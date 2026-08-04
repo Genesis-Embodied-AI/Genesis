@@ -2513,33 +2513,201 @@ class RigidSolver(KinematicSolver):
             gs.raise_exception(f"Invalid `name` {name}.")
 
     def set_dofs_kp(self, kp, dofs_idx=None, envs_idx=None):
+        """
+        Set the positional gain of each dof's PD controller, which resets its actuator gain and bias.
+
+        Parameters
+        ----------
+        kp : array_like
+            Positional gains, broadcast across the selected dofs.
+        dofs_idx : None | array_like, optional
+            Scene-level indices of the dofs to set. If None, every dof is set. Defaults to None.
+        envs_idx : None | array_like, optional
+            Indices of the environments to set. If None, every environment is set. Defaults to None.
+        Note
+        ----
+        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
+        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        """
         self._set_dofs_info([kp], dofs_idx, "kp", envs_idx)
 
     def set_dofs_kv(self, kv, dofs_idx=None, envs_idx=None):
+        """
+        Set the velocity gain of each dof's PD controller.
+
+        Parameters
+        ----------
+        kv : array_like
+            Velocity gains, broadcast across the selected dofs.
+        dofs_idx : None | array_like, optional
+            Scene-level indices of the dofs to set. If None, every dof is set. Defaults to None.
+        envs_idx : None | array_like, optional
+            Indices of the environments to set. If None, every environment is set. Defaults to None.
+        Note
+        ----
+        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
+        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        """
         self._set_dofs_info([kv], dofs_idx, "kv", envs_idx)
 
     def set_dofs_act_gain(self, act_gain, dofs_idx=None, envs_idx=None):
+        """
+        Set the actuator gain of each dof, which leaves the controller no longer PD-reducible.
+
+        Parameters
+        ----------
+        act_gain : array_like
+            Actuator gains, broadcast across the selected dofs.
+        dofs_idx : None | array_like, optional
+            Scene-level indices of the dofs to set. If None, every dof is set. Defaults to None.
+        envs_idx : None | array_like, optional
+            Indices of the environments to set. If None, every environment is set. Defaults to None.
+        Note
+        ----
+        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
+        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        """
         self._set_dofs_info([act_gain], dofs_idx, "act_gain", envs_idx)
 
     def set_dofs_act_bias(self, bias0, bias1, bias2, dofs_idx=None, envs_idx=None):
+        """
+        Set the three actuator bias coefficients of each dof.
+
+        Parameters
+        ----------
+        bias0 : array_like
+            Constant term.
+        bias1 : array_like
+            Coefficient on position.
+        bias2 : array_like
+            Coefficient on velocity.
+        dofs_idx : None | array_like, optional
+            Scene-level indices of the dofs to set. If None, every dof is set. Defaults to None.
+        envs_idx : None | array_like, optional
+            Indices of the environments to set. If None, every environment is set. Defaults to None.
+        Note
+        ----
+        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
+        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        """
         self._set_dofs_info([bias0, bias1, bias2], dofs_idx, "act_bias", envs_idx)
 
     def set_dofs_force_range(self, lower, upper, dofs_idx=None, envs_idx=None):
+        """
+        Set the lower and upper bound on the force each dof may apply.
+
+        Parameters
+        ----------
+        lower : array_like
+            Lower bounds, in newtons or newton-metres.
+        upper : array_like
+            Upper bounds, in newtons or newton-metres.
+        dofs_idx : None | array_like, optional
+            Scene-level indices of the dofs to set. If None, every dof is set. Defaults to None.
+        envs_idx : None | array_like, optional
+            Indices of the environments to set. If None, every environment is set. Defaults to None.
+        Note
+        ----
+        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
+        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        """
         self._set_dofs_info([lower, upper], dofs_idx, "force_range", envs_idx)
 
     def set_dofs_stiffness(self, stiffness, dofs_idx=None, envs_idx=None):
+        """
+        Set the spring stiffness pulling each dof toward its neutral position.
+
+        Parameters
+        ----------
+        stiffness : array_like
+            Stiffness values, broadcast across the selected dofs.
+        dofs_idx : None | array_like, optional
+            Scene-level indices of the dofs to set. If None, every dof is set. Defaults to None.
+        envs_idx : None | array_like, optional
+            Indices of the environments to set. If None, every environment is set. Defaults to None.
+        Note
+        ----
+        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
+        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        """
         self._set_dofs_info([stiffness], dofs_idx, "stiffness", envs_idx)
 
     def set_dofs_armature(self, armature, dofs_idx=None, envs_idx=None):
+        """
+        Set the armature of each dof, added to its own entry of the mass matrix.
+
+        Parameters
+        ----------
+        armature : array_like
+            Armature values, broadcast across the selected dofs.
+        dofs_idx : None | array_like, optional
+            Scene-level indices of the dofs to set. If None, every dof is set. Defaults to None.
+        envs_idx : None | array_like, optional
+            Indices of the environments to set. If None, every environment is set. Defaults to None.
+        Note
+        ----
+        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
+        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        """
         self._set_dofs_info([armature], dofs_idx, "armature", envs_idx)
 
     def set_dofs_damping(self, damping, dofs_idx=None, envs_idx=None):
+        """
+        Set the damping of each dof, which resists its velocity.
+
+        Parameters
+        ----------
+        damping : array_like
+            Damping values, broadcast across the selected dofs.
+        dofs_idx : None | array_like, optional
+            Scene-level indices of the dofs to set. If None, every dof is set. Defaults to None.
+        envs_idx : None | array_like, optional
+            Indices of the environments to set. If None, every environment is set. Defaults to None.
+        Note
+        ----
+        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
+        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        """
         self._set_dofs_info([damping], dofs_idx, "damping", envs_idx)
 
     def set_dofs_frictionloss(self, frictionloss, dofs_idx=None, envs_idx=None):
+        """
+        Set the dry friction force each dof resists motion with.
+
+        Parameters
+        ----------
+        frictionloss : array_like
+            Friction loss, in newtons or newton-metres.
+        dofs_idx : None | array_like, optional
+            Scene-level indices of the dofs to set. If None, every dof is set. Defaults to None.
+        envs_idx : None | array_like, optional
+            Indices of the environments to set. If None, every environment is set. Defaults to None.
+        Note
+        ----
+        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
+        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        """
         self._set_dofs_info([frictionloss], dofs_idx, "frictionloss", envs_idx)
 
     def set_dofs_limit(self, lower, upper, dofs_idx=None, envs_idx=None):
+        """
+        Set the lower and upper position limit of each dof.
+
+        Parameters
+        ----------
+        lower : array_like
+            Lower limits, in metres or radians.
+        upper : array_like
+            Upper limits, in metres or radians.
+        dofs_idx : None | array_like, optional
+            Scene-level indices of the dofs to set. If None, every dof is set. Defaults to None.
+        envs_idx : None | array_like, optional
+            Indices of the environments to set. If None, every environment is set. Defaults to None.
+        Note
+        ----
+        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
+        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        """
         self._set_dofs_info([lower, upper], dofs_idx, "limit", envs_idx)
 
     @mutates(StateChange.GEOMETRY, links=MutatedLinks.ARTICULATED)
@@ -2845,6 +3013,20 @@ class RigidSolver(KinematicSolver):
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_dofs_control_force(self, dofs_idx=None, envs_idx=None):
+        """
+        Get the internal force the position and velocity controllers apply to each dof.
+
+        Parameters
+        ----------
+        dofs_idx : None | array_like, optional
+            Scene-level indices of the dofs to read. If None, every dof is read. Defaults to None.
+        envs_idx : None | array_like, optional
+            Indices of the environments to read. If None, every environment is read. Defaults to None.
+        Returns
+        -------
+        tensor : torch.Tensor, shape ([n_envs,] n_dofs)
+            Control force in newtons for a translational dof, newton-metres for a rotational one.
+        """
         _tensor, dofs_idx, envs_idx = self._sanitize_io_variables(None, dofs_idx, self.n_dofs, "dofs_idx", envs_idx)
         tensor = _tensor[None] if self.n_envs == 0 else _tensor
         kernel_get_dofs_control_force(dofs_idx, envs_idx, tensor, self.dyn_state, self.dyn_info, self.rigid_config)
@@ -2889,10 +3071,42 @@ class RigidSolver(KinematicSolver):
         return actuator_force[0] if self.n_envs == 0 else actuator_force
 
     def get_dofs_force(self, dofs_idx=None, envs_idx=None):
+        """
+        Get the total internal force each dof experiences at the current step.
+
+        Parameters
+        ----------
+        dofs_idx : None | array_like, optional
+            Scene-level indices of the dofs to read. If None, every dof is read. Defaults to None.
+        envs_idx : None | array_like, optional
+            Indices of the environments to read. If None, every environment is read. Defaults to None.
+        Returns
+        -------
+        tensor : torch.Tensor, shape ([n_envs,] n_dofs)
+            Force in newtons for a translational dof, newton-metres for a rotational one.
+        """
         tensor = qd_to_torch(self.dyn_state.dofs.force, envs_idx, dofs_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_dofs_kp(self, dofs_idx=None, envs_idx=None):
+        """
+        Get the positional gain of each dof's PD controller.
+
+        Parameters
+        ----------
+        dofs_idx : None | array_like, optional
+            Scene-level indices of the dofs to read. If None, every dof is read. Defaults to None.
+        envs_idx : None | array_like, optional
+            Indices of the environments to read. If None, every environment is read. Defaults to None.
+        Note
+        ----
+        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
+        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        Returns
+        -------
+        tensor : torch.Tensor, shape ([n_envs,] n_dofs)
+            Positional gain.
+        """
         if not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         gain = qd_to_torch(self.dyn_info.dofs.act_gain, envs_idx, dofs_idx, transpose=True, copy=True)
@@ -2912,6 +3126,24 @@ class RigidSolver(KinematicSolver):
         return gain
 
     def get_dofs_kv(self, dofs_idx=None, envs_idx=None):
+        """
+        Get the velocity gain of each dof's PD controller.
+
+        Parameters
+        ----------
+        dofs_idx : None | array_like, optional
+            Scene-level indices of the dofs to read. If None, every dof is read. Defaults to None.
+        envs_idx : None | array_like, optional
+            Indices of the environments to read. If None, every environment is read. Defaults to None.
+        Note
+        ----
+        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
+        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        Returns
+        -------
+        tensor : torch.Tensor, shape ([n_envs,] n_dofs)
+            Velocity gain.
+        """
         if not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         gain = qd_to_torch(self.dyn_info.dofs.act_gain, envs_idx, dofs_idx, transpose=True, copy=True)
@@ -2931,12 +3163,48 @@ class RigidSolver(KinematicSolver):
         return -bias[..., 2]
 
     def get_dofs_act_gain(self, dofs_idx=None, envs_idx=None):
+        """
+        Get the actuator gain of each dof.
+
+        Parameters
+        ----------
+        dofs_idx : None | array_like, optional
+            Scene-level indices of the dofs to read. If None, every dof is read. Defaults to None.
+        envs_idx : None | array_like, optional
+            Indices of the environments to read. If None, every environment is read. Defaults to None.
+        Note
+        ----
+        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
+        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        Returns
+        -------
+        tensor : torch.Tensor, shape ([n_envs,] n_dofs)
+            Actuator gain.
+        """
         if not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = qd_to_torch(self.dyn_info.dofs.act_gain, envs_idx, dofs_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_dofs_act_bias(self, dofs_idx=None, envs_idx=None):
+        """
+        Get the three actuator bias coefficients of each dof.
+
+        Parameters
+        ----------
+        dofs_idx : None | array_like, optional
+            Scene-level indices of the dofs to read. If None, every dof is read. Defaults to None.
+        envs_idx : None | array_like, optional
+            Indices of the environments to read. If None, every environment is read. Defaults to None.
+        Note
+        ----
+        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
+        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        Returns
+        -------
+        tensor : torch.Tensor, shape ([n_envs,] n_dofs, 3)
+            Bias coefficients, ordered as passed to `set_dofs_act_bias`.
+        """
         if not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = qd_to_torch(self.dyn_info.dofs.act_bias, envs_idx, dofs_idx, transpose=True, copy=True)
@@ -2945,6 +3213,24 @@ class RigidSolver(KinematicSolver):
         return tensor[..., 0], tensor[..., 1], tensor[..., 2]
 
     def get_dofs_force_range(self, dofs_idx=None, envs_idx=None):
+        """
+        Get the lower and upper bound on the force each dof may apply.
+
+        Parameters
+        ----------
+        dofs_idx : None | array_like, optional
+            Scene-level indices of the dofs to read. If None, every dof is read. Defaults to None.
+        envs_idx : None | array_like, optional
+            Indices of the environments to read. If None, every environment is read. Defaults to None.
+        Note
+        ----
+        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
+        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        Returns
+        -------
+        lower, upper : torch.Tensor, shape ([n_envs,] n_dofs)
+            Lower and upper force bounds, in newtons or newton-metres.
+        """
         if not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = qd_to_torch(self.dyn_info.dofs.force_range, envs_idx, dofs_idx, transpose=True, copy=True)
@@ -2953,30 +3239,120 @@ class RigidSolver(KinematicSolver):
         return tensor[..., 0], tensor[..., 1]
 
     def get_dofs_stiffness(self, dofs_idx=None, envs_idx=None):
+        """
+        Get the spring stiffness pulling each dof toward its neutral position.
+
+        Parameters
+        ----------
+        dofs_idx : None | array_like, optional
+            Scene-level indices of the dofs to read. If None, every dof is read. Defaults to None.
+        envs_idx : None | array_like, optional
+            Indices of the environments to read. If None, every environment is read. Defaults to None.
+        Note
+        ----
+        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
+        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        Returns
+        -------
+        tensor : torch.Tensor, shape ([n_envs,] n_dofs)
+            Stiffness.
+        """
         if not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = qd_to_torch(self.dyn_info.dofs.stiffness, envs_idx, dofs_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_dofs_invweight(self, dofs_idx=None, envs_idx=None):
+        """
+        Get the inverse effective inertia of each dof, which scales its constraint impedance.
+
+        Parameters
+        ----------
+        dofs_idx : None | array_like, optional
+            Scene-level indices of the dofs to read. If None, every dof is read. Defaults to None.
+        envs_idx : None | array_like, optional
+            Indices of the environments to read. If None, every environment is read. Defaults to None.
+        Note
+        ----
+        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
+        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        Returns
+        -------
+        tensor : torch.Tensor, shape ([n_envs,] n_dofs)
+            Inverse weight, taken from the diagonal of the articulated-body inverse inertia.
+        """
         if not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = qd_to_torch(self.dyn_info.dofs.invweight, envs_idx, dofs_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_dofs_armature(self, dofs_idx=None, envs_idx=None):
+        """
+        Get the armature of each dof, added to its own entry of the mass matrix.
+
+        Parameters
+        ----------
+        dofs_idx : None | array_like, optional
+            Scene-level indices of the dofs to read. If None, every dof is read. Defaults to None.
+        envs_idx : None | array_like, optional
+            Indices of the environments to read. If None, every environment is read. Defaults to None.
+        Note
+        ----
+        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
+        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        Returns
+        -------
+        tensor : torch.Tensor, shape ([n_envs,] n_dofs)
+            Armature.
+        """
         if not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = qd_to_torch(self.dyn_info.dofs.armature, envs_idx, dofs_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_dofs_damping(self, dofs_idx=None, envs_idx=None):
+        """
+        Get the damping of each dof, which resists its velocity.
+
+        Parameters
+        ----------
+        dofs_idx : None | array_like, optional
+            Scene-level indices of the dofs to read. If None, every dof is read. Defaults to None.
+        envs_idx : None | array_like, optional
+            Indices of the environments to read. If None, every environment is read. Defaults to None.
+        Note
+        ----
+        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
+        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        Returns
+        -------
+        tensor : torch.Tensor, shape ([n_envs,] n_dofs)
+            Damping.
+        """
         if not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = qd_to_torch(self.dyn_info.dofs.damping, envs_idx, dofs_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_dofs_frictionloss(self, dofs_idx=None, envs_idx=None):
+        """
+        Get the dry friction force each dof resists motion with.
+
+        Parameters
+        ----------
+        dofs_idx : None | array_like, optional
+            Scene-level indices of the dofs to read. If None, every dof is read. Defaults to None.
+        envs_idx : None | array_like, optional
+            Indices of the environments to read. If None, every environment is read. Defaults to None.
+        Note
+        ----
+        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
+        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        Returns
+        -------
+        tensor : torch.Tensor, shape ([n_envs,] n_dofs)
+            Friction loss, in newtons or newton-metres.
+        """
         if not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = qd_to_torch(self.dyn_info.dofs.frictionloss, envs_idx, dofs_idx, transpose=True, copy=True)
