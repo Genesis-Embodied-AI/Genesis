@@ -543,10 +543,6 @@ class RigidOptions(Options):
         Broadphase traversal strategy. `SAP` (sweep-and-prune) or `ALL_VS_ALL` (parallel pair iteration). Defaults
         to ``None`` (auto: `SAP` on CPU or when hibernation/heterogeneous entities are enabled, `ALL_VS_ALL` on GPU
         otherwise). See `~genesis.constants.broadphase_traversal` for details on each strategy.
-
-    Warning
-    -------
-    Hibernation hasn't been robustly tested and will be fully supported soon.
     """
 
     dt: PositiveFloat | None = None
