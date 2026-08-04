@@ -1688,31 +1688,32 @@ class KinematicEntity(Entity):
         return state
 
     def _get_global_idx(self, idx_local, idx_local_max, idx_global_start=0, *, unsafe=False):
-        # A slice is normalized to the range that it selects, while a range holding negative values is expanded
-        # because wrapping them within the entity range does not preserve a constant step.
-        if isinstance(idx_local, slice):
-            idx_local = range(*idx_local.indices(idx_local_max))
-        if isinstance(idx_local, range) and min(idx_local.start, idx_local.stop) < 0:
-            idx_local = tuple(idx_local)
-
         # Handling default argument and special cases
         if idx_local is None:
             idx_global = range(idx_global_start, idx_local_max + idx_global_start)
-        elif isinstance(idx_local, range):
-            idx_global = range(idx_local.start + idx_global_start, idx_local.stop + idx_global_start, idx_local.step)
         elif isinstance(idx_local, (int, np.integer)):
             if idx_local < 0:
                 idx_local = idx_local_max + idx_local
             idx_global = (idx_local + idx_global_start,)
+        elif isinstance(idx_local, slice):
+            start, stop, step = idx_local.indices(idx_local_max)
+            idx_global = range(start + idx_global_start, stop + idx_global_start, step)
+        elif isinstance(idx_local, range):
+            # Wrapping negative entries may break a range's constant step, so only those ranges are expanded
+            if idx_local and (idx_local[0] < 0 or idx_local[-1] < 0):
+                idx_global = [i + idx_global_start + (idx_local_max if i < 0 else 0) for i in idx_local]
+            else:
+                idx_global = range(
+                    idx_local.start + idx_global_start, idx_local.stop + idx_global_start, idx_local.step
+                )
         elif isinstance(idx_local, (list, tuple)):
             try:
                 idx_global = [i + idx_global_start + (idx_local_max if i < 0 else 0) for i in idx_local]
             except TypeError:
                 gs.raise_exception("Expecting a sequence of integers for `idx_local`.")
         else:
-            # Negative values index from the end of the range owned by the entity, so they must be wrapped before the
-            # offset is applied. A boolean mask carries no such value, and arithmetic would cast it to integers.
             if idx_local.dtype not in (torch.bool, np.bool_):
+                # Negative values wrap within the entity-owned range before the global offset is applied
                 idx_local = idx_local + idx_local_max * (idx_local < 0)
             # Increment may be slow when dealing with heterogenuous data, so it must be avoided if possible
             if idx_global_start > 0:

@@ -853,19 +853,25 @@ def sanitize_index(
     dim: int,
     name: str,
 ) -> torch.Tensor:
-    # Quadrants kernels address buffers directly, so negative values must be wrapped. Only a collection can hold them,
-    # every other form yielding indices that are non-negative by construction.
-    is_negative_wrap_required = False
+    is_tensor_wrap_required = False
     if index is None:
         index = range(max_size)
     elif isinstance(index, slice):
         index = range(*index.indices(max_size))
     elif isinstance(index, (int, np.integer)):
         index = [index + max_size if index < 0 else index]
-    elif isinstance(index, torch.Tensor) and index.dtype == torch.bool:
-        index, *_ = torch.where(index)
+    elif isinstance(index, torch.Tensor):
+        if index.dtype == torch.bool:
+            index, *_ = torch.where(index)
+        else:
+            is_tensor_wrap_required = True
+    elif isinstance(index, np.ndarray):
+        index = index + max_size * (index < 0)
+    elif isinstance(index, range):
+        if index and (index[0] < 0 or index[-1] < 0):
+            index = [i + max_size if i < 0 else i for i in index]
     else:
-        is_negative_wrap_required = True
+        index = [i + max_size if i < 0 else i for i in index]
 
     index = torch.as_tensor(index, dtype=gs.tc_int, device=gs.device)
 
@@ -882,7 +888,8 @@ def sanitize_index(
             f"Invalid shape: {index.shape}. Expecting 1D tensor of length {expected_size} for {dim}-th index{dim_info}."
         )
 
-    if is_negative_wrap_required:
+    # Keep tensor normalization on-device because inspecting its values in Python would synchronize accelerator work
+    if is_tensor_wrap_required:
         index = torch.where(index < 0, index + max_size, index)
 
     # FIXME: This check is too expensive
