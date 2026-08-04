@@ -705,7 +705,7 @@ def test_friction_resolved_from_material_pair(n_envs, show_viewer):
     # matching the order their pairs were numbered in. A lookup keyed on the wrong one of those two then resolves
     # some other pair's coefficient.
     SPEEDS = (6.0, 8.0, 12.0, 20.0, 5.0, 9.0, 15.0, 7.0)
-    # Coefficient declared for the plane against each box's material. 0.8 sits above both surfaces' own coefficients
+    # Coefficient declared for the plane against each box's material. 0.6 sits above both surfaces' own coefficients
     # and 0.05 below both, so neither a maximum nor a minimum over the two reproduces them. Every one stays well
     # clear of the coefficient at which a cube tips over its leading edge, width / (2 * com_height), since approaching
     # it leans the contact force toward that edge and lifts the centre of mass. They are all distinct so that
@@ -776,9 +776,12 @@ def test_friction_resolved_from_material_pair(n_envs, show_viewer):
         boxes[i_box].geoms[0].set_material(own_material)
         plane_material.set_friction_pair(own_material, sliding_friction=pair_friction)
     plane_material.set_friction_pair(shared_material, sliding_friction=PAIR_HIGH)
-    plane_material.set_friction_pair(geom_material, sliding_friction=PAIR_LOW)
+    plane_material.set_friction_pair(geom_material, sliding_friction=PAIR_HIGH)
     scene.build(n_envs=n_envs)
 
+    # Retuning a declared pair on a built scene is what a system identification loop does. The fourth box slides at
+    # PAIR_LOW only if this reaches it, since it was declared at PAIR_HIGH above.
+    plane_material.set_friction_pair(geom_material, sliding_friction=PAIR_LOW)
     # The third box answers to the same declaration as the first two, scaled by its own sliding ratio alone.
     boxes[2].set_friction_ratio(sliding_ratio=SLIDING_RATIO)
     # The torsional ratio moves on the first box, which must leave its sliding deceleration untouched.

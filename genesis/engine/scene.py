@@ -18,7 +18,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 from genesis.engine.force_fields import ForceField
-from genesis.engine.materials.base import EntityT, Material, MaterialHandle, MaterialT
+from genesis.engine.materials.base import EntityT, Material, MaterialHandle
 from genesis.engine.materials.rigid import Rigid, RigidMaterial
 from genesis.engine.states.solvers import SimState
 from genesis.options import (
@@ -200,9 +200,9 @@ class Scene(RBC):
         # emitters
         self._emitters = gs.List()
 
+        self._materials: list[MaterialHandle] = []
         # Keyed on the identity of the options object, so two materials carrying the same friction and density
         # stay distinct. See add_material for the registration contract.
-        self._materials: list[MaterialHandle] = []
         self._material_idx: dict[int, int] = {}
 
         self._backward_ready = False
@@ -354,14 +354,8 @@ class Scene(RBC):
             rolling_ratio=rolling_ratio,
         )
 
-    @overload
-    def add_material(self, material: Rigid) -> RigidMaterial: ...
-
-    @overload
-    def add_material(self, material: MaterialT) -> MaterialHandle[MaterialT]: ...
-
     @gs.assert_unbuilt
-    def add_material(self, material):
+    def add_material(self, material: Rigid) -> RigidMaterial:
         """
         Register a material on the scene and get back the handle to pass to `add_entity`.
 
@@ -414,17 +408,6 @@ class Scene(RBC):
         vis_mode: str | None = ...,
         name: str | None = ...,
     ) -> "RigidEntity": ...
-
-    @overload
-    def add_entity(
-        self,
-        morph: Morph | Iterable[Morph],
-        material: MaterialHandle[Material[EntityT]] = ...,
-        surface: Surface | None = ...,
-        visualize_contact: bool = ...,
-        vis_mode: str | None = ...,
-        name: str | None = ...,
-    ) -> EntityT: ...
 
     @overload
     def add_entity(
