@@ -239,7 +239,7 @@ class Solver(RBC):
             self._gravity.from_numpy(gravity)
 
     @gs.assert_built
-    def set_gravity(self, gravity, envs_idx: IndexType = None):
+    def set_gravity(self, gravity: "np.typing.ArrayLike", envs_idx: IndexType = None):
         if self._gravity is None:
             gs.logger.debug("Gravity is not defined, skipping `set_gravity`.")
             return

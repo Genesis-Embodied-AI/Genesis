@@ -452,7 +452,7 @@ class RaycastContext(SharedSensorContext):
                 entry.bvh.build()
             entry.needs_rebuild = False
 
-    def reset(self, envs_idx):
+    def reset(self, envs_idx: torch.Tensor):
         # A reset may change otherwise-static geometry (re-randomized terrain, teleported obstacles), so force every
         # entry to rebuild once; static entries resume skipping on subsequent steps. The BVHs are geometry-global, not
         # per-env, so ``envs_idx`` is unused. No-op when inactive (``_bvh_contexts`` is empty).

@@ -11,7 +11,9 @@ from . import mesh as msu
 from .misc import get_fps_pc_cache_dir
 
 
-def get_fps_pc_cache(verts, faces, n_points: int, n_candidates: int, return_normals: bool, seed: int):
+def get_fps_pc_cache(
+    verts: np.ndarray, faces: np.ndarray, n_points: int, n_candidates: int, return_normals: bool, seed: int
+):
     return msu.MeshCache(get_fps_pc_cache_dir(), "fps_pc", verts, faces, n_points, n_candidates, return_normals, seed)
 
 

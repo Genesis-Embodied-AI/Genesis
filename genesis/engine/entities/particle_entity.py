@@ -512,7 +512,7 @@ class ParticleEntity(Entity):
         vel_ = self._sanitize_particles_tensor(tensor, dtype, None, envs_idx, element_shape)
         self._tgt[key] = to_gs_tensor(vel_)
 
-    def set_position(self, value, envs_idx: IndexType = None):
+    def set_position(self, value: "np.typing.ArrayLike", envs_idx: IndexType = None):
         """
         Set the position of all the particles individually, or the center of mass wrt the initial configuration of the
         particles as a whole.
@@ -532,7 +532,9 @@ class ParticleEntity(Entity):
         self._set_particles_target_state("pos", "position", (3,), gs.tc_float, poss, envs_idx)
 
     @gs.assert_built
-    def set_particles_pos(self, poss, particles_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_particles_pos(
+        self, poss: "np.typing.ArrayLike", particles_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Set the position of some particles.
 
@@ -576,7 +578,7 @@ class ParticleEntity(Entity):
         """
         raise NotImplementedError
 
-    def set_velocity(self, vels, envs_idx: IndexType = None):
+    def set_velocity(self, vels: "np.typing.ArrayLike", envs_idx: IndexType = None):
         """
         Set the velocity of all the particles individually.
 
@@ -590,7 +592,9 @@ class ParticleEntity(Entity):
         self._set_particles_target_state("vel", "velocity", (3,), gs.tc_float, vels, envs_idx)
 
     @gs.assert_built
-    def set_particles_vel(self, vels, particles_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_particles_vel(
+        self, vels: "np.typing.ArrayLike", particles_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Set the velocity of some particles.
 
@@ -634,7 +638,7 @@ class ParticleEntity(Entity):
         """
         raise NotImplementedError
 
-    def set_active(self, actives, envs_idx: IndexType = None):
+    def set_active(self, actives: "np.typing.ArrayLike", envs_idx: IndexType = None):
         """
         Set the activeness state of all the particles individually.
 
@@ -663,7 +667,9 @@ class ParticleEntity(Entity):
         self.set_active(gs.INACTIVE)
 
     @gs.assert_built
-    def set_particles_active(self, actives, particles_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_particles_active(
+        self, actives: "np.typing.ArrayLike", particles_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Set the velocity of some particles.
 
@@ -719,7 +725,7 @@ class ParticleEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def find_closest_particle(self, pos, envs_idx: IndexType = None):
+    def find_closest_particle(self, pos: "np.typing.ArrayLike", envs_idx: IndexType = None):
         """
         Find the index of the particle closest to a given position.
 

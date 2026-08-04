@@ -13,6 +13,8 @@ from genesis.options.sensors.options import ProbesWithNormalSensorOptionsMixin
 from genesis.utils.misc import concat_with_tensor, gaussian_crosstalk_kernel, make_tensor_field
 
 if TYPE_CHECKING:
+    from genesis.engine.entities.rigid_entity import RigidLink
+    from genesis.options.sensors.tactile import SpatialCrosstalkOptionsMixin
     from genesis.utils.ring_buffer import TensorRingBuffer
 
 
@@ -38,7 +40,7 @@ BVH_LEAF_SIZE = 8
 BVH_STACK_SIZE = 32
 
 
-def get_mesh_geom_chunks(link, prefer_visual: bool) -> list[tuple[object, np.ndarray, np.ndarray]]:
+def get_mesh_geom_chunks(link: "RigidLink", prefer_visual: bool) -> list[tuple[object, np.ndarray, np.ndarray]]:
     """
     Return per-geom mesh chunks ``(geom, verts_link, faces)`` in link-local frame.
 
@@ -617,7 +619,10 @@ class ViscoelasticHysteresisMixin(Generic[ViscoelasticHysteresisSharedMetadataT]
 
     @classmethod
     def reset(
-        cls, shared_metadata: ViscoelasticHysteresisSharedMetadataT, shared_ground_truth_cache: torch.Tensor, envs_idx
+        cls,
+        shared_metadata: ViscoelasticHysteresisSharedMetadataT,
+        shared_ground_truth_cache: torch.Tensor,
+        envs_idx: torch.Tensor,
     ):
         super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
         if shared_metadata.viscoelastic_xi.numel() > 0:
@@ -705,7 +710,7 @@ def _conv_crosstalk(field: torch.Tensor, kernel: torch.Tensor) -> torch.Tensor:
 
 
 def build_crosstalk_kernels(
-    options, grid_spacing: torch.Tensor, device: torch.device, dtype: torch.dtype
+    options: "SpatialCrosstalkOptionsMixin", grid_spacing: torch.Tensor, device: torch.device, dtype: torch.dtype
 ) -> tuple[list[torch.Tensor], int]:
     """
     Build the per-group depthwise crosstalk kernels for one sensor from its options.

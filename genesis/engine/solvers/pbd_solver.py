@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import quadrants as qd
+import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -245,7 +246,12 @@ class PBDSolver(Solver):
         return self.n_particles > 0
 
     def add_entity(
-        self, idx, material, morph, surface, name: str | None = None
+        self,
+        idx: int,
+        material: "gs.materials.PBD.Base",
+        morph: "gs.morphs.Morph",
+        surface: "gs.surfaces.Surface",
+        name: str | None = None,
     ) -> "PBD2DEntity | PBD3DEntity | PBDParticleEntity | PBDFreeParticleEntity":
         if isinstance(material, gs.materials.PBD.Cloth):
             entity = PBD2DEntity(
@@ -820,7 +826,7 @@ class PBDSolver(Solver):
     def load_ckpt(self, ckpt_name):
         pass
 
-    def set_state(self, f, state, envs_idx: IndexType = None):
+    def set_state(self, f: int, state: PBDSolverState, envs_idx: IndexType = None):
         if self.is_active:
             self._kernel_set_state(f, state.pos, state.vel, state.free)
 
@@ -947,7 +953,7 @@ class PBDSolver(Solver):
     @gs.assert_built
     def set_animate_particles_by_link(
         self,
-        particles_idx,
+        particles_idx: "np.ndarray | torch.Tensor",
         link_idx: int,
         links_state: LinksState,
         envs_idx: IndexType = None,

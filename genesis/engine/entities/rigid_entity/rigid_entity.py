@@ -1,9 +1,9 @@
 import inspect
 import math
 import os
-from itertools import chain
-from typing import TYPE_CHECKING, Literal, Any, Hashable
 from functools import wraps
+from itertools import chain
+from typing import TYPE_CHECKING, Any, Hashable, Literal, Sequence
 
 import quadrants as qd
 import numpy as np
@@ -13,8 +13,10 @@ import trimesh
 import genesis as gs
 from genesis.engine.materials.base import Material
 from genesis.engine.mesh import InertialProperties
+from genesis.engine.states.entities import RigidEntityState
 from genesis.options.morphs import Morph
 from genesis.options.surfaces import Surface
+from genesis.typing import IndexType, UnitVec4FType, Vec3FType
 from genesis.utils import array_class
 from genesis.utils import geom as gu
 from genesis.utils import mesh as mu
@@ -22,8 +24,6 @@ from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
 from genesis.utils.misc import DeprecationError, broadcast_tensor, qd_to_numpy, qd_to_torch, tensor_to_array
-from genesis.typing import IndexType, UnitVec4FType, Vec3FType
-from genesis.engine.states.entities import RigidEntityState
 
 from ..base_entity import Entity
 from .rigid_equality import RigidEquality
@@ -1429,7 +1429,7 @@ class KinematicEntity(Entity):
     @gs.assert_unbuilt
     def attach(
         self,
-        parent_entity,
+        parent_entity: "KinematicEntity",
         parent_link_name: str | None = None,
         pos: Vec3FType | None = None,
         quat: UnitVec4FType | None = None,
@@ -1444,7 +1444,7 @@ class KinematicEntity(Entity):
 
         Parameters
         ----------
-        parent_entity : genesis.Entity
+        parent_entity : KinematicEntity
             The entity in the scene that will be a parent of kinematic tree.
         parent_link_name : str
             The name of the link in the parent entity to be linked. Default to the latest link the parent kinematic
@@ -1804,7 +1804,7 @@ class KinematicEntity(Entity):
             gs.raise_exception("Neither `name` nor `uid` is provided.")
 
     @gs.assert_built
-    def get_pos(self, envs_idx: IndexType = None, *, relative=True):
+    def get_pos(self, envs_idx: IndexType = None, *, relative: bool = True):
         """
         Returns position of the entity's base link.
 
@@ -1824,7 +1824,7 @@ class KinematicEntity(Entity):
         return self._solver.get_links_pos(self.base_link_idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
-    def get_quat(self, envs_idx: IndexType = None, *, relative=True):
+    def get_quat(self, envs_idx: IndexType = None, *, relative: bool = True):
         """
         Returns quaternion of the entity's base link.
 
@@ -1878,7 +1878,7 @@ class KinematicEntity(Entity):
         return self._solver.get_links_ang(self.base_link_idx, envs_idx)[..., 0, :]
 
     @gs.assert_built
-    def get_links_pos(self, links_idx_local: IndexType = None, envs_idx: IndexType = None, *, relative=True):
+    def get_links_pos(self, links_idx_local: IndexType = None, envs_idx: IndexType = None, *, relative: bool = True):
         """
         Returns the position of a given reference point for all the entity's links.
 
@@ -1901,7 +1901,7 @@ class KinematicEntity(Entity):
         return self._solver.get_links_pos(links_idx, envs_idx, relative=relative)
 
     @gs.assert_built
-    def get_links_quat(self, links_idx_local: IndexType = None, envs_idx: IndexType = None, *, relative=True):
+    def get_links_quat(self, links_idx_local: IndexType = None, envs_idx: IndexType = None, *, relative: bool = True):
         """
         Returns quaternion of all the entity's links.
 
@@ -1960,7 +1960,7 @@ class KinematicEntity(Entity):
         return torch.stack((aabbs[..., 0, :].min(dim=-2).values, aabbs[..., 1, :].max(dim=-2).values), dim=-2)
 
     @gs.assert_built
-    def get_terrain_height(self, positions, envs_idx: IndexType = None):
+    def get_terrain_height(self, positions: "np.typing.ArrayLike", envs_idx: IndexType = None):
         """
         Return terrain surface heights in meters at world-frame x-y positions.
 
@@ -2038,7 +2038,15 @@ class KinematicEntity(Entity):
 
     @gs.assert_built
     @tracked
-    def set_pos(self, pos, envs_idx: IndexType = None, *, zero_velocity=False, relative=True, skip_forward=False):
+    def set_pos(
+        self,
+        pos: "np.typing.ArrayLike",
+        envs_idx: IndexType = None,
+        *,
+        zero_velocity: bool = False,
+        relative: bool = True,
+        skip_forward: bool = False,
+    ):
         """
         Set position of the entity's base link.
 
@@ -2064,12 +2072,20 @@ class KinematicEntity(Entity):
         self._solver.set_base_links_pos(pos, self.base_link_idx, envs_idx, relative=relative, skip_forward=skip_forward)
 
     @gs.assert_built
-    def set_pos_grad(self, envs_idx, relative, pos_grad):
+    def set_pos_grad(self, envs_idx: IndexType, relative: bool, pos_grad: torch.Tensor):
         self._solver.set_base_links_pos_grad(self.base_link_idx, envs_idx, relative, pos_grad.data)
 
     @gs.assert_built
     @tracked
-    def set_quat(self, quat, envs_idx: IndexType = None, *, zero_velocity=False, relative=True, skip_forward=False):
+    def set_quat(
+        self,
+        quat: "np.typing.ArrayLike",
+        envs_idx: IndexType = None,
+        *,
+        zero_velocity: bool = False,
+        relative: bool = True,
+        skip_forward: bool = False,
+    ):
         """
         Set quaternion of the entity's base link.
 
@@ -2096,18 +2112,18 @@ class KinematicEntity(Entity):
         )
 
     @gs.assert_built
-    def set_quat_grad(self, envs_idx, relative, quat_grad):
+    def set_quat_grad(self, envs_idx: IndexType, relative: bool, quat_grad: torch.Tensor):
         self._solver.set_base_links_quat_grad(self.base_link_idx, envs_idx, relative, quat_grad.data)
 
     @gs.assert_built
     def set_qpos(
         self,
-        qpos,
+        qpos: "np.typing.ArrayLike",
         qs_idx_local: IndexType = None,
         envs_idx: IndexType = None,
         *,
-        zero_velocity=False,
-        skip_forward=False,
+        zero_velocity: bool = False,
+        skip_forward: bool = False,
     ):
         """
         Set the entity's qpos.
@@ -2132,7 +2148,12 @@ class KinematicEntity(Entity):
     @gs.assert_built
     @tracked
     def set_dofs_velocity(
-        self, velocity=None, dofs_idx_local: IndexType = None, envs_idx: IndexType = None, *, skip_forward=False
+        self,
+        velocity: "np.typing.ArrayLike | None" = None,
+        dofs_idx_local: IndexType = None,
+        envs_idx: IndexType = None,
+        *,
+        skip_forward: bool = False,
     ):
         """
         Set the entity's dofs' velocity.
@@ -2151,7 +2172,12 @@ class KinematicEntity(Entity):
 
     @gs.assert_built
     def set_dofs_position(
-        self, position, dofs_idx_local: IndexType = None, envs_idx: IndexType = None, *, zero_velocity=False
+        self,
+        position: "np.typing.ArrayLike",
+        dofs_idx_local: IndexType = None,
+        envs_idx: IndexType = None,
+        *,
+        zero_velocity: bool = False,
     ):
         """
         Set the entity's dofs' position.
@@ -2259,7 +2285,7 @@ class KinematicEntity(Entity):
         return self._solver.get_dofs_limit(dofs_idx, envs_idx)
 
     @gs.assert_built
-    def zero_all_dofs_velocity(self, envs_idx: IndexType = None, *, skip_forward=False):
+    def zero_all_dofs_velocity(self, envs_idx: IndexType = None, *, skip_forward: bool = False):
         """
         Zero the velocity of all the entity's dofs.
 
@@ -2435,7 +2461,7 @@ class KinematicEntity(Entity):
         return gs.List(vgeom for link in self._links for vgeom in link.vgeoms)
 
     @gs.assert_built
-    def set_vverts(self, vverts, envs_idx: IndexType = None):
+    def set_vverts(self, vverts: "np.typing.ArrayLike | None", envs_idx: IndexType = None):
         """Override this entity's visual vertex positions for rendering and sensors.
 
         vverts is broadcast to (len(envs_idx), n_vverts, 3); scalars, (3,) and (n_vverts, 3) are accepted. vverts=None
@@ -3057,22 +3083,22 @@ class RigidEntity(KinematicEntity):
     @gs.assert_built
     def inverse_kinematics(
         self,
-        link,
-        pos=None,
-        quat=None,
-        local_point=None,
-        init_qpos=None,
-        respect_joint_limit=True,
-        max_samples=50,
-        max_solver_iters=20,
-        damping=0.01,
-        pos_tol=5e-4,  # 0.5 mm
-        rot_tol=5e-3,  # 0.28 degree
-        pos_mask=[True, True, True],
-        rot_mask=[True, True, True],
-        max_step_size=0.5,
+        link: RigidLink,
+        pos: "np.typing.ArrayLike | None" = None,
+        quat: "np.typing.ArrayLike | None" = None,
+        local_point: "np.typing.ArrayLike | None" = None,
+        init_qpos: "np.typing.ArrayLike | None" = None,
+        respect_joint_limit: bool = True,
+        max_samples: int = 50,
+        max_solver_iters: int = 20,
+        damping: float = 0.01,
+        pos_tol: float = 5e-4,  # 0.5 mm
+        rot_tol: float = 5e-3,  # 0.28 degree
+        pos_mask: "np.typing.ArrayLike" = [True, True, True],
+        rot_mask: "np.typing.ArrayLike" = [True, True, True],
+        max_step_size: float = 0.5,
         dofs_idx_local: IndexType = None,
-        return_error=False,
+        return_error: bool = False,
         envs_idx: IndexType = None,
     ):
         """
@@ -3165,22 +3191,22 @@ class RigidEntity(KinematicEntity):
     @gs.assert_built
     def inverse_kinematics_multilink(
         self,
-        links,
-        poss=None,
-        quats=None,
-        local_points=None,
-        init_qpos=None,
-        respect_joint_limit=True,
-        max_samples=50,
-        max_solver_iters=20,
-        damping=0.01,
-        pos_tol=5e-4,  # 0.5 mm
-        rot_tol=5e-3,  # 0.28 degree
-        pos_mask=[True, True, True],
-        rot_mask=[True, True, True],
-        max_step_size=0.5,
+        links: Sequence[RigidLink],
+        poss: "Sequence[np.typing.ArrayLike | None] | None" = None,
+        quats: "Sequence[np.typing.ArrayLike | None] | None" = None,
+        local_points: "Sequence[np.typing.ArrayLike | None] | None" = None,
+        init_qpos: "np.typing.ArrayLike | None" = None,
+        respect_joint_limit: bool = True,
+        max_samples: int = 50,
+        max_solver_iters: int = 20,
+        damping: float = 0.01,
+        pos_tol: float = 5e-4,  # 0.5 mm
+        rot_tol: float = 5e-3,  # 0.28 degree
+        pos_mask: "np.typing.ArrayLike" = [True, True, True],
+        rot_mask: "np.typing.ArrayLike" = [True, True, True],
+        max_step_size: float = 0.5,
         dofs_idx_local: IndexType = None,
-        return_error=False,
+        return_error: bool = False,
         envs_idx: IndexType = None,
     ):
         """
@@ -3369,7 +3395,11 @@ class RigidEntity(KinematicEntity):
 
     @gs.assert_built
     def forward_kinematics(
-        self, qpos, qs_idx_local: IndexType = None, links_idx_local: IndexType = None, envs_idx: IndexType = None
+        self,
+        qpos: "np.typing.ArrayLike",
+        qs_idx_local: IndexType = None,
+        links_idx_local: IndexType = None,
+        envs_idx: IndexType = None,
     ):
         """
         Compute forward kinematics for a single target link.
@@ -3479,21 +3509,21 @@ class RigidEntity(KinematicEntity):
     @gs.assert_built
     def plan_path(
         self,
-        qpos_goal,
-        qpos_start=None,
-        max_nodes=2000,
-        resolution=0.05,
-        timeout=None,
-        max_retry=1,
-        smooth_path=True,
-        num_waypoints=300,
-        ignore_collision=False,
-        planner="RRTConnect",
+        qpos_goal: "np.typing.ArrayLike",
+        qpos_start: "np.typing.ArrayLike | None" = None,
+        max_nodes: int = 2000,
+        resolution: float = 0.05,
+        timeout: float | None = None,
+        max_retry: int = 1,
+        smooth_path: bool = True,
+        num_waypoints: int = 300,
+        ignore_collision: bool = False,
+        planner: Literal["RRT", "RRTConnect"] = "RRTConnect",
         envs_idx: IndexType = None,
-        return_valid_mask=False,
+        return_valid_mask: bool = False,
         *,
-        ee_link_name=None,
-        with_entity=None,
+        ee_link_name: str | None = None,
+        with_entity: "RigidEntity | None" = None,
         **kwargs,
     ):
         """
@@ -3506,12 +3536,12 @@ class RigidEntity(KinematicEntity):
         qpos_start : None | array_like, optional
             The start state. If None, the current state of the rigid entity will be used.
             Defaults to None. [B, Nq] or [1, Nq]
-        resolution : float, optiona
+        resolution : float, optional
             Joint-space resolution. It corresponds to the maximum distance between states to be checked
             for validity along a path segment.
         timeout : float, optional
             The max time to spend for each planning in seconds. Note that the timeout is not exact.
-        max_retry : float, optional
+        max_retry : int, optional
             Maximum number of retry in case of timeout or convergence failure. Default to 1.
         smooth_path : bool, optional
             Whether to smooth the path after finding a solution. Defaults to True.
@@ -3681,7 +3711,7 @@ class RigidEntity(KinematicEntity):
         envs_idx: IndexType = None,
         *,
         ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
-        relative=True,
+        relative: bool = True,
     ):
         """
         Returns the position of a given reference point for all the entity's links.
@@ -3768,7 +3798,15 @@ class RigidEntity(KinematicEntity):
 
     @gs.assert_built
     @tracked
-    def set_pos(self, pos, envs_idx: IndexType = None, *, zero_velocity=True, relative=True, skip_forward=False):
+    def set_pos(
+        self,
+        pos: "np.typing.ArrayLike",
+        envs_idx: IndexType = None,
+        *,
+        zero_velocity: bool = True,
+        relative: bool = True,
+        skip_forward: bool = False,
+    ):
         """
         Set position of the entity's base link.
 
@@ -3796,12 +3834,20 @@ class RigidEntity(KinematicEntity):
         super().set_pos(pos, envs_idx, zero_velocity=zero_velocity, relative=relative, skip_forward=skip_forward)
 
     @gs.assert_built
-    def set_pos_grad(self, envs_idx, relative, pos_grad):
+    def set_pos_grad(self, envs_idx: IndexType, relative: bool, pos_grad: torch.Tensor):
         self._solver.set_base_links_pos_grad(self.base_link_idx, envs_idx, relative, pos_grad.data)
 
     @gs.assert_built
     @tracked
-    def set_quat(self, quat, envs_idx: IndexType = None, *, zero_velocity=True, relative=True, skip_forward=False):
+    def set_quat(
+        self,
+        quat: "np.typing.ArrayLike",
+        envs_idx: IndexType = None,
+        *,
+        zero_velocity: bool = True,
+        relative: bool = True,
+        skip_forward: bool = False,
+    ):
         """
         Set quaternion of the entity's base link.
 
@@ -3829,7 +3875,7 @@ class RigidEntity(KinematicEntity):
         super().set_quat(quat, envs_idx, zero_velocity=zero_velocity, relative=relative, skip_forward=skip_forward)
 
     @gs.assert_built
-    def set_quat_grad(self, envs_idx, relative, quat_grad):
+    def set_quat_grad(self, envs_idx: IndexType, relative: bool, quat_grad: torch.Tensor):
         self._solver.set_base_links_quat_grad(self.base_link_idx, envs_idx, relative, quat_grad.data)
 
     @gs.assert_built
@@ -3870,12 +3916,12 @@ class RigidEntity(KinematicEntity):
     @gs.assert_built
     def set_qpos(
         self,
-        qpos,
+        qpos: "np.typing.ArrayLike",
         qs_idx_local: IndexType = None,
         envs_idx: IndexType = None,
         *,
-        zero_velocity=True,
-        skip_forward=False,
+        zero_velocity: bool = True,
+        skip_forward: bool = False,
     ):
         """
         Set the entity's qpos.
@@ -3900,7 +3946,7 @@ class RigidEntity(KinematicEntity):
         super().set_qpos(qpos, qs_idx_local, envs_idx, zero_velocity=zero_velocity, skip_forward=skip_forward)
 
     @gs.assert_built
-    def set_dofs_kp(self, kp, dofs_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_dofs_kp(self, kp: "np.typing.ArrayLike", dofs_idx_local: IndexType = None, envs_idx: IndexType = None):
         """
         Set the entity's dofs' positional gains for the PD controller.
 
@@ -3917,7 +3963,7 @@ class RigidEntity(KinematicEntity):
         self._solver.set_dofs_kp(kp, dofs_idx, envs_idx)
 
     @gs.assert_built
-    def set_dofs_kv(self, kv, dofs_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_dofs_kv(self, kv: "np.typing.ArrayLike", dofs_idx_local: IndexType = None, envs_idx: IndexType = None):
         """
         Set the entity's dofs' velocity gains for the PD controller.
 
@@ -3934,7 +3980,9 @@ class RigidEntity(KinematicEntity):
         self._solver.set_dofs_kv(kv, dofs_idx, envs_idx)
 
     @gs.assert_built
-    def set_dofs_act_gain(self, act_gain, dofs_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_dofs_act_gain(
+        self, act_gain: "np.typing.ArrayLike", dofs_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Set the actuator gain for the entity's dofs. Invalidates PD-reducibility.
 
@@ -3951,7 +3999,14 @@ class RigidEntity(KinematicEntity):
         self._solver.set_dofs_act_gain(act_gain, dofs_idx, envs_idx)
 
     @gs.assert_built
-    def set_dofs_act_bias(self, bias0, bias1, bias2, dofs_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_dofs_act_bias(
+        self,
+        bias0: "np.typing.ArrayLike",
+        bias1: "np.typing.ArrayLike",
+        bias2: "np.typing.ArrayLike",
+        dofs_idx_local: IndexType = None,
+        envs_idx: IndexType = None,
+    ):
         """
         Set the actuator bias for the entity's dofs.
 
@@ -3972,7 +4027,13 @@ class RigidEntity(KinematicEntity):
         self._solver.set_dofs_act_bias(bias0, bias1, bias2, dofs_idx, envs_idx)
 
     @gs.assert_built
-    def set_dofs_force_range(self, lower, upper, dofs_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_dofs_force_range(
+        self,
+        lower: "np.typing.ArrayLike",
+        upper: "np.typing.ArrayLike",
+        dofs_idx_local: IndexType = None,
+        envs_idx: IndexType = None,
+    ):
         """
         Set the entity's dofs' force range.
 
@@ -3991,12 +4052,16 @@ class RigidEntity(KinematicEntity):
         self._solver.set_dofs_force_range(lower, upper, dofs_idx, envs_idx)
 
     @gs.assert_built
-    def set_dofs_stiffness(self, stiffness, dofs_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_dofs_stiffness(
+        self, stiffness: "np.typing.ArrayLike", dofs_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.set_dofs_stiffness(stiffness, dofs_idx, envs_idx)
 
     @gs.assert_built
-    def set_dofs_invweight(self, invweight, dofs_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_dofs_invweight(
+        self, invweight: "np.typing.ArrayLike", dofs_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         raise DeprecationError(
             "This method has been removed because dof invweights are supposed to be a by-product of link properties "
             "(mass, pose, and inertia matrix), joint placements, and dof armatures. Please consider using the "
@@ -4004,17 +4069,23 @@ class RigidEntity(KinematicEntity):
         )
 
     @gs.assert_built
-    def set_dofs_armature(self, armature, dofs_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_dofs_armature(
+        self, armature: "np.typing.ArrayLike", dofs_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.set_dofs_armature(armature, dofs_idx, envs_idx)
 
     @gs.assert_built
-    def set_dofs_damping(self, damping, dofs_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_dofs_damping(
+        self, damping: "np.typing.ArrayLike", dofs_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.set_dofs_damping(damping, dofs_idx, envs_idx)
 
     @gs.assert_built
-    def set_dofs_frictionloss(self, frictionloss, dofs_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_dofs_frictionloss(
+        self, frictionloss: "np.typing.ArrayLike", dofs_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Set the entity's dofs' friction loss.
         Parameters
@@ -4030,12 +4101,12 @@ class RigidEntity(KinematicEntity):
         self._solver.set_dofs_frictionloss(frictionloss, dofs_idx, envs_idx)
 
     @gs.assert_built
-    def set_dofs_velocity_grad(self, dofs_idx_local: IndexType, envs_idx, velocity_grad):
+    def set_dofs_velocity_grad(self, dofs_idx_local: IndexType, envs_idx: IndexType, velocity_grad: torch.Tensor):
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.set_dofs_velocity_grad(dofs_idx, envs_idx, velocity_grad.data)
 
     @gs.assert_built
-    def set_dofs_force_grad(self, dofs_idx_local: IndexType, envs_idx, force_grad):
+    def set_dofs_force_grad(self, dofs_idx_local: IndexType, envs_idx: IndexType, force_grad: torch.Tensor):
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.set_dofs_force_grad(dofs_idx, envs_idx, force_grad.data)
 
@@ -4045,7 +4116,12 @@ class RigidEntity(KinematicEntity):
 
     @gs.assert_built
     def set_dofs_position(
-        self, position, dofs_idx_local: IndexType = None, envs_idx: IndexType = None, *, zero_velocity=True
+        self,
+        position: "np.typing.ArrayLike",
+        dofs_idx_local: IndexType = None,
+        envs_idx: IndexType = None,
+        *,
+        zero_velocity: bool = True,
     ):
         """
         Set the entity's dofs' position.
@@ -4075,7 +4151,9 @@ class RigidEntity(KinematicEntity):
 
     @gs.assert_built
     @tracked
-    def control_dofs_force(self, force, dofs_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def control_dofs_force(
+        self, force: "np.typing.ArrayLike", dofs_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Control the entity's dofs' motor force. This is used for force/torque control.
 
@@ -4098,7 +4176,9 @@ class RigidEntity(KinematicEntity):
 
     @gs.assert_built
     @tracked
-    def control_dofs_velocity(self, velocity, dofs_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def control_dofs_velocity(
+        self, velocity: "np.typing.ArrayLike", dofs_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Set the PD controller's target velocity for the entity's dofs. This is used for velocity control.
 
@@ -4121,7 +4201,9 @@ class RigidEntity(KinematicEntity):
 
     @gs.assert_built
     @tracked
-    def control_dofs_position(self, position, dofs_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def control_dofs_position(
+        self, position: "np.typing.ArrayLike", dofs_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Set the position controller's target position for the entity's dofs. The controller is a proportional term
         plus a velocity damping term (virtual friction).
@@ -4146,7 +4228,11 @@ class RigidEntity(KinematicEntity):
     @gs.assert_built
     @tracked
     def control_dofs_position_velocity(
-        self, position, velocity, dofs_idx_local: IndexType = None, envs_idx: IndexType = None
+        self,
+        position: "np.typing.ArrayLike",
+        velocity: "np.typing.ArrayLike",
+        dofs_idx_local: IndexType = None,
+        envs_idx: IndexType = None,
     ):
         """
         Set a PD controller's target position and velocity for the entity's dofs. This is used for position control.
@@ -4349,7 +4435,7 @@ class RigidEntity(KinematicEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_mass_mat(self, envs_idx: IndexType = None, decompose=False):
+    def get_mass_mat(self, envs_idx: IndexType = None, decompose: bool = False):
         dofs_idx = self._get_global_idx(None, self.n_dofs, self._dof_start, unsafe=True)
         return self._solver.get_mass_mat(dofs_idx, envs_idx, decompose)
 
@@ -4524,7 +4610,9 @@ class RigidEntity(KinematicEntity):
     # ----------------------------------- friction ---------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def set_friction_ratio(self, friction_ratio, links_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_friction_ratio(
+        self, friction_ratio: "np.typing.ArrayLike", links_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Set the friction ratio of the geoms of the specified links.
 
@@ -4621,7 +4709,9 @@ class RigidEntity(KinematicEntity):
     # --------------------------------- mass / inertia -----------------------------------
     # ------------------------------------------------------------------------------------
 
-    def set_mass_shift(self, mass_shift, links_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_mass_shift(
+        self, mass_shift: "np.typing.ArrayLike", links_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Set the mass shift of specified links.
 
@@ -4637,7 +4727,9 @@ class RigidEntity(KinematicEntity):
         links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         self._solver.set_links_mass_shift(mass_shift, links_idx, envs_idx)
 
-    def set_COM_shift(self, com_shift, links_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_COM_shift(
+        self, com_shift: "np.typing.ArrayLike", links_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Set the center of mass (COM) shift of specified links.
 
@@ -4654,12 +4746,16 @@ class RigidEntity(KinematicEntity):
         self._solver.set_links_COM_shift(com_shift, links_idx, envs_idx)
 
     @gs.assert_built
-    def set_links_inertial_mass(self, inertial_mass, links_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_links_inertial_mass(
+        self, inertial_mass: "np.typing.ArrayLike", links_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         self._solver.set_links_inertial_mass(inertial_mass, links_idx, envs_idx)
 
     @gs.assert_built
-    def set_links_invweight(self, invweight, links_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_links_invweight(
+        self, invweight: "np.typing.ArrayLike", links_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         raise DeprecationError(
             "This method has been removed because links invweights are supposed to be a by-product of link properties "
             "(mass, pose, and inertia matrix), joint placements, and dof armatures. Please consider using the "

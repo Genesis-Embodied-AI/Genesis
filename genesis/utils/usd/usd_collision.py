@@ -5,6 +5,8 @@ from pxr import Usd, UsdPhysics
 import genesis as gs
 from genesis.utils.collision import solve_contype_conaffinity
 
+from .usd_context import UsdContext
+
 
 def _geoms_under(cg_infos: list[dict], path: str) -> list[int]:
     """Indices of collision g_infos whose source prim is `path` or a descendant of it."""
@@ -12,7 +14,7 @@ def _geoms_under(cg_infos: list[dict], path: str) -> list[int]:
     return [i for i, g in enumerate(cg_infos) if g["prim_path"] == path or g["prim_path"].startswith(prefix)]
 
 
-def apply_collision_filtering(context, cg_infos: list[dict]):
+def apply_collision_filtering(context: UsdContext, cg_infos: list[dict]):
     """
     Set contype/conaffinity on collision g_infos from USD collision filtering.
 

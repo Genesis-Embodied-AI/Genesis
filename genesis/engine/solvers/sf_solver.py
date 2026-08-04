@@ -1,7 +1,9 @@
+from typing import Any
+
 import quadrants as qd
 
-from genesis.typing import IndexType
 import genesis as gs
+from genesis.typing import IndexType
 
 from .base_solver import Solver
 
@@ -292,7 +294,7 @@ class SFSolver(Solver):
     def get_state(self, f):
         pass
 
-    def set_state(self, f, state, envs_idx: IndexType = None):
+    def set_state(self, f: int, state: Any, envs_idx: IndexType = None):
         pass
 
     def save_ckpt(self, ckpt_name):

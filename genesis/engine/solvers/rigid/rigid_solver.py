@@ -1,7 +1,7 @@
 import math
 import os
 import sys
-from typing import TYPE_CHECKING, Iterable, Literal
+from typing import TYPE_CHECKING, Iterable, Literal, Sequence
 
 import quadrants as qd
 import numpy as np
@@ -1329,7 +1329,7 @@ class RigidSolver(KinematicSolver):
         self.collider.clear()
         self.collider.detection()
 
-    def detect_collision(self, env_idx=0):
+    def detect_collision(self, env_idx: int = 0):
         # TODO: support batching
         self._kernel_detect_collision()
 
@@ -1985,12 +1985,18 @@ class RigidSolver(KinematicSolver):
     # ------------------------------------ control ---------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def set_links_pos(self, pos, links_idx: IndexType = None, envs_idx: IndexType = None):
+    def set_links_pos(self, pos: "np.typing.ArrayLike", links_idx: IndexType = None, envs_idx: IndexType = None):
         raise DeprecationError("This method has been removed. Please use 'set_base_links_pos' instead.")
 
     @mutates(StateChange.GEOMETRY, links="links_idx")
     def set_base_links_pos(
-        self, pos, links_idx: IndexType = None, envs_idx: IndexType = None, *, relative=False, skip_forward=False
+        self,
+        pos: "np.typing.ArrayLike",
+        links_idx: IndexType = None,
+        envs_idx: IndexType = None,
+        *,
+        relative: bool = False,
+        skip_forward: bool = False,
     ):
         if links_idx is None:
             links_idx = self._base_links_idx
@@ -2109,12 +2115,18 @@ class RigidSolver(KinematicSolver):
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
 
-    def set_links_quat(self, quat, links_idx: IndexType = None, envs_idx: IndexType = None):
+    def set_links_quat(self, quat: "np.typing.ArrayLike", links_idx: IndexType = None, envs_idx: IndexType = None):
         raise DeprecationError("This method has been removed. Please use 'set_base_links_quat' instead.")
 
     @mutates(StateChange.GEOMETRY, links="links_idx")
     def set_base_links_quat(
-        self, quat, links_idx: IndexType = None, envs_idx: IndexType = None, *, relative=False, skip_forward=False
+        self,
+        quat: "np.typing.ArrayLike",
+        links_idx: IndexType = None,
+        envs_idx: IndexType = None,
+        *,
+        relative: bool = False,
+        skip_forward: bool = False,
     ):
         if links_idx is None:
             links_idx = self._base_links_idx
@@ -2242,7 +2254,9 @@ class RigidSolver(KinematicSolver):
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
 
-    def set_links_mass_shift(self, mass, links_idx: IndexType = None, envs_idx: IndexType = None):
+    def set_links_mass_shift(
+        self, mass: "np.typing.ArrayLike", links_idx: IndexType = None, envs_idx: IndexType = None
+    ):
         mass, links_idx, envs_idx = self._sanitize_io_variables(
             mass, links_idx, self.n_links, "links_idx", envs_idx, skip_allocation=True
         )
@@ -2250,7 +2264,7 @@ class RigidSolver(KinematicSolver):
             mass = mass[None]
         kernel_set_links_mass_shift(links_idx, envs_idx, mass, self.dyn_state, self.rigid_config)
 
-    def set_links_COM_shift(self, com, links_idx: IndexType = None, envs_idx: IndexType = None):
+    def set_links_COM_shift(self, com: "np.typing.ArrayLike", links_idx: IndexType = None, envs_idx: IndexType = None):
         com, links_idx, envs_idx = self._sanitize_io_variables(
             com, links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
         )
@@ -2258,7 +2272,9 @@ class RigidSolver(KinematicSolver):
             com = com[None]
         kernel_set_links_COM_shift(links_idx, envs_idx, com, self.dyn_state, self.rigid_config)
 
-    def set_links_inertial_mass(self, mass, links_idx: IndexType = None, envs_idx: IndexType = None):
+    def set_links_inertial_mass(
+        self, mass: "np.typing.ArrayLike", links_idx: IndexType = None, envs_idx: IndexType = None
+    ):
         mass, links_idx, envs_idx = self._sanitize_io_variables(
             mass,
             links_idx,
@@ -2272,7 +2288,7 @@ class RigidSolver(KinematicSolver):
             mass = mass[None]
         kernel_set_links_inertial_mass(links_idx, envs_idx, mass, self.dyn_info, self.rigid_config)
 
-    def set_links_inertia(self, ratio, links_idx: IndexType = None, envs_idx: IndexType = None):
+    def set_links_inertia(self, ratio: "np.typing.ArrayLike", links_idx: IndexType = None, envs_idx: IndexType = None):
         if gs.use_zerocopy:
             mass_data = qd_to_torch(self.dyn_info.links.inertial_mass, transpose=True, copy=False)
             inertial_i_data = qd_to_torch(self.dyn_info.links.inertial_i, transpose=True, copy=False)
@@ -2303,7 +2319,9 @@ class RigidSolver(KinematicSolver):
             ratio = ratio[None]
         kernel_adjust_link_inertia(links_idx, envs_idx, ratio, self.dyn_info, self.rigid_config)
 
-    def set_geoms_friction_ratio(self, friction_ratio, geoms_idx: IndexType = None, envs_idx: IndexType = None):
+    def set_geoms_friction_ratio(
+        self, friction_ratio: "np.typing.ArrayLike", geoms_idx: IndexType = None, envs_idx: IndexType = None
+    ):
         friction_ratio, geoms_idx, envs_idx = self._sanitize_io_variables(
             friction_ratio, geoms_idx, self.n_geoms, "geoms_idx", envs_idx, skip_allocation=True
         )
@@ -2312,7 +2330,14 @@ class RigidSolver(KinematicSolver):
         kernel_set_geoms_friction_ratio(geoms_idx, envs_idx, friction_ratio, self.dyn_state, self.rigid_config)
 
     @mutates(StateChange.GEOMETRY, links=MutatedLinks.ARTICULATED)
-    def set_qpos(self, qpos, qs_idx: IndexType = None, envs_idx: IndexType = None, *, skip_forward=False):
+    def set_qpos(
+        self,
+        qpos: "np.typing.ArrayLike",
+        qs_idx: IndexType = None,
+        envs_idx: IndexType = None,
+        *,
+        skip_forward: bool = False,
+    ):
         if self.collider is not None:
             self.collider.reset(envs_idx)
         if self.constraint_solver is not None:
@@ -2402,7 +2427,7 @@ class RigidSolver(KinematicSolver):
 
     def set_sol_params(
         self,
-        sol_params,
+        sol_params: "np.typing.ArrayLike",
         geoms_idx: IndexType = None,
         envs_idx: IndexType = None,
         *,
@@ -2533,38 +2558,67 @@ class RigidSolver(KinematicSolver):
         else:
             gs.raise_exception(f"Invalid `name` {name}.")
 
-    def set_dofs_kp(self, kp, dofs_idx: IndexType = None, envs_idx: IndexType = None):
+    def set_dofs_kp(self, kp: "np.typing.ArrayLike", dofs_idx: IndexType = None, envs_idx: IndexType = None):
         self._set_dofs_info([kp], dofs_idx, "kp", envs_idx)
 
-    def set_dofs_kv(self, kv, dofs_idx: IndexType = None, envs_idx: IndexType = None):
+    def set_dofs_kv(self, kv: "np.typing.ArrayLike", dofs_idx: IndexType = None, envs_idx: IndexType = None):
         self._set_dofs_info([kv], dofs_idx, "kv", envs_idx)
 
-    def set_dofs_act_gain(self, act_gain, dofs_idx: IndexType = None, envs_idx: IndexType = None):
+    def set_dofs_act_gain(
+        self, act_gain: "np.typing.ArrayLike", dofs_idx: IndexType = None, envs_idx: IndexType = None
+    ):
         self._set_dofs_info([act_gain], dofs_idx, "act_gain", envs_idx)
 
-    def set_dofs_act_bias(self, bias0, bias1, bias2, dofs_idx: IndexType = None, envs_idx: IndexType = None):
+    def set_dofs_act_bias(
+        self,
+        bias0: "np.typing.ArrayLike",
+        bias1: "np.typing.ArrayLike",
+        bias2: "np.typing.ArrayLike",
+        dofs_idx: IndexType = None,
+        envs_idx: IndexType = None,
+    ):
         self._set_dofs_info([bias0, bias1, bias2], dofs_idx, "act_bias", envs_idx)
 
-    def set_dofs_force_range(self, lower, upper, dofs_idx: IndexType = None, envs_idx: IndexType = None):
+    def set_dofs_force_range(
+        self,
+        lower: "np.typing.ArrayLike",
+        upper: "np.typing.ArrayLike",
+        dofs_idx: IndexType = None,
+        envs_idx: IndexType = None,
+    ):
         self._set_dofs_info([lower, upper], dofs_idx, "force_range", envs_idx)
 
-    def set_dofs_stiffness(self, stiffness, dofs_idx: IndexType = None, envs_idx: IndexType = None):
+    def set_dofs_stiffness(
+        self, stiffness: "np.typing.ArrayLike", dofs_idx: IndexType = None, envs_idx: IndexType = None
+    ):
         self._set_dofs_info([stiffness], dofs_idx, "stiffness", envs_idx)
 
-    def set_dofs_armature(self, armature, dofs_idx: IndexType = None, envs_idx: IndexType = None):
+    def set_dofs_armature(
+        self, armature: "np.typing.ArrayLike", dofs_idx: IndexType = None, envs_idx: IndexType = None
+    ):
         self._set_dofs_info([armature], dofs_idx, "armature", envs_idx)
 
-    def set_dofs_damping(self, damping, dofs_idx: IndexType = None, envs_idx: IndexType = None):
+    def set_dofs_damping(self, damping: "np.typing.ArrayLike", dofs_idx: IndexType = None, envs_idx: IndexType = None):
         self._set_dofs_info([damping], dofs_idx, "damping", envs_idx)
 
-    def set_dofs_frictionloss(self, frictionloss, dofs_idx: IndexType = None, envs_idx: IndexType = None):
+    def set_dofs_frictionloss(
+        self, frictionloss: "np.typing.ArrayLike", dofs_idx: IndexType = None, envs_idx: IndexType = None
+    ):
         self._set_dofs_info([frictionloss], dofs_idx, "frictionloss", envs_idx)
 
-    def set_dofs_limit(self, lower, upper, dofs_idx: IndexType = None, envs_idx: IndexType = None):
+    def set_dofs_limit(
+        self,
+        lower: "np.typing.ArrayLike",
+        upper: "np.typing.ArrayLike",
+        dofs_idx: IndexType = None,
+        envs_idx: IndexType = None,
+    ):
         self._set_dofs_info([lower, upper], dofs_idx, "limit", envs_idx)
 
     @mutates(StateChange.GEOMETRY, links=MutatedLinks.ARTICULATED)
-    def set_dofs_position(self, position, dofs_idx: IndexType = None, envs_idx: IndexType = None):
+    def set_dofs_position(
+        self, position: "np.typing.ArrayLike", dofs_idx: IndexType = None, envs_idx: IndexType = None
+    ):
         self.collider.reset(envs_idx)
         self.constraint_solver.reset(envs_idx)
 
@@ -2610,7 +2664,12 @@ class RigidSolver(KinematicSolver):
             )
 
     def set_dofs_velocity(
-        self, velocity, dofs_idx: IndexType = None, envs_idx: IndexType = None, *, skip_forward=False
+        self,
+        velocity: "np.typing.ArrayLike | None",
+        dofs_idx: IndexType = None,
+        envs_idx: IndexType = None,
+        *,
+        skip_forward: bool = False,
     ):
         # Wake the owning entities before delegating to the base setter, which re-sanitizes and applies the write.
         if self._use_hibernation:
@@ -2620,7 +2679,7 @@ class RigidSolver(KinematicSolver):
             self._wake_dofs(wake_dofs_idx, wake_envs_idx)
         super().set_dofs_velocity(velocity, dofs_idx, envs_idx, skip_forward=skip_forward)
 
-    def control_dofs_force(self, force, dofs_idx: IndexType = None, envs_idx: IndexType = None):
+    def control_dofs_force(self, force: "np.typing.ArrayLike", dofs_idx: IndexType = None, envs_idx: IndexType = None):
         if gs.use_zerocopy and not self._use_hibernation:
             mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
             ctrl_mode = qd_to_torch(self.dyn_state.dofs.ctrl_mode, transpose=True, copy=False)
@@ -2640,7 +2699,9 @@ class RigidSolver(KinematicSolver):
         self._wake_dofs(dofs_idx, envs_idx)
         kernel_control_dofs_force(dofs_idx, envs_idx, force, self.dyn_state, self.rigid_config)
 
-    def control_dofs_velocity(self, velocity, dofs_idx: IndexType = None, envs_idx: IndexType = None):
+    def control_dofs_velocity(
+        self, velocity: "np.typing.ArrayLike", dofs_idx: IndexType = None, envs_idx: IndexType = None
+    ):
         if gs.use_zerocopy and not self._use_hibernation:
             mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
             ctrl_mode = qd_to_torch(self.dyn_state.dofs.ctrl_mode, transpose=True, copy=False)
@@ -2662,7 +2723,9 @@ class RigidSolver(KinematicSolver):
         self._wake_dofs(dofs_idx, envs_idx)
         kernel_control_dofs_velocity(dofs_idx, envs_idx, velocity, self.dyn_state, self.rigid_config)
 
-    def control_dofs_position(self, position, dofs_idx: IndexType = None, envs_idx: IndexType = None):
+    def control_dofs_position(
+        self, position: "np.typing.ArrayLike", dofs_idx: IndexType = None, envs_idx: IndexType = None
+    ):
         if gs.use_zerocopy and not self._use_hibernation:
             mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
             ctrl_mode = qd_to_torch(self.dyn_state.dofs.ctrl_mode, transpose=True, copy=False)
@@ -2685,7 +2748,11 @@ class RigidSolver(KinematicSolver):
         kernel_control_dofs_position(dofs_idx, envs_idx, position, self.dyn_state, self.rigid_config)
 
     def control_dofs_position_velocity(
-        self, position, velocity, dofs_idx: IndexType = None, envs_idx: IndexType = None
+        self,
+        position: "np.typing.ArrayLike",
+        velocity: "np.typing.ArrayLike",
+        dofs_idx: IndexType = None,
+        envs_idx: IndexType = None,
     ):
         if gs.use_zerocopy and not self._use_hibernation:
             mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
@@ -2864,7 +2931,7 @@ class RigidSolver(KinematicSolver):
         tensor = qd_to_torch(self.dyn_state.geoms.friction_ratio, envs_idx, geoms_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
-    def get_geoms_pos(self, geoms_idx: IndexType = None, envs_idx: IndexType = None, *, relative=False):
+    def get_geoms_pos(self, geoms_idx: IndexType = None, envs_idx: IndexType = None, *, relative: bool = False):
         tensor = qd_to_torch(self.dyn_state.geoms.pos, envs_idx, geoms_idx, transpose=True, copy=True)
         if relative and self._geoms_offset_pos is not None:
             quat = qd_to_torch(self.dyn_state.geoms.quat, envs_idx, geoms_idx, transpose=True, copy=True)
@@ -2873,7 +2940,7 @@ class RigidSolver(KinematicSolver):
             tensor -= _offset_world_shift(offset_pos, offset_quat, quat)
         return tensor[0] if self.n_envs == 0 else tensor
 
-    def get_geoms_quat(self, geoms_idx: IndexType = None, envs_idx: IndexType = None, *, relative=False):
+    def get_geoms_quat(self, geoms_idx: IndexType = None, envs_idx: IndexType = None, *, relative: bool = False):
         tensor = qd_to_torch(self.dyn_state.geoms.quat, envs_idx, geoms_idx, transpose=True, copy=True)
         if relative and self._geoms_offset_quat is not None:
             offset_quat = self._geoms_offset_quat if geoms_idx is None else self._geoms_offset_quat[geoms_idx]
@@ -3018,7 +3085,7 @@ class RigidSolver(KinematicSolver):
         tensor = qd_to_torch(self.dyn_info.dofs.frictionloss, envs_idx, dofs_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
-    def get_mass_mat(self, dofs_idx: IndexType = None, envs_idx: IndexType = None, decompose=False):
+    def get_mass_mat(self, dofs_idx: IndexType = None, envs_idx: IndexType = None, decompose: bool = False):
         tensor = qd_to_torch(self.mass_mat_L if decompose else self.mass_mat, envs_idx, transpose=True, copy=True)
         if dofs_idx is not None:
             tensor = tensor[indices_to_mask(None, dofs_idx, dofs_idx)]
@@ -3138,7 +3205,7 @@ class RigidSolver(KinematicSolver):
     def get_geoms_friction(self, geoms_idx: IndexType = None):
         return qd_to_torch(self.dyn_info.geoms.friction, geoms_idx, copy=True)
 
-    def get_AABB(self, entities_idx=None, envs_idx: IndexType = None):
+    def get_AABB(self, entities_idx: Sequence[int] | None = None, envs_idx: IndexType = None):
         from genesis.engine.couplers import LegacyCoupler
 
         if not isinstance(self.sim.coupler, LegacyCoupler):
@@ -3172,37 +3239,37 @@ class RigidSolver(KinematicSolver):
 
         return aabb[0] if self.n_envs == 0 else aabb
 
-    def set_geom_friction(self, friction, geoms_idx):
+    def set_geom_friction(self, friction: float, geoms_idx: int):
         kernel_set_geom_friction(geoms_idx, self.dyn_info, friction)
 
-    def set_geom_friction_torsional(self, friction_torsional, geoms_idx):
+    def set_geom_friction_torsional(self, friction_torsional: float, geoms_idx: int):
         kernel_set_geom_friction_torsional(geoms_idx, self.dyn_info, friction_torsional)
 
-    def set_geom_friction_rolling(self, friction_rolling, geoms_idx):
+    def set_geom_friction_rolling(self, friction_rolling: float, geoms_idx: int):
         kernel_set_geom_friction_rolling(geoms_idx, self.dyn_info, friction_rolling)
 
-    def set_geoms_friction(self, friction, geoms_idx: IndexType = None):
+    def set_geoms_friction(self, friction: "np.typing.ArrayLike", geoms_idx: IndexType = None):
         friction, geoms_idx, _ = self._sanitize_io_variables(
             friction, geoms_idx, self.n_geoms, "geoms_idx", envs_idx=None, batched=False, skip_allocation=True
         )
         kernel_set_geoms_friction(geoms_idx, friction, self.dyn_info, self.rigid_config)
 
-    def set_geoms_friction_torsional(self, friction_torsional, geoms_idx: IndexType = None):
+    def set_geoms_friction_torsional(self, friction_torsional: "np.typing.ArrayLike", geoms_idx: IndexType = None):
         friction_torsional, geoms_idx, _ = self._sanitize_io_variables(
             friction_torsional, geoms_idx, self.n_geoms, "geoms_idx", envs_idx=None, batched=False, skip_allocation=True
         )
         kernel_set_geoms_friction_torsional(geoms_idx, friction_torsional, self.dyn_info, self.rigid_config)
 
-    def set_geoms_friction_rolling(self, friction_rolling, geoms_idx: IndexType = None):
+    def set_geoms_friction_rolling(self, friction_rolling: "np.typing.ArrayLike", geoms_idx: IndexType = None):
         friction_rolling, geoms_idx, _ = self._sanitize_io_variables(
             friction_rolling, geoms_idx, self.n_geoms, "geoms_idx", envs_idx=None, batched=False, skip_allocation=True
         )
         kernel_set_geoms_friction_rolling(geoms_idx, friction_rolling, self.dyn_info, self.rigid_config)
 
-    def add_weld_constraint(self, link1_idx, link2_idx, envs_idx: IndexType = None):
+    def add_weld_constraint(self, link1_idx: int, link2_idx: int, envs_idx: IndexType = None):
         return self.constraint_solver.add_weld_constraint(link1_idx, link2_idx, envs_idx)
 
-    def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx: IndexType = None):
+    def delete_weld_constraint(self, link1_idx: int, link2_idx: int, envs_idx: IndexType = None):
         return self.constraint_solver.delete_weld_constraint(link1_idx, link2_idx, envs_idx)
 
     def get_weld_constraints(self, as_tensor: bool = True, to_torch: bool = True):
@@ -3223,22 +3290,32 @@ class RigidSolver(KinematicSolver):
         kernel_clear_external_force(self.dyn_state, self.rigid_info, self.rigid_config)
 
     @gs.assert_built
-    def set_gravity(self, gravity, envs_idx: IndexType = None):
+    def set_gravity(self, gravity: "np.typing.ArrayLike", envs_idx: IndexType = None):
         super().set_gravity(gravity, envs_idx)
         if hasattr(self, "rigid_info"):
             self.rigid_info.gravity.copy_from(self._gravity)
 
-    def update_drone_propeller_vgeoms(self, propellers_vgeom_idxs, propellers_revs, propellers_spin):
+    def update_drone_propeller_vgeoms(
+        self, propellers_vgeom_idxs: torch.Tensor, propellers_revs: torch.Tensor, propellers_spin: torch.Tensor
+    ):
         kernel_update_drone_propeller_vgeoms(
             propellers_vgeom_idxs, propellers_revs, propellers_spin, self.dyn_state, self.rigid_info, self.rigid_config
         )
 
-    def set_drone_rpm(self, propellers_link_idx, propellers_rpm, propellers_spin, KF, KM, invert):
+    def set_drone_rpm(
+        self,
+        propellers_link_idx: torch.Tensor,
+        propellers_rpm: torch.Tensor,
+        propellers_spin: torch.Tensor,
+        KF: float,
+        KM: float,
+        invert: bool,
+    ):
         kernel_set_drone_rpm(
             propellers_link_idx, propellers_rpm, propellers_spin, KF, KM, self.dyn_state, self.rigid_config, invert
         )
 
-    def update_verts_for_geoms(self, geoms_idx):
+    def update_verts_for_geoms(self, geoms_idx: IndexType):
         _, geoms_idx, _ = self._sanitize_io_variables(
             None, geoms_idx, self.n_geoms, "geoms_idx", envs_idx=None, skip_allocation=True
         )

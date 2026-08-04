@@ -1,4 +1,5 @@
 import quadrants as qd
+import numpy as np
 
 import genesis as gs
 from genesis.engine.states.entities import SPHEntityState
@@ -142,7 +143,9 @@ class SPHEntity(ParticleEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def set_particles_pos(self, poss, particles_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_particles_pos(
+        self, poss: "np.typing.ArrayLike", particles_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx)
         particles_idx = particles_idx_local + self._particle_start
@@ -161,7 +164,9 @@ class SPHEntity(ParticleEntity):
         return self.get_particles_pos(envs_idx)
 
     @gs.assert_built
-    def set_particles_vel(self, vels, particles_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_particles_vel(
+        self, vels: "np.typing.ArrayLike", particles_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx)
         particles_idx = particles_idx_local + self._particle_start
@@ -177,7 +182,9 @@ class SPHEntity(ParticleEntity):
         return vels
 
     @gs.assert_built
-    def set_particles_active(self, actives, particles_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_particles_active(
+        self, actives: "np.typing.ArrayLike", particles_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx)
         particles_idx = particles_idx_local + self._particle_start

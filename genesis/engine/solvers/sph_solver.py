@@ -173,7 +173,14 @@ class SPHSolver(Solver):
     def is_active(self):
         return self.n_particles > 0
 
-    def add_entity(self, idx, material, morph, surface, name: str | None = None) -> "SPHEntity":
+    def add_entity(
+        self,
+        idx: int,
+        material: "gs.materials.SPH.Base",
+        morph: "gs.morphs.Morph",
+        surface: "gs.surfaces.Surface",
+        name: str | None = None,
+    ) -> "SPHEntity":
         entity = SPHEntity(
             scene=self.scene,
             solver=self,
@@ -772,7 +779,7 @@ class SPHSolver(Solver):
     def load_ckpt(self, ckpt_name):
         pass
 
-    def set_state(self, f, state, envs_idx: IndexType = None):
+    def set_state(self, f: int, state: SPHSolverState, envs_idx: IndexType = None):
         if self.is_active:
             self._kernel_set_state(f, state.pos, state.vel, state.active)
 

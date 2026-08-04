@@ -230,7 +230,12 @@ class ProbeSensorMixin(Generic[ProbeSensorSharedMetadataT]):
         self._shared_metadata.cache_col_n_channel_groups.append(self._taxel_channel_groups)
 
     @classmethod
-    def reset(cls, shared_metadata, shared_ground_truth_cache, envs_idx):
+    def reset(
+        cls,
+        shared_metadata: "ProbeSensorMetadataMixin",
+        shared_ground_truth_cache: torch.Tensor,
+        envs_idx: torch.Tensor,
+    ):
         super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
         # Resample per-(env, probe) gain for probes whose sensor configured a resample range.
         if shared_metadata.any_gain_resample and shared_metadata.probe_gains.numel() > 0:
@@ -255,7 +260,7 @@ class ProbeSensorMixin(Generic[ProbeSensorSharedMetadataT]):
             shared_metadata.dead_dirty = True
 
     @gs.assert_built
-    def set_probe_gain(self, value, envs_idx: IndexType = None):
+    def set_probe_gain(self, value: "np.typing.ArrayLike", envs_idx: IndexType = None):
         """Set the per-probe measured-branch contact-depth gain for the given envs.
 
         ``value`` may be a scalar (broadcast to all probes of this sensor), or an array of length ``n_probes``.

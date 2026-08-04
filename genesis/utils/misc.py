@@ -393,7 +393,7 @@ def assert_gs_tensor(x):
         gs.raise_exception("Only accepts genesis.Tensor.")
 
 
-def to_gs_tensor(x, dtype: torch.dtype | None = None):
+def to_gs_tensor(x: "np.typing.ArrayLike", dtype: torch.dtype | None = None):
     if isinstance(x, gs.Tensor):
         tensor = x
     elif isinstance(x, torch.Tensor):
@@ -458,7 +458,11 @@ def gaussian_crosstalk_kernel(n_rows: int, n_cols: int, sigma: float, spacing: f
 
 
 def concat_with_tensor(
-    tensor: torch.Tensor, value, expand: tuple[int, ...] | None = None, dim: int = 0, flatten: bool = False
+    tensor: torch.Tensor,
+    value: "np.typing.ArrayLike",
+    expand: tuple[int, ...] | None = None,
+    dim: int = 0,
+    flatten: bool = False,
 ):
     """Helper method to concatenate a value (not necessarily a tensor) with a tensor."""
     if not isinstance(value, torch.Tensor):

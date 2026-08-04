@@ -2,6 +2,8 @@ import contextlib
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Iterable
 
+import numpy as np
+
 import genesis as gs
 from genesis.utils.misc import with_lock
 from genesis.vis.viewer_plugins.plugins import DefaultControlsPlugin
@@ -203,13 +205,15 @@ class InteractiveScene:
         self._refresh_visual_transforms_unlocked()
 
     @with_lock
-    def set_entity_qpos(self, entity: "RigidEntity", qpos, env_idx: int | None = None):
+    def set_entity_qpos(self, entity: "RigidEntity", qpos: "np.typing.ArrayLike", env_idx: int | None = None):
         """Set the entity's qpos and refresh visuals."""
         entity.set_qpos(qpos, envs_idx=env_idx)
         self._refresh_visual_transforms_unlocked()
 
     @with_lock
-    def set_entity_dofs_position(self, entity: "RigidEntity", dofs_position, env_idx: int | None = None):
+    def set_entity_dofs_position(
+        self, entity: "RigidEntity", dofs_position: "np.typing.ArrayLike", env_idx: int | None = None
+    ):
         """Set the entity's DOF positions and refresh visuals."""
         entity.set_dofs_position(dofs_position, envs_idx=env_idx)
         self._refresh_visual_transforms_unlocked()

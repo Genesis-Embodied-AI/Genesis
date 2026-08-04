@@ -581,7 +581,14 @@ class Camera(RBC):
         point_cloud = point_cloud[..., :3].reshape((*depth_arr.shape, 3))
         return point_cloud, mask
 
-    def set_pose(self, transform=None, pos=None, lookat=None, up=None, envs_idx: IndexType = None):
+    def set_pose(
+        self,
+        transform: "np.typing.ArrayLike | None" = None,
+        pos: "np.typing.ArrayLike | None" = None,
+        lookat: "np.typing.ArrayLike | None" = None,
+        up: "np.typing.ArrayLike | None" = None,
+        envs_idx: IndexType = None,
+    ):
         """
         Set the pose of the camera.
         Note that `transform` has a higher priority than `pos`, `lookat`, and `up`.

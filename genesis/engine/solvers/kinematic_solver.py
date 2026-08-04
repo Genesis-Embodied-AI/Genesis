@@ -710,7 +710,9 @@ class KinematicSolver(Solver):
         return state
 
     @mutates(StateChange.GEOMETRY, StateChange.DYNAMICS)
-    def set_state(self, f, state, envs_idx: IndexType = None, *, partial: bool = False) -> None:
+    def set_state(
+        self, f: int, state: KinematicSolverState, envs_idx: IndexType = None, *, partial: bool = False
+    ) -> None:
         if not self.is_active:
             return
 
@@ -803,7 +805,13 @@ class KinematicSolver(Solver):
 
     @mutates(StateChange.GEOMETRY, links="links_idx")
     def set_base_links_pos(
-        self, pos, links_idx: IndexType = None, envs_idx: IndexType = None, *, relative=False, skip_forward=False
+        self,
+        pos: "np.typing.ArrayLike",
+        links_idx: IndexType = None,
+        envs_idx: IndexType = None,
+        *,
+        relative: bool = False,
+        skip_forward: bool = False,
     ):
         if links_idx is None:
             links_idx = self._base_links_idx
@@ -837,7 +845,9 @@ class KinematicSolver(Solver):
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
 
-    def set_base_links_pos_grad(self, links_idx, envs_idx, relative, pos_grad):
+    def set_base_links_pos_grad(
+        self, links_idx: IndexType, envs_idx: IndexType, relative: bool, pos_grad: torch.Tensor
+    ):
         if links_idx is None:
             links_idx = self._base_links_idx
         # A relative 'set_pos' adds 'R(user_quat) @ offset_pos', which reads the current orientation; that dependency
@@ -861,7 +871,13 @@ class KinematicSolver(Solver):
 
     @mutates(StateChange.GEOMETRY, links="links_idx")
     def set_base_links_quat(
-        self, quat, links_idx: IndexType = None, envs_idx: IndexType = None, *, relative=False, skip_forward=False
+        self,
+        quat: "np.typing.ArrayLike",
+        links_idx: IndexType = None,
+        envs_idx: IndexType = None,
+        *,
+        relative: bool = False,
+        skip_forward: bool = False,
     ):
         if links_idx is None:
             links_idx = self._base_links_idx
@@ -905,7 +921,9 @@ class KinematicSolver(Solver):
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
 
-    def set_base_links_quat_grad(self, links_idx, envs_idx, relative, quat_grad):
+    def set_base_links_quat_grad(
+        self, links_idx: IndexType, envs_idx: IndexType, relative: bool, quat_grad: torch.Tensor
+    ):
         if links_idx is None:
             links_idx = self._base_links_idx
         # A relative 'set_quat' composes the orientation offset (a constant right-multiplication) and, when the offset
@@ -930,7 +948,14 @@ class KinematicSolver(Solver):
         )
 
     @mutates(StateChange.GEOMETRY, links=MutatedLinks.ARTICULATED)
-    def set_qpos(self, qpos, qs_idx: IndexType = None, envs_idx: IndexType = None, *, skip_forward=False):
+    def set_qpos(
+        self,
+        qpos: "np.typing.ArrayLike",
+        qs_idx: IndexType = None,
+        envs_idx: IndexType = None,
+        *,
+        skip_forward: bool = False,
+    ):
         if gs.use_zerocopy:
             data = qd_to_torch(self.rigid_info.qpos, transpose=True, copy=False)
             qs_mask = indices_to_mask(qs_idx)
@@ -977,7 +1002,12 @@ class KinematicSolver(Solver):
 
     @mutates(StateChange.DYNAMICS, links=MutatedLinks.ARTICULATED)
     def set_dofs_velocity(
-        self, velocity, dofs_idx: IndexType = None, envs_idx: IndexType = None, *, skip_forward=False
+        self,
+        velocity: "np.typing.ArrayLike | None",
+        dofs_idx: IndexType = None,
+        envs_idx: IndexType = None,
+        *,
+        skip_forward: bool = False,
     ):
         if gs.use_zerocopy:
             vel = qd_to_torch(self.dyn_state.dofs.vel, transpose=True, copy=False)
@@ -1036,7 +1066,7 @@ class KinematicSolver(Solver):
         else:
             self._is_forward_vel_updated = False
 
-    def set_dofs_velocity_grad(self, dofs_idx, envs_idx, velocity_grad):
+    def set_dofs_velocity_grad(self, dofs_idx: IndexType, envs_idx: IndexType, velocity_grad: torch.Tensor):
         velocity_grad_, dofs_idx, envs_idx = self._sanitize_io_variables(
             velocity_grad, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
         )
@@ -1044,7 +1074,7 @@ class KinematicSolver(Solver):
             velocity_grad_ = velocity_grad_.unsqueeze(0)
         kernel_set_dofs_velocity_grad(dofs_idx, envs_idx, velocity_grad_, self.dyn_state, self.rigid_config)
 
-    def set_dofs_force_grad(self, dofs_idx, envs_idx, force_grad):
+    def set_dofs_force_grad(self, dofs_idx: IndexType, envs_idx: IndexType, force_grad: torch.Tensor):
         force_grad_, dofs_idx, envs_idx = self._sanitize_io_variables(
             force_grad, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
         )
@@ -1053,7 +1083,9 @@ class KinematicSolver(Solver):
         kernel_set_dofs_force_grad(dofs_idx, envs_idx, force_grad_, self.dyn_state, self.rigid_config)
 
     @mutates(StateChange.GEOMETRY, links=MutatedLinks.ARTICULATED)
-    def set_dofs_position(self, position, dofs_idx: IndexType = None, envs_idx: IndexType = None):
+    def set_dofs_position(
+        self, position: "np.typing.ArrayLike", dofs_idx: IndexType = None, envs_idx: IndexType = None
+    ):
         position, dofs_idx, envs_idx = self._sanitize_io_variables(
             position, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
         )
@@ -1067,7 +1099,7 @@ class KinematicSolver(Solver):
         self._is_forward_pos_updated = True
         self._is_forward_vel_updated = True
 
-    def get_terrain_height(self, positions, link_idx, envs_idx: IndexType = None):
+    def get_terrain_height(self, positions: "np.typing.ArrayLike", link_idx: int, envs_idx: IndexType = None):
         terrain = self._links[link_idx].entity
 
         positions = torch.as_tensor(positions, dtype=gs.tc_float, device=gs.device)
@@ -1106,7 +1138,7 @@ class KinematicSolver(Solver):
             heights = heights[..., 0]
         return heights
 
-    def get_links_pos(self, links_idx: IndexType = None, envs_idx: IndexType = None, *, relative=False):
+    def get_links_pos(self, links_idx: IndexType = None, envs_idx: IndexType = None, *, relative: bool = False):
         if not gs.use_zerocopy:
             _, links_idx, envs_idx = self._sanitize_io_variables(
                 None, links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
@@ -1119,14 +1151,14 @@ class KinematicSolver(Solver):
             tensor -= _offset_world_shift(offset_pos, offset_quat, quat)
         return tensor[0] if self.n_envs == 0 else tensor
 
-    def get_links_quat(self, links_idx: IndexType = None, envs_idx: IndexType = None, *, relative=False):
+    def get_links_quat(self, links_idx: IndexType = None, envs_idx: IndexType = None, *, relative: bool = False):
         tensor = qd_to_torch(self.dyn_state.links.quat, envs_idx, links_idx, transpose=True, copy=True)
         if relative and self._links_offset_quat is not None:
             offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
             tensor = gu.transform_quat_by_quat(gu.inv_quat(offset_quat), tensor)
         return tensor[0] if self.n_envs == 0 else tensor
 
-    def get_vgeoms_pos(self, vgeoms_idx: IndexType = None, envs_idx: IndexType = None, *, relative=False):
+    def get_vgeoms_pos(self, vgeoms_idx: IndexType = None, envs_idx: IndexType = None, *, relative: bool = False):
         tensor = qd_to_torch(self.dyn_state.vgeoms.pos, envs_idx, vgeoms_idx, transpose=True, copy=True)
         if relative and self._vgeoms_offset_pos is not None:
             quat = qd_to_torch(self.dyn_state.vgeoms.quat, envs_idx, vgeoms_idx, transpose=True, copy=True)
@@ -1135,7 +1167,7 @@ class KinematicSolver(Solver):
             tensor -= _offset_world_shift(offset_pos, offset_quat, quat)
         return tensor[0] if self.n_envs == 0 else tensor
 
-    def get_vgeoms_quat(self, vgeoms_idx: IndexType = None, envs_idx: IndexType = None, *, relative=False):
+    def get_vgeoms_quat(self, vgeoms_idx: IndexType = None, envs_idx: IndexType = None, *, relative: bool = False):
         tensor = qd_to_torch(self.dyn_state.vgeoms.quat, envs_idx, vgeoms_idx, transpose=True, copy=True)
         if relative and self._vgeoms_offset_quat is not None:
             offset_quat = self._vgeoms_offset_quat if vgeoms_idx is None else self._vgeoms_offset_quat[vgeoms_idx]
@@ -1207,7 +1239,7 @@ class KinematicSolver(Solver):
         )
         self._is_forward_pos_updated = True
 
-    def update_vverts_for_vgeoms(self, vgeoms_idx):
+    def update_vverts_for_vgeoms(self, vgeoms_idx: np.ndarray):
         """Refresh the vverts_state.pos slice for the requested vgeoms by re-running FK.
 
         Used by set_vverts(None, ...) and at scene-build time to initialize the custom buffer with a meaningful pose.
@@ -1218,7 +1250,14 @@ class KinematicSolver(Solver):
         kernel_update_vverts_for_vgeoms(vgeoms_idx, self.dyn_state, self.dyn_info, self.rigid_config)
 
     @mutates(StateChange.GEOMETRY)
-    def set_vverts(self, custom_vvert_start, custom_vvert_end, vgeoms_idx, vverts, envs_idx: IndexType = None):
+    def set_vverts(
+        self,
+        custom_vvert_start: int,
+        custom_vvert_end: int,
+        vgeoms_idx: np.ndarray,
+        vverts: "np.typing.ArrayLike | None",
+        envs_idx: IndexType = None,
+    ):
         """Write the slice [custom_vvert_start:custom_vvert_end] of vverts_state.pos.
 
         vverts=None re-populates the slice from FK by running update_vverts_for_vgeoms over the vgeoms owning the slice.
@@ -1249,7 +1288,7 @@ class KinematicSolver(Solver):
         vverts = broadcast_tensor(vverts, gs.tc_float, target_shape, ("envs", "vverts", "xyz")).contiguous()
         kernel_set_vverts(custom_vvert_start, envs_idx, vverts, self.dyn_state, self.rigid_config)
 
-    def get_vverts(self, custom_vvert_start, custom_vvert_end, envs_idx: IndexType = None):
+    def get_vverts(self, custom_vvert_start: int, custom_vvert_end: int, envs_idx: IndexType = None):
         """Return a copy of the vverts_state.pos slice for the given custom-vvert range.
 
         Shape: (len(envs_idx), custom_vvert_end - custom_vvert_start, 3). envs_idx=None returns every env.

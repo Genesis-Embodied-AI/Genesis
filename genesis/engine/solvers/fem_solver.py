@@ -389,7 +389,14 @@ class FEMSolver(Solver):
     def is_active(self):
         return self.n_elements_max > 0
 
-    def add_entity(self, idx, material, morph, surface, name: str | None = None) -> "FEMEntity":
+    def add_entity(
+        self,
+        idx: int,
+        material: "gs.materials.FEM.Base",
+        morph: "gs.morphs.Morph",
+        surface: "gs.surfaces.Surface",
+        name: str | None = None,
+    ) -> "FEMEntity":
         # add material's update methods if not matching any existing material
         exist = False
         for mat in self._mats:
@@ -1097,7 +1104,7 @@ class FEMSolver(Solver):
     # --------------------------------------- io -----------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def set_state(self, f, state, envs_idx: IndexType = None):
+    def set_state(self, f: int, state: FEMSolverState, envs_idx: IndexType = None):
         if self.is_active:
             self._kernel_set_state(f, state.pos, state.vel, state.active)
 

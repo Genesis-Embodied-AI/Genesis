@@ -260,7 +260,14 @@ class MPMSolver(Solver):
     def is_active(self):
         return self.n_particles > 0
 
-    def add_entity(self, idx, material, morph, surface, name: str | None = None) -> "MPMEntity":
+    def add_entity(
+        self,
+        idx: int,
+        material: "gs.materials.MPM.Base",
+        morph: "gs.morphs.Morph",
+        surface: "gs.surfaces.Surface",
+        name: str | None = None,
+    ) -> "MPMEntity":
         self.add_material(material)
 
         # create entity
@@ -823,7 +830,7 @@ class MPMSolver(Solver):
             for entity in self._entities:
                 entity.load_ckpt(ckpt_name=ckpt_name)
 
-    def set_state(self, f, state, envs_idx: IndexType = None):
+    def set_state(self, f: int, state: MPMSolverState, envs_idx: IndexType = None):
         if self.is_active:
             self._kernel_set_state(f, state.pos, state.vel, state.C, state.F, state.Jp, state.active)
 

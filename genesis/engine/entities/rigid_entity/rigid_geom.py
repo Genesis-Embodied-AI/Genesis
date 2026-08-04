@@ -384,7 +384,7 @@ class RigidGeom(RBC):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_pos(self, envs_idx: IndexType = None, *, relative=True):
+    def get_pos(self, envs_idx: IndexType = None, *, relative: bool = True):
         """
         Get the position of the geom.
 
@@ -394,7 +394,7 @@ class RigidGeom(RBC):
         return self._solver.get_geoms_pos(self._idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
-    def get_quat(self, envs_idx: IndexType = None, *, relative=True):
+    def get_quat(self, envs_idx: IndexType = None, *, relative: bool = True):
         """
         Get the quaternion of the geom.
 
@@ -919,7 +919,7 @@ class RigidVisGeom(RBC):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_pos(self, envs_idx: IndexType = None, *, relative=True):
+    def get_pos(self, envs_idx: IndexType = None, *, relative: bool = True):
         """
         Get the position of the visual geom.
 
@@ -929,7 +929,7 @@ class RigidVisGeom(RBC):
         return self._solver.get_vgeoms_pos(self._idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
-    def get_quat(self, envs_idx: IndexType = None, *, relative=True):
+    def get_quat(self, envs_idx: IndexType = None, *, relative: bool = True):
         """
         Get the quaternion of the visual geom.
 
@@ -963,7 +963,7 @@ class RigidVisGeom(RBC):
         return torch.stack((vverts_pos.min(dim=-2).values, vverts_pos.max(dim=-2).values), dim=-2)
 
     @gs.assert_built
-    def set_vverts(self, vverts, envs_idx: IndexType = None):
+    def set_vverts(self, vverts: "np.typing.ArrayLike | None", envs_idx: IndexType = None):
         """Override this vgeom's visual vertex positions for rendering and sensors. See
         :meth:`KinematicEntity.set_vverts` for the full behavior; this method writes only this vgeom's slice.
 

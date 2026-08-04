@@ -1,8 +1,9 @@
 import time
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
 import quadrants as qd
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -12,6 +13,7 @@ from genesis.typing import IndexType
 from genesis.utils import array_class
 
 if TYPE_CHECKING:
+    from genesis.engine.entities.rigid_entity.rigid_entity import RigidEntity
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
 
@@ -31,7 +33,7 @@ class PathPlanner(ABC):
     @abstractmethod
     def plan(self, qpos_goal, qpos_start=None): ...
 
-    def get_link_pose(self, robot_g_link_idx, obj_g_link_idx, envs_idx):
+    def get_link_pose(self, robot_g_link_idx: int, obj_g_link_idx: int, envs_idx: torch.Tensor):
         """
         Get the relative pose of a given robot link wrt some object link.
 
@@ -58,7 +60,9 @@ class PathPlanner(ABC):
 
         return trans, quat
 
-    def update_object(self, ee_link_idx, obj_link_idx, _pos, _quat, envs_idx):
+    def update_object(
+        self, ee_link_idx: int, obj_link_idx: int, _pos: torch.Tensor, _quat: torch.Tensor, envs_idx: torch.Tensor
+    ):
         if self._solver.n_envs > 0:
             robot_trans = self._solver.get_links_pos(ee_link_idx, envs_idx=envs_idx)
             robot_quat = self._solver.get_links_quat(ee_link_idx, envs_idx=envs_idx)
@@ -95,7 +99,7 @@ class PathPlanner(ABC):
 
         return qpos_cur, qpos_goal, qpos_start, envs_idx
 
-    def get_exclude_geom_pairs(self, qposs, envs_idx):
+    def get_exclude_geom_pairs(self, qposs: Sequence[torch.Tensor], envs_idx: torch.Tensor):
         """
         Parameters
         ----------
@@ -160,17 +164,17 @@ class PathPlanner(ABC):
 
     def check_collision(
         self,
-        path,
-        ignore_geom_pairs,
-        envs_idx,
+        path: torch.Tensor,
+        ignore_geom_pairs: torch.Tensor,
+        envs_idx: torch.Tensor,
         *,
-        is_plan_with_obj=False,
-        obj_geom_start=-1,
-        obj_geom_end=-1,
-        ee_link_idx=0,
-        obj_link_idx=0,
-        _pos=None,
-        _quat=None,
+        is_plan_with_obj: bool = False,
+        obj_geom_start: int = -1,
+        obj_geom_end: int = -1,
+        ee_link_idx: int = 0,
+        obj_link_idx: int = 0,
+        _pos: torch.Tensor | None = None,
+        _quat: torch.Tensor | None = None,
     ):
         out = torch.zeros((path.shape[1],), dtype=gs.tc_bool, device=gs.device)
         for qpos in path:
@@ -249,18 +253,18 @@ class PathPlanner(ABC):
 
     def shortcut_path(
         self,
-        path_mask,
-        path,
-        iterations=50,
-        ignore_geom_pairs=None,
+        path_mask: torch.Tensor,
+        path: torch.Tensor,
+        iterations: int = 50,
+        ignore_geom_pairs: torch.Tensor | None = None,
         envs_idx: IndexType = None,
-        is_plan_with_obj=False,
-        obj_geom_start=-1,
-        obj_geom_end=-1,
-        ee_link_idx=0,
-        obj_link_idx=0,
-        _pos=None,
-        _quat=None,
+        is_plan_with_obj: bool = False,
+        obj_geom_start: int = -1,
+        obj_geom_end: int = -1,
+        ee_link_idx: int = 0,
+        obj_link_idx: int = 0,
+        _pos: torch.Tensor | None = None,
+        _quat: torch.Tensor | None = None,
     ):
         """
         path_mask: torch.Tensor
@@ -474,16 +478,16 @@ class RRT(PathPlanner):
 
     def plan(
         self,
-        qpos_goal,
-        qpos_start=None,
-        resolution=0.05,
-        timeout=None,
-        max_nodes=2000,
-        smooth_path=True,
-        num_waypoints=100,
-        ignore_collision=False,
-        ee_link_idx=None,
-        obj_entity=None,
+        qpos_goal: "np.typing.ArrayLike",
+        qpos_start: "np.typing.ArrayLike | None" = None,
+        resolution: float = 0.05,
+        timeout: float | None = None,
+        max_nodes: int = 2000,
+        smooth_path: bool = True,
+        num_waypoints: int = 100,
+        ignore_collision: bool = False,
+        ee_link_idx: int | None = None,
+        obj_entity: "RigidEntity | None" = None,
         envs_idx: IndexType = None,
     ):
         assert self._solver.n_envs > 0 or envs_idx is None
@@ -838,16 +842,16 @@ class RRTConnect(PathPlanner):
 
     def plan(
         self,
-        qpos_goal,
-        qpos_start=None,
-        resolution=0.05,
-        timeout=None,
-        max_nodes=4000,
-        smooth_path=True,
-        num_waypoints=300,
-        ignore_collision=False,
-        ee_link_idx=None,
-        obj_entity=None,
+        qpos_goal: "np.typing.ArrayLike",
+        qpos_start: "np.typing.ArrayLike | None" = None,
+        resolution: float = 0.05,
+        timeout: float | None = None,
+        max_nodes: int = 4000,
+        smooth_path: bool = True,
+        num_waypoints: int = 300,
+        ignore_collision: bool = False,
+        ee_link_idx: int | None = None,
+        obj_entity: "RigidEntity | None" = None,
         envs_idx: IndexType = None,
     ):
         assert self._solver.n_envs > 0 or envs_idx is None

@@ -406,7 +406,7 @@ class ConstraintSolver:
 
         return weld_const_info
 
-    def add_weld_constraint(self, link1_idx, link2_idx, envs_idx: IndexType = None):
+    def add_weld_constraint(self, link1_idx: int, link2_idx: int, envs_idx: IndexType = None):
         envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
         link1_idx, link2_idx = int(link1_idx), int(link2_idx)
 
@@ -436,7 +436,7 @@ class ConstraintSolver:
                 "RigidSolver's option 'max_dynamic_constraints'."
             )
 
-    def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx: IndexType = None):
+    def delete_weld_constraint(self, link1_idx: int, link2_idx: int, envs_idx: IndexType = None):
         envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
         self._eq_const_info_cache.clear()
         kernel_delete_weld_constraint(

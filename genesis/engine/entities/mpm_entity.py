@@ -1,6 +1,7 @@
 import functools
 
 import quadrants as qd
+import numpy as np
 import torch
 
 import genesis as gs
@@ -352,7 +353,9 @@ class MPMEntity(ParticleEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def set_particles_pos(self, poss, particles_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_particles_pos(
+        self, poss: "np.typing.ArrayLike", particles_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx)
         particles_idx = particles_idx_local + self._particle_start
@@ -376,7 +379,9 @@ class MPMEntity(ParticleEntity):
         return poss
 
     @gs.assert_built
-    def set_particles_vel(self, vels, particles_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_particles_vel(
+        self, vels: "np.typing.ArrayLike", particles_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx)
         particles_idx = particles_idx_local + self._particle_start
@@ -400,7 +405,9 @@ class MPMEntity(ParticleEntity):
         return vels
 
     @gs.assert_built
-    def set_particles_active(self, actives, particles_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_particles_active(
+        self, actives: "np.typing.ArrayLike", particles_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx)
         particles_idx = particles_idx_local + self._particle_start
@@ -423,7 +430,7 @@ class MPMEntity(ParticleEntity):
         return actives
 
     @assert_muscle
-    def set_actuation(self, actus, envs_idx: IndexType = None):
+    def set_actuation(self, actus: "np.typing.ArrayLike", envs_idx: IndexType = None):
         """
         Set actuation values for each muscle group individually.
 
@@ -441,7 +448,9 @@ class MPMEntity(ParticleEntity):
 
     @assert_muscle
     @gs.assert_built
-    def set_particles_actu(self, actus, particles_idx_local: IndexType = None, envs_idx: IndexType = None):
+    def set_particles_actu(
+        self, actus: "np.typing.ArrayLike", particles_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Set particle actuation values.
 
@@ -629,7 +638,7 @@ class MPMEntity(ParticleEntity):
         return mask
 
     @gs.assert_built
-    def set_particle_constraints(self, particles_mask, link_idx, stiffness):
+    def set_particle_constraints(self, particles_mask: torch.Tensor, link_idx: int, stiffness: float):
         """
         Attach MPM particles to a rigid link using soft constraints.
 

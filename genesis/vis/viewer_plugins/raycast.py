@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from genesis.engine.scene import Scene
     from genesis.engine.solvers.kinematic_solver import KinematicSolver
     from genesis.ext.pyrender.node import Node
+    from genesis.ext.pyrender.viewer import Viewer
     from genesis.utils.array_class import RaycastResult
 
 
@@ -208,7 +209,7 @@ class RaycasterViewerPlugin(ViewerPlugin):
         self.use_visual_geom = use_visual_geom
         self._raycaster: "Raycaster | None" = None
 
-    def build(self, viewer, camera: "Node", scene: "Scene"):
+    def build(self, viewer: "Viewer", camera: "Node", scene: "Scene"):
         super().build(viewer, camera, scene)
 
         self._raycaster = Raycaster(self.scene, self.use_visual_geom)

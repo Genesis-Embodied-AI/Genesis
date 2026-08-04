@@ -669,7 +669,12 @@ class TemperatureGridSensor(
         return gs.tc_float
 
     @classmethod
-    def reset(cls, shared_metadata: TemperatureGridSensorMetadata, current_ground_truth_data_T: torch.Tensor, envs_idx):
+    def reset(
+        cls,
+        shared_metadata: TemperatureGridSensorMetadata,
+        current_ground_truth_data_T: torch.Tensor,
+        envs_idx: torch.Tensor,
+    ):
         super().reset(shared_metadata, current_ground_truth_data_T, envs_idx)
         sensors_mat_idx = shared_metadata.link_to_material_idx[shared_metadata.links_idx]
         sensors_base_T = shared_metadata.link_material_properties[_PropIdx.BASE_TEMP][sensors_mat_idx]

@@ -700,21 +700,21 @@ class Scene(RBC):
     @gs.assert_unbuilt
     def add_camera(
         self,
-        model="pinhole",
-        res=(320, 320),
-        pos=(0.5, 2.5, 3.5),
-        lookat=(0.5, 0.5, 0.5),
-        up=(0.0, 0.0, 1.0),
-        fov=30,
-        aperture=2.0,
-        focus_dist=None,
-        GUI=False,
-        spp=256,
-        denoise=None,
-        near=0.1,
-        far=20.0,
-        env_idx=None,
-        debug=False,
+        model: str = "pinhole",
+        res: tuple[int, int] = (320, 320),
+        pos: "np.typing.ArrayLike" = (0.5, 2.5, 3.5),
+        lookat: "np.typing.ArrayLike" = (0.5, 0.5, 0.5),
+        up: "np.typing.ArrayLike" = (0.0, 0.0, 1.0),
+        fov: float = 30,
+        aperture: float = 2.0,
+        focus_dist: float | None = None,
+        GUI: bool = False,
+        spp: int = 256,
+        denoise: bool | None = None,
+        near: float = 0.1,
+        far: float = 20.0,
+        env_idx: int | None = None,
+        debug: bool = False,
     ):
         """
         Add a camera to the scene.
@@ -790,7 +790,7 @@ class Scene(RBC):
     def add_emitter(
         self,
         material: Material,
-        max_particles=20000,
+        max_particles: int = 20000,
         surface: Surface | None = None,
     ):
         """
@@ -865,11 +865,11 @@ class Scene(RBC):
     @gs.assert_unbuilt
     def build(
         self,
-        n_envs=0,
-        env_spacing=(0.0, 0.0),
+        n_envs: int = 0,
+        env_spacing: tuple[float, float] = (0.0, 0.0),
         n_envs_per_row: int | None = None,
-        center_envs_at_origin=True,
-        compile_kernels=None,
+        center_envs_at_origin: bool = True,
+        compile_kernels: bool | None = None,
     ):
         """
         Builds the scene once all entities have been added. This operation is required before running the simulation.
@@ -1389,7 +1389,14 @@ class Scene(RBC):
             return self._visualizer.context.draw_debug_mesh(merged)
 
     @gs.assert_built
-    def draw_debug_path(self, qposs, entity, link_idx=-1, density=0.3, frame_scaling=1.0):
+    def draw_debug_path(
+        self,
+        qposs: "np.typing.ArrayLike",
+        entity: "RigidEntity",
+        link_idx: int = -1,
+        density: float = 0.3,
+        frame_scaling: float = 1.0,
+    ):
         """
         Draws a planned joint trajectory in the scene for visualization.
 

@@ -319,7 +319,7 @@ class KinematicLink(RBC):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_pos(self, envs_idx: IndexType = None, *, relative=True):
+    def get_pos(self, envs_idx: IndexType = None, *, relative: bool = True):
         """
         Get the position of the link.
 
@@ -334,7 +334,7 @@ class KinematicLink(RBC):
         return self._solver.get_links_pos(self._idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
-    def get_quat(self, envs_idx: IndexType = None, *, relative=True):
+    def get_quat(self, envs_idx: IndexType = None, *, relative: bool = True):
         """
         Get the quaternion of the link.
 

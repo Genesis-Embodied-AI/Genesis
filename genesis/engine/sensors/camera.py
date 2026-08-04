@@ -265,7 +265,9 @@ class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, None, SharedSensor
         pass
 
     @classmethod
-    def reset(cls, shared_metadata: SharedSensorMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
+    def reset(
+        cls, shared_metadata: SharedSensorMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx: torch.Tensor
+    ):
         super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
         # Reset can restore a different state at the last rendered timestep, so force the next read to rerender.
         # FIXME: the frame cache keys on a single timestep for the whole batch, so a partial-env reset invalidates

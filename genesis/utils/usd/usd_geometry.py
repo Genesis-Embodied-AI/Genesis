@@ -43,8 +43,8 @@ def parse_prim_geoms(
     link_path_to_idx: Dict[str, int],
     morph: gs.morphs.USD,
     surface: gs.surfaces.Surface,
-    match_visual=False,
-    match_collision=False,
+    match_visual: bool = False,
+    match_collision: bool = False,
 ):
     if not prim.IsActive():
         return

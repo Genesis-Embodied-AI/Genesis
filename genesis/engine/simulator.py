@@ -431,7 +431,7 @@ class Simulator(RBC):
 
         return state
 
-    def set_gravity(self, gravity, envs_idx: IndexType = None):
+    def set_gravity(self, gravity: "np.typing.ArrayLike", envs_idx: IndexType = None):
         for solver in self._solvers:
             if solver.is_active:
                 solver.set_gravity(gravity, envs_idx)

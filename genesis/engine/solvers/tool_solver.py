@@ -47,7 +47,14 @@ class ToolSolver(Solver):
     def setup_boundary(self):
         self.boundary = FloorBoundary(height=self.floor_height)
 
-    def add_entity(self, idx, material, morph, surface, name: str | None = None) -> "ToolEntity":
+    def add_entity(
+        self,
+        idx: int,
+        material: "gs.materials.Tool",
+        morph: "gs.morphs.Morph",
+        surface: "gs.surfaces.Surface",
+        name: str | None = None,
+    ) -> "ToolEntity":
         entity = ToolEntity(
             scene=self._scene,
             idx=idx,
@@ -73,7 +80,7 @@ class ToolSolver(Solver):
             state = None
         return state
 
-    def set_state(self, f, state, envs_idx: IndexType = None):
+    def set_state(self, f: int, state: ToolSolverState, envs_idx: IndexType = None):
         if state is not None:
             assert len(state) == len(self._entities)
             for i, entity in enumerate(self._entities):

@@ -958,10 +958,10 @@ class FEMEntity(Entity):
     def set_vertex_constraints(
         self,
         verts_idx_local: IndexType,
-        target_poss=None,
-        link=None,
-        is_soft_constraint=False,
-        stiffness=0.0,
+        target_poss: "np.typing.ArrayLike | None" = None,
+        link: RigidLink | None = None,
+        is_soft_constraint: bool = False,
+        stiffness: float = 0.0,
         envs_idx: IndexType = None,
     ):
         """
@@ -1030,7 +1030,9 @@ class FEMEntity(Entity):
             envs_idx,
         )
 
-    def update_constraint_targets(self, verts_idx_local: IndexType, target_poss, envs_idx: IndexType = None):
+    def update_constraint_targets(
+        self, verts_idx_local: IndexType, target_poss: "np.typing.ArrayLike", envs_idx: IndexType = None
+    ):
         """Update target positions for existing constraints."""
         if not self._solver._constraints_initialized:
             gs.logger.warning("Ignoring update_constraint_targets; constraints have not been initialized.")
