@@ -341,7 +341,6 @@ class RigidSolver(KinematicSolver):
         pass
 
     def add_entity(self, idx, material, morph, surface, visualize_contact, name: str | None = None) -> RigidEntity:
-        # Handle heterogeneous morphs (list/tuple of morphs)
         """
         Create a rigid entity from a morph and register it with the solver.
 
@@ -360,6 +359,7 @@ class RigidSolver(KinematicSolver):
         name : str | None, optional
             Name of the entity. Defaults to None.
         """
+        # Handle heterogeneous morphs (list/tuple of morphs)
         morph_heterogeneous = []
         if isinstance(morph, (tuple, list)):
             morph, *morph_heterogeneous = morph
@@ -1251,7 +1251,6 @@ class RigidSolver(KinematicSolver):
         self._is_forward_pos_updated = True
 
     def substep(self, f):
-        # from genesis.utils.tools import create_timer
         """
         Advance the solver by one substep, from forward dynamics through the constraint solve to integration.
 
@@ -1260,6 +1259,7 @@ class RigidSolver(KinematicSolver):
         f : int
             Index of the substep within the current step.
         """
+        # from genesis.utils.tools import create_timer
         from genesis.engine.couplers import SAPCoupler
 
         if self._requires_grad and f == 0:
@@ -1320,9 +1320,9 @@ class RigidSolver(KinematicSolver):
         return qd_to_torch(self._errno) > 0
 
     def check_errno(self):
+        """Raise for any error the kernels recorded during the substeps since the previous check."""
         # FIXME: qd.atomic_or return value is broken on Metal — always returns 0.
         # See repro_metal_kernel_return.py. Falling back to numpy reduction.
-        """Raise for any error the kernels recorded during the substeps since the previous check."""
         if gs.use_zerocopy or sys.platform == "darwin":
             errno = np.bitwise_or.reduce(qd_to_numpy(self._errno))
         else:
@@ -1358,7 +1358,6 @@ class RigidSolver(KinematicSolver):
         self.collider.detection()
 
     def detect_collision(self, env_idx=0):
-        # TODO: support batching
         """
         Run collision detection on the current state and return the contacts it found.
 
@@ -1367,6 +1366,7 @@ class RigidSolver(KinematicSolver):
         env_idx : int, optional
             Index of the environment to report contacts for. Defaults to 0.
         """
+        # TODO: support batching
         self._kernel_detect_collision()
 
         n_collision = qd_to_numpy(self.collider._collider_state.n_contacts)[env_idx]
@@ -1620,10 +1620,10 @@ class RigidSolver(KinematicSolver):
             self.substep(f)
 
     def reset_grad(self):
+        """Zero every gradient buffer of the solver."""
         # Rigid additionally owns `geoms_state`, `entities_state`, and the `*_adjoint_cache` structs written by the
         # backward substep chain. All carry `needs_grad=True` fields that accumulate via `atomic_add` during backward,
         # so they must start at zero between consecutive `loss.backward()`s.
-        """Zero every gradient buffer of the solver."""
         super().reset_grad()
         if self._requires_grad:
             qd_zero_grad(self.dyn_state.geoms)
@@ -1667,7 +1667,6 @@ class RigidSolver(KinematicSolver):
         kernel_manual_forward_kinematics_bw(self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
 
     def substep_pre_coupling_grad(self, f):
-        # Change to backward mode
         """
         Run the backward pass of `substep_pre_coupling`.
 
@@ -1676,6 +1675,7 @@ class RigidSolver(KinematicSolver):
         f : int
             Index of the substep within the current step.
         """
+        # Change to backward mode
         self._is_backward = True
 
         # Run forward substep again to restore this step's information, this is needed because we do not store info
@@ -2034,15 +2034,16 @@ class RigidSolver(KinematicSolver):
             entity.process_input_grad()
 
     def save_ckpt(self, ckpt_name):
-        # Save ckpt only if we need gradients, because this operation is costly
         """
         Copy the differentiable state into the named checkpoint.
 
         Parameters
         ----------
         ckpt_name : str
-            Name the checkpoint is stored under.
+            Key the snapshot is held under in the solver's in-memory checkpoint store. Writing state to a file goes
+            through `~genesis.engine.scene.Scene.save_checkpoint` instead.
         """
+        # Save ckpt only if we need gradients, because this operation is costly
         if self._requires_grad:
             if ckpt_name not in self._ckpt:
                 self._ckpt[ckpt_name] = dict()
@@ -2057,15 +2058,16 @@ class RigidSolver(KinematicSolver):
                 entity.save_ckpt(ckpt_name)
 
     def load_ckpt(self, ckpt_name):
-        # Set first frame
         """
         Restore the state saved in the named checkpoint.
 
         Parameters
         ----------
         ckpt_name : str
-            Name the checkpoint is stored under.
+            Key the snapshot is held under in the solver's in-memory checkpoint store. Writing state to a file goes
+            through `~genesis.engine.scene.Scene.save_checkpoint` instead.
         """
+        # Set first frame
         self.rigid_info.qpos.from_numpy(self._ckpt[ckpt_name]["qpos"][0])
         self.dyn_state.dofs.vel.from_numpy(self._ckpt[ckpt_name]["dofs_vel"][0])
         self.dyn_state.dofs.acc.from_numpy(self._ckpt[ckpt_name]["dofs_acc"][0])
@@ -3032,7 +3034,6 @@ class RigidSolver(KinematicSolver):
             )
 
     def set_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None, *, skip_forward=False):
-        # Wake the owning entities before delegating to the base setter, which re-sanitizes and applies the write.
         """
         Set the velocity of each dof, waking any hibernated entity it belongs to.
 
@@ -3047,6 +3048,7 @@ class RigidSolver(KinematicSolver):
         skip_forward : bool, optional
             Leave the dependent link and geom poses stale instead of refreshing them. Defaults to False.
         """
+        # Wake the owning entities before delegating to the base setter, which re-sanitizes and applies the write.
         if self._use_hibernation:
             _, wake_dofs_idx, wake_envs_idx = self._sanitize_io_variables(
                 velocity, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
