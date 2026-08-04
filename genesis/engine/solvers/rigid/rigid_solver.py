@@ -1,7 +1,7 @@
 import math
 import os
 import sys
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Iterable, Literal
 
 import quadrants as qd
 import numpy as np
@@ -14,6 +14,7 @@ from genesis.engine.entities import DroneEntity, RigidEntity
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.states import QueriedStates, RigidSolverState
 from genesis.options.solvers import RigidOptions
+from genesis.typing import IndexType
 from genesis.utils.misc import (
     DeprecationError,
     qd_to_torch,
@@ -339,7 +340,15 @@ class RigidSolver(KinematicSolver):
     def init_ckpt(self):
         pass
 
-    def add_entity(self, idx, material, morph, surface, visualize_contact, name: str | None = None) -> RigidEntity:
+    def add_entity(
+        self,
+        idx: int,
+        material: "gs.materials.Rigid",
+        morph: "gs.morphs.Morph | Iterable[gs.morphs.Morph]",
+        surface: "gs.surfaces.Surface",
+        visualize_contact: bool,
+        name: str | None = None,
+    ) -> RigidEntity:
         # Handle heterogeneous morphs (list/tuple of morphs)
         morph_heterogeneous = []
         if isinstance(morph, (tuple, list)):
@@ -1445,9 +1454,9 @@ class RigidSolver(KinematicSolver):
 
     def apply_links_external_force(
         self,
-        force,
-        links_idx=None,
-        envs_idx=None,
+        force: "np.typing.ArrayLike",
+        links_idx: IndexType | None = None,
+        envs_idx: IndexType | None = None,
         *,
         ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
         local: bool = False,
@@ -1499,9 +1508,9 @@ class RigidSolver(KinematicSolver):
 
     def apply_links_external_torque(
         self,
-        torque,
-        links_idx=None,
-        envs_idx=None,
+        torque: "np.typing.ArrayLike",
+        links_idx: IndexType | None = None,
+        envs_idx: IndexType | None = None,
         *,
         ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
         local: bool = False,
@@ -1748,7 +1757,9 @@ class RigidSolver(KinematicSolver):
         return state
 
     @mutates(StateChange.GEOMETRY, StateChange.DYNAMICS)
-    def set_state(self, f, state, envs_idx=None, *, partial: bool = False) -> None:
+    def set_state(
+        self, f: int, state: RigidSolverState, envs_idx: IndexType | None = None, *, partial: bool = False
+    ) -> None:
         if not self.is_active:
             return
 
@@ -2723,11 +2734,11 @@ class RigidSolver(KinematicSolver):
 
     def get_links_pos(
         self,
-        links_idx=None,
-        envs_idx=None,
+        links_idx: IndexType | None = None,
+        envs_idx: IndexType | None = None,
         *,
         ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
-        relative=False,
+        relative: bool = False,
     ):
         if not gs.use_zerocopy:
             _, links_idx, envs_idx = self._sanitize_io_variables(
@@ -2756,7 +2767,11 @@ class RigidSolver(KinematicSolver):
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_vel(
-        self, links_idx=None, envs_idx=None, *, ref: Literal["link_origin", "link_com", "root_com"] = "link_origin"
+        self,
+        links_idx: IndexType | None = None,
+        envs_idx: IndexType | None = None,
+        *,
+        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
     ):
         if gs.use_zerocopy:
             mask = (0, *indices_to_mask(links_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, links_idx)
