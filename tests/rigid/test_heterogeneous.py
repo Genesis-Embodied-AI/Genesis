@@ -17,6 +17,8 @@ def test_physics_parity(show_viewer, tol):
     # Uses the fixed-child mesh objects from 'test_convexify' (offset center of mass, distinct mass) so the per-env
     # parity check exercises the inertia alignment, not just trivially-symmetric primitives.
     N_STEPS = 100
+    # Velocity parity is asserted while the impact keeps the velocity orders above the residual the entities settle to.
+    N_STEPS_IMPACT = 22
     DROP_HEIGHT = 0.2
     VARIANTS = (("mug_1", "output.xml"), ("donut_0", "output.xml"), ("cup_2", "model.xml"), ("apple_15", "model.xml"))
     # Divergent per-variant yaw offset, stripped to identity by the relative getter and carried by the world frame.
@@ -24,9 +26,10 @@ def test_physics_parity(show_viewer, tol):
     OFFSET_EULERS = ((0.0, 0.0, 30.0), (0.0, 0.0, -45.0), (0.0, 0.0, 90.0), (0.0, 0.0, -120.0))
     # Distinct per-variant placement, dispatched per environment.
     POSITIONS = ((0.0, 0.0, DROP_HEIGHT), (0.2, 0.0, DROP_HEIGHT), (0.0, 0.2, DROP_HEIGHT), (0.2, 0.2, DROP_HEIGHT))
-    # The homogeneous references live in the same scene, offset far enough that no entity ever interacts with
-    # another: a single build compiles one kernel set instead of one per scene.
-    REFERENCE_OFFSETS = ((10.0, 0.0, 0.0), (20.0, 0.0, 0.0), (30.0, 0.0, 0.0), (40.0, 0.0, 0.0))
+    # The homogeneous references live in the same scene, offset just far enough that no entity ever interacts with
+    # another: a single build compiles one kernel set instead of one per scene. Single-precision positions quantize with
+    # distance from the origin, so a farther offset injects a larger divergence into the parity asserted below.
+    REFERENCE_OFFSETS = ((1.0, 0.0, 0.0), (2.0, 0.0, 0.0), (3.0, 0.0, 0.0), (4.0, 0.0, 0.0))
 
     asset_files = tuple(f"{get_hf_dataset(pattern=f'{name}/*')}/{name}/{xml}" for name, xml in VARIANTS)
 
@@ -69,14 +72,18 @@ def test_physics_parity(show_viewer, tol):
         )
         assert_allclose(het_obj.get_quat(relative=relative), ref_quats, tol=tol)
 
-    for _ in range(N_STEPS):
+    for _ in range(N_STEPS_IMPACT):
         scene.step()
 
-    # After the drop each environment matches the homogeneous reference of its variant in pose, velocity and mass.
-    ref_pos = torch.cat([ref_obj.get_pos(envs_idx=[i_env]) for i_env, ref_obj in enumerate(ref_objs)])
     ref_vel = torch.cat([ref_obj.get_vel(envs_idx=[i_env]) for i_env, ref_obj in enumerate(ref_objs)])
-    assert_allclose(ref_pos - het_obj.get_pos(), REFERENCE_OFFSETS, tol=tol)
     assert_allclose(het_obj.get_vel(), ref_vel, tol=tol)
+
+    for _ in range(N_STEPS - N_STEPS_IMPACT):
+        scene.step()
+
+    # After the drop each environment matches the homogeneous reference of its variant in pose and mass.
+    ref_pos = torch.cat([ref_obj.get_pos(envs_idx=[i_env]) for i_env, ref_obj in enumerate(ref_objs)])
+    assert_allclose(ref_pos - het_obj.get_pos(), REFERENCE_OFFSETS, tol=tol)
     assert_allclose(het_obj.get_mass(), [ref_obj.get_mass() for ref_obj in ref_objs], tol=tol)
 
     # The variants are genuinely distinct: their masses are not all equal.
