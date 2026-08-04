@@ -337,10 +337,12 @@ class RigidSolver(KinematicSolver):
         self._ckpt = dict()
 
     def init_ckpt(self):
+        """Allocate the checkpoint storage of the solver."""
         pass
 
     def add_entity(self, idx, material, morph, surface, visualize_contact, name: str | None = None) -> RigidEntity:
         # Handle heterogeneous morphs (list/tuple of morphs)
+        """Create a rigid entity from a morph and register it with the solver."""
         morph_heterogeneous = []
         if isinstance(morph, (tuple, list)):
             morph, *morph_heterogeneous = morph
@@ -387,6 +389,7 @@ class RigidSolver(KinematicSolver):
         return entity
 
     def build(self):
+        """Allocate the solver state from the registered entities and compile its kernels."""
         self._n_geoms = self.n_geoms
         self._n_cells = self.n_cells
         self._n_verts = self.n_verts
@@ -1232,6 +1235,7 @@ class RigidSolver(KinematicSolver):
 
     def substep(self, f):
         # from genesis.utils.tools import create_timer
+        """Advance the solver by one substep, from forward dynamics through the constraint solve to integration."""
         from genesis.engine.couplers import SAPCoupler
 
         if self._requires_grad and f == 0:
@@ -1286,6 +1290,7 @@ class RigidSolver(KinematicSolver):
     def check_errno(self):
         # FIXME: qd.atomic_or return value is broken on Metal — always returns 0.
         # See repro_metal_kernel_return.py. Falling back to numpy reduction.
+        """Raise for any error the kernels recorded during the substeps since the previous check."""
         if gs.use_zerocopy or sys.platform == "darwin":
             errno = np.bitwise_or.reduce(qd_to_numpy(self._errno))
         else:
@@ -1322,6 +1327,7 @@ class RigidSolver(KinematicSolver):
 
     def detect_collision(self, env_idx=0):
         # TODO: support batching
+        """Run collision detection on the current state and return the contacts it found."""
         self._kernel_detect_collision()
 
         n_collision = qd_to_numpy(self.collider._collider_state.n_contacts)[env_idx]
@@ -1553,6 +1559,7 @@ class RigidSolver(KinematicSolver):
         )
 
     def substep_pre_coupling(self, f):
+        """Advance the solver by one substep, up to the point where the coupler exchanges forces."""
         if self.is_active:
             # Skip rigid body computation when using IPCCoupler (IPC handles rigid simulation)
             from genesis.engine.couplers import IPCCoupler
@@ -1570,6 +1577,7 @@ class RigidSolver(KinematicSolver):
         # Rigid additionally owns `geoms_state`, `entities_state`, and the `*_adjoint_cache` structs written by the
         # backward substep chain. All carry `needs_grad=True` fields that accumulate via `atomic_add` during backward,
         # so they must start at zero between consecutive `loss.backward()`s.
+        """Zero every gradient buffer of the solver."""
         super().reset_grad()
         if self._requires_grad:
             qd_zero_grad(self.dyn_state.geoms)
@@ -1614,6 +1622,7 @@ class RigidSolver(KinematicSolver):
 
     def substep_pre_coupling_grad(self, f):
         # Change to backward mode
+        """Run the backward pass of `substep_pre_coupling`."""
         self._is_backward = True
 
         # Run forward substep again to restore this step's information, this is needed because we do not store info
@@ -1687,6 +1696,7 @@ class RigidSolver(KinematicSolver):
         self._is_backward = False
 
     def substep_post_coupling(self, f):
+        """Finish the substep the coupler interrupted, integrating the coupled state."""
         from genesis.engine.couplers import SAPCoupler, IPCCoupler
 
         if not self.is_active:
@@ -1715,6 +1725,7 @@ class RigidSolver(KinematicSolver):
     # ------------------------------------------------------------------------------------
 
     def update_geoms_render_T(self):
+        """Refresh the render transform of every geom from the current state."""
         kernel_update_geoms_render_T(self._geoms_render_T, self.dyn_state, self.rigid_info, self.rigid_config)
 
     # ------------------------------------------------------------------------------------
@@ -1919,15 +1930,18 @@ class RigidSolver(KinematicSolver):
                 entity._prev_prop_t = -1
 
     def process_input(self, in_backward=False):
+        """Apply the control inputs every entity has buffered since the previous substep."""
         for entity in self._entities:
             entity.process_input(in_backward=in_backward)
 
     def process_input_grad(self):
+        """Run the backward pass of `process_input`."""
         for entity in self._entities:
             entity.process_input_grad()
 
     def save_ckpt(self, ckpt_name):
         # Save ckpt only if we need gradients, because this operation is costly
+        """Copy the differentiable state into the named checkpoint."""
         if self._requires_grad:
             if ckpt_name not in self._ckpt:
                 self._ckpt[ckpt_name] = dict()
@@ -1943,6 +1957,7 @@ class RigidSolver(KinematicSolver):
 
     def load_ckpt(self, ckpt_name):
         # Set first frame
+        """Restore the state saved in the named checkpoint."""
         self.rigid_info.qpos.from_numpy(self._ckpt[ckpt_name]["qpos"][0])
         self.dyn_state.dofs.vel.from_numpy(self._ckpt[ckpt_name]["dofs_vel"][0])
         self.dyn_state.dofs.acc.from_numpy(self._ckpt[ckpt_name]["dofs_acc"][0])
@@ -3540,9 +3555,11 @@ class RigidSolver(KinematicSolver):
         kernel_set_geoms_friction_rolling(geoms_idx, friction_rolling, self.dyn_info, self.rigid_config)
 
     def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None):
+        """Weld two links together, holding their relative pose until the constraint is deleted."""
         return self.constraint_solver.add_weld_constraint(link1_idx, link2_idx, envs_idx)
 
     def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx=None):
+        """Delete the weld constraint holding the two links together."""
         return self.constraint_solver.delete_weld_constraint(link1_idx, link2_idx, envs_idx)
 
     def get_weld_constraints(self, as_tensor: bool = True, to_torch: bool = True):
@@ -3552,6 +3569,7 @@ class RigidSolver(KinematicSolver):
         return self.constraint_solver.get_equality_constraints(as_tensor, to_torch)
 
     def clear_external_force(self):
+        """Zero the external forces and torques applied to every link."""
         if gs.use_zerocopy:
             for tensor in (self.dyn_state.links.cfrc_applied_ang, self.dyn_state.links.cfrc_applied_vel):
                 out = qd_to_torch(tensor, copy=False)
@@ -3569,6 +3587,7 @@ class RigidSolver(KinematicSolver):
             self.rigid_info.gravity.copy_from(self._gravity)
 
     def update_drone_propeller_vgeoms(self, propellers_vgeom_idxs, propellers_revs, propellers_spin):
+        """Spin the visual geometry of the given propellers to match their revolutions."""
         kernel_update_drone_propeller_vgeoms(
             propellers_vgeom_idxs, propellers_revs, propellers_spin, self.dyn_state, self.rigid_info, self.rigid_config
         )
@@ -3579,6 +3598,7 @@ class RigidSolver(KinematicSolver):
         )
 
     def update_verts_for_geoms(self, geoms_idx):
+        """Refresh the vertices of the given geoms from their entity's current deformation."""
         _, geoms_idx, _ = self._sanitize_io_variables(
             None, geoms_idx, self.n_geoms, "geoms_idx", envs_idx=None, skip_allocation=True
         )
@@ -3590,58 +3610,68 @@ class RigidSolver(KinematicSolver):
 
     @property
     def n_geoms(self):
+        """Number of collision geoms in the scene."""
         if self.is_built:
             return self._n_geoms
         return len(self.geoms)
 
     @property
     def n_cells(self):
+        """Number of signed-distance-field cells across every geom."""
         if self.is_built:
             return self._n_cells
         return sum(entity.n_cells for entity in self._entities)
 
     @property
     def n_verts(self):
+        """Number of collision vertices across every geom."""
         if self.is_built:
             return self._n_verts
         return sum(entity.n_verts for entity in self._entities)
 
     @property
     def n_free_verts(self):
+        """Number of collision vertices belonging to links that can move."""
         if self.is_built:
             return self._n_free_verts
         return sum(link.n_verts if not link.is_fixed or link.entity._batch_fixed_verts else 0 for link in self.links)
 
     @property
     def n_fixed_verts(self):
+        """Number of collision vertices belonging to fixed links."""
         if self.is_built:
             return self._n_fixed_verts
         return sum(link.n_verts if link.is_fixed and not link.entity._batch_fixed_verts else 0 for link in self.links)
 
     @property
     def n_faces(self):
+        """Number of collision faces across every geom."""
         if self.is_built:
             return self._n_faces
         return sum(entity.n_faces for entity in self._entities)
 
     @property
     def n_edges(self):
+        """Number of collision edges across every geom."""
         if self.is_built:
             return self._n_edges
         return sum(entity.n_edges for entity in self._entities)
 
     @property
     def max_collision_pairs(self):
+        """Upper bound on the contact pairs the broad phase may report per step."""
         return self._max_collision_pairs
 
     @property
     def n_equalities(self):
+        """Number of equality constraints in the scene."""
         if self.is_built:
             return self._n_equalities
         return sum(entity.n_equalities for entity in self._entities)
 
     @property
     def equalities(self):
+        """Every equality constraint in the scene, in scene-level index order."""
         if self.is_built:
             return self._equalities
         return gs.List(equality for entity in self._entities for equality in entity.equalities)
