@@ -199,17 +199,12 @@ class contact_resolution(IntEnum):
     signorini : int
         Bounds friction against the normal force the contact has actually developed, so that force is set by the
         contact's own normal state rather than by tangential demand, and sliding can never inflate it - a sliding body
-        decelerates at ``mu * g`` and stays down at any speed. Contacts are resolved by successive approximation,
-        costing extra solver iterations and giving up the single-convex-program guarantee.
-
-    Notes
-    -----
-    `signorini` requires the elliptic friction cone, whose rows separate into a normal row and a friction disc - the
-    pyramidal cone mixes the normal direction into every row and admits no such split - and the Newton constraint
-    solver, the only one that reaches the fixed point of the resulting successive approximation. It implements the
-    Coulomb complementarity problem eq. (C.22) of Alexis Duburcq, "Learning and Optimization of the Locomotion with an
-    Exoskeleton for Paraplegic People", PhD thesis, Universite Paris Sciences et Lettres, 2022 (HAL tel-04166955),
-    Appendix C, whose Signorini condition is what forbids the normal force from absorbing tangential demand.
+        decelerates at ``mu * g`` and stays down at any speed. Requires `friction_cone.elliptic` and
+        `constraint_solver.Newton`. Contacts are resolved by successive approximation, costing extra solver iterations
+        and giving up the single-convex-program guarantee. It implements the Coulomb complementarity problem eq. (C.22)
+        of Alexis Duburcq, "Learning and Optimization of the Locomotion with an Exoskeleton for Paraplegic People", PhD
+        thesis, Universite Paris Sciences et Lettres, 2022 (HAL tel-04166955), Appendix C, whose Signorini condition is
+        what forbids the normal force from absorbing tangential demand.
     """
 
     convex = 0
