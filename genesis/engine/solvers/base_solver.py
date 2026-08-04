@@ -10,11 +10,11 @@ import torch
 
 import genesis as gs
 import genesis.utils.array_class as array_class
-from genesis.utils.misc import qd_to_torch, sanitize_index, tensor_to_array
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.states import QueriedStates
 from genesis.repr_base import RBC
 from genesis.typing import IndexType
+from genesis.utils.misc import qd_to_torch, sanitize_index, tensor_to_array
 
 
 if TYPE_CHECKING:

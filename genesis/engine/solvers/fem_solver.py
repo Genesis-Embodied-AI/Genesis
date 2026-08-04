@@ -13,8 +13,8 @@ from genesis.engine.boundaries import FloorBoundary
 from genesis.engine.entities.fem_entity import FEMEntity
 from genesis.engine.states.solvers import FEMSolverState
 from genesis.typing import IndexType
-from genesis.utils.misc import qd_to_torch
 from genesis.utils.geom import qd_transform_by_quat, qd_transform_quat_by_quat
+from genesis.utils.misc import qd_to_torch
 
 from .base_solver import Solver
 

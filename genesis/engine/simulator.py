@@ -34,9 +34,9 @@ from .solvers import (
     ToolSolver,
 )
 from .couplers import IPCCoupler, LegacyCoupler, SAPCoupler
+from .sensors import SensorManager
 from .states.cache import QueriedStates
 from .states.solvers import SimState
-from .sensors import SensorManager
 
 if TYPE_CHECKING:
     from genesis.engine.couplers import IPCCoupler, LegacyCoupler, SAPCoupler

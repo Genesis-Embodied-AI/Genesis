@@ -7,9 +7,9 @@ import torch
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
+from genesis.repr_base import RBC
 from genesis.utils import array_class
 from genesis.utils.misc import DeprecationError, tensor_to_array
-from genesis.repr_base import RBC
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver

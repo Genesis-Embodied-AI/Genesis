@@ -6,8 +6,8 @@ import numpy as np
 import quadrants as qd
 
 import genesis as gs
-import genesis.utils.element as eu
 import genesis.utils.array_class as array_class
+import genesis.utils.element as eu
 import genesis.utils.geom as gu
 from genesis.constants import IntEnum
 from genesis.engine.bvh import AABB, LBVH, FEMSurfaceTetLBVH, RigidTetLBVH
