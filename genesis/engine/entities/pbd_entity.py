@@ -1,5 +1,8 @@
+from typing import TYPE_CHECKING
+
 import quadrants as qd
 import numpy as np
+import torch
 import trimesh
 
 import genesis as gs
@@ -7,6 +10,9 @@ import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 from genesis.engine.entities.particle_entity import ParticleEntity
 from genesis.typing import IndexType
+
+if TYPE_CHECKING:
+    from genesis.engine.mesh import Mesh
 
 
 class PBDBaseEntity(ParticleEntity):
@@ -56,7 +62,7 @@ class PBDBaseEntity(ParticleEntity):
         poss = self._sanitize_particles_tensor(poss, gs.tc_float, particles_idx, envs_idx, (3,))
         self.solver._kernel_set_particles_pos(particles_idx, envs_idx, poss)
 
-    def get_particles_pos(self, envs_idx: IndexType = None):
+    def get_particles_pos(self, envs_idx: IndexType = None) -> torch.Tensor:
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         poss = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx, (3,))
         self.solver._kernel_get_particles_pos(self._particle_start, self.n_particles, envs_idx, poss)
@@ -74,7 +80,7 @@ class PBDBaseEntity(ParticleEntity):
         vels = self._sanitize_particles_tensor(vels, gs.tc_float, particles_idx, envs_idx, (3,))
         self.solver._kernel_set_particles_vel(particles_idx, envs_idx, vels)
 
-    def get_particles_vel(self, envs_idx: IndexType = None):
+    def get_particles_vel(self, envs_idx: IndexType = None) -> torch.Tensor:
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         vels = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx, (3,))
         self.solver._kernel_get_particles_vel(self._particle_start, self.n_particles, envs_idx, vels)
@@ -92,7 +98,7 @@ class PBDBaseEntity(ParticleEntity):
         actives = self._sanitize_particles_tensor(actives, gs.tc_bool, particles_idx, envs_idx)
         self.solver._kernel_set_particles_active(particles_idx, envs_idx, actives)
 
-    def get_particles_active(self, envs_idx: IndexType = None):
+    def get_particles_active(self, envs_idx: IndexType = None) -> torch.Tensor:
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         actives = self._sanitize_particles_tensor(None, gs.tc_bool, None, envs_idx)
         self.solver._kernel_get_particles_active(self._particle_start, self.n_particles, envs_idx, actives)
@@ -301,17 +307,17 @@ class PBDTetEntity(PBDBaseEntity):
     # ------------------------------------------------------------------------------------
 
     @property
-    def mesh(self):
+    def mesh(self) -> "Mesh":
         """Mesh."""
         return self._mesh
 
     @property
-    def edges(self):
+    def edges(self) -> np.ndarray:
         """Edge array of the mesh."""
         return self._edges
 
     @property
-    def n_edges(self):
+    def n_edges(self) -> int:
         """Number of edges in the mesh."""
         return len(self._edges)
 
@@ -444,7 +450,7 @@ class PBD2DEntity(PBDTetEntity):
             self.solver.inner_edges_info[i_ie].v4 = self._particle_start + inner_edges[i_ie_, 3]
 
     @property
-    def n_inner_edges(self):
+    def n_inner_edges(self) -> int:
         """The number of inner edges in the 2D mesh."""
         return len(self._inner_edges)
 
@@ -568,17 +574,17 @@ class PBD3DEntity(PBDTetEntity):
             self.solver.elems_info[i_el].v4 = self._particle_start + elems[i_el_, 3]
 
     @property
-    def n_elems(self):
+    def n_elems(self) -> int:
         """The number of tetrahedral elements in the mesh."""
         return len(self._elems)
 
     @property
-    def elem_start(self):
+    def elem_start(self) -> int:
         """The starting index of the elements in the global solver."""
         return self._elem_start
 
     @property
-    def elem_end(self):
+    def elem_end(self) -> int:
         """The ending index of the elements in the global solver."""
         return self._elem_start + self.n_elems
 
@@ -651,7 +657,7 @@ class PBDParticleEntity(PBDBaseEntity):
             self.solver.particles_ng[i_p, i_b].active = qd.cast(active, gs.qd_bool)
 
     @property
-    def n_fluid_particles(self):
+    def n_fluid_particles(self) -> int:
         """The number of fluid particles."""
         return self.n_particles
 

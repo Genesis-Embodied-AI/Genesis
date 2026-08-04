@@ -1,7 +1,10 @@
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from typing import TYPE_CHECKING
+
 import numpy as np
+import torch
 import quadrants as qd
 import trimesh
 
@@ -24,6 +27,11 @@ from genesis.utils.mesh import load_mesh
 
 from .base_entity import Entity
 from .mpm_entity import MPMEntity
+
+if TYPE_CHECKING:
+    from genesis.engine.entities.rigid_entity import RigidEntity
+    from genesis.engine.solvers.mpm_solver import MPMSolver
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
 
 @qd.data_oriented
@@ -210,7 +218,7 @@ class HybridEntity(Entity):
     # ----------------------------------- basic ops --------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def get_dofs_position(self, *args, **kwargs):
+    def get_dofs_position(self, *args, **kwargs) -> torch.Tensor:
         """
         Get the current generalized coordinates (positions) of the rigid part of the hybrid entity.
 
@@ -226,7 +234,7 @@ class HybridEntity(Entity):
         """
         return self._part_rigid.get_dofs_position(*args, **kwargs)
 
-    def get_dofs_velocity(self, *args, **kwargs):
+    def get_dofs_velocity(self, *args, **kwargs) -> torch.Tensor:
         """
         Get the current generalized velocities of the rigid part of the hybrid entity.
 
@@ -242,7 +250,7 @@ class HybridEntity(Entity):
         """
         return self._part_rigid.get_dofs_velocity(*args, **kwargs)
 
-    def get_dofs_force(self, *args, **kwargs):
+    def get_dofs_force(self, *args, **kwargs) -> torch.Tensor:
         """
         Get the current generalized forces applied on the rigid part of the hybrid entity.
 
@@ -258,7 +266,7 @@ class HybridEntity(Entity):
         """
         return self._part_rigid.get_dofs_force(*args, **kwargs)
 
-    def get_dofs_control_force(self, *args, **kwargs):
+    def get_dofs_control_force(self, *args, **kwargs) -> torch.Tensor:
         """
         Get the control forces currently applied to the rigid part of the hybrid entity.
 
@@ -465,22 +473,22 @@ class HybridEntity(Entity):
         return self._part_rigid.morph.fixed
 
     @property
-    def part_rigid(self):
+    def part_rigid(self) -> "RigidEntity":
         """The rigid part of the hybrid entity."""
         return self._part_rigid
 
     @property
-    def part_soft(self):
+    def part_soft(self) -> MPMEntity:
         """The soft part of the hybrid entity."""
         return self._part_soft
 
     @property
-    def solver_rigid(self):
+    def solver_rigid(self) -> "RigidSolver":
         """The solver associated with the rigid part of the hybrid entity."""
         return self._solver_rigid
 
     @property
-    def solver_soft(self):
+    def solver_soft(self) -> "MPMSolver":
         """The solver associated with the soft part of the hybrid entity."""
         return self._solver_soft
 

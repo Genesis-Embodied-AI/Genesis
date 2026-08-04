@@ -46,12 +46,12 @@ def uri_to_PIL(data_uri):
     return BytesIO(data)
 
 
-def get_glb_bufferview_data(glb, buffer_view):
+def get_glb_bufferview_data(glb, buffer_view) -> bytes:
     buffer = glb.buffers[buffer_view.buffer]
     return glb.get_data_from_buffer_uri(buffer.uri)
 
 
-def get_glb_data_from_accessor(glb, accessor_index):
+def get_glb_data_from_accessor(glb, accessor_index) -> np.ndarray:
     accessor = glb.accessors[accessor_index]
     buffer_view = glb.bufferViews[accessor.bufferView]
     buffer_data = get_glb_bufferview_data(glb, buffer_view)
@@ -82,7 +82,7 @@ def get_glb_data_from_accessor(glb, accessor_index):
     return array.reshape((count, *type_to_count[data_type][1]))
 
 
-def get_glb_image(glb, image_index, image_type=None):
+def get_glb_image(glb, image_index, image_type=None) -> np.ndarray | None:
     if image_index is not None:
         image = Image.open(uri_to_PIL(glb.images[image_index].uri))
         if image_type is not None:

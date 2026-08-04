@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import quadrants as qd
@@ -13,6 +14,12 @@ from genesis.utils.geom import (
     transform_pos_quat_by_trans_quat,
 )
 from genesis.utils.misc import to_gs_tensor
+
+if TYPE_CHECKING:
+    from genesis.engine.scene import Scene
+    from genesis.engine.solvers.tool_solver import ToolSolver
+    from genesis.options.morphs import Morph
+    from genesis.options.surfaces import Surface
 
 from ..base_entity import Entity
 from .mesh import Mesh
@@ -298,7 +305,7 @@ class ToolEntity(Entity):
             for i in qd.static(range(3)):
                 self.ang.grad[f, i_b][i] += ang_grad[i_b, i]
 
-    def get_state(self, f=None):
+    def get_state(self, f=None) -> ToolEntityState:
         state = ToolEntityState(self, self._sim.cur_step_global)
 
         if f is None:
@@ -493,37 +500,37 @@ class ToolEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     @property
-    def uid(self):
+    def uid(self) -> "gs.UID":
         return self._uid
 
     @property
-    def idx(self):
+    def idx(self) -> int:
         return self._idx
 
     @property
-    def scene(self):
+    def scene(self) -> "Scene":
         return self._scene
 
     @property
-    def solver(self):
+    def solver(self) -> "ToolSolver":
         return self._solver
 
     @property
-    def material(self):
+    def material(self) -> "gs.materials.Tool":
         return self._material
 
     @property
-    def morph(self):
+    def morph(self) -> "Morph":
         return self._morph
 
     @property
-    def surface(self):
+    def surface(self) -> "Surface":
         return self._surface
 
     @property
-    def init_pos(self):
+    def init_pos(self) -> np.ndarray:
         return self._init_pos
 
     @property
-    def init_quat(self):
+    def init_quat(self) -> np.ndarray:
         return self._init_quat

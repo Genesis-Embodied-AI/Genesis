@@ -82,7 +82,7 @@ class SFSolver(Solver):
     # ------------------------------------------------------------------------------------
 
     @property
-    def is_active(self):
+    def is_active(self) -> bool:
         return bool(self.jets)
 
     def set_jets(self, jets):
@@ -291,7 +291,7 @@ class SFSolver(Solver):
     # --------------------------------------- io -----------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def get_state(self, f):
+    def get_state(self, f) -> None:
         pass
 
     def set_state(self, f: int, state: Any, envs_idx: IndexType = None):

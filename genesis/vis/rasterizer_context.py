@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING
+
 import numpy as np
 import torch
 import trimesh
@@ -8,7 +10,10 @@ import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
 from genesis.ext import pyrender
 from genesis.ext.pyrender.jit_render import JITRenderer
-from genesis.utils.misc import tensor_to_array, qd_to_numpy
+from genesis.utils.misc import qd_to_numpy, tensor_to_array
+
+if TYPE_CHECKING:
+    from genesis.vis.camera import Camera
 
 
 class SegmentationColorMap:
@@ -1203,9 +1208,9 @@ class RasterizerContext:
         return self.seg_color_map.colorize_seg_idxc_arr(seg_idxc_arr)
 
     @property
-    def cameras(self):
+    def cameras(self) -> "gs.List[Camera]":
         return self.visualizer.cameras
 
     @property
-    def seg_idxc_map(self):
+    def seg_idxc_map(self) -> dict:
         return self.seg_color_map.idxc_map

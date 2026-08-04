@@ -981,7 +981,9 @@ class Collider:
                 self._solver.dyn_state, self._collider_state, self._solver.dyn_info, self._solver.rigid_config
             )
 
-    def get_contacts(self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False):
+    def get_contacts(
+        self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False
+    ) -> dict[str, torch.Tensor | np.ndarray]:
         # Early return if already pre-computed
         contact_data = self._contact_data_cache.setdefault((as_tensor, to_torch), {})
         if contact_data:

@@ -1,5 +1,6 @@
 import functools
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import quadrants as qd
@@ -12,9 +13,15 @@ import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
 from genesis.engine.states.cache import QueriedStates
 from genesis.typing import IndexType
-from genesis.utils.misc import to_gs_tensor, broadcast_tensor
+from genesis.utils.misc import broadcast_tensor, to_gs_tensor
 
 from .base_entity import Entity
+
+if TYPE_CHECKING:
+    from genesis.engine.materials.base import Material
+    from genesis.engine.mesh import Mesh
+    from genesis.options.morphs import Morph
+    from genesis.options.surfaces import Surface
 
 
 def assert_active(method):
@@ -562,7 +569,7 @@ class ParticleEntity(Entity):
         raise NotImplementedError
 
     @gs.assert_built
-    def get_particles_pos(self, envs_idx: IndexType = None):
+    def get_particles_pos(self, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Retrieve current particle positions from the solver.
 
@@ -622,7 +629,7 @@ class ParticleEntity(Entity):
         raise NotImplementedError
 
     @gs.assert_built
-    def get_particles_vel(self, envs_idx: IndexType = None):
+    def get_particles_vel(self, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Retrieve current particle velocities from the solver.
 
@@ -684,7 +691,7 @@ class ParticleEntity(Entity):
         """
         raise NotImplementedError
 
-    def get_particles_active(self, envs_idx: IndexType = None):
+    def get_particles_active(self, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Retrieve current particle activeness boolean flags from the solver.
 
@@ -701,7 +708,7 @@ class ParticleEntity(Entity):
         raise NotImplementedError
 
     @gs.assert_built
-    def get_mass(self, envs_idx: IndexType = None):
+    def get_mass(self, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Return the total mass of the entity.
 
@@ -778,86 +785,86 @@ class ParticleEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     @property
-    def uid(self):
+    def uid(self) -> "gs.UID":
         """Unique identifier for the entity."""
         return self._uid
 
     @property
-    def idx(self):
+    def idx(self) -> int:
         """Index of the entity within the simulation."""
         return self._idx
 
     @property
-    def morph(self):
+    def morph(self) -> "Morph":
         """Morphological representation used for particle sampling."""
         return self._morph
 
     @property
-    def vmesh(self):
+    def vmesh(self) -> "Mesh | None":
         """Visual mesh used for skinning and rendering."""
         return self._vmesh
 
     @property
-    def n_vverts(self):
+    def n_vverts(self) -> int:
         """Number of visual mesh vertices."""
         return len(self._vverts)
 
     @property
-    def n_vfaces(self):
+    def n_vfaces(self) -> int:
         """Number of visual mesh faces."""
         return len(self._vfaces)
 
     @property
-    def n_particles(self):
+    def n_particles(self) -> int:
         """Number of particles"""
         return self._n_particles
 
     @property
-    def particle_start(self):
+    def particle_start(self) -> int:
         """Starting index of the entity's particles in the global buffer."""
         return self._particle_start
 
     @property
-    def particle_end(self):
+    def particle_end(self) -> int:
         """Ending index (exclusive) of the entity's particles."""
         return self._particle_start + self._n_particles
 
     @property
-    def vvert_start(self):
+    def vvert_start(self) -> int:
         """Starting index for visual mesh vertices."""
         return self._vvert_start
 
     @property
-    def vvert_end(self):
+    def vvert_end(self) -> int:
         """Ending index (exclusive) for visual mesh vertices."""
         return self._vvert_start + self.n_vverts
 
     @property
-    def vface_start(self):
+    def vface_start(self) -> int:
         """Starting index for visual mesh faces."""
         return self._vface_start
 
     @property
-    def vface_end(self):
+    def vface_end(self) -> int:
         """Ending index (exclusive) for visual mesh faces."""
         return self._vface_start + self.n_vfaces
 
     @property
-    def particle_size(self):
+    def particle_size(self) -> float:
         """Diameter of individual particles."""
         return self._particle_size
 
     @property
-    def init_particles(self):
+    def init_particles(self) -> np.ndarray:
         """Initial sampled particle positions."""
         return self._particles
 
     @property
-    def material(self):
+    def material(self) -> "Material":
         """Material of this entity."""
         return self._material
 
     @property
-    def surface(self):
+    def surface(self) -> "Surface":
         """Surface for rendering."""
         return self._surface

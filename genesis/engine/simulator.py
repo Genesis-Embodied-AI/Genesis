@@ -39,8 +39,9 @@ from .states.solvers import SimState
 from .sensors import SensorManager
 
 if TYPE_CHECKING:
-    from genesis.engine.scene import Scene
+    from genesis.engine.couplers import IPCCoupler, LegacyCoupler, SAPCoupler
     from genesis.engine.entities.base_entity import Entity
+    from genesis.engine.scene import Scene
 
     from .solvers.base_solver import Solver
 
@@ -408,7 +409,7 @@ class Simulator(RBC):
     # --------------------------------------- io -----------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def get_state(self):
+    def get_state(self) -> SimState:
         state = SimState(
             scene=self.scene,
             s_global=self.cur_step_global,
@@ -446,22 +447,22 @@ class Simulator(RBC):
         return self._dt
 
     @property
-    def substeps(self):
+    def substeps(self) -> int:
         """The number of substeps per simulation step."""
         return self._substeps
 
     @property
-    def scene(self):
+    def scene(self) -> "Scene":
         """The scene object that the simulator is associated with."""
         return self._scene
 
     @property
-    def gravity(self):
+    def gravity(self) -> np.ndarray:
         """The gravity vector."""
         return self._gravity
 
     @property
-    def requires_grad(self):
+    def requires_grad(self) -> bool:
         """Whether the simulator requires gradients."""
         return self._requires_grad
 
@@ -471,51 +472,51 @@ class Simulator(RBC):
         return len(self._entities)
 
     @property
-    def entities(self):
+    def entities(self) -> "list[Entity]":
         """The list of entities in the simulator."""
         return self._entities
 
     @property
-    def substeps_local(self):
+    def substeps_local(self) -> int | None:
         """The number of substeps stored in local memory."""
         return self._substeps_local
 
     @property
-    def cur_substep_global(self):
+    def cur_substep_global(self) -> int:
         """The current substep of the simulation."""
         return self._cur_substep_global
 
     @property
-    def cur_substep_local(self):
+    def cur_substep_local(self) -> int:
         """The current substep of the simulation in local memory."""
         return self.f_global_to_f_local(self._cur_substep_global)
 
     @property
-    def cur_step_local(self):
+    def cur_step_local(self) -> int:
         """The current step of the simulation in local memory."""
         return self.f_global_to_s_local(self._cur_substep_global)
 
     @property
-    def cur_step_global(self):
+    def cur_step_global(self) -> int:
         """The current step of the simulation."""
         return self.f_global_to_s_global(self._cur_substep_global)
 
     @property
-    def cur_t(self):
+    def cur_t(self) -> float:
         """The current time of the simulation."""
         return self._cur_substep_global * self._substep_dt
 
     @property
-    def coupler(self):
+    def coupler(self) -> "IPCCoupler | LegacyCoupler | SAPCoupler":
         """The coupler object that manages the inter-solver coupling."""
         return self._coupler
 
     @property
-    def solvers(self):
+    def solvers(self) -> "list[Solver]":
         """The list of solvers in the simulator."""
         return self._solvers
 
     @property
-    def active_solvers(self):
+    def active_solvers(self) -> "list[Solver]":
         """The list of active solvers in the simulator."""
         return self._active_solvers

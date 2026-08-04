@@ -277,7 +277,7 @@ class MPMEntity(ParticleEntity):
         super().process_input_grad()
 
     @gs.assert_built
-    def get_state(self):
+    def get_state(self) -> MPMEntityState:
         """
         Get the current physical state of the particle entity.
 
@@ -368,7 +368,7 @@ class MPMEntity(ParticleEntity):
             self._sim.cur_substep_local, self._particle_start, self._n_particles, poss_grad
         )
 
-    def get_particles_pos(self, envs_idx: IndexType = None):
+    def get_particles_pos(self, envs_idx: IndexType = None) -> torch.Tensor:
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         poss = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx, (3,))
         self.solver._kernel_get_particles_pos(
@@ -394,7 +394,7 @@ class MPMEntity(ParticleEntity):
             self._sim.cur_substep_local, self._particle_start, self._n_particles, vels_grad
         )
 
-    def get_particles_vel(self, envs_idx: IndexType = None):
+    def get_particles_vel(self, envs_idx: IndexType = None) -> torch.Tensor:
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         vels = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx, (3,))
         self.solver._kernel_get_particles_vel(
@@ -419,7 +419,7 @@ class MPMEntity(ParticleEntity):
 
         self.solver._kernel_set_particles_active(self._sim.cur_substep_local, particles_idx, envs_idx, actives)
 
-    def get_particles_active(self, envs_idx: IndexType = None):
+    def get_particles_active(self, envs_idx: IndexType = None) -> torch.Tensor:
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         actives = self._sanitize_particles_tensor(None, gs.tc_bool, None, envs_idx)
         self.solver._kernel_get_particles_active(
@@ -485,7 +485,7 @@ class MPMEntity(ParticleEntity):
             self._sim.cur_substep_local, self._particle_start, self._n_particles, actu_grad
         )
 
-    def get_particles_actu(self, envs_idx: IndexType = None):
+    def get_particles_actu(self, envs_idx: IndexType = None) -> torch.Tensor:
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         actus = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx, (self.material.n_groups,))
         self.solver._kernel_get_particles_actu(
@@ -517,7 +517,7 @@ class MPMEntity(ParticleEntity):
 
     @assert_muscle
     @assert_active
-    def get_muscle_group(self):
+    def get_muscle_group(self) -> torch.Tensor:
         """
         Retrieve the muscle group index for each particle.
 
@@ -591,7 +591,7 @@ class MPMEntity(ParticleEntity):
         self.solver._kernel_set_particles_free(particles_idx, free)
 
     @assert_active
-    def get_free(self):
+    def get_free(self) -> torch.Tensor:
         """
         Get free/fixed status for all particles.
 
@@ -609,7 +609,7 @@ class MPMEntity(ParticleEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_particles_in_bbox(self, bbox_min, bbox_max):
+    def get_particles_in_bbox(self, bbox_min, bbox_max) -> torch.Tensor:
         """
         Get boolean mask for particles within a bounding box.
 

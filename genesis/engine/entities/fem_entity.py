@@ -1,5 +1,6 @@
 from functools import wraps
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import igl
 import numpy as np
@@ -11,15 +12,19 @@ import genesis as gs
 import genesis.utils.element as eu
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
-from genesis.engine.entities.rigid_entity import RigidLink
 from genesis.engine.couplers import SAPCoupler
+from genesis.engine.entities.rigid_entity import RigidLink
 from genesis.engine.states.cache import QueriedStates
 from genesis.engine.states.entities import FEMEntityState
 from genesis.repr_base import RBC
 from genesis.typing import IndexType
-from genesis.utils.misc import to_gs_tensor, tensor_to_array, broadcast_tensor
+from genesis.utils.misc import broadcast_tensor, tensor_to_array, to_gs_tensor
 
 from .base_entity import Entity
+
+if TYPE_CHECKING:
+    from genesis.engine.mesh import Mesh
+    from genesis.options.surfaces import Surface
 
 
 class FEMVisGeom(RBC):
@@ -38,72 +43,72 @@ class FEMVisGeom(RBC):
         self._vmesh = vmesh
         self._sim_verts_idx = sim_verts_idx
 
-    def get_trimesh(self):
+    def get_trimesh(self) -> "trimesh.Trimesh":
         """The underlying `trimesh.Trimesh` of the render mesh."""
         return self._vmesh.trimesh
 
     @property
-    def uid(self):
+    def uid(self) -> "gs.UID":
         """Unique ID of the vgeom."""
         return self._uid
 
     @property
-    def entity(self):
+    def entity(self) -> "FEMEntity":
         """The FEM entity the vgeom belongs to."""
         return self._entity
 
     @property
-    def vmesh(self):
+    def vmesh(self) -> "Mesh":
         """The render mesh."""
         return self._vmesh
 
     @property
-    def sim_verts_idx(self):
+    def sim_verts_idx(self) -> np.ndarray:
         """Map from render-mesh vertex index to the entity's simulated vertex index."""
         return self._sim_verts_idx
 
     @property
-    def surface(self):
+    def surface(self) -> "Surface":
         """Surface object of the vgeom."""
         return self._vmesh.surface
 
     @property
-    def uvs(self):
+    def uvs(self) -> np.ndarray | None:
         """UV coordinates of the vgeom."""
         return self._vmesh.uvs
 
     @property
-    def metadata(self):
+    def metadata(self) -> dict:
         """Metadata of the render mesh."""
         return self._vmesh.metadata
 
     @property
-    def n_vverts(self):
+    def n_vverts(self) -> int:
         """Number of render vertices of the vgeom."""
         return len(self._vmesh.verts)
 
     @property
-    def n_vfaces(self):
+    def n_vfaces(self) -> int:
         """Number of render faces of the vgeom."""
         return len(self._vmesh.faces)
 
     @property
-    def vvert_start(self):
+    def vvert_start(self) -> int:
         """Starting index of the vgeom's render vertices in the FEM solver."""
         return self._vvert_start
 
     @property
-    def vface_start(self):
+    def vface_start(self) -> int:
         """Starting index of the vgeom's render faces in the FEM solver."""
         return self._vface_start
 
     @property
-    def vvert_end(self):
+    def vvert_end(self) -> int:
         """Ending index of the vgeom's render vertices in the FEM solver."""
         return self._vvert_start + self.n_vverts
 
     @property
-    def vface_end(self):
+    def vface_end(self) -> int:
         """Ending index of the vgeom's render faces in the FEM solver."""
         return self._vface_start + self.n_vfaces
 
@@ -427,7 +432,7 @@ class FEMEntity(Entity):
 
             self.set_muscle_direction(muscle_direction)
 
-    def get_state(self):
+    def get_state(self) -> FEMEntityState:
         state = FEMEntityState(self, self._sim.cur_step_global)
         self.get_frame(self._sim.cur_substep_local, state.pos, state.vel, state.active)
 
@@ -1071,7 +1076,7 @@ class FEMEntity(Entity):
             for j in qd.static(range(3)):
                 pos[i_b, i_v_, j] = self._solver.elements_v[f, i_v, i_b].pos[j]
 
-    def get_el2v(self):
+    def get_el2v(self) -> "gs.Tensor":
         """
         Retrieve the element-to-vertex mapping.
 
@@ -1161,82 +1166,82 @@ class FEMEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     @property
-    def n_vertices(self):
+    def n_vertices(self) -> int:
         """Number of vertices in the FEM entity."""
         return len(self.init_positions)
 
     @property
-    def vgeoms(self):
+    def vgeoms(self) -> "gs.List[FEMVisGeom]":
         """The list of visual geoms (`FEMVisGeom`) in the entity, one per morph sub-mesh."""
         return self._vgeoms
 
     @property
-    def n_elements(self):
+    def n_elements(self) -> int:
         """Number of simulation elements: surface triangles for Cloth material, tetrahedra otherwise."""
         return len(self.elems)
 
     @property
-    def n_surfaces(self):
+    def n_surfaces(self) -> int:
         """Number of surface triangles extracted from the FEM mesh."""
         return self._n_surfaces
 
     @property
-    def v_start(self):
+    def v_start(self) -> int:
         """Global vertex index offset for this entity."""
         return self._v_start
 
     @property
-    def el_start(self):
+    def el_start(self) -> int:
         """Global element index offset for this entity."""
         return self._el_start
 
     @property
-    def s_start(self):
+    def s_start(self) -> int:
         """Global surface triangle index offset for this entity."""
         return self._s_start
 
     @property
-    def n_vverts(self):
+    def n_vverts(self) -> int:
         """Number of render vertices in the FEM entity, summed over its visual geoms."""
         return sum(vgeom.n_vverts for vgeom in self._vgeoms)
 
     @property
-    def n_vfaces(self):
+    def n_vfaces(self) -> int:
         """Number of render faces in the FEM entity, summed over its visual geoms."""
         return sum(vgeom.n_vfaces for vgeom in self._vgeoms)
 
     @property
-    def vvert_start(self):
+    def vvert_start(self) -> int:
         """Global render vertex index offset for this entity."""
         return self._vvert_start
 
     @property
-    def vface_start(self):
+    def vface_start(self) -> int:
         """Global render face index offset for this entity."""
         return self._vface_start
 
     @property
-    def vvert_end(self):
+    def vvert_end(self) -> int:
         """Global render vertex index past this entity's last one."""
         return self._vvert_start + self.n_vverts
 
     @property
-    def vface_end(self):
+    def vface_end(self) -> int:
         """Global render face index past this entity's last one."""
         return self._vface_start + self.n_vfaces
 
     @property
-    def n_surface_vertices(self):
+    def n_surface_vertices(self) -> int:
         """Number of unique vertices involved in surface triangles."""
         return self._n_surface_vertices
 
     @property
-    def surface_triangles(self):
+    def surface_triangles(self) -> np.ndarray:
         """Surface triangles of the FEM mesh."""
         return self._surface_tri_np
 
     @property
-    def tet_cfg(self):
+    def tet_cfg(self) -> dict:
         """Configuration of tetrahedralization."""
         tet_cfg = mu.generate_tetgen_config_from_morph(self.morph)
         return tet_cfg

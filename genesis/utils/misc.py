@@ -168,7 +168,9 @@ def set_random_seed(seed):
     torch.cuda.manual_seed_all(seed)
 
 
-def get_device(backend: gs.constants.backend, device_idx: Optional[int] = None):
+def get_device(
+    backend: gs.constants.backend, device_idx: Optional[int] = None
+) -> tuple[torch.device, str, float, gs.constants.backend]:
     if backend == gs.gpu:
         if torch.cuda.is_available():
             if torch.version.hip:
@@ -235,21 +237,21 @@ def fits_in_gpu_shared_memory(*dims: int) -> bool:
     return math.prod(dims) * itemsize <= qd.lang.impl.get_max_shared_memory_bytes(is_lowerbound_ok=True)
 
 
-def get_src_dir():
+def get_src_dir() -> str:
     return os.path.dirname(gs.__file__)
 
 
-def get_gen_log_dir():
+def get_gen_log_dir() -> str:
     current_time = datetime.datetime.now()
     unique_id = current_time.strftime("%Y%m%d_%H%M%S_%f")
     return os.path.join(os.path.dirname(gs.__file__), "gen", "logs", unique_id)
 
 
-def get_assets_dir():
+def get_assets_dir() -> str:
     return os.path.join(get_src_dir(), "assets")
 
 
-def get_cache_dir():
+def get_cache_dir() -> str:
     cache_dir = os.environ.get("GS_CACHE_FILE_PATH")
     if cache_dir is not None:
         return cache_dir
@@ -261,51 +263,51 @@ def get_cache_dir():
     return os.path.join(root_cache_dir, "genesis")
 
 
-def get_gsd_cache_dir():
+def get_gsd_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "gsd")
 
 
-def get_gnd_cache_dir():
+def get_gnd_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "terrain")
 
 
-def get_cvx_cache_dir():
+def get_cvx_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "cvx")
 
 
-def get_ptc_cache_dir():
+def get_ptc_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "ptc")
 
 
-def get_fps_pc_cache_dir():
+def get_fps_pc_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "fps_pc")
 
 
-def get_tet_cache_dir():
+def get_tet_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "tet")
 
 
-def get_gel_cache_dir():
+def get_gel_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "gel")
 
 
-def get_remesh_cache_dir():
+def get_remesh_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "rm")
 
 
-def get_wt_cache_dir():
+def get_wt_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "wt")
 
 
-def get_wth_cache_dir():
+def get_wth_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "wth")
 
 
-def get_exr_cache_dir():
+def get_exr_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "exr")
 
 
-def get_usd_cache_dir():
+def get_usd_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "usd")
 
 
@@ -997,7 +999,7 @@ def sanitize_indexed_tensor(
     return tensor, tuple(indices_)
 
 
-def get_indexed_shape(tensor_shape, indices):
+def get_indexed_shape(tensor_shape, indices) -> tuple[int, ...]:
     """Compute the resulting shape after advanced indexing without performing the operation."""
     ndim = len(tensor_shape)
 

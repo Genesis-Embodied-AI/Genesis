@@ -33,7 +33,9 @@ class PathPlanner(ABC):
     @abstractmethod
     def plan(self, qpos_goal, qpos_start=None): ...
 
-    def get_link_pose(self, robot_g_link_idx: int, obj_g_link_idx: int, envs_idx: torch.Tensor):
+    def get_link_pose(
+        self, robot_g_link_idx: int, obj_g_link_idx: int, envs_idx: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Get the relative pose of a given robot link wrt some object link.
 
@@ -99,7 +101,7 @@ class PathPlanner(ABC):
 
         return qpos_cur, qpos_goal, qpos_start, envs_idx
 
-    def get_exclude_geom_pairs(self, qposs: Sequence[torch.Tensor], envs_idx: torch.Tensor):
+    def get_exclude_geom_pairs(self, qposs: Sequence[torch.Tensor], envs_idx: torch.Tensor) -> torch.Tensor:
         """
         Parameters
         ----------

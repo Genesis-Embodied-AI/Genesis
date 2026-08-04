@@ -1,5 +1,10 @@
+from typing import TYPE_CHECKING
+
 import genesis as gs
 from genesis.repr_base import RBC
+
+if TYPE_CHECKING:
+    from genesis.engine.entities.base_entity import Entity
 
 
 class ToolEntityState:
@@ -73,35 +78,35 @@ class MPMEntityState(RBC):
         self._active = self._active.detach()
 
     @property
-    def entity(self):
+    def entity(self) -> "Entity":
         return self._entity
 
     @property
-    def s_global(self):
+    def s_global(self) -> int:
         return self._s_global
 
     @property
-    def pos(self):
+    def pos(self) -> "gs.Tensor":
         return self._pos
 
     @property
-    def vel(self):
+    def vel(self) -> "gs.Tensor":
         return self._vel
 
     @property
-    def C(self):
+    def C(self) -> "gs.Tensor":
         return self._C
 
     @property
-    def F(self):
+    def F(self) -> "gs.Tensor":
         return self._F
 
     @property
-    def Jp(self):
+    def Jp(self) -> "gs.Tensor":
         return self._Jp
 
     @property
-    def active(self):
+    def active(self) -> "gs.Tensor":
         return self._active
 
 
@@ -124,19 +129,19 @@ class SPHEntityState(RBC):
         self._vel = gs.zeros(base_shape + (3,), **args)
 
     @property
-    def entity(self):
+    def entity(self) -> "Entity":
         return self._entity
 
     @property
-    def s_global(self):
+    def s_global(self) -> int:
         return self._s_global
 
     @property
-    def pos(self):
+    def pos(self) -> "gs.Tensor":
         return self._pos
 
     @property
-    def vel(self):
+    def vel(self) -> "gs.Tensor":
         return self._vel
 
 
@@ -170,23 +175,23 @@ class FEMEntityState:
         self._active = self._active.detach()
 
     @property
-    def entity(self):
+    def entity(self) -> "Entity":
         return self._entity
 
     @property
-    def s_global(self):
+    def s_global(self) -> int:
         return self._s_global
 
     @property
-    def pos(self):
+    def pos(self) -> "gs.Tensor":
         return self._pos
 
     @property
-    def vel(self):
+    def vel(self) -> "gs.Tensor":
         return self._vel
 
     @property
-    def active(self):
+    def active(self) -> "gs.Tensor":
         return self._active
 
 
@@ -212,17 +217,17 @@ class RigidEntityState(RBC):
         self._quat = self._quat.detach()
 
     @property
-    def entity(self):
+    def entity(self) -> "Entity":
         return self._entity
 
     @property
-    def s_global(self):
+    def s_global(self) -> int:
         return self._s_global
 
     @property
-    def pos(self):
+    def pos(self) -> "gs.Tensor":
         return self._pos
 
     @property
-    def quat(self):
+    def quat(self) -> "gs.Tensor":
         return self._quat

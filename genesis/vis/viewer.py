@@ -453,24 +453,24 @@ class Viewer(RBC):
         return self._pyrender_viewer.viewer_flags["record"]
 
     @property
-    def plugins(self):
+    def plugins(self) -> "tuple[ViewerPlugin, ...]":
         """The registered viewer plugins, read-only; use ``add_plugin`` to register one."""
         return tuple(self._plugins)
 
     @property
-    def is_built(self):
+    def is_built(self) -> bool:
         return self._is_built
 
     @property
-    def res(self):
+    def res(self) -> tuple[int, int]:
         return self._res
 
     @property
-    def refresh_rate(self):
+    def refresh_rate(self) -> float:
         return self._refresh_rate
 
     @property
-    def realtime_factor(self):
+    def realtime_factor(self) -> float:
         return self._realtime_factor
 
     @realtime_factor.setter
@@ -484,14 +484,14 @@ class Viewer(RBC):
             self._realtime_pacer = Rate(value / self.scene.sim.dt)
 
     @property
-    def camera_pos(self):
+    def camera_pos(self) -> np.ndarray:
         """
         Get the camera's current position.
         """
         return np.array(self._pyrender_viewer._trackball._n_pose[:3, 3])
 
     @property
-    def camera_lookat(self):
+    def camera_lookat(self) -> np.ndarray:
         """
         Get the camera's current lookat point.
         """
@@ -500,16 +500,16 @@ class Viewer(RBC):
         return pos - z
 
     @property
-    def camera_pose(self):
+    def camera_pose(self) -> np.ndarray:
         """
         Get the camera's current pose represented by a 4x4 matrix.
         """
         return np.array(self._pyrender_viewer._trackball._n_pose)
 
     @property
-    def camera_up(self):
+    def camera_up(self) -> np.ndarray:
         return self._camera_up
 
     @property
-    def camera_fov(self):
+    def camera_fov(self) -> float:
         return self._camera_fov

@@ -39,7 +39,7 @@ class ForceField(RBC):
         return acc
 
     @property
-    def active(self):
+    def active(self) -> bool:
         """
         Whether the force field is active.
         """
@@ -74,11 +74,11 @@ class Constant(ForceField):
         return self._acc_qd
 
     @property
-    def direction(self):
+    def direction(self) -> np.ndarray:
         return self._direction
 
     @property
-    def strength(self):
+    def strength(self) -> float:
         return self._strength
 
 
@@ -128,19 +128,19 @@ class Wind(ForceField):
         return acc
 
     @property
-    def direction(self):
+    def direction(self) -> np.ndarray:
         return self._direction
 
     @property
-    def strength(self):
+    def strength(self) -> float:
         return self._strength
 
     @property
-    def radius(self):
+    def radius(self) -> float:
         return self._radius
 
     @property
-    def center(self):
+    def center(self) -> np.ndarray:
         return self._center
 
 
@@ -190,11 +190,11 @@ class Point(ForceField):
         return acc
 
     @property
-    def strength(self):
+    def strength(self) -> float:
         return self._strength
 
     @property
-    def position(self):
+    def position(self) -> np.ndarray:
         return self._position
 
 
@@ -221,11 +221,11 @@ class Drag(ForceField):
         return -self._linear * vel - self._quadratic * vel.norm() * vel
 
     @property
-    def linear(self):
+    def linear(self) -> float:
         return self._linear
 
     @property
-    def quadratic(self):
+    def quadratic(self) -> float:
         return self._quadratic
 
 
@@ -256,7 +256,7 @@ class Noise(ForceField):
         return noise * self._strength
 
     @property
-    def strength(self):
+    def strength(self) -> float:
         return self._strength
 
 
@@ -337,35 +337,35 @@ class Vortex(ForceField):
         return acceleration
 
     @property
-    def direction(self):
+    def direction(self) -> np.ndarray:
         return self._direction
 
     @property
-    def radius(self):
+    def radius(self) -> float:
         return self._radius
 
     @property
-    def center(self):
+    def center(self) -> np.ndarray:
         return self._center
 
     @property
-    def strength_perpendicular(self):
+    def strength_perpendicular(self) -> float:
         return self._strength_perpendicular
 
     @property
-    def strength_radial(self):
+    def strength_radial(self) -> float:
         return self._strength_radial
 
     @property
-    def falloff_pow(self):
+    def falloff_pow(self) -> float:
         return self._falloff_pow
 
     @property
-    def falloff_min(self):
+    def falloff_min(self) -> float:
         return self._falloff_min
 
     @property
-    def falloff_max(self):
+    def falloff_max(self) -> float:
         return self._falloff_max
 
 
@@ -413,11 +413,11 @@ class Turbulence(ForceField):
         return acc
 
     @property
-    def strength(self):
+    def strength(self) -> float:
         return self._strength
 
     @property
-    def frequency(self):
+    def frequency(self) -> float:
         return self._frequency
 
 

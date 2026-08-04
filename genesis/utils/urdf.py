@@ -15,7 +15,7 @@ from . import geom as gu
 from .misc import get_assets_dir
 
 
-def get_robot_name(file_path):
+def get_robot_name(file_path) -> str:
     """
     Extract the robot name from a URDF file.
 

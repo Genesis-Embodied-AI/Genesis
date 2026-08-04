@@ -485,5 +485,5 @@ class SensorManager:
         )
 
     @property
-    def sensors(self):
+    def sensors(self) -> "gs.List[Sensor]":
         return gs.List([sensor for sensor_list in self._sensors_by_type.values() for sensor in sensor_list])

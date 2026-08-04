@@ -41,17 +41,28 @@ from genesis.options.recorders import RecorderOptions
 from genesis.recorders import RecorderManager
 from genesis.repr_base import RBC
 from genesis.typing import IndexType
+from genesis.utils.misc import sanitize_index, tensor_to_array
 from genesis.utils.tools import FPSTracker
-from genesis.utils.misc import tensor_to_array, sanitize_index
-from genesis.vis import Visualizer
 from genesis.utils.warnings import warn_once
+from genesis.vis import Visualizer
 
 if TYPE_CHECKING:
     from genesis.engine.entities.base_entity import Entity
+    from genesis.engine.entities.emitter import Emitter
     from genesis.engine.entities.rigid_entity import RigidEntity
     from genesis.engine.sensors.base_sensor import Sensor
-    from genesis.recorders import Recorder
+    from genesis.engine.simulator import Simulator
+    from genesis.engine.solvers.base_solver import Solver
+    from genesis.engine.solvers.fem_solver import FEMSolver
+    from genesis.engine.solvers.kinematic_solver import KinematicSolver
+    from genesis.engine.solvers.mpm_solver import MPMSolver
+    from genesis.engine.solvers.pbd_solver import PBDSolver
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
+    from genesis.engine.solvers.sph_solver import SPHSolver
+    from genesis.engine.solvers.tool_solver import ToolSolver
+    from genesis.ext.pyrender.viewer import Viewer
     from genesis.options.sensors.options import SensorOptions, SensorT
+    from genesis.recorders import Recorder
 
 
 @gs.assert_initialized
@@ -1065,7 +1076,7 @@ class Scene(RBC):
         return self._sim.get_state()
 
     @gs.assert_built
-    def get_state(self):
+    def get_state(self) -> SimState:
         """
         Returns the current state of the scene.
 
@@ -1626,27 +1637,27 @@ class Scene(RBC):
     # ------------------------------------------------------------------------------------
 
     @property
-    def uid(self):
+    def uid(self) -> "gs.UID":
         """The unique ID of the scene."""
         return self._uid
 
     @property
-    def dt(self):
+    def dt(self) -> float:
         """The time duration for each simulation step."""
         return self._sim.dt
 
     @property
-    def t(self):
+    def t(self) -> int:
         """The current simulation time step."""
         return self._t
 
     @property
-    def substeps(self):
+    def substeps(self) -> int:
         """The number of substeps per simulation step."""
         return self._sim.substeps
 
     @property
-    def requires_grad(self):
+    def requires_grad(self) -> bool:
         """Whether the scene is in differentiable mode."""
         return self._sim.requires_grad
 
@@ -1656,43 +1667,43 @@ class Scene(RBC):
         return self._is_built
 
     @property
-    def show_FPS(self):
+    def show_FPS(self) -> bool:
         """Whether to print the frames per second (FPS) in the terminal."""
         warn_once("Scene.show_FPS is deprecated. Please use profiling_options.show_FPS")
         return self.profiling_options.show_FPS
 
     @property
-    def gravity(self):
+    def gravity(self) -> np.ndarray:
         """The gravity in the scene."""
         return self._sim.gravity
 
     @property
-    def viewer(self):
+    def viewer(self) -> "Viewer | None":
         """The viewer object for the scene."""
         return self._visualizer.viewer
 
     @property
-    def visualizer(self):
+    def visualizer(self) -> "Visualizer":
         """The visualizer object for the scene."""
         return self._visualizer
 
     @property
-    def sim(self):
+    def sim(self) -> "Simulator":
         """The scene's top-level simulator."""
         return self._sim
 
     @property
-    def cur_t(self):
+    def cur_t(self) -> float:
         """The current simulation time."""
         return self._sim.cur_t
 
     @property
-    def solvers(self):
+    def solvers(self) -> "list[Solver]":
         """All the solvers managed by the scene's simulator."""
         return self._sim.solvers
 
     @property
-    def active_solvers(self):
+    def active_solvers(self) -> "list[Solver]":
         """All the active solvers managed by the scene's simulator."""
         return self._sim.active_solvers
 
@@ -1745,47 +1756,47 @@ class Scene(RBC):
             gs.raise_exception(f"Entity not found for uid: '{uid}'.")
 
     @property
-    def emitters(self):
+    def emitters(self) -> "gs.List[Emitter]":
         """All the emitters in the scene."""
         return self._emitters
 
     @property
-    def tool_solver(self):
+    def tool_solver(self) -> "ToolSolver":
         """The scene's `tool_solver`, managing all the `ToolEntity` in the scene."""
         return self._sim.tool_solver
 
     @property
-    def rigid_solver(self):
+    def rigid_solver(self) -> "RigidSolver":
         """The scene's `rigid_solver`, managing all the `RigidEntity` in the scene."""
         return self._sim.rigid_solver
 
     @property
-    def kinematic_solver(self):
+    def kinematic_solver(self) -> "KinematicSolver":
         """The scene's `kinematic_solver`, managing all the kinematic (visualization-only) entities in the scene."""
         return self._sim.kinematic_solver
 
     @property
-    def mpm_solver(self):
+    def mpm_solver(self) -> "MPMSolver":
         """The scene's `mpm_solver`, managing all the `MPMEntity` in the scene."""
         return self._sim.mpm_solver
 
     @property
-    def sph_solver(self):
+    def sph_solver(self) -> "SPHSolver":
         """The scene's `sph_solver`, managing all the `SPHEntity` in the scene."""
         return self._sim.sph_solver
 
     @property
-    def fem_solver(self):
+    def fem_solver(self) -> "FEMSolver":
         """The scene's `fem_solver`, managing all the `FEMEntity` in the scene."""
         return self._sim.fem_solver
 
     @property
-    def pbd_solver(self):
+    def pbd_solver(self) -> "PBDSolver":
         """The scene's `pbd_solver`, managing all the `PBDEntity` in the scene."""
         return self._sim.pbd_solver
 
     @property
-    def segmentation_idx_dict(self):
+    def segmentation_idx_dict(self) -> dict:
         """
         Returns a dictionary mapping segmentation indices to scene entities.
 

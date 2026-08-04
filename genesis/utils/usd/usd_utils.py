@@ -249,7 +249,7 @@ def extract_scale(T: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     return Q, S
 
 
-def get_attr_value_by_candidates(prim: Usd.Prim, candidates: List[str], attr_name: str, default_value: float):
+def get_attr_value_by_candidates(prim: Usd.Prim, candidates: List[str], attr_name: str, default_value: float) -> float:
     for candidate in candidates:
         attr_value = prim.GetAttribute(candidate).Get()
         if attr_value is not None:

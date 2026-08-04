@@ -322,7 +322,9 @@ class ConstraintSolver:
             self._solver.rigid_config,
         )
 
-    def get_equality_constraints(self, as_tensor: bool = True, to_torch: bool = True):
+    def get_equality_constraints(
+        self, as_tensor: bool = True, to_torch: bool = True
+    ) -> dict[str, torch.Tensor | np.ndarray]:
         # Early return if already pre-computed
         eq_const_info = self._eq_const_info_cache.get((as_tensor, to_torch))
         if eq_const_info is not None:
@@ -371,7 +373,9 @@ class ConstraintSolver:
 
         return eq_const_info.copy()
 
-    def get_weld_constraints(self, as_tensor: bool = True, to_torch: bool = True):
+    def get_weld_constraints(
+        self, as_tensor: bool = True, to_torch: bool = True
+    ) -> dict[str, torch.Tensor | np.ndarray]:
         eq_const_info = self.get_equality_constraints(as_tensor, to_torch)
         eq_type = eq_const_info.pop("type")
 

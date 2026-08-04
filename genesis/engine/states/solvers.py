@@ -1,5 +1,10 @@
+from typing import TYPE_CHECKING
+
 import genesis as gs
 from genesis.repr_base import RBC
+
+if TYPE_CHECKING:
+    from genesis.engine.scene import Scene
 
 
 class SimState(RBC):
@@ -28,15 +33,15 @@ class SimState(RBC):
                 solver_state.serializable()
 
     @property
-    def scene(self):
+    def scene(self) -> "Scene":
         return self._scene
 
     @property
-    def s_global(self):
+    def s_global(self) -> int:
         return self._s_global
 
     @property
-    def solvers_state(self):
+    def solvers_state(self) -> list:
         return self._solvers_state
 
     def __iter__(self):
@@ -76,7 +81,7 @@ class KinematicSolverState:
         self.i_pos_shift = self.i_pos_shift.detach()
 
     @property
-    def s_global(self):
+    def s_global(self) -> int:
         return self._s_global
 
 
@@ -117,7 +122,7 @@ class RigidSolverState:
         self.friction_ratio = self.friction_ratio.detach()
 
     @property
-    def s_global(self):
+    def s_global(self) -> int:
         return self._s_global
 
 
@@ -179,31 +184,31 @@ class MPMSolverState(RBC):
         self._active = self._active.detach()
 
     @property
-    def scene(self):
+    def scene(self) -> "Scene":
         return self._scene
 
     @property
-    def pos(self):
+    def pos(self) -> "gs.Tensor":
         return self._pos
 
     @property
-    def vel(self):
+    def vel(self) -> "gs.Tensor":
         return self._vel
 
     @property
-    def C(self):
+    def C(self) -> "gs.Tensor":
         return self._C
 
     @property
-    def F(self):
+    def F(self) -> "gs.Tensor":
         return self._F
 
     @property
-    def Jp(self):
+    def Jp(self) -> "gs.Tensor":
         return self._Jp
 
     @property
-    def active(self):
+    def active(self) -> "gs.Tensor":
         return self._active
 
 
@@ -226,19 +231,19 @@ class SPHSolverState:
         self._active = gs.zeros((self._scene.sim._B, scene.sim.sph_solver.n_particles), **args)
 
     @property
-    def scene(self):
+    def scene(self) -> "Scene":
         return self._scene
 
     @property
-    def pos(self):
+    def pos(self) -> "gs.Tensor":
         return self._pos
 
     @property
-    def vel(self):
+    def vel(self) -> "gs.Tensor":
         return self._vel
 
     @property
-    def active(self):
+    def active(self) -> "gs.Tensor":
         return self._active
 
 
@@ -261,19 +266,19 @@ class PBDSolverState:
         self._free = gs.zeros((self._scene.sim._B, scene.sim.pbd_solver.n_particles), **args)
 
     @property
-    def scene(self):
+    def scene(self) -> "Scene":
         return self._scene
 
     @property
-    def pos(self):
+    def pos(self) -> "gs.Tensor":
         return self._pos
 
     @property
-    def vel(self):
+    def vel(self) -> "gs.Tensor":
         return self._vel
 
     @property
-    def free(self):
+    def free(self) -> "gs.Tensor":
         return self._free
 
 
@@ -299,17 +304,17 @@ class FEMSolverState:
         self._active = self._active.detach()
 
     @property
-    def scene(self):
+    def scene(self) -> "Scene":
         return self._scene
 
     @property
-    def pos(self):
+    def pos(self) -> "gs.Tensor":
         return self._pos
 
     @property
-    def vel(self):
+    def vel(self) -> "gs.Tensor":
         return self._vel
 
     @property
-    def active(self):
+    def active(self) -> "gs.Tensor":
         return self._active

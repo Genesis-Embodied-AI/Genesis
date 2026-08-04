@@ -1,6 +1,6 @@
 import os
 import pickle as pkl
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 import igl
 import numpy as np
@@ -13,12 +13,13 @@ import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 from genesis.repr_base import RBC
 from genesis.typing import IndexType
-from genesis.utils.misc import tensor_to_array, qd_to_torch, DeprecationError
+from genesis.utils.misc import DeprecationError, qd_to_torch, tensor_to_array
 
 if TYPE_CHECKING:
     from genesis.engine.materials.rigid import Rigid as RigidMaterial
     from genesis.engine.mesh import Mesh
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
+    from genesis.options.surfaces import Surface
 
     from .rigid_entity import RigidEntity
     from .rigid_link import RigidLink
@@ -277,13 +278,13 @@ class RigidGeom(RBC):
         sd_grad = np.stack([sd_grad_x, sd_grad_y, sd_grad_z], -1)
         return sd_grad
 
-    def get_trimesh(self):
+    def get_trimesh(self) -> "trimesh.Trimesh":
         """
         Get the geom's trimesh object.
         """
         return self._mesh.trimesh
 
-    def get_sdf_trimesh(self, color=[1.0, 1.0, 0.6, 1.0]):
+    def get_sdf_trimesh(self, color=[1.0, 1.0, 0.6, 1.0]) -> "trimesh.Trimesh":
         """
         Reconstruct trimesh object from sdf.
         """
@@ -384,7 +385,7 @@ class RigidGeom(RBC):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_pos(self, envs_idx: IndexType = None, *, relative: bool = True):
+    def get_pos(self, envs_idx: IndexType = None, *, relative: bool = True) -> torch.Tensor:
         """
         Get the position of the geom.
 
@@ -394,7 +395,7 @@ class RigidGeom(RBC):
         return self._solver.get_geoms_pos(self._idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
-    def get_quat(self, envs_idx: IndexType = None, *, relative: bool = True):
+    def get_quat(self, envs_idx: IndexType = None, *, relative: bool = True) -> torch.Tensor:
         """
         Get the quaternion of the geom.
 
@@ -404,7 +405,7 @@ class RigidGeom(RBC):
         return self._solver.get_geoms_quat(self._idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
-    def get_verts(self):
+    def get_verts(self) -> torch.Tensor:
         """
         Get the vertices of the geom in world frame.
         """
@@ -420,7 +421,7 @@ class RigidGeom(RBC):
         return tensor
 
     @gs.assert_built
-    def get_AABB(self):
+    def get_AABB(self) -> torch.Tensor:
         """
         Get the vertex-based axis-aligned bounding box (AABB) of the geom in world frame.
         """
@@ -437,7 +438,7 @@ class RigidGeom(RBC):
             self._sol_params = sol_params
 
     @property
-    def sol_params(self):
+    def sol_params(self) -> np.ndarray:
         """
         Get the solver parameters of this geometry.
         """
@@ -450,7 +451,7 @@ class RigidGeom(RBC):
     # ------------------------------------------------------------------------------------
 
     @property
-    def uid(self):
+    def uid(self) -> "gs.UID":
         """
         Get the unique ID of the geom.
         """
@@ -471,35 +472,35 @@ class RigidGeom(RBC):
         return self._type
 
     @property
-    def friction(self):
+    def friction(self) -> float:
         """
         Get the friction coefficient of the geom.
         """
         return self._friction
 
     @property
-    def friction_torsional(self):
+    def friction_torsional(self) -> float:
         """
         Get the torsional friction coefficient of the geom (see 'gs.materials.Rigid').
         """
         return self._friction_torsional
 
     @property
-    def friction_rolling(self):
+    def friction_rolling(self) -> float:
         """
         Get the rolling friction coefficient of the geom (see 'gs.materials.Rigid').
         """
         return self._friction_rolling
 
     @property
-    def data(self):
+    def data(self) -> np.ndarray:
         """
         Get the additional data of the geom.
         """
         return self._data
 
     @property
-    def metadata(self):
+    def metadata(self) -> dict:
         """
         Get the metadata of the geom.
         """
@@ -601,70 +602,70 @@ class RigidGeom(RBC):
         return self._init_quat
 
     @property
-    def init_verts(self):
+    def init_verts(self) -> np.ndarray:
         """
         Get the initial vertices of the geom.
         """
         return self._init_verts
 
     @property
-    def init_faces(self):
+    def init_faces(self) -> np.ndarray:
         """
         Get the initial faces of the geom.
         """
         return self._init_faces
 
     @property
-    def init_edges(self):
+    def init_edges(self) -> np.ndarray:
         """
         Get the initial edges of the geom.
         """
         return self._init_edges
 
     @property
-    def init_normals(self):
+    def init_normals(self) -> np.ndarray:
         """
         Get the initial normals of the geom.
         """
         return self._init_normals
 
     @property
-    def init_center_pos(self):
+    def init_center_pos(self) -> np.ndarray:
         """
         Get the initial center position of the geom.
         """
         return self._init_center_pos
 
     @property
-    def uvs(self):
+    def uvs(self) -> np.ndarray | None:
         """
         Get the UV coordinates of the geom.
         """
         return self._uvs
 
     @property
-    def surface(self):
+    def surface(self) -> "Surface":
         """
         Get the surface object of the geom.
         """
         return self._surface
 
     @property
-    def gsd_path(self):
+    def gsd_path(self) -> str:
         """
         Get the path to the preprocessed `.gsd` file.
         """
         return self._gsd_path
 
     @property
-    def sdf_res(self):
+    def sdf_res(self) -> np.ndarray:
         """
         Get the resolution of the geom's signed distance field (SDF).
         """
         return self._sdf_res
 
     @property
-    def sdf_val(self):
+    def sdf_val(self) -> np.ndarray:
         """
         Get the signed distance field (SDF) of the geom.
         """
@@ -673,14 +674,14 @@ class RigidGeom(RBC):
         return self._sdf_val
 
     @property
-    def sdf_val_flattened(self):
+    def sdf_val_flattened(self) -> np.ndarray:
         """
         Get the flattened signed distance field (SDF) of the geom.
         """
         return self.sdf_val.reshape((-1,))
 
     @property
-    def sdf_grad(self):
+    def sdf_grad(self) -> np.ndarray:
         """
         Get the gradient of the geom's signed distance field (SDF).
         """
@@ -689,14 +690,14 @@ class RigidGeom(RBC):
         return self._sdf_grad
 
     @property
-    def sdf_grad_flattened(self):
+    def sdf_grad_flattened(self) -> np.ndarray:
         """
         Get the flattened gradient of the geom's signed distance field (SDF).
         """
         return self.sdf_grad.reshape(-1, 3)
 
     @property
-    def sdf_max(self):
+    def sdf_max(self) -> float:
         """
         Get the maximum value of the geom's signed distance field (SDF).
         """
@@ -705,21 +706,21 @@ class RigidGeom(RBC):
         return self._sdf_max
 
     @property
-    def sdf_cell_size(self):
+    def sdf_cell_size(self) -> np.ndarray:
         """
         Get the cell size of the geom's signed distance field (SDF).
         """
         return self._sdf_cell_size
 
     @property
-    def sdf_grad_delta(self):
+    def sdf_grad_delta(self) -> np.ndarray:
         """
         Get the delta value for computing the gradient of the geom's signed distance field (SDF).
         """
         return self._sdf_grad_delta
 
     @property
-    def sdf_closest_vert(self):
+    def sdf_closest_vert(self) -> np.ndarray:
         """
         Get the closest vertex of each cell of the geom's signed distance field (SDF).
         """
@@ -728,14 +729,14 @@ class RigidGeom(RBC):
         return self._sdf_closest_vert
 
     @property
-    def sdf_closest_vert_flattened(self):
+    def sdf_closest_vert_flattened(self) -> np.ndarray:
         """
         Get the flattened closest vertex of each cell of the geom's signed distance field (SDF).
         """
         return self.sdf_closest_vert.reshape((-1,))
 
     @property
-    def T_mesh_to_sdf(self):
+    def T_mesh_to_sdf(self) -> np.ndarray:
         """
         Get the transformation matrix of the geom's mesh frame w.r.t its signed distance field (SDF) frame.
         """
@@ -744,7 +745,7 @@ class RigidGeom(RBC):
         return self._T_mesh_to_sdf
 
     @property
-    def n_cells(self):
+    def n_cells(self) -> int:
         """
         Number of cells in the geom's signed distance field (SDF).
         """
@@ -765,91 +766,91 @@ class RigidGeom(RBC):
         return len(self._init_faces)
 
     @property
-    def n_edges(self):
+    def n_edges(self) -> int:
         """
         Number of edges of the geom.
         """
         return len(self._init_edges)
 
     @property
-    def cell_start(self):
+    def cell_start(self) -> int:
         """
         Get the starting index of the cells of the signed distance field (SDF) in the rigid solver.
         """
         return self._cell_start
 
     @property
-    def vert_start(self):
+    def vert_start(self) -> int:
         """
         Get the starting index of the geom's vertices in the rigid solver.
         """
         return self._vert_start
 
     @property
-    def face_start(self):
+    def face_start(self) -> int:
         """
         Get the starting index of the geom's faces in the rigid solver.
         """
         return self._face_start
 
     @property
-    def edge_start(self):
+    def edge_start(self) -> int:
         """
         Get the starting index of the geom's edges in the rigid solver.
         """
         return self._edge_start
 
     @property
-    def verts_state_start(self):
+    def verts_state_start(self) -> int:
         """
         Get the starting index of the geom's vertices in the rigid solver.
         """
         return self._verts_state_start
 
     @property
-    def cell_end(self):
+    def cell_end(self) -> int:
         """
         Get the ending index of the cells of the signed distance field (SDF) in the rigid solver.
         """
         return self.n_cells + self.cell_start
 
     @property
-    def vert_end(self):
+    def vert_end(self) -> int:
         """
         Get the ending index of the geom's vertices in the rigid solver.
         """
         return self.n_verts + self.vert_start
 
     @property
-    def verts_state_end(self):
+    def verts_state_end(self) -> int:
         """
         Get the ending index of the geom's vertices in the rigid solver.
         """
         return self.n_verts + self.verts_state_start
 
     @property
-    def face_end(self):
+    def face_end(self) -> int:
         """
         Get the ending index of the geom's faces in the rigid solver.
         """
         return self.n_faces + self.face_start
 
     @property
-    def edge_end(self):
+    def edge_end(self) -> int:
         """
         Get the ending index of the geom's edges in the rigid solver.
         """
         return self.n_edges + self.edge_start
 
     @property
-    def is_built(self):
+    def is_built(self) -> bool:
         """
         Whether the rigid entity the geom belongs to is built.
         """
         return self.entity.is_built
 
     @property
-    def is_free(self):
+    def is_free(self) -> NoReturn:
         raise DeprecationError("This property has been removed.")
 
     @property
@@ -908,7 +909,7 @@ class RigidVisGeom(RBC):
     def _build(self):
         pass
 
-    def get_trimesh(self):
+    def get_trimesh(self) -> "trimesh.Trimesh":
         """
         Get trimesh object.
         """
@@ -919,7 +920,7 @@ class RigidVisGeom(RBC):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_pos(self, envs_idx: IndexType = None, *, relative: bool = True):
+    def get_pos(self, envs_idx: IndexType = None, *, relative: bool = True) -> torch.Tensor:
         """
         Get the position of the visual geom.
 
@@ -929,7 +930,7 @@ class RigidVisGeom(RBC):
         return self._solver.get_vgeoms_pos(self._idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
-    def get_quat(self, envs_idx: IndexType = None, *, relative: bool = True):
+    def get_quat(self, envs_idx: IndexType = None, *, relative: bool = True) -> torch.Tensor:
         """
         Get the quaternion of the visual geom.
 
@@ -939,7 +940,7 @@ class RigidVisGeom(RBC):
         return self._solver.get_vgeoms_quat(self._idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
-    def get_vAABB(self, envs_idx: IndexType = None):
+    def get_vAABB(self, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Get the axis-aligned bounding box (AABB) of the geom in world frame.
 
@@ -983,7 +984,7 @@ class RigidVisGeom(RBC):
         )
 
     @gs.assert_built
-    def get_vverts(self, envs_idx: IndexType = None):
+    def get_vverts(self, envs_idx: IndexType = None) -> torch.Tensor:
         """Return a copy of this vgeom's visual vertex positions in world space.
 
         Entities created with 'morph.enable_custom_vverts=True' read from the engine-owned 'vverts_state.pos' buffer.
@@ -1009,151 +1010,151 @@ class RigidVisGeom(RBC):
     # ------------------------------------------------------------------------------------
 
     @property
-    def uid(self):
+    def uid(self) -> "gs.UID":
         """
         Get the unique ID of the vgeom.
         """
         return self._uid
 
     @property
-    def idx(self):
+    def idx(self) -> int:
         """
         Get the global index of the vgeom in RigidSolver.
         """
         return self._idx
 
     @property
-    def link(self):
+    def link(self) -> "RigidLink":
         """
         Get the link that the vgeom belongs to.
         """
         return self._link
 
     @property
-    def entity(self):
+    def entity(self) -> "RigidEntity":
         """
         Get the entity that the vgeom belongs to.
         """
         return self._entity
 
     @property
-    def vmesh(self):
+    def vmesh(self) -> "Mesh":
         return self._vmesh
 
     @property
-    def solver(self):
+    def solver(self) -> "RigidSolver":
         """
         Get the solver that the vgeom belongs to.
         """
         return self._solver
 
     @property
-    def metadata(self):
+    def metadata(self) -> dict:
         """
         Get the metadata of the vgeom.
         """
         return self._metadata
 
     @property
-    def init_pos(self):
+    def init_pos(self) -> np.ndarray:
         """
         Get the initial position of the vgeom.
         """
         return self._init_pos
 
     @property
-    def init_quat(self):
+    def init_quat(self) -> np.ndarray:
         """
         Get the initial quaternion of the vgeom.
         """
         return self._init_quat
 
     @property
-    def init_vverts(self):
+    def init_vverts(self) -> np.ndarray:
         """
         Get the initial vertices of the vgeom.
         """
         return self._init_vverts
 
     @property
-    def init_vfaces(self):
+    def init_vfaces(self) -> np.ndarray:
         """
         Get the initial faces of the vgeom.
         """
         return self._init_vfaces
 
     @property
-    def init_vnormals(self):
+    def init_vnormals(self) -> np.ndarray:
         """
         Get the initial normals of the vgeom.
         """
         return self._init_vnormals
 
     @property
-    def uvs(self):
+    def uvs(self) -> np.ndarray | None:
         """
         Get the UV coordinates of the vgeom.
         """
         return self._uvs
 
     @property
-    def surface(self):
+    def surface(self) -> "Surface":
         """
         Get the surface object of the vgeom.
         """
         return self._surface
 
     @property
-    def n_vverts(self):
+    def n_vverts(self) -> int:
         """
         Number of vertices of the vgeom.
         """
         return len(self._init_vverts)
 
     @property
-    def n_vfaces(self):
+    def n_vfaces(self) -> int:
         """
         Number of faces of the vgeom.
         """
         return len(self._init_vfaces)
 
     @property
-    def vvert_start(self):
+    def vvert_start(self) -> int:
         """
         Get the starting index of the vgeom's vertices in the rigid solver.
         """
         return self._vvert_start
 
     @property
-    def vface_start(self):
+    def vface_start(self) -> int:
         """
         Get the starting index of the vgeom's faces in the rigid solver.
         """
         return self._vface_start
 
     @property
-    def vvert_end(self):
+    def vvert_end(self) -> int:
         """
         Get the ending index of the vgeom's vertices in the rigid solver.
         """
         return self.n_vverts + self.vvert_start
 
     @property
-    def vface_end(self):
+    def vface_end(self) -> int:
         """
         Get the ending index of the vgeom's faces in the rigid solver.
         """
         return self.n_vfaces + self.vface_start
 
     @property
-    def is_built(self):
+    def is_built(self) -> bool:
         """
         Whether the rigid entity the vgeom belongs to is built.
         """
         return self.entity.is_built
 
     @property
-    def is_free(self):
+    def is_free(self) -> NoReturn:
         raise DeprecationError("This property has been removed.")
 
     @property

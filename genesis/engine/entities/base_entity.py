@@ -7,8 +7,13 @@ from genesis.repr_base import RBC
 from genesis.typing import IndexType
 
 if TYPE_CHECKING:
+    from genesis.engine.materials.base import Material
     from genesis.engine.scene import Scene
     from genesis.engine.sensors.base_sensor import Sensor
+    from genesis.engine.simulator import Simulator
+    from genesis.engine.solvers.base_solver import Solver
+    from genesis.options.morphs import Morph
+    from genesis.options.surfaces import Surface
 
 
 class Entity(RBC):
@@ -57,39 +62,39 @@ class Entity(RBC):
     # ------------------------------------------------------------------------------------
 
     @property
-    def uid(self):
+    def uid(self) -> "gs.UID":
         return self._uid
 
     @property
-    def idx(self):
+    def idx(self) -> int:
         return self._idx
 
     @property
-    def scene(self):
+    def scene(self) -> "Scene":
         return self._scene
 
     @property
-    def sim(self):
+    def sim(self) -> "Simulator":
         return self._sim
 
     @property
-    def solver(self):
+    def solver(self) -> "Solver":
         return self._solver
 
     @property
-    def surface(self):
+    def surface(self) -> "Surface":
         return self._surface
 
     @property
-    def morph(self):
+    def morph(self) -> "Morph":
         return self._morph
 
     @property
-    def material(self):
+    def material(self) -> "Material":
         return self._material
 
     @property
-    def is_built(self):
+    def is_built(self) -> bool:
         return self._solver._scene._is_built
 
     def _repr_brief(self):

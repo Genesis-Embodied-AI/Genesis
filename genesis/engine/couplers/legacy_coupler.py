@@ -15,6 +15,7 @@ from genesis.utils.geom import qd_inv_transform_by_trans_quat, qd_transform_by_t
 
 if TYPE_CHECKING:
     from genesis.engine.simulator import Simulator
+    from genesis.engine.solvers.base_solver import Solver
 
 CLAMPED_INV_DT = 50.0
 
@@ -963,6 +964,6 @@ class LegacyCoupler(RBC):
             )
 
     @property
-    def active_solvers(self):
+    def active_solvers(self) -> "list[Solver]":
         """All the active solvers managed by the scene's simulator."""
         return self.sim.active_solvers

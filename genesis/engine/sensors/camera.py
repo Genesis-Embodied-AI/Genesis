@@ -113,14 +113,14 @@ class BatchRendererCameraWrapper(BaseCameraWrapper):
         self._up = up
         self.transform = pos_lookat_up_to_T(pos, lookat, up)
 
-    def get_pos(self):
+    def get_pos(self) -> torch.Tensor:
         """Get camera position (for batch renderer)."""
         n_envs = self.sensor._manager._sim.n_envs
         if self._pos.ndim > 1 or n_envs == 0:
             return self._pos
         return self._pos[None].expand((n_envs, -1))
 
-    def get_quat(self):
+    def get_quat(self) -> torch.Tensor:
         """Get camera quaternion (for batch renderer)."""
         quat = T_to_quat(self.transform)
         n_envs = self.sensor._manager._sim.n_envs

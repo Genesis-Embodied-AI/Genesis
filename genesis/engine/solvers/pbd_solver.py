@@ -242,7 +242,7 @@ class PBDSolver(Solver):
     # ------------------------------------------------------------------------------------
 
     @property
-    def is_active(self):
+    def is_active(self) -> bool:
         return self.n_particles > 0
 
     def add_entity(
@@ -844,7 +844,7 @@ class PBDSolver(Solver):
                 self.particles[i_p, i_b].vel[j] = vel[i_b, i_p, j]
             self.particles[i_p, i_b].free = free[i_b, i_p]
 
-    def get_state(self, f):
+    def get_state(self, f) -> PBDSolverState:
         if self.is_active:
             state = PBDSolverState(self.scene)
             self._kernel_get_state(f, state.pos, state.vel, state.free)
@@ -852,7 +852,7 @@ class PBDSolver(Solver):
             state = None
         return state
 
-    def get_state_render(self):
+    def get_state_render(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor] | tuple[None, None, None]:
         """
         Get visual vertex positions, UVs, and face indices for rendering.
 
@@ -1030,67 +1030,67 @@ class PBDSolver(Solver):
     # ------------------------------------------------------------------------------------
 
     @property
-    def n_particles(self):
+    def n_particles(self) -> int:
         if self.is_built:
             return self._n_particles
         return sum([entity.n_particles for entity in self._entities])
 
     @property
-    def n_fluid_particles(self):
+    def n_fluid_particles(self) -> int:
         if self.is_built:
             return self._n_fluid_particles
         return sum(entity.n_fluid_particles for entity in self._entities if isinstance(entity, PBDParticleEntity))
 
     @property
-    def n_edges(self):
+    def n_edges(self) -> int:
         if self.is_built:
             return self._n_edges
         return sum(entity.n_edges for entity in self._entities if isinstance(entity, PBDTetEntity))
 
     @property
-    def n_inner_edges(self):
+    def n_inner_edges(self) -> int:
         if self.is_built:
             return self._n_inner_edges
         return sum(entity.n_inner_edges for entity in self._entities if isinstance(entity, PBD2DEntity))
 
     @property
-    def n_elems(self):
+    def n_elems(self) -> int:
         if self.is_built:
             return self._n_elems
         return sum(entity.n_elems for entity in self._entities if isinstance(entity, PBD3DEntity))
 
     @property
-    def n_vverts(self):
+    def n_vverts(self) -> int:
         if self.is_built:
             return self._n_vverts
         return sum(entity.n_vverts for entity in self._entities)
 
     @property
-    def n_vfaces(self):
+    def n_vfaces(self) -> int:
         if self.is_built:
             return self._n_vfaces
         return sum(entity.n_vfaces for entity in self._entities)
 
     @property
-    def particle_size(self):
+    def particle_size(self) -> float:
         return self._particle_size
 
     @property
-    def particle_radius(self):
+    def particle_radius(self) -> float:
         return self._particle_size / 2.0
 
     @property
-    def hash_grid_res(self):
+    def hash_grid_res(self) -> np.ndarray:
         return self.sh.grid_res
 
     @property
-    def hash_grid_cell_size(self):
+    def hash_grid_cell_size(self) -> float:
         return self.sh.cell_size
 
     @property
-    def upper_bound(self):
+    def upper_bound(self) -> np.ndarray:
         return self._upper_bound
 
     @property
-    def lower_bound(self):
+    def lower_bound(self) -> np.ndarray:
         return self._lower_bound

@@ -173,11 +173,11 @@ class MeshInfoGroup:
         return [mesh_info.export_mesh(scale, is_mesh_zup) for mesh_info in self.infos.values()]
 
 
-def get_asset_path(file):
+def get_asset_path(file) -> str:
     return os.path.join(get_src_dir(), "assets", file)
 
 
-def get_gsd_path(verts, faces, sdf_res, sdf_cell_size):
+def get_gsd_path(verts, faces, sdf_res, sdf_cell_size) -> str:
     # The grid is fully determined by the mesh plus the resolved per-axis resolution and cell size, so the key is
     # built from those rather than the material defaults: the resolution now also depends on wall thickness, so the
     # defaults no longer identify the grid. Schema tag bumped when the on-disk SDF layout changes (e.g. scalar ->
@@ -187,51 +187,51 @@ def get_gsd_path(verts, faces, sdf_res, sdf_cell_size):
     return os.path.join(get_gsd_cache_dir(), f"{hashkey}.gsd")
 
 
-def get_gnd_path(name, subterrain_types, subterrain_size, horizontal_scale, vertical_scale, n_subterrains):
+def get_gnd_path(name, subterrain_types, subterrain_size, horizontal_scale, vertical_scale, n_subterrains) -> str:
     hashkey = get_hashkey(name, subterrain_types, subterrain_size, horizontal_scale, vertical_scale, n_subterrains)
     return os.path.join(get_gnd_cache_dir(), f"{hashkey}.gnd")
 
 
-def get_cvx_cache(verts, faces, coacd_options):
+def get_cvx_cache(verts, faces, coacd_options) -> "MeshCache":
     return MeshCache(get_cvx_cache_dir(), "cvx", verts, faces, coacd_options.__dict__)
 
 
-def get_ptc_cache(verts, faces, p_size, sampler):
+def get_ptc_cache(verts, faces, p_size, sampler) -> "MeshCache":
     return MeshCache(get_ptc_cache_dir(), "ptc", verts, faces, p_size, sampler)
 
 
-def get_tet_cache(verts, faces, tet_cfg):
+def get_tet_cache(verts, faces, tet_cfg) -> "MeshCache":
     return MeshCache(get_tet_cache_dir(), "tet", verts, faces, tet_cfg)
 
 
-def get_remesh_cache(verts, faces, edge_len_abs, edge_len_ratio, fix):
+def get_remesh_cache(verts, faces, edge_len_abs, edge_len_ratio, fix) -> "MeshCache":
     return MeshCache(get_remesh_cache_dir(), "rm", verts, faces, edge_len_abs, edge_len_ratio, fix)
 
 
-def get_wt_cache(verts, faces, aggressiveness):
+def get_wt_cache(verts, faces, aggressiveness) -> "MeshCache":
     return MeshCache(get_wt_cache_dir(), "wt", verts, faces, aggressiveness, WT_CACHE_VERSION)
 
 
-def get_wth_cache(verts, faces, quantile):
+def get_wth_cache(verts, faces, quantile) -> "MeshCache":
     return MeshCache(get_wth_cache_dir(), "wth", verts, faces, quantile, WTH_CACHE_VERSION)
 
 
-def get_exr_path(file_path):
+def get_exr_path(file_path) -> str:
     hashkey = get_hashkey(Path(file_path))
     return os.path.join(get_exr_cache_dir(), f"{hashkey}.exr")
 
 
-def get_usd_zip_path(file_path):
+def get_usd_zip_path(file_path) -> str:
     hashkey = get_hashkey(Path(file_path))
     return os.path.join(get_usd_cache_dir(), "zip", hashkey)
 
 
-def get_usd_bake_path(file_path):
+def get_usd_bake_path(file_path) -> str:
     hashkey = get_hashkey(Path(file_path))
     return os.path.join(get_usd_cache_dir(), "bake", hashkey)
 
 
-def get_hashkey(*args):
+def get_hashkey(*args) -> str:
     hasher = hashlib.sha256()
     for arg in (*args, gs.__version__.encode()):
         if isinstance(arg, Path):

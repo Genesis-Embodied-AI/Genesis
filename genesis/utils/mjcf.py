@@ -24,7 +24,7 @@ from .misc import get_assets_dir, redirect_libc_stderr
 MIN_TIMECONST = np.finfo(np.double).eps
 
 
-def get_model_name(file_path):
+def get_model_name(file_path) -> str | None:
     """
     Extract the model name from an MJCF file, if specified.
 

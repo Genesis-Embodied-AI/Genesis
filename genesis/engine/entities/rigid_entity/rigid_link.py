@@ -1,5 +1,5 @@
 from itertools import starmap
-from typing import TYPE_CHECKING, NamedTuple, Sequence
+from typing import TYPE_CHECKING, NamedTuple, NoReturn, Sequence
 
 import numpy as np
 import torch
@@ -319,7 +319,7 @@ class KinematicLink(RBC):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_pos(self, envs_idx: IndexType = None, *, relative: bool = True):
+    def get_pos(self, envs_idx: IndexType = None, *, relative: bool = True) -> torch.Tensor:
         """
         Get the position of the link.
 
@@ -334,7 +334,7 @@ class KinematicLink(RBC):
         return self._solver.get_links_pos(self._idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
-    def get_quat(self, envs_idx: IndexType = None, *, relative: bool = True):
+    def get_quat(self, envs_idx: IndexType = None, *, relative: bool = True) -> torch.Tensor:
         """
         Get the quaternion of the link.
 
@@ -373,7 +373,7 @@ class KinematicLink(RBC):
         return self._solver.get_links_ang(self._idx, envs_idx)[..., 0, :]
 
     @gs.assert_built
-    def get_vAABB(self, envs_idx: IndexType = None):
+    def get_vAABB(self, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Get the axis-aligned bounding box (AABB) of the link's visual body in the world frame by aggregating all
         the visual geometries associated with this link (`link.vgeoms`).
@@ -402,7 +402,7 @@ class KinematicLink(RBC):
     # ------------------------------------------------------------------------------------
 
     @property
-    def uid(self):
+    def uid(self) -> "gs.UID":
         """
         The unique ID of the link.
         """
@@ -437,94 +437,94 @@ class KinematicLink(RBC):
         return self.entity.joints_by_links[self.idx_local]
 
     @property
-    def n_joints(self):
+    def n_joints(self) -> int:
         """
         Number of the joints that connects the link to its parent link.
         """
         return self._n_joints
 
     @property
-    def joint_start(self):
+    def joint_start(self) -> int:
         """
         The start index of the link's joints in the RigidSolver.
         """
         return self._joint_start
 
     @property
-    def joint_end(self):
+    def joint_end(self) -> int:
         """
         The end index of the link's joints in the RigidSolver.
         """
         return self._joint_start + self.n_joints
 
     @property
-    def n_dofs(self):
+    def n_dofs(self) -> int:
         """The number of degrees of freedom (DOFs) of the entity."""
         return sum(joint.n_dofs for joint in self.joints)
 
     @property
-    def dof_start(self):
+    def dof_start(self) -> int:
         """The index of the link's first degree of freedom (DOF) in the scene."""
         if not self.joints:
             return -1
         return self.joints[0].dof_start
 
     @property
-    def dof_end(self):
+    def dof_end(self) -> int:
         """The index of the link's last degree of freedom (DOF) in the scene *plus one*."""
         if not self.joints:
             return -1
         return self.joints[-1].dof_end
 
     @property
-    def n_qs(self):
+    def n_qs(self) -> int:
         """Returns the number of `q` variables of the link."""
         return sum(joint.n_qs for joint in self.joints)
 
     @property
-    def q_start(self):
+    def q_start(self) -> int:
         """Returns the starting index of the `q` variables of the link in the rigid solver."""
         if not self.joints:
             return -1
         return self.joints[0].q_start
 
     @property
-    def q_end(self):
+    def q_end(self) -> int:
         """Returns the last index of the `q` variables of the link in the rigid solver *plus one*."""
         if not self.joints:
             return -1
         return self.joints[-1].q_end
 
     @property
-    def idx(self):
+    def idx(self) -> int:
         """
         The global index of the link in the RigidSolver.
         """
         return self._idx
 
     @property
-    def parent_idx(self):
+    def parent_idx(self) -> int:
         """
         The global index of the link's parent link in the RigidSolver. If the link is the root link, return -1.
         """
         return self._parent_idx
 
     @property
-    def root_idx(self):
+    def root_idx(self) -> int:
         """
         The global index of the link's root link in the RigidSolver.
         """
         return self._root_idx
 
     @property
-    def idx_local(self):
+    def idx_local(self) -> int:
         """
         The local index of the link in the entity.
         """
         return self._idx - self._entity.link_start
 
     @property
-    def is_fixed(self):
+    def is_fixed(self) -> bool:
         """
         Whether the link is fixed wrt the world.
         """
@@ -541,7 +541,7 @@ class KinematicLink(RBC):
         return self._aligned
 
     @property
-    def invweight(self):
+    def invweight(self) -> np.ndarray:
         """Inverse weight of the link. Always zero for KinematicLink (infinite mass)."""
         return np.zeros(2, dtype=gs.np_float)
 
@@ -560,22 +560,22 @@ class KinematicLink(RBC):
         return self._quat
 
     @property
-    def inertial_pos(self):
+    def inertial_pos(self) -> np.ndarray:
         """Initial position of the link's inertial frame. Zero for KinematicLink."""
         return np.zeros(3, dtype=gs.np_float)
 
     @property
-    def inertial_quat(self):
+    def inertial_quat(self) -> np.ndarray:
         """Initial quaternion of the link's inertial frame. Identity for KinematicLink."""
         return np.array([1.0, 0.0, 0.0, 0.0], dtype=gs.np_float)
 
     @property
-    def inertial_mass(self):
+    def inertial_mass(self) -> float:
         """Mass of the link. Always 0.0 for KinematicLink."""
         return 0.0
 
     @property
-    def inertial_i(self):
+    def inertial_i(self) -> np.ndarray:
         """Inertia matrix of the link. Zero for KinematicLink."""
         return np.zeros((3, 3), dtype=gs.np_float)
 
@@ -953,7 +953,7 @@ class RigidLink(KinematicLink):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_verts(self):
+    def get_verts(self) -> torch.Tensor:
         """
         Get the vertices of the link's collision body (concatenation of all `link.geoms`) in the world frame.
         """
@@ -973,7 +973,7 @@ class RigidLink(KinematicLink):
         return tensor
 
     @gs.assert_built
-    def get_AABB(self):
+    def get_AABB(self) -> torch.Tensor:
         """
         Get the vertex-based axis-aligned bounding box (AABB) of the link's collision body in the world frame by
         aggregating all the collision geometries associated with this link (`link.geoms`).
@@ -1026,7 +1026,7 @@ class RigidLink(KinematicLink):
         self._invweight = self._invweight / ratio[..., None]
 
     @gs.assert_built
-    def get_mass(self):
+    def get_mass(self) -> float:
         """
         Get the mass of the link.
         """
@@ -1065,7 +1065,7 @@ class RigidLink(KinematicLink):
         return self._visualize_contact
 
     @property
-    def invweight(self):
+    def invweight(self) -> np.ndarray:
         """
         The invweight of the link.
         """
@@ -1130,7 +1130,7 @@ class RigidLink(KinematicLink):
         return self._geom_start + self.n_geoms
 
     @property
-    def n_cells(self):
+    def n_cells(self) -> int:
         """
         Number of sdf cells of all the link's geoms.
         """
@@ -1158,5 +1158,5 @@ class RigidLink(KinematicLink):
         return sum([geom.n_edges for geom in self._geoms])
 
     @property
-    def is_free(self):
+    def is_free(self) -> NoReturn:
         raise DeprecationError("This property has been removed.")

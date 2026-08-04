@@ -16,7 +16,7 @@ CS_ENCODE = {
 }
 
 
-def get_input_attribute_value(shader: UsdShade.Shader, input_name: str, input_type: str | None = None):
+def get_input_attribute_value(shader: UsdShade.Shader, input_name: str, input_type: str | None = None) -> tuple:
     shader_input = shader.GetInput(input_name)
 
     if input_type != "value":

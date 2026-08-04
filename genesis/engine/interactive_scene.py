@@ -9,8 +9,11 @@ from genesis.utils.misc import with_lock
 from genesis.vis.viewer_plugins.plugins import DefaultControlsPlugin
 
 if TYPE_CHECKING:
+    from genesis.engine.entities.base_entity import Entity
     from genesis.engine.entities.rigid_entity import RigidEntity
     from genesis.engine.scene import Scene
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
+    from genesis.ext.pyrender.viewer import Viewer
     from genesis.options.sensors.options import SensorOptions
 
 
@@ -136,15 +139,15 @@ class InteractiveScene:
         return self._scene
 
     @property
-    def viewer(self):
+    def viewer(self) -> "Viewer | None":
         return self.scene.viewer
 
     @property
-    def entities(self):
+    def entities(self) -> "gs.List[Entity]":
         return self.scene.entities
 
     @property
-    def rigid_solver(self):
+    def rigid_solver(self) -> "RigidSolver":
         return self.scene.rigid_solver
 
     @property

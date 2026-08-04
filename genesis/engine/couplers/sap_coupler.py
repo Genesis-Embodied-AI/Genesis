@@ -17,6 +17,7 @@ from genesis.typing import IndexType
 
 if TYPE_CHECKING:
     from genesis.engine.simulator import Simulator
+    from genesis.engine.solvers.base_solver import Solver
 
 MARCHING_TETS_EDGE_TABLE = (
     (-1, -1, -1, -1),
@@ -1791,7 +1792,7 @@ class SAPCoupler(RBC):
     # ----------------------------------- Properties -------------------------------------
     # ------------------------------------------------------------------------------------
     @property
-    def active_solvers(self):
+    def active_solvers(self) -> "list[Solver]":
         """All the active solvers managed by the scene's simulator."""
         return self.sim.active_solvers
 

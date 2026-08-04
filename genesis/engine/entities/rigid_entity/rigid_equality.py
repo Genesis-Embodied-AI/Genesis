@@ -1,5 +1,14 @@
+from typing import TYPE_CHECKING
+
+import numpy as np
+
 import genesis as gs
 from genesis.repr_base import RBC
+
+if TYPE_CHECKING:
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
+
+    from .rigid_entity import RigidEntity
 
 
 class RigidEquality(RBC):
@@ -45,7 +54,7 @@ class RigidEquality(RBC):
             self._sol_params = sol_params
 
     @property
-    def sol_params(self):
+    def sol_params(self) -> np.ndarray:
         """
         Returns the solver parameters of this equality constraint.
         """
@@ -58,35 +67,35 @@ class RigidEquality(RBC):
     # ------------------------------------------------------------------------------------
 
     @property
-    def uid(self):
+    def uid(self) -> "gs.UID":
         """
         Returns the unique id of the equality.
         """
         return self._uid
 
     @property
-    def name(self):
+    def name(self) -> str:
         """
         Returns the name of the equality.
         """
         return self._name
 
     @property
-    def entity(self):
+    def entity(self) -> "RigidEntity":
         """
         Returns the entity that the equality belongs to.
         """
         return self._entity
 
     @property
-    def solver(self):
+    def solver(self) -> "RigidSolver":
         """
         The RigidSolver object that the equality belongs to.
         """
         return self._solver
 
     @property
-    def idx(self):
+    def idx(self) -> int:
         """
         Returns the global index of the equality in the rigid solver.
         """
@@ -96,42 +105,42 @@ class RigidEquality(RBC):
         return f"{self.__repr_name__()}, idx: {self.idx}"
 
     @property
-    def idx_local(self):
+    def idx_local(self) -> int:
         """
         Returns the local index of the equality in the entity.
         """
         return self._idx - self._entity._equality_start
 
     @property
-    def type(self):
+    def type(self) -> "gs.EQUALITY_TYPE":
         """
         Returns the type of the equality.
         """
         return self._type
 
     @property
-    def eq_obj1id(self):
+    def eq_obj1id(self) -> int:
         """
         Returns the index of the first object (joint for EQUALITY_TYPE.JOINT, link otherwise)
         """
         return self._eq_obj1id
 
     @property
-    def eq_obj2id(self):
+    def eq_obj2id(self) -> int:
         """
         Returns the index of the second object (joint for EQUALITY_TYPE.JOINT, link otherwise)
         """
         return self._eq_obj2id
 
     @property
-    def eq_data(self):
+    def eq_data(self) -> np.ndarray:
         """
         Returns the eq_data of this equality constraint.
         """
         return self._eq_data
 
     @property
-    def is_built(self):
+    def is_built(self) -> bool:
         """
         Whether the rigid entity this equality constraint belongs to is built.
         """

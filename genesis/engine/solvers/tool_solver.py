@@ -41,7 +41,7 @@ class ToolSolver(Solver):
             entity.build()
 
     @property
-    def is_active(self):
+    def is_active(self) -> bool:
         return self.n_entities > 0
 
     def setup_boundary(self):
@@ -71,7 +71,7 @@ class ToolSolver(Solver):
         for entity in self._entities:
             entity.reset_grad()
 
-    def get_state(self, f):
+    def get_state(self, f) -> ToolSolverState:
         if self.is_active:
             state = ToolSolverState(self._scene)
             for entity in self._entities:
