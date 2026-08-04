@@ -1,7 +1,35 @@
+import numpy as np
 import pytest
 import torch
+import trimesh
 
 import genesis as gs
+
+
+@pytest.mark.required
+def test_mesh_set_particle_transform(show_viewer):
+    pos = np.array((0.2, 0.1, 0.2))
+    mesh = trimesh.creation.box(extents=(0.04, 0.12, 0.04))
+    scene = gs.Scene(
+        mpm_options=gs.options.MPMOptions(
+            lower_bound=(-0.5, -0.5, -0.5),
+            upper_bound=(0.5, 0.5, 0.5),
+            particle_size=0.01,
+        ),
+        show_viewer=show_viewer,
+    )
+    entity = scene.add_entity(
+        morph=gs.morphs.MeshSet(
+            files=(mesh,),
+            poss=(pos,),
+            eulers=((0.0, 0.0, 90.0),),
+        ),
+        material=gs.materials.MPM.Elastic(sampler="regular"),
+    )
+
+    particles = entity.init_particles
+    np.testing.assert_allclose(particles.mean(axis=0), pos, atol=1e-6)
+    np.testing.assert_allclose(np.ptp(particles, axis=0), (0.11, 0.03, 0.03), atol=1e-6)
 
 
 @pytest.mark.required

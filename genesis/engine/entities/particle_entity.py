@@ -264,7 +264,11 @@ class ParticleEntity(Entity):
                         sampler=sampler,
                     )
 
-                particles_i += np.asarray(morph_i.pos, dtype=gs.np_float)
+                particles_i = gu.transform_by_trans_quat(
+                    particles_i,
+                    np.asarray(morph_i.pos, dtype=gs.np_float),
+                    np.asarray(morph_i.quat, dtype=gs.np_float),
+                )
                 particles.append(particles_i)
         elif isinstance(self._morph, (gs.options.morphs.Primitive, gs.options.morphs.Mesh)):
             particles = self._vmesh.particlize(self._particle_size, self.sampler)
