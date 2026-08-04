@@ -55,8 +55,8 @@ class Rasterizer(RendererOptions):
     Note
     ----
     You can set which renderer to use for cameras, but the interactive viewer always uses the rasterizer rendering
-    backend. If you want to configure properties like shadow, lights, etc., you should use `gs.options.VisOptions`
-    instead.
+    backend. If you want to configure properties like shadow, lights, etc., you should use
+    `gs.options.VisOptions <genesis.options.VisOptions>` instead.
     """
 
     pass

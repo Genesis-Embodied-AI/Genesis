@@ -24,7 +24,8 @@ class Surface(Options):
 
     A `Surface` object encapsulates all visual information used for rendering an entity or its sub-components (links,
     geoms, ...). The surface contains different types of textures depending on the surface type (e.g. diffuse, specular,
-    roughness, metallic, normal, emissive). Each one of them is a `gs.textures.Texture` object.
+    roughness, metallic, normal, emissive). Each one of them is a
+    `gs.textures.Texture <genesis.options.textures.Texture>` object.
 
     Tip
     ---

@@ -529,7 +529,7 @@ class FileMorph(Morph):
     scale : float or tuple, optional
         The scaling factor for the size of the entity. If a float, it scales uniformly.
         If a 3-tuple, it scales along each axis. Defaults to 1.0.
-        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
+        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh <genesis.options.morphs.Mesh>`.
     pos : tuple, shape (3,), optional
         The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
@@ -573,7 +573,8 @@ class FileMorph(Morph):
         original mesh and its convex hull is lower than this threshold.
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
-        Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+        Options for configuring coacd convex decomposition. Needs to be a
+        `gs.options.CoacdOptions <genesis.options.misc.CoacdOptions>` object.
     recompute_inertia : bool, optional
         Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
         broken assets from external providers that cannot be re-exported from source. Default to False.
@@ -724,7 +725,7 @@ class Mesh(FileMorph, TetGenMixin):
     scale : float or tuple, optional
         The scaling factor for the size of the entity. If a float, it scales uniformly.
         If a 3-tuple, it scales along each axis. Defaults to 1.0.
-        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
+        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh <genesis.options.morphs.Mesh>`.
     pos : tuple, shape (3,), optional
         The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
@@ -768,7 +769,8 @@ class Mesh(FileMorph, TetGenMixin):
         original mesh and its convex hull is lower than this threshold.
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
-        Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+        Options for configuring coacd convex decomposition. Needs to be a
+        `gs.options.CoacdOptions <genesis.options.misc.CoacdOptions>` object.
     recompute_inertia : bool, optional
         Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
         broken assets from external providers that cannot be re-exported from source. Default to False.
@@ -917,7 +919,7 @@ class MJCF(FileMorph):
     scale : float or tuple, optional
         The scaling factor for the size of the entity. If a float, it scales uniformly.
         If a 3-tuple, it scales along each axis. Defaults to 1.0.
-        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
+        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh <genesis.options.morphs.Mesh>`.
     pos : tuple, shape (3,), optional
         The position of the entity in meters as a translational offset. Mathematically, `pos` and `euler` options
         correspond respectively to the translational and rotational part of a transform that it is (left) applied on the
@@ -964,7 +966,8 @@ class MJCF(FileMorph):
         original mesh and its convex hull is lower than this threshold.
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
-        Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+        Options for configuring coacd convex decomposition. Needs to be a
+        `gs.options.CoacdOptions <genesis.options.misc.CoacdOptions>` object.
     recompute_inertia : bool, optional
         Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
         broken assets from external providers that cannot be re-exported from source. Default to False.
@@ -1027,7 +1030,7 @@ class MJCF(FileMorph):
 class URDF(FileMorph):
     """
     Morph loaded from a URDF or XACRO file. This morph only supports `RigidEntity`.
-    If you need to create a `Drone` entity, use `gs.morphs.Drone` instead.
+    If you need to create a `Drone` entity, use `gs.morphs.Drone <genesis.options.morphs.Drone>` instead.
 
     XACRO files (``.urdf.xacro`` or ``.xacro``) are automatically preprocessed into plain URDF using the `xacro`
     package. All standard xacro features (macros, properties, includes, conditionals, substitution args) are supported.
@@ -1050,7 +1053,7 @@ class URDF(FileMorph):
     scale : float or tuple, optional
         The scaling factor for the size of the entity. If a float, it scales uniformly.
         If a 3-tuple, it scales along each axis. Defaults to 1.0.
-        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
+        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh <genesis.options.morphs.Mesh>`.
     pos : tuple, shape (3,), optional
         The position of the entity in meters as a translational offset. Mathematically, `pos` and `euler` options
         correspond respectively to the translational and rotational part of a transform that it is (left) applied on the
@@ -1096,7 +1099,8 @@ class URDF(FileMorph):
         original mesh and its convex hull is lower than this threshold.
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
-        Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+        Options for configuring coacd convex decomposition. Needs to be a
+        `gs.options.CoacdOptions <genesis.options.misc.CoacdOptions>` object.
     recompute_inertia : bool, optional
         Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
         broken assets from external providers that cannot be re-exported from source. Default to False.
@@ -1192,7 +1196,8 @@ class Drone(FileMorph):
         The path to the file.
     scale : float or tuple, optional
         The scaling factor for the size of the entity. If a float, it scales uniformly. If a 3-tuple, it scales along
-        each axis. Defaults to 1.0. Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
+        each axis. Defaults to 1.0. Note that 3-tuple scaling is only supported for
+        `gs.morphs.Mesh <genesis.options.morphs.Mesh>`.
     pos : tuple, shape (3,), optional
         The position of the entity in meters as a translational offset. Mathematically, `pos` and `euler` options
         correspond respectively to the translational and rotational part of a transform that it is (left) applied on the
@@ -1238,7 +1243,8 @@ class Drone(FileMorph):
         original mesh and its convex hull is lower than this threshold.
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
-        Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+        Options for configuring coacd convex decomposition. Needs to be a
+        `gs.options.CoacdOptions <genesis.options.misc.CoacdOptions>` object.
     recompute_inertia : bool, optional
         Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
         broken assets from external providers that cannot be re-exported from source. Default to False.
@@ -1354,7 +1360,7 @@ class Terrain(Morph):
     scale : float or tuple, optional
         The scaling factor for the size of the entity. If a float, it scales uniformly.
         If a 3-tuple, it scales along each axis. Defaults to 1.0.
-        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
+        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh <genesis.options.morphs.Mesh>`.
     pos : tuple, shape (3,), optional
         The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
     visualization : bool, optional
@@ -1545,7 +1551,7 @@ class USD(FileMorph):
     scale : float or tuple, optional
         The scaling factor for the size of the entity. If a float, it scales uniformly.
         If a 3-tuple, it scales along each axis. Defaults to 1.0.
-        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
+        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh <genesis.options.morphs.Mesh>`.
     pos : tuple, shape (3,), optional
         The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
@@ -1589,7 +1595,8 @@ class USD(FileMorph):
         original mesh and its convex hull is lower than this threshold.
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
-        Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+        Options for configuring coacd convex decomposition. Needs to be a
+        `gs.options.CoacdOptions <genesis.options.misc.CoacdOptions>` object.
     recompute_inertia : bool, optional
         Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
         broken assets from external providers that cannot be re-exported from source. Default to False.

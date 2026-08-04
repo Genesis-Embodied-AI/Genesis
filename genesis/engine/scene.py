@@ -56,8 +56,9 @@ if TYPE_CHECKING:
 @gs.assert_initialized
 class Scene(RBC):
     """
-    A ``genesis.Scene`` object wraps all components in a simulation environment, including a simulator (containing multiple physics solvers), entities, and a visualizer (controlling both the viewer and all the cameras).
-    Basically, everything happens inside a scene.
+    A ``genesis.Scene`` object wraps all components in a simulation environment, including a simulator (containing
+    multiple physics solvers), entities, and a visualizer (controlling both the viewer and all the cameras). Basically,
+    everything happens inside a scene.
 
     Parameters
     ----------
@@ -80,11 +81,13 @@ class Scene(RBC):
     pbd_options : gs.options.PBDOptions
         The options configuring the pbd_solver (``scene.sim.PBDSolver``).
     vis_options : gs.options.VisOptions
-        The options configuring the visualization system (``scene.visualizer``). Visualizer controls both the interactive viewer and the cameras.
+        The options configuring the visualization system (``scene.visualizer``). Visualizer controls both the
+        interactive viewer and the cameras.
     viewer_options : gs.options.ViewerOptions
         The options configuring the viewer (``scene.visualizer.viewer``).
     renderer : gs.renderers.RendererOptions
-        The renderer options used by `camera` for rendering images. This doesn't affect the behavior of the interactive viewer.
+        The renderer options used by `camera` for rendering images. This doesn't affect the behavior of the interactive
+        viewer.
     show_viewer : bool
         Whether to show the interactive viewer. Set it to False if you only need headless rendering.
     show_FPS : bool
@@ -573,7 +576,8 @@ class Scene(RBC):
         Parameters
         ----------
         morph : gs.morphs.Morph
-            The morph of the light. Must be an instance of `gs.morphs.Primitive` or `gs.morphs.Mesh`.
+            The morph of the light. Must be an instance of `gs.morphs.Primitive <genesis.options.morphs.Primitive>` or
+            `gs.morphs.Mesh <genesis.options.morphs.Mesh>`.
         color : tuple of float, shape (3,)
             The color of the light, specified as (r, g, b).
         intensity : float
@@ -799,7 +803,8 @@ class Scene(RBC):
         ----------
         material : gs.materials.Material
             The material of the fluid to be emitted. Must be an instance of `gs.materials.MPM.Base`,
-            `gs.materials.SPH.Base`, `gs.materials.PBD.Particle` or `gs.materials.PBD.Liquid`.
+            `gs.materials.SPH.Base`, `gs.materials.PBD.Particle <genesis.engine.materials.PBD.particle.Particle>` or
+            `gs.materials.PBD.Liquid <genesis.engine.materials.PBD.liquid.Liquid>`.
         max_particles : int
             The maximum number of particles that can be emitted by the emitter. Particles will be recycled once this
             limit is reached.
@@ -1230,7 +1235,8 @@ class Scene(RBC):
         pos : array_like, shape (3,), optional
             The position of the mesh in the scene.
         T : array_like, shape (4, 4) | None, optional
-            The transformation matrix of the mesh. If None, the mesh will be drawn at the position specified by `pos`. Otherwise, `T` has a higher priority than `pos`.
+            The transformation matrix of the mesh. If None, the mesh will be drawn at the position specified by `pos`.
+            Otherwise, `T` has a higher priority than `pos`.
 
         Returns
         -------
