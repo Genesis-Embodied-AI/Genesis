@@ -6523,7 +6523,7 @@ def _get_static_config(*args, **kwargs):
     first_warmup=1,
     warmup=0,
     active=2,
-    repeat_after_count=100,
+    repeat_after_count=300,
     repeat_after_seconds=0,
 )
 def func_solve_body(
