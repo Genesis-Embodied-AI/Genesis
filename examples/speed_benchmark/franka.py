@@ -27,7 +27,7 @@ franka = scene.add_entity(
 )
 
 
-# create 20 parallel environments
+# create 30000 parallel environments
 B = 30000
 scene.build(n_envs=B, env_spacing=(1.0, 1.0))
 
