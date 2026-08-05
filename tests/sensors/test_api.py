@@ -244,8 +244,8 @@ def test_pipeline_contract(tol):
     H = np.array([row[3] for row in paths], dtype=np.float32)
 
     # Companion simple sensor for the ring-allocation paths. No knobs, no overrides beyond raw write - the read
-    # just echoes the shared per-class step counter. Four instances cover (delay=0, history=0), history-only,
-    # delay-only, and (delay + history).
+    # just echoes the shared per-class step counter. Five instances cover (delay=0, history=0), history-only,
+    # delay-only, (delay + history), and (delay + jitter).
     @dataclass
     class FakeSimpleMetadata(SimpleSensorMetadata):
         step_counter: int = 0
@@ -288,6 +288,7 @@ def test_pipeline_contract(tol):
     s_history = scene.add_sensor(FakeSimpleOptions(history_length=HISTORY_LEN))
     s_delay = scene.add_sensor(FakeSimpleOptions(delay=DELAY_STEPS * DT))
     s_both = scene.add_sensor(FakeSimpleOptions(history_length=HISTORY_LEN, delay=DELAY_STEPS * DT))
+    s_jitter = scene.add_sensor(FakeSimpleOptions(delay=DELAY_STEPS * DT, jitter=DT))
     scene.build()
     scene.reset()  # zero the build-warmup counter increment so step 1 sees raw = 1.
 
@@ -298,6 +299,7 @@ def test_pipeline_contract(tol):
     history_observed = np.zeros((n_steps, HISTORY_LEN), dtype=np.float32)
     delay_observed = np.zeros(n_steps, dtype=np.float32)
     both_observed = np.zeros((n_steps, HISTORY_LEN), dtype=np.float32)
+    jitter_observed = np.zeros(n_steps, dtype=np.float32)
     for i in range(n_steps):
         scene.step()
         gt_observed[i] = tensor_to_array(sensor.read_ground_truth()).reshape(-1)
@@ -306,6 +308,7 @@ def test_pipeline_contract(tol):
         history_observed[i] = tensor_to_array(s_history.read()).reshape(-1)
         delay_observed[i] = tensor_to_array(s_delay.read()).item()
         both_observed[i] = tensor_to_array(s_both.read()).reshape(-1)
+        jitter_observed[i] = tensor_to_array(s_jitter.read()).item()
 
     # Analytical expectation for the vector sensor, per component. Let raw[k] = k, and (P, M, A, H) be the per-
     # component vectors.
@@ -347,6 +350,11 @@ def test_pipeline_contract(tol):
     # The combined delay + history sensor returns the same history as the history-only sensor (delay is bypassed
     # by the ring-gather history path); verify they match.
     assert_allclose(both_observed, expected_history, tol=tol)
+    # `jitter == dt` shifts a read by exactly zero or one extra slot, so every jittered sample is bracketed by the
+    # raw values `DELAY_STEPS` and `DELAY_STEPS + 1` back. The upper bound is the un-jittered delayed sequence; a
+    # read fresher than it means the deepest slot wrapped around the ring onto the newest one.
+    jitter_lo = np.where(raw - DELAY_STEPS - 1 >= 1, raw - DELAY_STEPS - 1, 0.0)
+    assert ((jitter_observed >= jitter_lo) & (jitter_observed <= expected_delay)).all()
 
 
 @pytest.mark.required
