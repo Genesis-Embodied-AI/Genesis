@@ -111,11 +111,12 @@ class SensorOptions(Options, Generic[SensorT]):
         """
         assert scene.sim is not None
         if self.delay > 0:
-            delay_hz = self.delay / scene.sim.dt
-            if not np.isclose(delay_hz, round(delay_hz), atol=gs.EPS):
+            delay_ratio = self.delay / scene.sim.dt
+            delay_ts = round(delay_ratio)
+            if not np.isclose(delay_ratio, delay_ts, atol=gs.EPS):
                 gs.logger.warning(
                     f"{type(self).__name__}: Read delay should be a multiple of the simulation time step. Got "
-                    f"{self.delay} and {scene.sim.dt}. Actual read delay will be {1 / round(delay_hz)}."
+                    f"{self.delay} and {scene.sim.dt}. Actual read delay will be {delay_ts * scene.sim.dt}."
                 )
 
 
