@@ -20,6 +20,58 @@ from ..utils import (
 
 
 @pytest.mark.required
+def test_urdf_inertial_origin_defaults_to_link_frame():
+    robot = ET.Element("robot", name="implicit_inertial_origin")
+    link = ET.SubElement(robot, "link", name="body")
+    inertial = ET.SubElement(link, "inertial")
+    ET.SubElement(inertial, "mass", value="2.5")
+    ET.SubElement(
+        inertial,
+        "inertia",
+        ixx="0.11",
+        ixy="0.01",
+        ixz="0.02",
+        iyy="0.22",
+        iyz="0.03",
+        izz="0.30",
+    )
+
+    morph = gs.morphs.URDF(
+        file=ET.tostring(robot, encoding="unicode"),
+        merge_fixed_links=False,
+    )
+    l_infos, _, _, _ = uu.parse_urdf(morph, gs.surfaces.Default())
+
+    assert len(l_infos) == 1
+    assert_allclose(l_infos[0]["inertial_pos"], np.zeros(3), tol=gs.EPS)
+    assert_allclose(l_infos[0]["inertial_quat"], gu.identity_quat(), tol=gs.EPS)
+    assert_allclose(l_infos[0]["inertial_mass"], 2.5, tol=gs.EPS)
+    assert_allclose(
+        l_infos[0]["inertial_i"],
+        np.array(
+            [
+                [0.11, 0.01, 0.02],
+                [0.01, 0.22, 0.03],
+                [0.02, 0.03, 0.30],
+            ]
+        ),
+        tol=gs.EPS,
+    )
+
+    robot_without_inertial = ET.Element("robot", name="absent_inertial")
+    ET.SubElement(robot_without_inertial, "link", name="body")
+    morph_without_inertial = gs.morphs.URDF(
+        file=ET.tostring(robot_without_inertial, encoding="unicode"),
+        merge_fixed_links=False,
+    )
+    absent_infos, _, _, _ = uu.parse_urdf(morph_without_inertial, gs.surfaces.Default())
+
+    assert absent_infos[0]["inertial_pos"] is None
+    assert absent_infos[0]["inertial_mass"] is None
+    assert absent_infos[0]["inertial_i"] is None
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("model_name", ["depth_first_tree_mjcf", "depth_first_tree_urdf"])
 def test_depth_first_link_ordering(xml_path, model_name, show_viewer):
     # Links must be parsed depth-first so every subtree - hence every free body's DOFs - occupies a contiguous index

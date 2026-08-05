@@ -178,9 +178,15 @@ def parse_urdf(morph, surface):
         l_info["inertial_i"] = None
         l_info["inertial_mass"] = None
         if link.inertial is not None:
-            if link.inertial.origin is not None:
-                l_info["inertial_pos"] = link.inertial.origin[:3, 3]
-                l_info["inertial_quat"] = gu.R_to_quat(link.inertial.origin[:3, :3])
+            # URDF defines a missing inertial origin as the link frame.  The
+            # vendored urdfpy parser preserves the omission as ``None``, so
+            # normalize it here instead of discarding an otherwise complete
+            # authored inertia tensor during rigid-link finalization.
+            inertial_origin = link.inertial.origin
+            if inertial_origin is None:
+                inertial_origin = np.eye(4, dtype=np.float64)
+            l_info["inertial_pos"] = inertial_origin[:3, 3]
+            l_info["inertial_quat"] = gu.R_to_quat(inertial_origin[:3, :3])
             if link.inertial.inertia is not None:
                 l_info["inertial_i"] = link.inertial.inertia
             if link.inertial.mass is not None:
