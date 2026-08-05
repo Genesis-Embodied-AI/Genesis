@@ -1124,11 +1124,15 @@ class RigidSolver(KinematicSolver):
             # A geom is hollow when its own center lies in a cavity rather than inside its material (bowl, mug,
             # nut), i.e. its own SDF is positive at its center. This is a static property of the collision
             # geometry, precomputed here so the narrowphase never has to probe it at runtime. SPHERE/PLANE/TERRAIN
-            # SDFs are analytic and never hollow.
+            # SDFs are analytic and convex geoms enclose their own center, so neither is ever hollow and probing
+            # them would only force their SDF grid to be built.
             geoms_is_hollow = []
             for geom, center in zip(geoms, geoms_center):
                 is_hollow = False
-                if geom.type not in (gs.GEOM_TYPE.SPHERE, gs.GEOM_TYPE.PLANE, gs.GEOM_TYPE.TERRAIN):
+                if (
+                    geom.type not in (gs.GEOM_TYPE.SPHERE, gs.GEOM_TYPE.PLANE, gs.GEOM_TYPE.TERRAIN)
+                    and not geom.is_convex
+                ):
                     grid_pos = geom.T_mesh_to_sdf[:3, :3] @ center + geom.T_mesh_to_sdf[:3, 3]
                     cell = np.minimum(np.maximum(np.floor(grid_pos).astype(gs.np_int), 0), geom.sdf_res - 2)
                     frac = grid_pos - cell
