@@ -6524,6 +6524,7 @@ def _get_static_config(*args, **kwargs):
     warmup=0,
     active=2,
     repeat_after_count=100,
+    repeat_after_seconds=0,
 )
 def func_solve_body(
     dyn_state: array_class.DynState,
