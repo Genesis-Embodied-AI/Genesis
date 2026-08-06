@@ -1327,7 +1327,7 @@ def get_gjk_state_contact_only(_B):
         simplex_vertex_intersect=get_gjk_simplex_vertex(_B, is_active=True),
         simplex_buffer_intersect=get_gjk_simplex_buffer(_B, is_active=True),
         nsimplex=V(dtype=gs.qd_int, shape=(_B,)),
-        # EPA — dummy allocations, never accessed by func_gjk
+        # EPA - dummy allocations, never accessed by func_gjk
         polytope=get_epa_polytope(_dummy_B, is_active=True),
         polytope_verts=MDVertex(
             obj1=V_VEC(3, dtype=gs.qd_float, shape=(1, 1)),
@@ -1342,13 +1342,13 @@ def get_gjk_state_contact_only(_B):
         polytope_faces_map=V(dtype=gs.qd_int, shape=(1, 1)),
         polytope_horizon_data=get_epa_polytope_horizon_data(_dummy_B, 1, is_active=True),
         polytope_horizon_stack=get_epa_polytope_horizon_data(_dummy_B, 1, is_active=True),
-        # Multi-contact — dummy
+        # Multi-contact - dummy
         contact_faces=get_contact_face(_dummy_B, 1, is_active=True),
         contact_normals=get_contact_normal(_dummy_B, 1, is_active=True),
         contact_halfspaces=get_contact_halfspace(_dummy_B, 1, is_active=True),
         contact_clipped_polygons=V_VEC(3, dtype=gs.qd_float, shape=(1, 2, 1)),
         multi_contact_flag=V(dtype=gs.qd_bool, shape=(_B,)),
-        # Results — full _B for fields func_gjk writes; dummy for EPA-only fields
+        # Results - full _B for fields func_gjk writes; dummy for EPA-only fields
         witness=get_witness(_B, 1, is_active=True),
         n_witness=V(dtype=gs.qd_int, shape=(_B,)),
         n_contacts=V(dtype=gs.qd_int, shape=(1,)),
