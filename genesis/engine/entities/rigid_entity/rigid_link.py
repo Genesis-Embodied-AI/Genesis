@@ -210,10 +210,11 @@ def finalize_inertial(
         hint_mass = mass
     if mass is None:
         mass = hint_mass
-    if com is None and inertia is not None:
-        com = gu.zero_pos()
-    if com is None or inertia is None:
+    if inertia is None:
         com, inertia, quat = hint_com, hint_inertia, gu.identity_quat()
+    elif com is None:
+        # Falling back to the geometry estimate here would discard an otherwise complete authored inertia.
+        com = gu.zero_pos()
     if quat is None:
         quat = gu.identity_quat()
     return LinkInertial(
@@ -786,12 +787,17 @@ class RigidLink(KinematicLink):
 
         # Make sure that provided spatial inertia is consistent with the estimate from the geometries if not fixed
         if (self._inertial_mass or hint_mass) > MASS_EPS and hint_mass > gs.EPS:
-            if self._inertial_pos is not None:
+            # An omitted center of mass is resolved to the link frame origin whenever the inertia tensor is authored
+            # (see 'finalize_inertial'), so it must undergo the same consistency check as an authored one.
+            inertial_pos = self._inertial_pos
+            if inertial_pos is None and self._inertial_i is not None:
+                inertial_pos = gu.zero_pos()
+            if inertial_pos is not None:
                 tol = (aabb_max - aabb_min) * AABB_EPS + AABB_EPS
-                if not ((aabb_min - tol < self._inertial_pos) & (self._inertial_pos < aabb_max + tol)).all():
+                if not ((aabb_min - tol < inertial_pos) & (inertial_pos < aabb_max + tol)).all():
                     com_str: list[str] = []
                     aabb_str: list[str] = []
-                    for name, pos, axis_min, axis_max in zip(("x", "y", "z"), self._inertial_pos, aabb_min, aabb_max):
+                    for name, pos, axis_min, axis_max in zip(("x", "y", "z"), inertial_pos, aabb_min, aabb_max):
                         com_str.append(f"{name}={pos:0.3f}")
                         aabb_str.append(f"{name}=({axis_min:0.3f}, {axis_max:0.3f})")
                     gs.logger.warning(
