@@ -142,6 +142,8 @@ class integrator(IntEnum):
         correction then also reaches the accelerations produced by constraints and external forces, which it does not
         model.
 
+    Notes
+    -----
     Both `implicitfast` and `approximate_implicitfast` advance standalone free bodies by the implicit midpoint rule,
     outside the differentiable path, where `Euler` takes the plain position update.
     """
@@ -185,6 +187,8 @@ class friction_cone(IntEnum):
         ``sqrt(f_t1^2 + f_t2^2) <= mu * f_n``, and with a high `impratio` it holds resting stacks without the slow
         tangential creep of regularized friction, in return for being harder to solve and more sensitive numerically.
 
+    Notes
+    -----
     Prefer `pyramidal` for robustness, and `elliptic` when isotropic friction or firm static friction matters, such as
     objects that must stay put at rest instead of slowly creeping.
     """
@@ -216,6 +220,8 @@ class contact_resolution(IntEnum):
         thesis, Universite Paris Sciences et Lettres, 2022 (HAL tel-04166955), Appendix C, whose Signorini condition is
         what forbids the normal force from absorbing tangential demand.
 
+    Notes
+    -----
     Prefer `signorini` whenever sliding contact matters, and `convex` when a stiff scene converges better under it.
     """
 

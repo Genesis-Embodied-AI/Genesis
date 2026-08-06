@@ -1324,7 +1324,7 @@ class RigidSolver(KinematicSolver):
         return qd_to_torch(self._errno) > 0
 
     def check_errno(self):
-        """Raise for any error the kernels recorded during the substeps since the previous check."""
+        """Raise for any error the kernels recorded since the last state reset, which is what clears the record."""
         # FIXME: qd.atomic_or return value is broken on Metal - always returns 0.
         # See repro_metal_kernel_return.py. Falling back to numpy reduction.
         if gs.use_zerocopy or sys.platform == "darwin":
@@ -2790,7 +2790,7 @@ class RigidSolver(KinematicSolver):
 
     def set_dofs_kp(self, kp, dofs_idx=None, envs_idx=None):
         """
-        Set the positional gain of each dof's PD controller, which resets its actuator gain and bias.
+        Set the positional gain of each dof's PD controller, leaving the velocity gain `set_dofs_kv` holds untouched.
 
         Parameters
         ----------
@@ -4389,14 +4389,14 @@ class RigidSolver(KinematicSolver):
 
     @property
     def n_free_verts(self):
-        """Number of collision vertices belonging to links that can move."""
+        """Number of collision vertices held per environment, covering every link but the fixed ones kept unbatched."""
         if self.is_built:
             return self._n_free_verts
         return sum(link.n_verts if not link.is_fixed or link.entity._batch_fixed_verts else 0 for link in self.links)
 
     @property
     def n_fixed_verts(self):
-        """Number of collision vertices belonging to fixed links."""
+        """Number of collision vertices shared across environments, from fixed links their entity leaves unbatched."""
         if self.is_built:
             return self._n_fixed_verts
         return sum(link.n_verts if link.is_fixed and not link.entity._batch_fixed_verts else 0 for link in self.links)
@@ -4417,7 +4417,7 @@ class RigidSolver(KinematicSolver):
 
     @property
     def max_collision_pairs(self):
-        """Upper bound on the contact pairs the broad phase may report per step."""
+        """Configured `max_collision_pairs`, which the broad and narrow phase buffers are both sized from."""
         return self._max_collision_pairs
 
     @property
