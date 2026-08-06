@@ -212,6 +212,10 @@ IMP_MAX = 0.9999
 # Minimum ratio between simulation timestep `_substep_dt` and time constant of constraints
 TIME_CONSTANT_SAFETY_FACTOR = 2.0
 
+# A commanded position/velocity target whose actuator coefficient is below this fraction of the
+# same actuator's intrinsic position and damping terms cannot move the joint in practice.
+CTRL_AUTHORITY_RATIO = 0.01
+
 
 def _sanitize_sol_params(sol_params, min_timeconst: float, default_timeconst: float | None = None):
     timeconst, dampratio, dmin, dmax, width, mid, power = sol_params.reshape((-1, 7)).T
@@ -274,6 +278,8 @@ class RigidSolver(KinematicSolver):
         self._use_contact_island = options.use_contact_island
         # Hibernation builds on islands, so requesting it without islands is a genuine conflict.
         self._use_hibernation = options.use_hibernation
+        self._no_authority_dofs = None
+        self._warned_no_authority = False
         self._warned_non_pd_control = False
         if self._use_hibernation and not self._use_contact_island:
             gs.raise_exception(
@@ -2648,7 +2654,58 @@ class RigidSolver(KinematicSolver):
                 "Use get_dofs_act_gain()/get_dofs_act_bias() to inspect them."
             )
 
+    def _warn_once_if_target_has_no_authority(self, mode, dofs_idx, envs_idx):
+        """Warn when a position/velocity target is negligible against the same actuator's own law.
+
+        In position mode the applied force is
+
+            act_gain * (ctrl_pos - pos) + act_bias[0] + (act_gain + act_bias[1]) * pos
+            + act_bias[2] * (vel - ctrl_vel)
+
+        so `ctrl_pos` reaches the joint only through `act_gain`, and `ctrl_vel` only
+        through `act_bias[2]`. A tendon approximated by a joint actuator can leave the
+        commanded coefficient orders of magnitude below the intrinsic ones - the bundled
+        Franka fingers carry act_gain 0.0157 against act_bias[1] -100 - so the call
+        returns normally and the joint does not follow.
+
+        The offending DOFs are computed once and cached; when a model has none, later
+        calls cost a single boolean test.
+        """
+        if self._no_authority_dofs is None:
+            gain = qd_to_torch(self.dyn_info.dofs.act_gain, None, None, transpose=True, copy=False)
+            bias = qd_to_torch(self.dyn_info.dofs.act_bias, None, None, transpose=True, copy=False)
+            if not self._options.batch_dofs_info:
+                gain, bias = gain[None], bias[None]
+            reference = torch.abs(gain + bias[..., 1]).clamp(min=torch.abs(bias[..., 2]))
+            weak_position = torch.abs(gain) <= CTRL_AUTHORITY_RATIO * reference
+            weak_velocity = torch.abs(bias[..., 2]) <= CTRL_AUTHORITY_RATIO * reference
+            # A DOF counts as weak in a mode only where the intrinsic terms are non-trivial.
+            active = reference > gs.EPS
+            self._no_authority_dofs = {
+                gs.CTRL_MODE.POSITION: (weak_position & active).any(dim=0),
+                gs.CTRL_MODE.VELOCITY: (weak_velocity & active).any(dim=0),
+            }
+        weak = self._no_authority_dofs[mode]
+        if not bool(weak.any()):
+            return
+        if dofs_idx is not None:
+            requested = torch.as_tensor(dofs_idx, dtype=torch.long, device=weak.device).flatten()
+            weak = torch.zeros_like(weak).index_put_((requested,), weak[requested])
+        offenders = torch.nonzero(weak).flatten().tolist()
+        if not offenders or self._warned_no_authority:
+            return
+        self._warned_no_authority = True
+        name = "Position" if mode == gs.CTRL_MODE.POSITION else "Velocity"
+        gs.logger.warning(
+            f"{name} control was requested on dofs {offenders}, whose actuator gives the "
+            f"commanded target less than {CTRL_AUTHORITY_RATIO:.0%} of the authority of its own "
+            "position/damping terms, so the joint will barely follow it. This is typical of an "
+            "MJCF tendon approximated by a joint actuator. Drive those dofs with "
+            "control_dofs_force, or inspect them with get_dofs_act_gain()/get_dofs_act_bias()."
+        )
+
     def control_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None):
+        self._warn_once_if_target_has_no_authority(gs.CTRL_MODE.VELOCITY, dofs_idx, envs_idx)
         self._warn_once_if_not_pd_reducible("Velocity")
         if gs.use_zerocopy and not self._use_hibernation:
             mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
@@ -2672,6 +2729,7 @@ class RigidSolver(KinematicSolver):
         kernel_control_dofs_velocity(dofs_idx, envs_idx, velocity, self.dyn_state, self.rigid_config)
 
     def control_dofs_position(self, position, dofs_idx=None, envs_idx=None):
+        self._warn_once_if_target_has_no_authority(gs.CTRL_MODE.POSITION, dofs_idx, envs_idx)
         self._warn_once_if_not_pd_reducible("Position")
         if gs.use_zerocopy and not self._use_hibernation:
             mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
@@ -2695,6 +2753,7 @@ class RigidSolver(KinematicSolver):
         kernel_control_dofs_position(dofs_idx, envs_idx, position, self.dyn_state, self.rigid_config)
 
     def control_dofs_position_velocity(self, position, velocity, dofs_idx=None, envs_idx=None):
+        self._warn_once_if_target_has_no_authority(gs.CTRL_MODE.POSITION, dofs_idx, envs_idx)
         if gs.use_zerocopy and not self._use_hibernation:
             mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
             ctrl_mode = qd_to_torch(self.dyn_state.dofs.ctrl_mode, transpose=True, copy=False)

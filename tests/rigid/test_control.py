@@ -21,6 +21,44 @@ from ..utils import (
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
 @pytest.mark.parametrize("backend", [gs.cpu])
+def test_general_actuator_keeps_usable_targets_quiet(gs_sim, caplog):
+    """A non-PD actuator whose gain still has authority must not be warned about."""
+    (entity,) = gs_sim.entities
+
+    with caplog.at_level("WARNING"):
+        entity.control_dofs_position(0.0)
+        entity.control_dofs_velocity(0.0)
+    assert "barely follow" not in caplog.text
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["general_actuator"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_a_gainless_position_target_is_warned_about_once(gs_sim, caplog):
+    """Starve one DOF's position gain and the call should say so - exactly once."""
+    (entity,) = gs_sim.entities
+    entity.set_dofs_act_gain([0.01], dofs_idx_local=[1])
+    entity.set_dofs_act_bias([0.0], [-100.0], [-10.0], dofs_idx_local=[1])
+    gs_sim.rigid_solver._no_authority_dofs = None
+    gs_sim.rigid_solver._warned_no_authority = False
+
+    with caplog.at_level("WARNING"):
+        entity.control_dofs_position(0.0, dofs_idx_local=[1])
+    assert "barely follow" in caplog.text
+
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        entity.control_dofs_position(0.0, dofs_idx_local=[1])
+    assert "barely follow" not in caplog.text
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["general_actuator"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu])
 def test_general_actuator_position_control_warns(gs_sim, caplog):
     """Position control on a non-PD-reducible actuator is silent otherwise."""
     (entity,) = gs_sim.entities
