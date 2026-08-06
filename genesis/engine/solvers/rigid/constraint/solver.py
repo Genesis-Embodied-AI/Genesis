@@ -2115,20 +2115,24 @@ def func_compute_island_envelope(
 
 @qd.func
 def func_add_cone_hessian_block(
-    i_b, constraint_state: array_class.ConstraintState, rigid_config: qd.template(), scale: qd.template() = 1.0
+    i_b,
+    constraint_state: array_class.ConstraintState,
+    rigid_config: qd.template(),
+    is_removal: qd.template() = False,
+    scale_by_jacobi: qd.template() = False,
 ):
-    """Accumulate scale * J_c^T H_c J_c (the coupled elliptic-cone contribution) into the Hessian nt_H[i_b].
+    """Accumulate J_c^T H_c J_c (the coupled elliptic-cone contribution) into the Hessian nt_H[i_b].
 
     A middle-zone contact adds the packed symmetric local block H_c over the cone rows' shared DOF support (top
     zone adds nothing; bottom zone is the plain per-row J^T D J the caller already accumulated with active=True). H_c
     is positive semi-definite (PSD), so nt_H stays symmetric positive definite (SPD) and the factor kernels are
     unchanged. The block is read in natural DOF order and stored at the layout the factor uses - natural for the
-    dense path, permuted via dof_iperm for the sparse skyline. scale is +1 to add the block before a factor and -1
-    to remove it after a non-destructive factor, so a caller can carry the cone through an incrementally-maintained
-    nt_H without a rebuild.
+    dense path, permuted via dof_iperm for the sparse skyline. is_removal negates the block, so a caller bracketing
+    a non-destructive factor can carry the cone through an incrementally-maintained nt_H without a rebuild: add
+    before the factor, remove after.
 
     On the CPU backend every cone's cone_prev_jaref is seeded from its current residuals, so the incremental factor's
-    downdate targets exactly the block baked here (a +1 caller always precedes the factor there).
+    downdate targets exactly the block baked here (an adding caller always precedes the factor there).
     """
     n_rows = qd.static(rigid_config.rows_per_contact)
     ne = constraint_state.n_constraints_equality[i_b]
@@ -2168,12 +2172,22 @@ def func_add_cone_hessian_block(
                         p2 = constraint_state.dof_iperm[i_b, i_d2]
                         w_row = qd.max(p1, p2)
                         w_col = qd.min(p1, p2)
-                    constraint_state.nt_H[i_b, w_row, w_col] = constraint_state.nt_H[i_b, w_row, w_col] + scale * block
+                    # A caller bracketing a non-destructive factor maintains nt_H in scaled coordinates; the block
+                    # rides the stored scale (see nt_jacobi in array_class.py).
+                    if qd.static(scale_by_jacobi):
+                        block = block * constraint_state.nt_jacobi[row, i_b] * constraint_state.nt_jacobi[col, i_b]
+                    if qd.static(is_removal):
+                        block = -block
+                    constraint_state.nt_H[i_b, w_row, w_col] = constraint_state.nt_H[i_b, w_row, w_col] + block
 
 
 @qd.func
 def func_add_cone_hessian_block_island(
-    i_b, i_island, constraint_state: array_class.ConstraintState, rigid_config: qd.template()
+    i_b,
+    i_island,
+    constraint_state: array_class.ConstraintState,
+    rigid_config: qd.template(),
+    scale_by_jacobi: qd.template() = False,
 ):
     """Accumulate the coupled elliptic-cone contribution J_c^T H_c J_c of one island's middle-zone cones into nt_H.
 
@@ -2224,6 +2238,9 @@ def func_add_cone_hessian_block_island(
                             rows_jac_row[i_r] = constraint_state.jac[i_c + i_r, row, i_b]
                             rows_jac_col[i_r] = constraint_state.jac[i_c + i_r, col, i_b]
                         block = _func_cone_block_product(cone_H, rows_jac_row, rows_jac_col)
+                        # H is maintained in scaled coordinates; see func_jacobi_scale.
+                        if qd.static(scale_by_jacobi):
+                            block = block * constraint_state.nt_jacobi[row, i_b] * constraint_state.nt_jacobi[col, i_b]
                         constraint_state.nt_H[i_b, row, col] = constraint_state.nt_H[i_b, row, col] + block
 
 
@@ -2302,6 +2319,9 @@ def func_update_cone_free_hessian_flip(
             for i_d2_ in range(i_d1_, jac_n):
                 i_d2 = constraint_state.jac_dofs_idx[i_c, i_d2_, i_b]
                 v = constraint_state.jac[i_c, i_d1, i_b] * constraint_state.jac[i_c, i_d2, i_b] * efc_D
+                # The mirror is maintained in scaled coordinates; see func_jacobi_scale_env.
+                if qd.static(rigid_config.enable_jacobi_equilibration):
+                    v = v * constraint_state.nt_jacobi[i_d1, i_b] * constraint_state.nt_jacobi[i_d2, i_b]
                 if i_d1 == i_d2:
                     constraint_state.nt_H_cone_free_diag[i_b, i_d1] = (
                         constraint_state.nt_H_cone_free_diag[i_b, i_d1] + v
@@ -2321,6 +2341,9 @@ def func_update_cone_free_hessian_flip(
                 for i_d2_ in range(i_d1_, jac_n):
                     i_d2 = constraint_state.jac_dofs_idx[i_c, i_d2_, i_b]
                     v = constraint_state.jac[i_c, i_d1, i_b] * constraint_state.jac[i_c, i_d2, i_b] * efc_D
+                    # The mirror is maintained in scaled coordinates; see func_jacobi_scale_env.
+                    if qd.static(rigid_config.enable_jacobi_equilibration):
+                        v = v * constraint_state.nt_jacobi[i_d1, i_b] * constraint_state.nt_jacobi[i_d2, i_b]
                     p1 = constraint_state.dof_iperm[i_b, i_d1]
                     p2 = constraint_state.dof_iperm[i_b, i_d2]
                     if p1 == p2:
@@ -2357,6 +2380,53 @@ def func_hessian_direct_batch(
         n = constraint_state.island.dof_slices.n[i_island, i_b]
         dof_base = constraint_state.island.dof_slices.start[i_island, i_b]
         con_base = constraint_state.island.constraint_slices.start[i_island, i_b]
+        # Self-contained scale refresh over the island's own DOFs and constraints: assembly consumes it below, and a
+        # lone island's rebuild must not depend on any other island assembling (see func_jacobi_scale_env).
+        if qd.static(rigid_config.enable_jacobi_equilibration):
+            con_n_scale = constraint_state.island.constraint_slices.n[i_island, i_b]
+            for i_d in range(n):
+                i_dg = constraint_state.island.dof_id[dof_base + i_d, i_b]
+                hess_diag = rigid_info.mass_mat[i_dg, i_dg, i_b]
+                for i_lcon in range(con_n_scale):
+                    i_c = constraint_state.island.constraint_id[con_base + i_lcon, i_b]
+                    if constraint_state.active[i_c, i_b]:
+                        hess_diag = (
+                            hess_diag + constraint_state.efc_D[i_c, i_b] * constraint_state.jac[i_c, i_dg, i_b] ** 2
+                        )
+                constraint_state.nt_jacobi[i_dg, i_b] = hess_diag
+            if qd.static(rigid_config.enable_elliptic_friction):
+                n_rows_scale = qd.static(rigid_config.rows_per_contact)
+                nef_scale = (
+                    constraint_state.n_constraints_equality[i_b] + constraint_state.n_constraints_frictionloss[i_b]
+                )
+                n_cone_scale = constraint_state.n_constraints_cone[i_b]
+                for i_lcon in range(con_n_scale):
+                    i_c = constraint_state.island.constraint_id[con_base + i_lcon, i_b]
+                    if i_c >= nef_scale and i_c < nef_scale + n_cone_scale and (i_c - nef_scale) % n_rows_scale == 0:
+                        rows_efc_D, rows_friction, con_mu, rows_jaref = _func_cone_head_load(
+                            i_c, i_b, constraint_state, rigid_config
+                        )
+                        zone, N, T = _func_cone_zone(rows_jaref, rows_efc_D, con_mu, rows_friction, rigid_config)
+                        if zone == 2:
+                            _rows_force, _cost, cone_H = _func_cone_middle(
+                                rows_jaref, rows_efc_D, con_mu, rows_friction, N, T, rigid_config
+                            )
+                            jac_n = constraint_state.jac_n_dofs[i_c, i_b]
+                            for i_d1_ in range(jac_n):
+                                i_d1 = constraint_state.jac_dofs_idx[i_c, i_d1_, i_b]
+                                rows_jac = qd.Vector.zero(gs.qd_float, n_rows_scale)
+                                for i_r in qd.static(range(n_rows_scale)):
+                                    rows_jac[i_r] = constraint_state.jac[i_c + i_r, i_d1, i_b]
+                                constraint_state.nt_jacobi[i_d1, i_b] = constraint_state.nt_jacobi[
+                                    i_d1, i_b
+                                ] + _func_cone_block_product(cone_H, rows_jac, rows_jac)
+            for i_d in range(n):
+                i_dg = constraint_state.island.dof_id[dof_base + i_d, i_b]
+                hess_diag = constraint_state.nt_jacobi[i_dg, i_b]
+                s = gs.qd_float(1.0)
+                if hess_diag > 0.0:
+                    s = 1.0 / qd.sqrt(hess_diag)
+                constraint_state.nt_jacobi[i_dg, i_b] = s
         con_n = constraint_state.island.constraint_slices.n[i_island, i_b]
         # The island's DOFs are gathered in ascending global order (dof_id), so its block lives in the lower
         # triangle of nt_H at those global rows/cols. Off-block (cross-island) entries are left untouched: the
@@ -2393,10 +2463,13 @@ def func_hessian_direct_batch(
                                 >= constraint_state.island.dof_local_pos[i_d2, i_b]
                             ) != (i_d1 >= i_d2):
                                 row, col = col, row
-                        constraint_state.nt_H[i_b, row, col] = (
-                            constraint_state.nt_H[i_b, row, col]
-                            + constraint_state.jac[i_c, i_d1, i_b] * constraint_state.jac[i_c, i_d2, i_b] * efc_D
-                        )
+                        contrib = constraint_state.jac[i_c, i_d1, i_b] * constraint_state.jac[i_c, i_d2, i_b] * efc_D
+                        # Each contribution carries its rows' scales so H assembles equilibrated; see func_jacobi_scale.
+                        if qd.static(rigid_config.enable_jacobi_equilibration):
+                            contrib = (
+                                contrib * constraint_state.nt_jacobi[i_d1, i_b] * constraint_state.nt_jacobi[i_d2, i_b]
+                            )
+                        constraint_state.nt_H[i_b, row, col] = constraint_state.nt_H[i_b, row, col] + contrib
         # H += M, restricted to the island's DOFs. Mass couples only DOFs within the same mass block, which is a
         # contiguous global DOF range and so maps to a contiguous local range (dof_id is ascending). Bound the add by
         # that block (dofs_mass_block_start, mapped to local via dof_local_pos) rather than the full constraint
@@ -2409,9 +2482,11 @@ def func_hessian_direct_batch(
             mass_lo = constraint_state.island.dof_local_pos[mass_block_start, i_b]
             for j_d in range(mass_lo, i_d + 1):
                 j_dg = constraint_state.island.dof_id[dof_base + j_d, i_b]
-                constraint_state.nt_H[i_b, i_dg, j_dg] = (
-                    constraint_state.nt_H[i_b, i_dg, j_dg] + rigid_info.mass_mat[i_dg, j_dg, i_b]
-                )
+                mass = rigid_info.mass_mat[i_dg, j_dg, i_b]
+                # Scaled like the island scatter above.
+                if qd.static(rigid_config.enable_jacobi_equilibration):
+                    mass = mass * constraint_state.nt_jacobi[i_dg, i_b] * constraint_state.nt_jacobi[j_dg, i_b]
+                constraint_state.nt_H[i_b, i_dg, j_dg] = constraint_state.nt_H[i_b, i_dg, j_dg] + mass
         # Persist the cone-free block before the cone blocks land, so a rebuild restores it by an envelope copy and
         # bakes the current cone blocks on top instead of reassembling J^T D J (func_factor_island_incremental_or_direct).
         if qd.static(rigid_config.enable_cone_free_hessian_reuse):
@@ -2419,11 +2494,17 @@ def func_hessian_direct_batch(
         # Coupled elliptic-cone Hessian block for this island's middle-zone cones; the per-row J^T D J of the active
         # rows was already added above.
         if qd.static(rigid_config.enable_elliptic_friction):
-            func_add_cone_hessian_block_island(i_b, i_island, constraint_state, rigid_config)
+            func_add_cone_hessian_block_island(
+                i_b, i_island, constraint_state, rigid_config, scale_by_jacobi=rigid_config.enable_jacobi_equilibration
+            )
         return
 
     n_dofs = constraint_state.nt_H.shape[1]
     n_entities = dyn_info.entities.n_links.shape[0]
+
+    # Self-contained scale refresh: assembly consumes it below (see func_jacobi_scale_env).
+    if qd.static(rigid_config.enable_jacobi_equilibration):
+        func_jacobi_scale_env(i_b, constraint_state, rigid_info, rigid_config)
 
     # Reset Hessian matrix to zero
     for i_d1 in range(n_dofs):
@@ -2448,20 +2529,32 @@ def func_hessian_direct_batch(
                             p2 = constraint_state.dof_iperm[i_b, i_d2]
                             row = qd.max(p1, p2)
                             col = qd.min(p1, p2)
-                            constraint_state.nt_H[i_b, row, col] = (
-                                constraint_state.nt_H[i_b, row, col]
-                                + constraint_state.jac[i_c, i_d1, i_b] * constraint_state.jac[i_c, i_d2, i_b] * efc_D
+                            contrib = (
+                                constraint_state.jac[i_c, i_d1, i_b] * constraint_state.jac[i_c, i_d2, i_b] * efc_D
                             )
+                            # Scaled like the island scatter above.
+                            if qd.static(rigid_config.enable_jacobi_equilibration):
+                                contrib = (
+                                    contrib
+                                    * constraint_state.nt_jacobi[i_d1, i_b]
+                                    * constraint_state.nt_jacobi[i_d2, i_b]
+                                )
+                            constraint_state.nt_H[i_b, row, col] = constraint_state.nt_H[i_b, row, col] + contrib
     else:
         for i_d1, i_c in qd.ndrange(n_dofs, constraint_state.n_constraints[i_b]):
             if constraint_state.active[i_c, i_b] and qd.abs(constraint_state.jac[i_c, i_d1, i_b]) > EPS:
                 for i_d2 in range(i_d1 + 1):
-                    constraint_state.nt_H[i_b, i_d1, i_d2] = (
-                        constraint_state.nt_H[i_b, i_d1, i_d2]
-                        + constraint_state.jac[i_c, i_d2, i_b]
+                    contrib = (
+                        constraint_state.jac[i_c, i_d2, i_b]
                         * constraint_state.jac[i_c, i_d1, i_b]
                         * constraint_state.efc_D[i_c, i_b]
                     )
+                    # Scaled like the island scatter above.
+                    if qd.static(rigid_config.enable_jacobi_equilibration):
+                        contrib = (
+                            contrib * constraint_state.nt_jacobi[i_d1, i_b] * constraint_state.nt_jacobi[i_d2, i_b]
+                        )
+                    constraint_state.nt_H[i_b, i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2] + contrib
 
     # Compute `H += M`. With sparse_solve the storage position is permuted via dof_iperm; otherwise it is natural
     # (dof_iperm is only populated on the sparse path).
@@ -2469,18 +2562,18 @@ def func_hessian_direct_batch(
         for i_d1 in range(dyn_info.entities.dof_start[i_e], dyn_info.entities.dof_end[i_e]):
             # Mass couples only DOFs within the same kinematic-tree block, so cross-block entries are zero and skipped.
             for i_d2 in range(rigid_info.dofs_mass_block_start[i_d1], i_d1 + 1):
+                mass = rigid_info.mass_mat[i_d1, i_d2, i_b]
+                # Scaled like the island scatter above.
+                if qd.static(rigid_config.enable_jacobi_equilibration):
+                    mass = mass * constraint_state.nt_jacobi[i_d1, i_b] * constraint_state.nt_jacobi[i_d2, i_b]
                 if qd.static(rigid_config.sparse_solve):
                     p1 = constraint_state.dof_iperm[i_b, i_d1]
                     p2 = constraint_state.dof_iperm[i_b, i_d2]
                     row = qd.max(p1, p2)
                     col = qd.min(p1, p2)
-                    constraint_state.nt_H[i_b, row, col] = (
-                        constraint_state.nt_H[i_b, row, col] + rigid_info.mass_mat[i_d1, i_d2, i_b]
-                    )
+                    constraint_state.nt_H[i_b, row, col] = constraint_state.nt_H[i_b, row, col] + mass
                 else:
-                    constraint_state.nt_H[i_b, i_d1, i_d2] = (
-                        constraint_state.nt_H[i_b, i_d1, i_d2] + rigid_info.mass_mat[i_d1, i_d2, i_b]
-                    )
+                    constraint_state.nt_H[i_b, i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2] + mass
 
     # Persist the cone-free Hessian before the cone blocks land, so a rebuild restores it by an envelope copy and
     # bakes the current cone blocks on top instead of reassembling J^T D J (func_solve_iter).
@@ -2493,7 +2586,9 @@ def func_hessian_direct_batch(
     # The three cone rows share one DOF support, so the block is scattered over that support once and keeps the Hessian
     # symmetric positive definite (SPD), leaving the factor kernels unchanged.
     if qd.static(rigid_config.enable_elliptic_friction):
-        func_add_cone_hessian_block(i_b, constraint_state, rigid_config)
+        func_add_cone_hessian_block(
+            i_b, constraint_state, rigid_config, scale_by_jacobi=rigid_config.enable_jacobi_equilibration
+        )
 
 
 @qd.func
@@ -2573,6 +2668,30 @@ def func_island_assemble_factor_solve_tiled(
                 i_d = i_d + T
             qd.simt.block.sync()
 
+            # Scale the freshly assembled block to unit diagonal before factoring; see nt_jacobi in array_class.py.
+            if qd.static(rigid_config.enable_jacobi_equilibration):
+                i_d = tid
+                while i_d < n:
+                    gi = gbase + i_d
+                    hess_diag = constraint_state.nt_H[i_b, gi, gi]
+                    s = gs.qd_float(1.0)
+                    if hess_diag > 0.0:
+                        s = 1.0 / qd.sqrt(hess_diag)
+                    constraint_state.nt_jacobi[gi, i_b] = s
+                    i_d = i_d + T
+                qd.simt.block.sync()
+                i_d = tid
+                while i_d < n:
+                    gi = gbase + i_d
+                    s_row = constraint_state.nt_jacobi[gi, i_b]
+                    for j in range(i_d + 1):
+                        gj = gbase + j
+                        constraint_state.nt_H[i_b, gi, gj] = (
+                            constraint_state.nt_H[i_b, gi, gj] * s_row * constraint_state.nt_jacobi[gj, i_b]
+                        )
+                    i_d = i_d + T
+                qd.simt.block.sync()
+
         # --- Blocked left-looking Cholesky into L_sh (register tiles, no block sync), reading the island block ---
         N_BLOCKS = (n + T - 1) // T
         for kb in range(N_BLOCKS):
@@ -2587,11 +2706,7 @@ def func_island_assemble_factor_solve_tiled(
                 for t in range(T):
                     v = L_sh[lk0:lk1, lj0 + t]
                     L_kk -= qd.outer(v, v)
-            # Floor each pivot relative to that row's ORIGINAL diagonal rather than at the bare unit roundoff: a pivot of the
-            # Newton system is an inertia and falls with the fifth power of the body size, so an absolute floor takes over the
-            # factorization below unit scale and inflates it by an amount the constraint jacobian - hence the orientation -
-            # decides. `eps` is read only on the lane owning the pivot, so a per-lane value costs nothing, and the diagonal
-            # read here is still the original one: the left-looking factor writes this block only after the call.
+            # Floored relative to the row's original diagonal; see the tiled factor's floor comment.
             d_row = gk0 + tid
             diag_orig = gs.qd_float(1.0)
             if d_row < gk1:
@@ -2618,6 +2733,9 @@ def func_island_assemble_factor_solve_tiled(
         k = tid
         while k < n:
             v_sh[k] = constraint_state.grad[gbase + k, i_b]
+            # L factors the scaled block, so the solve wraps with nt_jacobi (see array_class.py).
+            if qd.static(rigid_config.enable_jacobi_equilibration):
+                v_sh[k] = v_sh[k] * constraint_state.nt_jacobi[gbase + k, i_b]
             k = k + T
         qd.simt.block.sync()
         for i_r in range(n):
@@ -2646,6 +2764,8 @@ def func_island_assemble_factor_solve_tiled(
         k = tid
         while k < n:
             constraint_state.Mgrad[gbase + k, i_b] = v_sh[k]
+            if qd.static(rigid_config.enable_jacobi_equilibration):
+                constraint_state.Mgrad[gbase + k, i_b] = v_sh[k] * constraint_state.nt_jacobi[gbase + k, i_b]
             k = k + T
         qd.simt.block.sync()
 
@@ -2688,6 +2808,30 @@ def func_island_assemble_factor_solve_tiled(
                 i_d = i_d + T
             qd.simt.block.sync()
 
+            # Scale the freshly assembled block to unit diagonal before factoring; see nt_jacobi in array_class.py.
+            if qd.static(rigid_config.enable_jacobi_equilibration):
+                i_d = tid
+                while i_d < n:
+                    gi = gbase + i_d
+                    hess_diag = constraint_state.nt_H[i_b, gi, gi]
+                    s = gs.qd_float(1.0)
+                    if hess_diag > 0.0:
+                        s = 1.0 / qd.sqrt(hess_diag)
+                    constraint_state.nt_jacobi[gi, i_b] = s
+                    i_d = i_d + T
+                qd.simt.block.sync()
+                i_d = tid
+                while i_d < n:
+                    gi = gbase + i_d
+                    s_row = constraint_state.nt_jacobi[gi, i_b]
+                    for j in range(i_d + 1):
+                        gj = gbase + j
+                        constraint_state.nt_H[i_b, gi, gj] = (
+                            constraint_state.nt_H[i_b, gi, gj] * s_row * constraint_state.nt_jacobi[gj, i_b]
+                        )
+                    i_d = i_d + T
+                qd.simt.block.sync()
+
         # Left-looking blocked Cholesky with register tiles, prior L columns read back from nt_H (block_dim == T == one
         # subgroup, so the cooperative tile loads/stores are lockstep - no block.sync between column blocks needed).
         N_BLOCKS = (n + T - 1) // T
@@ -2703,11 +2847,7 @@ def func_island_assemble_factor_solve_tiled(
                 for t in range(T):
                     v = constraint_state.nt_H[i_b, gk0:gk1, gbase + lj0 + t]
                     L_kk -= qd.outer(v, v)
-            # Floor each pivot relative to that row's ORIGINAL diagonal rather than at the bare unit roundoff: a pivot of the
-            # Newton system is an inertia and falls with the fifth power of the body size, so an absolute floor takes over the
-            # factorization below unit scale and inflates it by an amount the constraint jacobian - hence the orientation -
-            # decides. `eps` is read only on the lane owning the pivot, so a per-lane value costs nothing, and the diagonal
-            # read here is still the original one: the left-looking factor writes this block only after the call.
+            # Floored relative to the row's original diagonal; see the tiled factor's floor comment.
             d_row = gk0 + tid
             diag_orig = gs.qd_float(1.0)
             if d_row < gk1:
@@ -2736,6 +2876,11 @@ def func_island_assemble_factor_solve_tiled(
         k = tid
         while k < n:
             constraint_state.Mgrad[gbase + k, i_b] = constraint_state.grad[gbase + k, i_b]
+            # L factors the scaled block, so the solve wraps with nt_jacobi (see array_class.py).
+            if qd.static(rigid_config.enable_jacobi_equilibration):
+                constraint_state.Mgrad[gbase + k, i_b] = (
+                    constraint_state.grad[gbase + k, i_b] * constraint_state.nt_jacobi[gbase + k, i_b]
+                )
             k = k + T
         qd.simt.block.sync()
         for i_r in range(n):
@@ -2762,6 +2907,14 @@ def func_island_assemble_factor_solve_tiled(
                 constraint_state.Mgrad[gbase + i_r, i_b] = (
                     constraint_state.Mgrad[gbase + i_r, i_b] - dot
                 ) / constraint_state.nt_H[i_b, gbase + i_r, gbase + i_r]
+            qd.simt.block.sync()
+        if qd.static(rigid_config.enable_jacobi_equilibration):
+            k = tid
+            while k < n:
+                constraint_state.Mgrad[gbase + k, i_b] = (
+                    constraint_state.Mgrad[gbase + k, i_b] * constraint_state.nt_jacobi[gbase + k, i_b]
+                )
+                k = k + T
             qd.simt.block.sync()
     else:
         # Non-contiguous island (gathered DOFs are not a single ascending run): scalar per-island solve on lane 0,
@@ -2843,6 +2996,7 @@ def func_island_tiled_factor_solve_all(
 def func_hessian_direct_tiled(
     constraint_state: array_class.ConstraintState,
     rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
     check_full_hessian: qd.template() = False,
 ):
     """Compute the Hessian matrix `H = M + J.T @ D @ J of the optimization problem for all environment at once.
@@ -2890,6 +3044,57 @@ def func_hessian_direct_tiled(
         jac_col = qd.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.qd_float)
         efc_D = qd.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK,), gs.qd_float)
 
+        # Self-contained scale refresh consumed by the staging below, lane-strided over DOFs (see
+        # func_jacobi_scale_env for the formula); the cone pass strides over cones, whose support-local writes are
+        # DOF-disjoint within a cone but not across cones, so it keeps one lane per cone.
+        if qd.static(rigid_config.enable_jacobi_equilibration):
+            i_d_s = tid
+            while i_d_s < n_dofs:
+                hess_diag = rigid_info.mass_mat[i_d_s, i_d_s, i_b]
+                for i_c_s in range(constraint_state.n_constraints[i_b]):
+                    if constraint_state.active[i_c_s, i_b]:
+                        hess_diag = (
+                            hess_diag
+                            + constraint_state.efc_D[i_c_s, i_b] * constraint_state.jac[i_c_s, i_d_s, i_b] ** 2
+                        )
+                constraint_state.nt_jacobi[i_d_s, i_b] = hess_diag
+                i_d_s = i_d_s + BLOCK_DIM
+            qd.simt.block.sync()
+            if qd.static(rigid_config.enable_elliptic_friction):
+                n_rows_s = qd.static(rigid_config.rows_per_contact)
+                nef_s = constraint_state.n_constraints_equality[i_b] + constraint_state.n_constraints_frictionloss[i_b]
+                i_cone_s = tid
+                while i_cone_s < constraint_state.n_constraints_cone[i_b] // n_rows_s:
+                    i_head_s = nef_s + i_cone_s * n_rows_s
+                    rows_efc_D, rows_friction, con_mu, rows_jaref = _func_cone_head_load(
+                        i_head_s, i_b, constraint_state, rigid_config
+                    )
+                    zone, N, T = _func_cone_zone(rows_jaref, rows_efc_D, con_mu, rows_friction, rigid_config)
+                    if zone == 2:
+                        _rows_force, _cost, cone_H = _func_cone_middle(
+                            rows_jaref, rows_efc_D, con_mu, rows_friction, N, T, rigid_config
+                        )
+                        for i_d1_s in range(constraint_state.jac_n_dofs[i_head_s, i_b]):
+                            i_d1 = constraint_state.jac_dofs_idx[i_head_s, i_d1_s, i_b]
+                            rows_jac = qd.Vector.zero(gs.qd_float, n_rows_s)
+                            for i_r in qd.static(range(n_rows_s)):
+                                rows_jac[i_r] = constraint_state.jac[i_head_s + i_r, i_d1, i_b]
+                            qd.atomic_add(
+                                constraint_state.nt_jacobi[i_d1, i_b],
+                                _func_cone_block_product(cone_H, rows_jac, rows_jac),
+                            )
+                    i_cone_s = i_cone_s + BLOCK_DIM
+                qd.simt.block.sync()
+            i_d_s = tid
+            while i_d_s < n_dofs:
+                hess_diag = constraint_state.nt_jacobi[i_d_s, i_b]
+                s = gs.qd_float(1.0)
+                if hess_diag > 0.0:
+                    s = 1.0 / qd.sqrt(hess_diag)
+                constraint_state.nt_jacobi[i_d_s, i_b] = s
+                i_d_s = i_d_s + BLOCK_DIM
+            qd.simt.block.sync()
+
         # Loop over all the constraints and accumulate their respective contributions to the Hessian matrix
         i_c_start = 0
         n_c = constraint_state.n_constraints[i_b]
@@ -2913,6 +3118,12 @@ def func_hessian_direct_tiled(
                 while i_c_ < n_conts_tile:
                     for i_d_ in range(n_dofs_tile_row):
                         jac_row[i_c_, i_d_] = constraint_state.jac[i_c_start + i_c_, i_d1_start + i_d_, i_b]
+                        # The staged Jacobian carries its column's scale, so every accumulated J^T D J contribution
+                        # lands in equilibrated coordinates; see func_jacobi_scale.
+                        if qd.static(rigid_config.enable_jacobi_equilibration):
+                            jac_row[i_c_, i_d_] = (
+                                jac_row[i_c_, i_d_] * constraint_state.nt_jacobi[i_d1_start + i_d_, i_b]
+                            )
                     i_c_ = i_c_ + BLOCK_DIM
                 qd.simt.block.sync()
 
@@ -2929,6 +3140,11 @@ def func_hessian_direct_tiled(
                         while i_c_ < n_conts_tile:
                             for i_d_ in range(n_dofs_tile_col):
                                 jac_col[i_c_, i_d_] = constraint_state.jac[i_c_start + i_c_, i_d2_start + i_d_, i_b]
+                                # Scaled like jac_row above.
+                                if qd.static(rigid_config.enable_jacobi_equilibration):
+                                    jac_col[i_c_, i_d_] = (
+                                        jac_col[i_c_, i_d_] * constraint_state.nt_jacobi[i_d2_start + i_d_, i_b]
+                                    )
                             i_c_ = i_c_ + BLOCK_DIM
                         qd.simt.block.sync()
 
@@ -2943,6 +3159,12 @@ def func_hessian_direct_tiled(
                             coef = gs.qd_float(0.0)
                             if i_c_start == 0:
                                 coef = rigid_info.mass_mat[i_d1, i_d2, i_b]
+                                if qd.static(rigid_config.enable_jacobi_equilibration):
+                                    coef = (
+                                        coef
+                                        * constraint_state.nt_jacobi[i_d1, i_b]
+                                        * constraint_state.nt_jacobi[i_d2, i_b]
+                                    )
                             for j_c_ in range(n_conts_tile):
                                 coef = coef + jac_row[j_c_, i_d1_] * jac_row[j_c_, i_d2_] * efc_D[j_c_]
                             if i_c_start == 0:
@@ -2961,6 +3183,12 @@ def func_hessian_direct_tiled(
                             coef = gs.qd_float(0.0)
                             if i_c_start == 0:
                                 coef = rigid_info.mass_mat[i_d1, i_d2, i_b]
+                                if qd.static(rigid_config.enable_jacobi_equilibration):
+                                    coef = (
+                                        coef
+                                        * constraint_state.nt_jacobi[i_d1, i_b]
+                                        * constraint_state.nt_jacobi[i_d2, i_b]
+                                    )
                             for j_c_ in range(n_conts_tile):
                                 coef = coef + jac_row[j_c_, i_d1_] * jac_col[j_c_, i_d2_] * efc_D[j_c_]
                             if i_c_start == 0:
@@ -3019,6 +3247,7 @@ def func_cholesky_factor_direct_batch(
             for j_d in range(i_start, i_d):
                 j_dg = constraint_state.island.dof_id[dof_base + j_d, i_b]
                 tmp = tmp - constraint_state.nt_H[i_b, i_dg, j_dg] ** 2
+            # Floored relative to the row's original diagonal; see the tiled factor's floor comment.
             constraint_state.nt_H[i_b, i_dg, i_dg] = qd.sqrt(qd.max(tmp, EPS * qd.max(hess_diag, EPS)))
             inv = 1.0 / constraint_state.nt_H[i_b, i_dg, i_dg]
             # Only rows whose envelope reaches column i_d can be nonzero there. The CPU per-island path always
@@ -3049,6 +3278,7 @@ def func_cholesky_factor_direct_batch(
             tmp = hess_diag
             for k_d in range(i_start, i_d):
                 tmp = tmp - constraint_state.nt_H[i_b, i_d, k_d] ** 2
+            # Floored relative to the row's original diagonal; see the tiled factor's floor comment.
             constraint_state.nt_H[i_b, i_d, i_d] = qd.sqrt(qd.max(tmp, EPS * qd.max(hess_diag, EPS)))
 
             tmp = 1.0 / constraint_state.nt_H[i_b, i_d, i_d]
@@ -3065,6 +3295,7 @@ def func_cholesky_factor_direct_batch(
             tmp = hess_diag
             for j_d in range(i_d):
                 tmp = tmp - constraint_state.nt_H[i_b, i_d, j_d] ** 2
+            # Floored relative to the row's original diagonal; see the tiled factor's floor comment.
             constraint_state.nt_H[i_b, i_d, i_d] = qd.sqrt(qd.max(tmp, EPS * qd.max(hess_diag, EPS)))
 
             tmp = 1.0 / constraint_state.nt_H[i_b, i_d, i_d]
@@ -3073,6 +3304,55 @@ def func_cholesky_factor_direct_batch(
                 for k_d in range(i_d):
                     dot = dot + constraint_state.nt_H[i_b, j_d, k_d] * constraint_state.nt_H[i_b, i_d, k_d]
                 constraint_state.nt_H[i_b, j_d, i_d] = (constraint_state.nt_H[i_b, j_d, i_d] - dot) * tmp
+
+
+@qd.func
+def func_jacobi_scale_env(
+    i_b, constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
+):
+    """Refresh one env's nt_jacobi from the Hessian diagonal formula diag(M + J^T D J + cone blocks).
+
+    Runs at the top of every direct assembly, which then writes H already scaled - the Jacobian, mass and cone
+    contributions each carry their rows' scales - so no pass ever re-traverses H and the scale can never be stale
+    for the assembly that consumes it; see nt_jacobi in array_class.py. The middle-zone cone block carries the
+    curvature of the DOFs it couples; a scale ignoring it explodes exactly where the cone dominates a light body's
+    diagonal, which is the regime equilibration is for.
+    """
+    n_dofs = constraint_state.nt_H.shape[1]
+    for i_d in range(n_dofs):
+        hess_diag = rigid_info.mass_mat[i_d, i_d, i_b]
+        for i_c in range(constraint_state.n_constraints[i_b]):
+            if constraint_state.active[i_c, i_b]:
+                hess_diag = hess_diag + constraint_state.efc_D[i_c, i_b] * constraint_state.jac[i_c, i_d, i_b] ** 2
+        constraint_state.nt_jacobi[i_d, i_b] = hess_diag
+    if qd.static(rigid_config.enable_elliptic_friction):
+        n_rows = qd.static(rigid_config.rows_per_contact)
+        nef = constraint_state.n_constraints_equality[i_b] + constraint_state.n_constraints_frictionloss[i_b]
+        for i_cone in range(constraint_state.n_constraints_cone[i_b] // n_rows):
+            i_head = nef + i_cone * n_rows
+            rows_efc_D, rows_friction, con_mu, rows_jaref = _func_cone_head_load(
+                i_head, i_b, constraint_state, rigid_config
+            )
+            zone, N, T = _func_cone_zone(rows_jaref, rows_efc_D, con_mu, rows_friction, rigid_config)
+            if zone == 2:
+                _rows_force, _cost, cone_H = _func_cone_middle(
+                    rows_jaref, rows_efc_D, con_mu, rows_friction, N, T, rigid_config
+                )
+                jac_n = constraint_state.jac_n_dofs[i_head, i_b]
+                for i_d1_ in range(jac_n):
+                    i_d1 = constraint_state.jac_dofs_idx[i_head, i_d1_, i_b]
+                    rows_jac = qd.Vector.zero(gs.qd_float, n_rows)
+                    for i_r in qd.static(range(n_rows)):
+                        rows_jac[i_r] = constraint_state.jac[i_head + i_r, i_d1, i_b]
+                    constraint_state.nt_jacobi[i_d1, i_b] = constraint_state.nt_jacobi[
+                        i_d1, i_b
+                    ] + _func_cone_block_product(cone_H, rows_jac, rows_jac)
+    for i_d in range(n_dofs):
+        hess_diag = constraint_state.nt_jacobi[i_d, i_b]
+        s = gs.qd_float(1.0)
+        if hess_diag > 0.0:
+            s = 1.0 / qd.sqrt(hess_diag)
+        constraint_state.nt_jacobi[i_d, i_b] = s
 
 
 @qd.func
@@ -3140,11 +3420,12 @@ def _cholesky_factor_direct_tiled_impl(
                     L_kk -= qd.outer(v, v)
 
             # Factor diagonal tile in-place
-            # Floor each pivot relative to that row's ORIGINAL diagonal rather than at the bare unit roundoff: a pivot of the
-            # Newton system is an inertia and falls with the fifth power of the body size, so an absolute floor takes over the
-            # factorization below unit scale and inflates it by an amount the constraint jacobian - hence the orientation -
-            # decides. `eps` is read only on the lane owning the pivot, so a per-lane value costs nothing, and the diagonal
-            # read here is still the original one: the left-looking factor writes this block only after the call.
+            # Floor each pivot relative to the row's ORIGINAL diagonal rather than at the bare unit roundoff: Newton
+            # pivots are inertias and fall with the fifth power of the body size, so an absolute floor takes over below
+            # unit scale, inflating the factor in a direction the constraint jacobian decides, and even at unit scale it
+            # costs solve iterations (under Jacobi equilibration the diagonal is one and the floor degenerates to the
+            # bare roundoff). The diagonal read here is still the original one: the left-looking factor writes this
+            # block only after the call.
             d_row = k0 + tid
             diag_orig = gs.qd_float(1.0)
             if d_row < n_dofs:
@@ -3242,11 +3523,7 @@ def _cholesky_and_solve_fused_tiled_impl(
                     L_kk -= qd.outer(v, v)
 
             # Factor diagonal tile in-place
-            # Floor each pivot relative to that row's ORIGINAL diagonal rather than at the bare unit roundoff: a pivot of the
-            # Newton system is an inertia and falls with the fifth power of the body size, so an absolute floor takes over the
-            # factorization below unit scale and inflates it by an amount the constraint jacobian - hence the orientation -
-            # decides. `eps` is read only on the lane owning the pivot, so a per-lane value costs nothing, and the diagonal
-            # read here is still the original one: the left-looking factor writes this block only after the call.
+            # Floored relative to the row's original diagonal; see the tiled factor's floor comment.
             d_row = k0 + tid
             diag_orig = gs.qd_float(1.0)
             if d_row < n_dofs:
@@ -3283,10 +3560,12 @@ def _cholesky_and_solve_fused_tiled_impl(
         # No longer using TxT tiles; the T threads parallelize each row's dot product by striping across columns,
         # then subgroup-reduce to sum the partial products. Thread 0 writes each solved element.
 
-        # Load gradient into v_sh
+        # Load gradient into v_sh. L factors the scaled H, so the solve wraps with nt_jacobi (see array_class.py).
         k = tid
         while k < n_dofs:
             v_sh[k] = constraint_state.grad[k, i_b]
+            if qd.static(rigid_config.enable_jacobi_equilibration):
+                v_sh[k] = v_sh[k] * constraint_state.nt_jacobi[k, i_b]
             k = k + T
         qd.simt.block.sync()
 
@@ -3319,6 +3598,8 @@ def _cholesky_and_solve_fused_tiled_impl(
         k = tid
         while k < n_dofs:
             constraint_state.Mgrad[k, i_b] = v_sh[k]
+            if qd.static(rigid_config.enable_jacobi_equilibration):
+                constraint_state.Mgrad[k, i_b] = v_sh[k] * constraint_state.nt_jacobi[k, i_b]
             k = k + T
 
         # When dispatched from the warm-start in func_solve_init, the monolith body's first iter expects nt_H to hold L
@@ -3441,7 +3722,7 @@ def func_hessian_and_cholesky_factor_direct(
             func_hessian_and_cholesky_factor_direct_batch(i_b, constraint_state, dyn_info, rigid_info, rigid_config)
     else:
         # GPU
-        func_hessian_direct_tiled(constraint_state, rigid_info)
+        func_hessian_direct_tiled(constraint_state, rigid_info, rigid_config)
 
         # The tiled kernel assembles M + J^T D J only. Add the coupled elliptic-cone block as an additive post-pass
         # before factoring: the block is positive semi-definite (PSD) so the factor kernels are unchanged, and the tiled
@@ -3452,7 +3733,9 @@ def func_hessian_and_cholesky_factor_direct(
             qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
             for i_b in range(_B):
                 if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-                    func_add_cone_hessian_block(i_b, constraint_state, rigid_config)
+                    func_add_cone_hessian_block(
+                        i_b, constraint_state, rigid_config, scale_by_jacobi=rigid_config.enable_jacobi_equilibration
+                    )
 
         if qd.static(rigid_config.enable_tiled_cholesky_hessian):
             # The register-streaming tiled factor has no shared-memory DOF cap, so it replaces the scalar one-thread-
@@ -3565,7 +3848,7 @@ def func_apply_rank1_sparse_whole_env(
 
 @qd.func
 def func_hessian_and_cholesky_factor_incremental_dense_batch(
-    i_b, constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo
+    i_b, constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
 ) -> bool:
     n_dofs = constraint_state.nt_H.shape[1]
 
@@ -3576,7 +3859,11 @@ def func_hessian_and_cholesky_factor_incremental_dense_batch(
         efc_D_sqrt = qd.sqrt(constraint_state.efc_D[i_c, i_b])
 
         for i_d in range(n_dofs):
-            constraint_state.nt_vec[i_d, i_b] = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
+            v = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
+            # Scaled coordinates, matching the maintained L; see nt_jacobi in array_class.py.
+            if qd.static(rigid_config.enable_jacobi_equilibration):
+                v = v * constraint_state.nt_jacobi[i_d, i_b]
+            constraint_state.nt_vec[i_d, i_b] = v
 
         if func_apply_rank1_dense_whole_env(i_b, sign, constraint_state, rigid_info):
             is_degenerated = True
@@ -3586,7 +3873,7 @@ def func_hessian_and_cholesky_factor_incremental_dense_batch(
 
 @qd.func
 def func_hessian_and_cholesky_factor_incremental_sparse_batch(
-    i_b, constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo
+    i_b, constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
 ) -> bool:
     """Maintain the whole-env skyline factor L (in nt_H, permuted layout) by a rank-1 update/downdate per changed
     constraint, instead of reassembling and re-factoring H from scratch.
@@ -3614,7 +3901,11 @@ def func_hessian_and_cholesky_factor_incremental_sparse_batch(
         for k_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
             i_d = constraint_state.jac_dofs_idx[i_c, k_, i_b]
             p = constraint_state.dof_iperm[i_b, i_d]
-            constraint_state.nt_vec[p, i_b] = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
+            v = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
+            # Scaled coordinates, matching the maintained L; see nt_jacobi in array_class.py.
+            if qd.static(rigid_config.enable_jacobi_equilibration):
+                v = v * constraint_state.nt_jacobi[i_d, i_b]
+            constraint_state.nt_vec[p, i_b] = v
             if p < p_min:
                 p_min = p
 
@@ -3729,7 +4020,11 @@ def func_rank_batch_update_island(
             for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
                 i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
                 slot_base = i_d * rigid_config.hessian_rank_update_batch
-                constraint_state.nt_vec[slot_base + i_u, i_b] = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
+                v_stage = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
+                # Scaled coordinates, matching the maintained L; see nt_jacobi in array_class.py.
+                if qd.static(rigid_config.enable_jacobi_equilibration):
+                    v_stage = v_stage * constraint_state.nt_jacobi[i_d, i_b]
+                constraint_state.nt_vec[slot_base + i_u, i_b] = v_stage
                 ld_support = constraint_state.island.dof_local_pos[i_d, i_b]
                 if ld_support < ld_start:
                     ld_start = ld_support
@@ -3807,6 +4102,10 @@ def func_cone_rank_update_island(
                             for i_r in qd.static(range(j_r, n_rows)):
                                 w_prev = w_prev + cone_L_prev[qd.static(_tri_idx(j_r, i_r, n_rows))] * rows_jac[i_r]
                                 w_cur = w_cur + cone_L_cur[qd.static(_tri_idx(j_r, i_r, n_rows))] * rows_jac[i_r]
+                            # Scaled coordinates, matching the maintained L; see nt_jacobi in array_class.py.
+                            if qd.static(rigid_config.enable_jacobi_equilibration):
+                                w_prev = w_prev * constraint_state.nt_jacobi[i_d, i_b]
+                                w_cur = w_cur * constraint_state.nt_jacobi[i_d, i_b]
                             constraint_state.nt_vec[slot_base + j_r, i_b] = w_prev
                             constraint_state.nt_vec[slot_base + n_rows + j_r, i_b] = w_cur
                         ld_support = constraint_state.island.dof_local_pos[i_d, i_b]
@@ -3892,6 +4191,9 @@ def func_cone_rank_update_whole_env(
                                     w = gs.qd_float(0.0)
                                     for i_r in qd.static(range(n_rows)):
                                         w = w + updates_coef[i_u, i_r] * constraint_state.jac[i_head + i_r, i_d, i_b]
+                                    # Scaled coordinates, matching the maintained L; see nt_jacobi in array_class.py.
+                                    if qd.static(rigid_config.enable_jacobi_equilibration):
+                                        w = w * constraint_state.nt_jacobi[i_d, i_b]
                                     constraint_state.nt_vec[p, i_b] = w
                                     if p < p_min:
                                         p_min = p
@@ -3905,6 +4207,9 @@ def func_cone_rank_update_whole_env(
                                     w = gs.qd_float(0.0)
                                     for i_r in qd.static(range(n_rows)):
                                         w = w + updates_coef[i_u, i_r] * constraint_state.jac[i_head + i_r, i_d, i_b]
+                                    # Scaled coordinates, matching the maintained L; see nt_jacobi in array_class.py.
+                                    if qd.static(rigid_config.enable_jacobi_equilibration):
+                                        w = w * constraint_state.nt_jacobi[i_d, i_b]
                                     constraint_state.nt_vec[i_d, i_b] = w
                                 if func_apply_rank1_dense_whole_env(i_b, sign, constraint_state, rigid_info):
                                     is_degenerated = True
@@ -4025,7 +4330,13 @@ def func_factor_island_incremental_or_direct(
             # J^T D J reassembly runs.
             if qd.static(rigid_config.enable_cone_free_hessian_reuse):
                 func_copy_cone_free_hessian_island(i_b, i_island, constraint_state, save=False)
-                func_add_cone_hessian_block_island(i_b, i_island, constraint_state, rigid_config)
+                func_add_cone_hessian_block_island(
+                    i_b,
+                    i_island,
+                    constraint_state,
+                    rigid_config,
+                    scale_by_jacobi=rigid_config.enable_jacobi_equilibration,
+                )
             else:
                 func_hessian_direct_batch(i_b, i_island, constraint_state, dyn_info, rigid_info, rigid_config)
             func_cholesky_factor_direct_batch(i_b, i_island, constraint_state, rigid_info, rigid_config)
@@ -4060,10 +4371,12 @@ def func_hessian_and_cholesky_factor_incremental_batch(
         func_build_changed_constraint_list(i_b, constraint_state)
         if qd.static(rigid_config.sparse_solve):
             is_degenerated = func_hessian_and_cholesky_factor_incremental_sparse_batch(
-                i_b, constraint_state, rigid_info
+                i_b, constraint_state, rigid_info, rigid_config
             )
         else:
-            is_degenerated = func_hessian_and_cholesky_factor_incremental_dense_batch(i_b, constraint_state, rigid_info)
+            is_degenerated = func_hessian_and_cholesky_factor_incremental_dense_batch(
+                i_b, constraint_state, rigid_info, rigid_config
+            )
         # The active-set update above maintains the per-row J^T D J of the flipped rows; the coupled middle-zone cone
         # block varies with the residual each iteration, so it rides the same factor via its block update here. Only
         # the CPU backend reaches this incremental path for elliptic (a GPU scalar factor rebuilt above); the static
@@ -4101,6 +4414,10 @@ def func_cholesky_solve_batch(
         for ld in range(n):
             gd = constraint_state.island.dof_id[dof_base + ld, i_b]
             curr_out = constraint_state.grad[gd, i_b]
+            # Solve in scaled coordinates: pre-scale the right-hand side, unscale Mgrad at the end; see nt_jacobi in
+            # array_class.py.
+            if qd.static(rigid_config.enable_jacobi_equilibration):
+                curr_out = curr_out * constraint_state.nt_jacobi[gd, i_b]
             for j_d in range(constraint_state.island.dof_env_start_local[dof_base + ld, i_b], ld):
                 g_jd = constraint_state.island.dof_id[dof_base + j_d, i_b]
                 curr_out = curr_out - constraint_state.nt_H[i_b, gd, g_jd] * constraint_state.Mgrad[g_jd, i_b]
@@ -4119,6 +4436,10 @@ def func_cholesky_solve_batch(
                     g_jd = constraint_state.island.dof_id[dof_base + j_d, i_b]
                     curr_out = curr_out - constraint_state.nt_H[i_b, g_jd, gd] * constraint_state.Mgrad[g_jd, i_b]
             constraint_state.Mgrad[gd, i_b] = curr_out / constraint_state.nt_H[i_b, gd, gd]
+        if qd.static(rigid_config.enable_jacobi_equilibration):
+            for ld in range(n):
+                gd = constraint_state.island.dof_id[dof_base + ld, i_b]
+                constraint_state.Mgrad[gd, i_b] = constraint_state.Mgrad[gd, i_b] * constraint_state.nt_jacobi[gd, i_b]
     elif qd.static(rigid_config.sparse_envelope):
         n_dofs = constraint_state.Mgrad.shape[0]
         # i_d / j_d index permuted positions; grad/Mgrad are stored in natural DOF order, so map through dof_perm
@@ -4126,6 +4447,10 @@ def func_cholesky_solve_batch(
         for i_d in range(n_dofs):
             d_i = constraint_state.dof_perm[i_b, i_d]
             curr_out = constraint_state.grad[d_i, i_b]
+            # Solve in scaled coordinates: pre-scale the right-hand side, unscale Mgrad at the end; see nt_jacobi in
+            # array_class.py.
+            if qd.static(rigid_config.enable_jacobi_equilibration):
+                curr_out = curr_out * constraint_state.nt_jacobi[d_i, i_b]
             for j_d in range(constraint_state.nt_H_env_start[i_b, i_d], i_d):
                 d_j = constraint_state.dof_perm[i_b, j_d]
                 curr_out = curr_out - constraint_state.nt_H[i_b, i_d, j_d] * constraint_state.Mgrad[d_j, i_b]
@@ -4140,10 +4465,19 @@ def func_cholesky_solve_batch(
                     d_j = constraint_state.dof_perm[i_b, j_d]
                     curr_out = curr_out - constraint_state.nt_H[i_b, j_d, i_d] * constraint_state.Mgrad[d_j, i_b]
             constraint_state.Mgrad[d_i, i_b] = curr_out / constraint_state.nt_H[i_b, i_d, i_d]
+        if qd.static(rigid_config.enable_jacobi_equilibration):
+            for i_d in range(n_dofs):
+                constraint_state.Mgrad[i_d, i_b] = (
+                    constraint_state.Mgrad[i_d, i_b] * constraint_state.nt_jacobi[i_d, i_b]
+                )
     else:
         n_dofs = constraint_state.Mgrad.shape[0]
         for i_d in range(n_dofs):
             curr_out = constraint_state.grad[i_d, i_b]
+            # Solve in scaled coordinates: pre-scale the right-hand side, unscale Mgrad at the end; see nt_jacobi in
+            # array_class.py.
+            if qd.static(rigid_config.enable_jacobi_equilibration):
+                curr_out = curr_out * constraint_state.nt_jacobi[i_d, i_b]
             for j_d in range(i_d):
                 curr_out = curr_out - constraint_state.nt_H[i_b, i_d, j_d] * constraint_state.Mgrad[j_d, i_b]
             constraint_state.Mgrad[i_d, i_b] = curr_out / constraint_state.nt_H[i_b, i_d, i_d]
@@ -4154,6 +4488,11 @@ def func_cholesky_solve_batch(
             for j_d in range(i_d + 1, n_dofs):
                 curr_out = curr_out - constraint_state.nt_H[i_b, j_d, i_d] * constraint_state.Mgrad[j_d, i_b]
             constraint_state.Mgrad[i_d, i_b] = curr_out / constraint_state.nt_H[i_b, i_d, i_d]
+        if qd.static(rigid_config.enable_jacobi_equilibration):
+            for i_d in range(n_dofs):
+                constraint_state.Mgrad[i_d, i_b] = (
+                    constraint_state.Mgrad[i_d, i_b] * constraint_state.nt_jacobi[i_d, i_b]
+                )
 
 
 @qd.func
@@ -4210,6 +4549,9 @@ def func_cholesky_solve_tiled(constraint_state: array_class.ConstraintState, rig
         k_d = tid
         while k_d < n_dofs:
             v[k_d] = constraint_state.grad[k_d, i_b]
+            # L factors the scaled H, so the solve wraps with nt_jacobi (see array_class.py).
+            if qd.static(rigid_config.enable_jacobi_equilibration):
+                v[k_d] = v[k_d] * constraint_state.nt_jacobi[k_d, i_b]
             k_d = k_d + BLOCK_DIM
         qd.simt.block.sync()
 
@@ -4265,6 +4607,8 @@ def func_cholesky_solve_tiled(constraint_state: array_class.ConstraintState, rig
         k_d = tid
         while k_d < n_dofs:
             constraint_state.Mgrad[k_d, i_b] = v[k_d]
+            if qd.static(rigid_config.enable_jacobi_equilibration):
+                constraint_state.Mgrad[k_d, i_b] = v[k_d] * constraint_state.nt_jacobi[k_d, i_b]
             k_d = k_d + BLOCK_DIM
 
 
@@ -4998,11 +5342,11 @@ def func_linesearch_batch(
     scale = rigid_info.meaninertia[i_b] * qd.max(1, n_dofs)
     ls_ratio = rigid_info.tolerance[None] * rigid_info.ls_tolerance[None]
     if qd.static(not rigid_config.enable_mujoco_compatibility):
-        # What is bounded is a cost derivative along the search direction, a mass times an acceleration squared, and
-        # the mean inertia carries only the mass: the gradient norm supplies the missing acceleration, where the mass
-        # alone leaves the bound slack by whatever accelerations the scene carries and rounding picks the trial point.
-        # The ratio is floored at the working precision's resolution, below which no derivative assembled from this
-        # gradient resolves. Reproducing the reference behaviour keeps the mass and the bare ratio.
+        # The bounded quantity is a cost derivative along the search direction, a mass times an acceleration squared:
+        # the gradient norm supplies the acceleration the mean inertia's mass lacks, without which the bound is slack
+        # by the scene's accelerations and rounding picks the trial point. The ratio is floored at the working
+        # precision's resolution, below which no derivative from this gradient resolves; the reference behaviour keeps
+        # the mass and the bare ratio.
         scale = qd.sqrt(grad_sqnorm)
         LS_NOISE_RATIO = qd.static(10.0)
         ls_ratio = qd.max(ls_ratio, LS_NOISE_RATIO * rigid_info.EPS[None])
@@ -6368,14 +6712,16 @@ def func_solve_init(
         # env counts where the env dimension alone saturates the GPU. func_hessian_direct_tiled assembles the full H;
         # func_update_gradient_tiled builds grad and runs the fused factor+solve, writing L back to nt_H for the
         # monolith body's incremental iterations (write_L_to_nt_H inside, gated on enable_fused_factor_solve_init).
-        func_hessian_direct_tiled(constraint_state, rigid_info)
+        func_hessian_direct_tiled(constraint_state, rigid_info, rigid_config)
         # The tiled kernel assembles M + J^T D J only; bake the coupled elliptic-cone block before the fused factor
         # reads nt_H, so the seed search direction carries the middle-zone cone curvature.
         if qd.static(rigid_config.enable_elliptic_friction):
             qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
             for i_b in range(_B):
                 if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-                    func_add_cone_hessian_block(i_b, constraint_state, rigid_config)
+                    func_add_cone_hessian_block(
+                        i_b, constraint_state, rigid_config, scale_by_jacobi=rigid_config.enable_jacobi_equilibration
+                    )
         func_update_gradient_tiled(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
     elif qd.static(
         rigid_config.solver_type == gs.constraint_solver.Newton
@@ -6559,7 +6905,7 @@ def func_solve_iter(
                         <= sum_span_sq
                     ):
                         need_rebuild = func_hessian_and_cholesky_factor_incremental_sparse_batch(
-                            i_b, constraint_state, rigid_info
+                            i_b, constraint_state, rigid_info, rigid_config
                         )
                 # The coupled middle-zone cone block varies with the residual, so whenever some cone sits in the
                 # middle zone on either side (cone_passes > 0) and the active-set update stayed incremental, it rides
@@ -6579,7 +6925,12 @@ def func_solve_iter(
                     # without it, the full J^T D J reassembly runs.
                     if qd.static(rigid_config.enable_cone_free_hessian_reuse):
                         func_copy_cone_free_hessian_whole_env(i_b, constraint_state, save=False)
-                        func_add_cone_hessian_block(i_b, constraint_state, rigid_config)
+                        func_add_cone_hessian_block(
+                            i_b,
+                            constraint_state,
+                            rigid_config,
+                            scale_by_jacobi=rigid_config.enable_jacobi_equilibration,
+                        )
                         func_cholesky_factor_direct_batch(i_b, 0, constraint_state, rigid_info, rigid_config)
                     else:
                         func_hessian_and_cholesky_factor_direct_batch(

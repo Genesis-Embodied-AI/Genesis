@@ -482,6 +482,12 @@ class ConstraintState:
     # In practice, this variable is re-purposed to store the Cholesky factor L st H = L @ L.T to spare memory resources.
     # TODO: Optimize storage to only allocate memory half of the Hessian matrix to sparse memory resources.
     nt_H: qd.Tensor
+    # Per-DOF Jacobi scale s_i = 1/sqrt(diag(M + J^T D J)_i), at natural DOF id, refreshed ahead of every direct
+    # rebuild (func_jacobi_scale; 1 on an empty diagonal). Assembly writes H already scaled, nt_H holds L of S H S,
+    # update vectors are scaled at construction, and the batch solve wraps grad/Mgrad, so Mgrad = H^-1 grad exactly. A unit diagonal keeps the Hessian's mixed-unit spread within float32's
+    # conditioning capability at any geometry scale and makes the bare-EPS pivot floor scale-relative. Only meaningful
+    # with enable_jacobi_equilibration.
+    nt_jacobi: qd.Tensor
     # Diagonal of the persisted cone-free Hessian packed in nt_H's mirror slots (see nt_H). Only meaningful with
     # enable_cone_free_hessian_reuse.
     nt_H_cone_free_diag: qd.Tensor
@@ -633,6 +639,7 @@ def get_constraint_state(constraint_solver, solver, collider):
             if solver.rigid_config.enable_register_tiled_mass
             else V(dtype=gs.qd_float, shape=(_B, solver.n_dofs_, solver.n_dofs_))
         ),
+        nt_jacobi=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         nt_H_env_start=V(dtype=gs.qd_int, shape=sparse_dof_shape),
         dof_perm=V(dtype=gs.qd_int, shape=sparse_dof_shape),
         dof_iperm=V(dtype=gs.qd_int, shape=sparse_dof_shape),
@@ -2468,6 +2475,9 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # flattened index decompositions) key on this flag, while algorithm selection (warp-cooperative vs serial
     # reductions) keys on enable_cooperative_constraint_kernels alone.
     constraint_layout_batch_first: bool = False
+    # Whether the Newton system is Jacobi-equilibrated: see nt_jacobi in ConstraintState for the mechanics, the rigid
+    # solver's resolution for the gating.
+    enable_jacobi_equilibration: bool = False
     tiled_n_dofs_per_block: int = -1
     tiled_n_dofs: int = -1
     tiled_n_island_dofs: int = -1  # shared-tile cap for the cooperative per-island solve (fits GPU shared memory)
