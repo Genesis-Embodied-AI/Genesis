@@ -21,6 +21,27 @@ from ..utils import (
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
 @pytest.mark.parametrize("backend", [gs.cpu])
+def test_general_actuator_position_control_warns(gs_sim, caplog):
+    """Position control on a non-PD-reducible actuator is silent otherwise."""
+    (entity,) = gs_sim.entities
+
+    with caplog.at_level("WARNING"):
+        entity.control_dofs_position(0.0, dofs_idx_local=[1])
+    assert "non-PD-reducible" in caplog.text
+
+    # The warning is emitted once per solver, so stepping loops are not spammed.
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        entity.control_dofs_position(0.0, dofs_idx_local=[1])
+        entity.control_dofs_velocity(0.0, dofs_idx_local=[1])
+    assert "non-PD-reducible" not in caplog.text
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["general_actuator"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu])
 def test_general_actuator(gs_sim, mj_sim, tol):
     (entity,) = gs_sim.entities
 

@@ -274,6 +274,7 @@ class RigidSolver(KinematicSolver):
         self._use_contact_island = options.use_contact_island
         # Hibernation builds on islands, so requesting it without islands is a genuine conflict.
         self._use_hibernation = options.use_hibernation
+        self._warned_non_pd_control = False
         if self._use_hibernation and not self._use_contact_island:
             gs.raise_exception(
                 "`use_hibernation=True` requires `use_contact_island=True`, as hibernation builds on islands."
@@ -2621,7 +2622,34 @@ class RigidSolver(KinematicSolver):
         self._wake_dofs(dofs_idx, envs_idx)
         kernel_control_dofs_force(dofs_idx, envs_idx, force, self.dyn_state, self.rigid_config)
 
+    def _warn_once_if_not_pd_reducible(self, mode):
+        """Warn when position/velocity control targets DOFs whose actuator ignores it.
+
+        A general gain/bias actuator - what an MJCF tendon is approximated by, for
+        instance - does not reduce to a PD law, so `ctrl_pos`/`ctrl_vel` have no
+        effect on it and the call silently does nothing. The check runs once per
+        solver, so stepping loops pay nothing after the first call.
+        """
+        if self._warned_non_pd_control:
+            return
+        self._warned_non_pd_control = True
+        gain = qd_to_torch(self.dyn_info.dofs.act_gain, None, None, transpose=True, copy=False)
+        bias = qd_to_torch(self.dyn_info.dofs.act_bias, None, None, transpose=True, copy=False)
+        if self._options.batch_dofs_info:
+            gain, bias = gain[0], bias[0]
+        reducible = torch.abs(gain + bias[..., 1]) < gs.EPS * torch.clamp(torch.abs(gain), min=1.0)
+        reducible &= torch.abs(bias[..., 0]) < gs.EPS
+        offenders = torch.nonzero(~reducible).flatten().tolist()
+        if offenders:
+            gs.logger.warning(
+                f"{mode} control was requested while dofs {offenders} use a non-PD-reducible "
+                "actuator (act_gain != -act_bias[1], or act_bias[0] != 0). Those dofs ignore "
+                "position and velocity targets; drive them with control_dofs_force instead. "
+                "Use get_dofs_act_gain()/get_dofs_act_bias() to inspect them."
+            )
+
     def control_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None):
+        self._warn_once_if_not_pd_reducible("Velocity")
         if gs.use_zerocopy and not self._use_hibernation:
             mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
             ctrl_mode = qd_to_torch(self.dyn_state.dofs.ctrl_mode, transpose=True, copy=False)
@@ -2644,6 +2672,7 @@ class RigidSolver(KinematicSolver):
         kernel_control_dofs_velocity(dofs_idx, envs_idx, velocity, self.dyn_state, self.rigid_config)
 
     def control_dofs_position(self, position, dofs_idx=None, envs_idx=None):
+        self._warn_once_if_not_pd_reducible("Position")
         if gs.use_zerocopy and not self._use_hibernation:
             mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
             ctrl_mode = qd_to_torch(self.dyn_state.dofs.ctrl_mode, transpose=True, copy=False)
