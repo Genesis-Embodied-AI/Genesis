@@ -12,6 +12,7 @@ from genesis.utils.misc import qd_to_torch
 
 from ..utils import (
     assert_allclose,
+    assert_equal,
 )
 
 
@@ -550,6 +551,74 @@ def test_geom_pos_quat(n_envs, show_viewer):
             assert vgeom_quat.shape == (*batch_shape, 4)
             assert_allclose(geom_pos, vgeom_pos, atol=gs.EPS)
             assert_allclose(geom_quat, vgeom_quat, atol=gs.EPS)
+
+
+@pytest.mark.required
+def test_registered_material_shared_between_entities():
+    scene = gs.Scene(
+        show_viewer=False,
+    )
+    rubber = scene.add_material(
+        gs.materials.Rigid(
+            friction=1.2,
+        )
+    )
+    plane = scene.add_entity(
+        gs.morphs.Plane(),
+        material=rubber,
+    )
+    shared_box = scene.add_entity(
+        gs.morphs.Box(
+            pos=(0.0, 0.0, 0.5),
+            size=(0.1, 0.1, 0.1),
+        ),
+        material=rubber,
+    )
+    inline_box = scene.add_entity(
+        gs.morphs.Box(
+            pos=(0.0, 1.0, 0.5),
+            size=(0.1, 0.1, 0.1),
+        ),
+        material=gs.materials.Rigid(
+            friction=0.3,
+        ),
+    )
+
+    # Entities built from one registered material report it as their identity, while a material passed inline is
+    # registered on the spot and stays private to its entity.
+    assert plane.material is rubber
+    assert shared_box.material is rubber
+    assert scene.add_material(rubber.options) is rubber
+    assert inline_box.material.idx != rubber.idx
+
+    # The declared options remain readable through the material, which is where the geoms take their coefficient from.
+    assert_equal([geom.friction for geom in shared_box.geoms], 1.2)
+    assert_equal([geom.friction for geom in inline_box.geoms], 0.3)
+
+    # A geom assigned a material of its own takes every coefficient that material declares, and keeps the one it
+    # carries where the material declares none.
+    steel = scene.add_material(
+        gs.materials.Rigid(
+            friction=0.9,
+            friction_torsional=0.05,
+        )
+    )
+    unspecified = scene.add_material(
+        gs.materials.Rigid(),
+    )
+    shared_box.geoms[0].set_material(steel)
+    inline_box.geoms[0].set_material(unspecified)
+    assert_equal(shared_box.geoms[0].friction, 0.9)
+    assert_equal(shared_box.geoms[0].friction_torsional, 0.05)
+    assert_equal(inline_box.geoms[0].friction, 0.3)
+
+    with pytest.raises(gs.GenesisException):
+        scene.add_material(gs.materials.MPM.Elastic())
+
+    # A material is numbered within the scene it was registered on, so pairing one against a material of another
+    # scene would key the pair on some unrelated material.
+    with pytest.raises(gs.GenesisException):
+        rubber.set_friction_pair(gs.Scene(show_viewer=False).add_material(gs.materials.Rigid()), sliding_friction=0.5)
 
 
 @pytest.mark.slow  # ~200s

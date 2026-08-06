@@ -206,8 +206,6 @@ def func_collider_clear_env(
                     collider_state.contact_data.normal[i_c_hibernated, i_b] = collider_state.contact_data.normal[i_c, i_b]
                     collider_state.contact_data.pos[i_c_hibernated, i_b] = collider_state.contact_data.pos[i_c, i_b]
                     collider_state.contact_data.friction[i_c_hibernated, i_b] = collider_state.contact_data.friction[i_c, i_b]
-                    collider_state.contact_data.friction_torsional[i_c_hibernated, i_b] = collider_state.contact_data.friction_torsional[i_c, i_b]
-                    collider_state.contact_data.friction_rolling[i_c_hibernated, i_b] = collider_state.contact_data.friction_rolling[i_c, i_b]
                     collider_state.contact_data.sol_params[i_c_hibernated, i_b] = collider_state.contact_data.sol_params[i_c, i_b]
                     collider_state.contact_data.force[i_c_hibernated, i_b] = collider_state.contact_data.force[i_c, i_b]
                     collider_state.contact_data.link_a[i_c_hibernated, i_b] = collider_state.contact_data.link_a[i_c, i_b]
@@ -307,6 +305,44 @@ def collider_kernel_get_contacts(
 
 
 @qd.func
+def func_resolve_contact_friction(
+    i_ga,
+    i_gb,
+    i_b,
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
+):
+    """Sliding, torsional and rolling friction coefficients of a contact between two geoms.
+
+    Each coefficient is the larger of the two geoms' own, scaled by that geom's friction ratio, unless the pair
+    carries a coefficient of its own (see ColliderInfo.friction_override). Sliding friction carries a floor, so every
+    contact resists tangentially.
+
+    The override is addressed by the dense pair index of the two geoms; the caller's pair index counts broadphase
+    output on some paths, which is a different space.
+    """
+    override = collider_info.friction_override[
+        collider_info.collision_pair_idx[(i_gb, i_ga) if i_ga > i_gb else (i_ga, i_gb)]
+    ]
+    frictions = qd.Vector.zero(gs.qd_float, 3)
+    for j in qd.static(range(3)):
+        ratio_a = dyn_state.geoms.friction_ratio[i_ga, i_b][j]
+        ratio_b = dyn_state.geoms.friction_ratio[i_gb, i_b][j]
+        if override[j] >= 0.0:
+            # A pair coefficient describes the two surfaces together and has no per-surface decomposition, so the
+            # geoms' ratios reach it through their geometric mean: scaling both by k scales the coefficient by k.
+            frictions[j] = override[j] * qd.sqrt(ratio_a * ratio_b)
+        else:
+            frictions[j] = qd.max(
+                dyn_info.geoms.friction[i_ga][j] * ratio_a,
+                dyn_info.geoms.friction[i_gb][j] * ratio_b,
+            )
+    frictions[array_class.FrictionIdx.SLIDING] = qd.max(frictions[array_class.FrictionIdx.SLIDING], 1e-2)
+    return frictions
+
+
+@qd.func
 def func_add_contact(
     i_ga,
     i_gb,
@@ -328,12 +364,7 @@ def func_add_contact(
     else:
         i_c = collider_state.n_contacts[i_b]
     if i_c < collider_info.max_candidate_contacts[None]:
-        friction_a = dyn_info.geoms.friction[i_ga] * dyn_state.geoms.friction_ratio[i_ga, i_b]
-        friction_b = dyn_info.geoms.friction[i_gb] * dyn_state.geoms.friction_ratio[i_gb, i_b]
-        friction_torsional_a = dyn_info.geoms.friction_torsional[i_ga] * dyn_state.geoms.friction_ratio[i_ga, i_b]
-        friction_torsional_b = dyn_info.geoms.friction_torsional[i_gb] * dyn_state.geoms.friction_ratio[i_gb, i_b]
-        friction_rolling_a = dyn_info.geoms.friction_rolling[i_ga] * dyn_state.geoms.friction_ratio[i_ga, i_b]
-        friction_rolling_b = dyn_info.geoms.friction_rolling[i_gb] * dyn_state.geoms.friction_ratio[i_gb, i_b]
+        frictions = func_resolve_contact_friction(i_ga, i_gb, i_b, dyn_state, dyn_info, collider_info)
 
         # b to a
         collider_state.contact_data.geom_a[i_c, i_b] = i_ga
@@ -341,9 +372,7 @@ def func_add_contact(
         collider_state.contact_data.normal[i_c, i_b] = normal
         collider_state.contact_data.pos[i_c, i_b] = contact_pos
         collider_state.contact_data.penetration[i_c, i_b] = penetration
-        collider_state.contact_data.friction[i_c, i_b] = qd.max(qd.max(friction_a, friction_b), 1e-2)
-        collider_state.contact_data.friction_torsional[i_c, i_b] = qd.max(friction_torsional_a, friction_torsional_b)
-        collider_state.contact_data.friction_rolling[i_c, i_b] = qd.max(friction_rolling_a, friction_rolling_b)
+        collider_state.contact_data.friction[i_c, i_b] = frictions
         collider_state.contact_data.sol_params[i_c, i_b] = 0.5 * (
             dyn_info.geoms.sol_params[i_ga] + dyn_info.geoms.sol_params[i_gb]
         )
@@ -376,12 +405,7 @@ def func_set_contact(
     Set the contact data for the contact [i_c]. This is used for the backward pass, which parallelizes over the entire
     contact data, and for the split narrowphase multi-contact writes.
     """
-    friction_a = dyn_info.geoms.friction[i_ga] * dyn_state.geoms.friction_ratio[i_ga, i_b]
-    friction_b = dyn_info.geoms.friction[i_gb] * dyn_state.geoms.friction_ratio[i_gb, i_b]
-    friction_torsional_a = dyn_info.geoms.friction_torsional[i_ga] * dyn_state.geoms.friction_ratio[i_ga, i_b]
-    friction_torsional_b = dyn_info.geoms.friction_torsional[i_gb] * dyn_state.geoms.friction_ratio[i_gb, i_b]
-    friction_rolling_a = dyn_info.geoms.friction_rolling[i_ga] * dyn_state.geoms.friction_ratio[i_ga, i_b]
-    friction_rolling_b = dyn_info.geoms.friction_rolling[i_gb] * dyn_state.geoms.friction_ratio[i_gb, i_b]
+    frictions = func_resolve_contact_friction(i_ga, i_gb, i_b, dyn_state, dyn_info, collider_info)
 
     # b to a
     collider_state.contact_data.geom_a[i_c, i_b] = i_ga
@@ -389,9 +413,7 @@ def func_set_contact(
     collider_state.contact_data.normal[i_c, i_b] = normal
     collider_state.contact_data.pos[i_c, i_b] = contact_pos
     collider_state.contact_data.penetration[i_c, i_b] = penetration
-    collider_state.contact_data.friction[i_c, i_b] = qd.max(qd.max(friction_a, friction_b), 1e-2)
-    collider_state.contact_data.friction_torsional[i_c, i_b] = qd.max(friction_torsional_a, friction_torsional_b)
-    collider_state.contact_data.friction_rolling[i_c, i_b] = qd.max(friction_rolling_a, friction_rolling_b)
+    collider_state.contact_data.friction[i_c, i_b] = frictions
     collider_state.contact_data.sol_params[i_c, i_b] = 0.5 * (
         dyn_info.geoms.sol_params[i_ga] + dyn_info.geoms.sol_params[i_gb]
     )

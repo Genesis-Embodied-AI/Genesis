@@ -1,17 +1,19 @@
 import math
 import os
 import sys
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
-import quadrants as qd
 import numpy as np
 import torch
+
+import quadrants as qd
 
 import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.engine.entities import DroneEntity, RigidEntity
 from genesis.engine.entities.base_entity import Entity
+from genesis.engine.materials.rigid import RigidMaterial
 from genesis.engine.states import QueriedStates, RigidSolverState
 from genesis.options.solvers import RigidOptions
 from genesis.utils.misc import (
@@ -173,8 +175,6 @@ from .abd.accessor import (
     kernel_set_geom_friction_rolling,
     kernel_set_geom_friction_torsional,
     kernel_set_geoms_friction,
-    kernel_set_geoms_friction_rolling,
-    kernel_set_geoms_friction_torsional,
     kernel_adjust_link_inertia,
 )
 from .abd.diff import (
@@ -211,6 +211,17 @@ IMP_MAX = 0.9999
 
 # Minimum ratio between simulation timestep `_substep_dt` and time constant of constraints
 TIME_CONSTANT_SAFETY_FACTOR = 2.0
+
+
+class FrictionPair(NamedTuple):
+    """Contact friction coefficients declared for one pair of materials.
+
+    A None coefficient is left to the maximum over the two geoms, so a pair may pin sliding friction alone.
+    """
+
+    material_a: RigidMaterial
+    material_b: RigidMaterial
+    coefficients: tuple[float | None, float | None, float | None]
 
 
 def _sanitize_sol_params(sol_params, min_timeconst: float, default_timeconst: float | None = None):
@@ -267,6 +278,10 @@ class RigidSolver(KinematicSolver):
         self._box_box_detection = options.box_box_detection
         self._requires_grad = self._sim.options.requires_grad
         self._enable_heterogeneous = False  # Set to True when any entity has heterogeneous morphs
+
+        # Friction pairs, in declaration order. See Collider.update_friction_override for how they reach the
+        # runtime.
+        self._friction_pairs: list[FrictionPair] = []
 
         # Contact islands are off by default (opt in explicitly). The gate further below still disables them under
         # requires_grad (the differentiable adjoint reads the dense global Hessian) and for single-island scenes
@@ -1156,9 +1171,10 @@ class RigidSolver(KinematicSolver):
                 np.array(geoms_center, dtype=gs.np_float),
                 np.array([geom.init_quat for geom in geoms], dtype=gs.np_float),
                 np.array([geom.type for geom in geoms], dtype=gs.np_int),
-                np.array([geom.friction for geom in geoms], dtype=gs.np_float),
-                np.array([geom.friction_torsional for geom in geoms], dtype=gs.np_float),
-                np.array([geom.friction_rolling for geom in geoms], dtype=gs.np_float),
+                np.array(
+                    [(geom.friction, geom.friction_torsional, geom.friction_rolling) for geom in geoms],
+                    dtype=gs.np_float,
+                ),
                 geoms_sol_params,
                 np.array([geom.data for geom in geoms], dtype=gs.np_float),
                 np.array([geom.is_convex for geom in geoms], dtype=gs.np_bool),
@@ -1830,7 +1846,7 @@ class RigidSolver(KinematicSolver):
                 cfrc_ang_dst.masked_fill_(envs_mask[:, None, None], 0.0)
                 torch.where(envs_mask[:, None], state.mass_shift, mass_dst, out=mass_dst)
                 if self.n_geoms:
-                    torch.where(envs_mask[:, None], state.friction_ratio, fric_dst, out=fric_dst)
+                    torch.where(envs_mask[:, None, None], state.friction_ratio, fric_dst, out=fric_dst)
                 if self._use_hibernation:
                     links_hibernated_dst.masked_fill_(envs_mask[:, None], 0)
                     awake_steps_dst.masked_fill_(envs_mask[:, None], 0)
@@ -2295,8 +2311,12 @@ class RigidSolver(KinematicSolver):
         kernel_adjust_link_inertia(links_idx, envs_idx, ratio, self.dyn_info, self.rigid_config)
 
     def set_geoms_friction_ratio(self, friction_ratio, geoms_idx=None, envs_idx=None):
+        """Set the sliding, torsional and rolling friction ratio of each geom, packed along the trailing axis.
+
+        Takes the three together, which set_links_friction_ratio builds on to write one coefficient at a time.
+        """
         friction_ratio, geoms_idx, envs_idx = self._sanitize_io_variables(
-            friction_ratio, geoms_idx, self.n_geoms, "geoms_idx", envs_idx, skip_allocation=True
+            friction_ratio, geoms_idx, self.n_geoms, "geoms_idx", envs_idx, element_shape=(3,), skip_allocation=True
         )
         if self.n_envs == 0:
             friction_ratio = friction_ratio[None]
@@ -2828,7 +2848,35 @@ class RigidSolver(KinematicSolver):
         tensor = qd_to_torch(self.dyn_info.links.invweight, envs_idx, links_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 and self._options.batch_links_info else tensor
 
+    def set_links_friction_ratio(
+        self,
+        sliding_ratio=None,
+        links_idx=None,
+        envs_idx=None,
+        *,
+        torsional_ratio=None,
+        rolling_ratio=None,
+    ):
+        """Scale the friction coefficients of every geom of the given links, addressed by global link index.
+
+        A coefficient left None keeps its current value. The three share one packed field, so the ones left unset are
+        read back and written unchanged.
+        """
+        links_idx = range(self.n_links) if links_idx is None else links_idx
+        geoms_idx = [i_g for i_l in links_idx for i_g in range(self.links[i_l].geom_start, self.links[i_l].geom_end)]
+        links_n_geoms = torch.tensor([self.links[i_l].n_geoms for i_l in links_idx], dtype=gs.tc_int, device=gs.device)
+
+        ratios = self.get_geoms_friction_ratio(geoms_idx, envs_idx)
+        for i_coeff, ratio in enumerate((sliding_ratio, torsional_ratio, rolling_ratio)):
+            if ratio is None:
+                continue
+            # A per-link ratio expands to the geoms of each link; a scalar already applies to all of them.
+            ratio = torch.as_tensor(ratio, dtype=gs.tc_float, device=gs.device)
+            ratios[..., i_coeff] = torch.repeat_interleave(ratio, links_n_geoms, dim=-1) if ratio.ndim else ratio
+        self.set_geoms_friction_ratio(ratios, geoms_idx, envs_idx)
+
     def get_geoms_friction_ratio(self, geoms_idx=None, envs_idx=None):
+        """Sliding, torsional and rolling friction ratio of each geom, packed along the trailing axis."""
         tensor = qd_to_torch(self.dyn_state.geoms.friction_ratio, envs_idx, geoms_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
@@ -3104,6 +3152,7 @@ class RigidSolver(KinematicSolver):
         return self.get_kinetic_energy(envs_idx=envs_idx) + self.get_potential_energy(envs_idx=envs_idx)
 
     def get_geoms_friction(self, geoms_idx=None):
+        """Sliding, torsional and rolling friction coefficients of each geom, packed along the trailing axis."""
         return qd_to_torch(self.dyn_info.geoms.friction, geoms_idx, copy=True)
 
     def get_AABB(self, entities_idx=None, envs_idx=None):
@@ -3150,22 +3199,57 @@ class RigidSolver(KinematicSolver):
         kernel_set_geom_friction_rolling(geoms_idx, self.dyn_info, friction_rolling)
 
     def set_geoms_friction(self, friction, geoms_idx=None):
+        """Set the sliding, torsional and rolling friction coefficients of each geom, packed along the trailing axis.
+
+        Takes the three together, where the per-geom setters write one coefficient at a time.
+        """
         friction, geoms_idx, _ = self._sanitize_io_variables(
-            friction, geoms_idx, self.n_geoms, "geoms_idx", envs_idx=None, batched=False, skip_allocation=True
+            friction,
+            geoms_idx,
+            self.n_geoms,
+            "geoms_idx",
+            envs_idx=None,
+            element_shape=(3,),
+            batched=False,
+            skip_allocation=True,
         )
         kernel_set_geoms_friction(geoms_idx, friction, self.dyn_info, self.rigid_config)
 
-    def set_geoms_friction_torsional(self, friction_torsional, geoms_idx=None):
-        friction_torsional, geoms_idx, _ = self._sanitize_io_variables(
-            friction_torsional, geoms_idx, self.n_geoms, "geoms_idx", envs_idx=None, batched=False, skip_allocation=True
-        )
-        kernel_set_geoms_friction_torsional(geoms_idx, friction_torsional, self.dyn_info, self.rigid_config)
+    def set_friction_pair(
+        self, material_a, material_b, sliding_friction=None, torsional_friction=None, rolling_friction=None
+    ):
+        """Pin the contact friction coefficients between two registered materials.
 
-    def set_geoms_friction_rolling(self, friction_rolling, geoms_idx=None):
-        friction_rolling, geoms_idx, _ = self._sanitize_io_variables(
-            friction_rolling, geoms_idx, self.n_geoms, "geoms_idx", envs_idx=None, batched=False, skip_allocation=True
-        )
-        kernel_set_geoms_friction_rolling(geoms_idx, friction_rolling, self.dyn_info, self.rigid_config)
+        The pair replaces the maximum over the two geoms wherever both materials meet, and declaring the same two
+        materials again replaces its coefficients.
+        """
+        for material in (material_a, material_b):
+            if not isinstance(material, RigidMaterial):
+                gs.raise_exception(
+                    "A friction pair is declared between two materials registered through 'scene.add_material'. "
+                    f"Got {material}."
+                )
+            # A material is numbered within the scene it was registered on, so one from another scene would key the
+            # pair on some unrelated material of this one.
+            if material.scene is not self.scene:
+                gs.raise_exception(f"Material {material} is registered on another scene than this solver's.")
+        # The same bounds the per-geom coefficients answer to, so a pair cannot silently land on the solver's floor.
+        if sliding_friction is not None and (sliding_friction < 1e-2 or sliding_friction > 5.0):
+            gs.raise_exception("`sliding_friction` must be in the range [1e-2, 5.0] for simulation stability.")
+        for name, coeff in (("torsional_friction", torsional_friction), ("rolling_friction", rolling_friction)):
+            if coeff is not None and coeff < 0.0:
+                gs.raise_exception(f"`{name}` must be non-negative.")
+
+        pair = FrictionPair(material_a, material_b, (sliding_friction, torsional_friction, rolling_friction))
+        key = {material_a.idx, material_b.idx}
+        for i_pair, other in enumerate(self._friction_pairs):
+            if {other.material_a.idx, other.material_b.idx} == key:
+                self._friction_pairs[i_pair] = pair
+                break
+        else:
+            self._friction_pairs.append(pair)
+        if self.is_built:
+            self.collider.update_friction_override()
 
     def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None):
         return self.constraint_solver.add_weld_constraint(link1_idx, link2_idx, envs_idx)

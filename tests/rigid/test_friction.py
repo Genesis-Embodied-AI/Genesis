@@ -698,6 +698,119 @@ def test_elliptic_cone_push_isotropy(contact_resolution, show_viewer, tol):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
+def test_friction_resolved_from_material_pair(n_envs, show_viewer):
+    GRAVITY = 9.81
+    SIZE = 0.1
+    # Distinct launch speeds spread the boxes apart as they slide, so the order broadphase reports them in stops
+    # matching the order their pairs were numbered in. A lookup keyed on the wrong one of those two then resolves
+    # some other pair's coefficient.
+    SPEEDS = (6.0, 8.0, 12.0, 20.0, 5.0, 9.0, 15.0, 7.0)
+    # Coefficient declared for the plane against each box's material. 0.6 sits above both surfaces' own coefficients
+    # and 0.05 below both, so neither a maximum nor a minimum over the two reproduces them. Every one stays well
+    # clear of the coefficient at which a cube tips over its leading edge, width / (2 * com_height), since approaching
+    # it leans the contact force toward that edge and lifts the centre of mass. They are all distinct so that
+    # resolving any contact from another pair's coefficient shows up.
+    PAIR_HIGH = 0.6
+    PAIR_LOW = 0.05
+    PAIR_OWN = (0.1, 0.15, 0.25, 0.35)
+    # Scaling one geom's sliding ratio reaches a pair coefficient through the geometric mean of the two geoms', so
+    # the plane's ratio of 1 leaves the square root of this factor.
+    SLIDING_RATIO = 0.25
+    N_SETTLE = 40
+    N_SLIDE = 40
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.005,
+            gravity=(0.0, 0.0, -GRAVITY),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            friction_cone=gs.friction_cone.elliptic,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.0, -1.0, 0.6),
+            camera_lookat=(1.0, 0.2, 0.05),
+        ),
+        show_viewer=show_viewer,
+    )
+    plane_material = scene.add_material(
+        gs.materials.Rigid(
+            friction=0.4,
+        )
+    )
+    scene.add_entity(
+        gs.morphs.Plane(),
+        material=plane_material,
+    )
+    # One material shared by the first two boxes, so a single declaration governs both; one material assigned on a
+    # geom rather than its entity, which is how one entity carries more than one surface.
+    shared_material = scene.add_material(
+        gs.materials.Rigid(
+            friction=0.4,
+        )
+    )
+    geom_material = scene.add_material(
+        gs.materials.Rigid(
+            friction=0.4,
+        )
+    )
+    # Spaced far enough apart never to interact, so each box is its own contact island.
+    boxes = [
+        scene.add_entity(
+            gs.morphs.Box(
+                pos=(0.0, 4.0 * SIZE * i_box, 0.5 * SIZE),
+                size=(SIZE, SIZE, SIZE),
+            ),
+            material=shared_material,
+        )
+        for i_box in range(len(SPEEDS))
+    ]
+    boxes[3].geoms[0].set_material(geom_material)
+    # The remaining boxes each carry their own material and coefficient.
+    for i_box, pair_friction in enumerate(PAIR_OWN, start=4):
+        own_material = scene.add_material(
+            gs.materials.Rigid(
+                friction=0.4,
+            )
+        )
+        boxes[i_box].geoms[0].set_material(own_material)
+        plane_material.set_friction_pair(own_material, sliding_friction=pair_friction)
+    plane_material.set_friction_pair(shared_material, sliding_friction=PAIR_HIGH)
+    plane_material.set_friction_pair(geom_material, sliding_friction=PAIR_HIGH)
+    scene.build(n_envs=n_envs)
+
+    # Retuning a declared pair on a built scene is what a system identification loop does. The fourth box slides at
+    # PAIR_LOW only if this reaches it, since it was declared at PAIR_HIGH above.
+    plane_material.set_friction_pair(geom_material, sliding_friction=PAIR_LOW)
+    # The third box answers to the same declaration as the first two, scaled by its own sliding ratio alone.
+    boxes[2].set_friction_ratio(sliding_ratio=SLIDING_RATIO)
+    # The torsional ratio moves on the first box, which must leave its sliding deceleration untouched.
+    boxes[0].set_friction_ratio(torsional_ratio=0.5)
+
+    for _ in range(N_SETTLE):
+        scene.step()
+    for box, speed in zip(boxes, SPEEDS):
+        velocity = box.get_dofs_velocity()
+        velocity[..., 0] = speed
+        box.set_dofs_velocity(velocity)
+    speed_0 = torch.stack([box.get_dofs_velocity()[..., 0] for box in boxes])
+    for _ in range(N_SLIDE):
+        scene.step()
+    speed_1 = torch.stack([box.get_dofs_velocity()[..., 0] for box in boxes])
+
+    # Every box slides at the coefficient its pair declares, in place of the 0.4 both its own surfaces carry: the
+    # shared declaration for the first two, that same declaration scaled for the third, and the declaration made
+    # against the fourth box's geom material.
+    friction = torch.tensor(
+        [PAIR_HIGH, PAIR_HIGH, PAIR_HIGH * SLIDING_RATIO**0.5, PAIR_LOW, *PAIR_OWN],
+        device=gs.device,
+    ).reshape(-1, *(1,) * (n_envs > 0))
+    deceleration = (speed_0 - speed_1) / (N_SLIDE * scene.sim.dt)
+    assert_allclose(deceleration, (friction * GRAVITY).expand_as(deceleration), rtol=0.01)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
 def test_kinetic_friction(n_envs, show_viewer):
     GRAVITY = 9.81
     SIZE = 0.1

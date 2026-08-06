@@ -76,6 +76,18 @@ def V_SCALAR_FROM(dtype, value):
     return data
 
 
+# ======================================= Friction packing ========================================
+
+
+class FrictionIdx(IntEnum):
+    """Component order of every packed friction vector: GeomsInfo.friction, GeomsState.friction_ratio and
+    ContactData.friction all carry the coefficients in this order."""
+
+    SLIDING = 0
+    TORSIONAL = 1
+    ROLLING = 2
+
+
 # =========================================== ErrorCode ===========================================
 
 
@@ -694,9 +706,8 @@ class ContactData:
     penetration: qd.Tensor
     normal: qd.Tensor
     pos: qd.Tensor
+    # Sliding, torsional and rolling coefficients of the contact, packed in that order.
     friction: qd.Tensor
-    friction_torsional: qd.Tensor
-    friction_rolling: qd.Tensor
     sol_params: qd.Tensor
     force: qd.Tensor
     link_a: qd.Tensor
@@ -714,9 +725,7 @@ def get_contact_data(solver, max_candidate_contacts, requires_grad):
         normal=V(dtype=gs.qd_vec3, shape=(max_candidate_contacts_, _B), needs_grad=requires_grad),
         pos=V(dtype=gs.qd_vec3, shape=(max_candidate_contacts_, _B), needs_grad=requires_grad),
         penetration=V(dtype=gs.qd_float, shape=(max_candidate_contacts_, _B), needs_grad=requires_grad),
-        friction=V(dtype=gs.qd_float, shape=(max_candidate_contacts_, _B)),
-        friction_torsional=V(dtype=gs.qd_float, shape=(max_candidate_contacts_, _B)),
-        friction_rolling=V(dtype=gs.qd_float, shape=(max_candidate_contacts_, _B)),
+        friction=V(dtype=gs.qd_vec3, shape=(max_candidate_contacts_, _B)),
         sol_params=V_VEC(7, dtype=gs.qd_float, shape=(max_candidate_contacts_, _B)),
         force=V(dtype=gs.qd_vec3, shape=(max_candidate_contacts_, _B)),
         link_a=V(dtype=gs.qd_int, shape=(max_candidate_contacts_, _B)),
@@ -1547,6 +1556,10 @@ class ColliderInfo:
     # Post-pruning contact-point budget per environment, which sizes the contact constraint buffers (4 constraints per
     # contact point). Smaller than max_candidate_contacts when contact pruning is enabled or 'max_contacts' is set.
     max_contacts: qd.Tensor
+    # Friction coefficients declared for a pair of geoms, indexed by the dense pair index of collision_pair_idx and
+    # packed like GeomsInfo.friction. A component holds -1 where nothing was declared, so a pair may pin the sliding
+    # coefficient and leave the torsional and rolling ones to the maximum over the two geoms.
+    friction_override: qd.Tensor
     # Compact list of valid collision pairs. Used by all-vs-all broadphase to dispatch valid pairs to GPU threads.
     n_valid_pairs: qd.Tensor
     valid_collision_pairs: qd.Tensor
@@ -1602,6 +1615,7 @@ def get_collider_info(
         max_candidate_contacts=V(dtype=gs.qd_int, shape=()),
         max_collision_pairs_broad=V(dtype=gs.qd_int, shape=()),
         max_contacts=V(dtype=gs.qd_int, shape=()),
+        friction_override=V(dtype=gs.qd_vec3, shape=(max(n_valid_pairs, 1),)),
         n_valid_pairs=V_SCALAR_FROM(dtype=gs.qd_int, value=n_valid_pairs),
         valid_collision_pairs=V(dtype=gs.qd_ivec2, shape=(max(n_valid_pairs, 1),)),
         terrain_hf=V(dtype=gs.qd_float, shape=terrain_hf_shape),
@@ -1954,9 +1968,8 @@ class GeomsInfo:
     data: qd.Tensor
     link_idx: qd.Tensor
     type: qd.Tensor
+    # Sliding, torsional and rolling coefficients of the geom, packed in that order.
     friction: qd.Tensor
-    friction_torsional: qd.Tensor
-    friction_rolling: qd.Tensor
     sol_params: qd.Tensor
     vert_num: qd.Tensor
     vert_start: qd.Tensor
@@ -1991,9 +2004,7 @@ def get_geoms_info(solver, is_active=True):
         data=V(dtype=gs.qd_vec7, shape=shape),
         link_idx=V(dtype=gs.qd_int, shape=shape),
         type=V(dtype=gs.qd_int, shape=shape),
-        friction=V(dtype=gs.qd_float, shape=shape),
-        friction_torsional=V(dtype=gs.qd_float, shape=shape),
-        friction_rolling=V(dtype=gs.qd_float, shape=shape),
+        friction=V(dtype=gs.qd_vec3, shape=shape),
         sol_params=V(dtype=gs.qd_vec7, shape=shape),
         vert_num=V(dtype=gs.qd_int, shape=shape),
         vert_start=V(dtype=gs.qd_int, shape=shape),
@@ -2045,7 +2056,7 @@ def get_geoms_state(solver, is_active=True):
         min_buffer_idx=V(dtype=gs.qd_int, shape=shape),
         max_buffer_idx=V(dtype=gs.qd_int, shape=shape),
         is_hibernated=V(dtype=gs.qd_int, shape=shape),
-        friction_ratio=V(dtype=gs.qd_float, shape=shape),
+        friction_ratio=V(dtype=gs.qd_vec3, shape=shape),
     )
 
 

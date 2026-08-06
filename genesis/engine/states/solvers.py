@@ -103,7 +103,7 @@ class RigidSolverState:
         self.links_quat = gs.zeros((_B, scene.sim.rigid_solver.n_links, 4), **args)
         self.i_pos_shift = gs.zeros((_B, scene.sim.rigid_solver.n_links, 3), **args)
         self.mass_shift = gs.zeros((_B, scene.sim.rigid_solver.n_links), **args)
-        self.friction_ratio = gs.ones((_B, scene.sim.rigid_solver.n_geoms), **args)
+        self.friction_ratio = gs.ones((_B, scene.sim.rigid_solver.n_geoms, 3), **args)
 
     def serializable(self):
         self.scene = None

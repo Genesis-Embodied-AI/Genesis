@@ -6,14 +6,14 @@ from pydantic import Field, PrivateAttr, StrictBool
 import genesis as gs
 from genesis.typing import NonNegativeFloat, PositiveFloat, StrictInt, ValidFloat
 
-from ..base import Material
+from ..base import MaterialOptions
 
 if TYPE_CHECKING:
     from genesis.engine.entities.fem_entity import FEMEntity
 
 
 @qd.data_oriented
-class Base(Material["FEMEntity"]):
+class Base(MaterialOptions["FEMEntity"]):
     """
     The base class of FEM materials.
 

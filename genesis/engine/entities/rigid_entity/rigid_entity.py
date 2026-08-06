@@ -1,20 +1,25 @@
 import inspect
 import math
 import os
+from functools import wraps
 from itertools import chain
 from typing import TYPE_CHECKING, Literal, Any, Hashable
-from functools import wraps
 
-import quadrants as qd
 import numpy as np
 import torch
+
 import trimesh
 
+import quadrants as qd
+
 import genesis as gs
-from genesis.engine.materials.base import Material
+from genesis.engine.materials.base import MaterialOptions
+from genesis.engine.materials.rigid import RigidMaterial
 from genesis.engine.mesh import InertialProperties
+from genesis.engine.states.entities import RigidEntityState
 from genesis.options.morphs import Morph
 from genesis.options.surfaces import Surface
+from genesis.typing import UnitVec4FType, Vec3FType
 from genesis.utils import array_class
 from genesis.utils import geom as gu
 from genesis.utils import mesh as mu
@@ -22,8 +27,6 @@ from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
 from genesis.utils.misc import DeprecationError, broadcast_tensor, qd_to_numpy, qd_to_torch, tensor_to_array
-from genesis.typing import UnitVec4FType, Vec3FType
-from genesis.engine.states.entities import RigidEntityState
 
 from ..base_entity import Entity
 from .rigid_equality import RigidEquality
@@ -99,7 +102,7 @@ class KinematicEntity(Entity):
         self,
         scene: "Scene",
         solver: "KinematicSolver",
-        material: Material,
+        material: MaterialOptions,
         morph: Morph,
         surface: Surface,
         idx: int,
@@ -1241,7 +1244,7 @@ class KinematicEntity(Entity):
         # An explicitly set material density overrides any asset-authored per-geom density, as material friction does
         # for authored frictions. Dropping the keys up front keeps the align anchor, its all-or-none source check,
         # and the build-time inertial estimate consistently uniform-density.
-        if isinstance(self.material, gs.materials.Rigid) and self.material.rho is not None:
+        if isinstance(self.material, RigidMaterial) and self.material.rho is not None:
             for g_info in g_infos:
                 g_info.pop("density", None)
 
@@ -1340,7 +1343,7 @@ class KinematicEntity(Entity):
                 is_mass_explicit = None
 
         dynamics_hint = None
-        if isinstance(self.material, gs.materials.Rigid):
+        if isinstance(self.material, RigidMaterial):
             rho = self.material.rho
             if rho is None:
                 if self._solver._enable_mujoco_compatibility:
@@ -2510,7 +2513,7 @@ class RigidEntity(KinematicEntity):
         self,
         scene: "Scene",
         solver: "RigidSolver",
-        material: Material,
+        material: MaterialOptions,
         morph: Morph,
         surface: Surface,
         idx: int,
@@ -2575,13 +2578,13 @@ class RigidEntity(KinematicEntity):
         # Add collision geometries
         coup_links = self.material.coup_links
         for g_info in cg_infos:
-            friction = self.material.friction
+            friction = self.material.options.friction
             if friction is None:
                 friction = g_info.get("friction", gu.default_friction())
-            friction_torsional = self.material.friction_torsional
+            friction_torsional = self.material.options.friction_torsional
             if friction_torsional is None:
                 friction_torsional = g_info.get("friction_torsional", gu.default_friction_torsional())
-            friction_rolling = self.material.friction_rolling
+            friction_rolling = self.material.options.friction_rolling
             if friction_rolling is None:
                 friction_rolling = g_info.get("friction_rolling", gu.default_friction_rolling())
             needs_coup = self.material.needs_coup and (coup_links is None or link.name in coup_links)
@@ -2841,13 +2844,13 @@ class RigidEntity(KinematicEntity):
         # Add collision geometries
         coup_links = self.material.coup_links
         for g_info in cg_infos:
-            friction = self.material.friction
+            friction = self.material.options.friction
             if friction is None:
                 friction = g_info.get("friction", gu.default_friction())
-            friction_torsional = self.material.friction_torsional
+            friction_torsional = self.material.options.friction_torsional
             if friction_torsional is None:
                 friction_torsional = g_info.get("friction_torsional", gu.default_friction_torsional())
-            friction_rolling = self.material.friction_rolling
+            friction_rolling = self.material.options.friction_rolling
             if friction_rolling is None:
                 friction_rolling = g_info.get("friction_rolling", gu.default_friction_rolling())
             needs_coup = self.material.needs_coup and (coup_links is None or link.name in coup_links)
@@ -4494,31 +4497,43 @@ class RigidEntity(KinematicEntity):
     # ----------------------------------- friction ---------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def set_friction_ratio(self, friction_ratio, links_idx_local=None, envs_idx=None):
+    def set_friction_ratio(
+        self,
+        sliding_ratio=None,
+        links_idx_local=None,
+        envs_idx=None,
+        *,
+        torsional_ratio=None,
+        rolling_ratio=None,
+    ):
         """
-        Set the friction ratio of the geoms of the specified links.
+        Scale the friction coefficients of the geoms of the specified links.
+
+        Each coefficient answers to its own ratio: giving one leaves the other two as they are, so lowering sliding
+        friction never disturbs the torsional or rolling resistance.
 
         Parameters
         ----------
-        friction_ratio : torch.Tensor, shape (n_envs, n_links)
-            The friction ratio
+        sliding_ratio : float | array_like, shape (n_envs, n_links), optional
+            Ratio applied to the sliding friction. If None, the sliding ratio keeps its current value. Defaults to
+            None.
         links_idx_local : array_like
-            The indices of the links to set friction ratio.
+            The indices of the links to scale.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
+        torsional_ratio : float | array_like, shape (n_envs, n_links), optional
+            Ratio applied to the torsional friction. If None, it keeps its current value. Defaults to None.
+        rolling_ratio : float | array_like, shape (n_envs, n_links), optional
+            Ratio applied to the rolling friction. If None, it keeps its current value. Defaults to None.
         """
-        links_idx_local = self._get_global_idx(links_idx_local, self.n_links, 0, unsafe=True)
-
-        links_n_geoms = torch.tensor(
-            [self._links[i_l].n_geoms for i_l in links_idx_local], dtype=gs.tc_int, device=gs.device
+        links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        self._solver.set_links_friction_ratio(
+            sliding_ratio,
+            links_idx,
+            envs_idx,
+            torsional_ratio=torsional_ratio,
+            rolling_ratio=rolling_ratio,
         )
-        links_friction_ratio = torch.as_tensor(friction_ratio, dtype=gs.tc_float, device=gs.device)
-        geoms_friction_ratio = torch.repeat_interleave(links_friction_ratio, links_n_geoms, dim=-1)
-        geoms_idx = [
-            i_g for i_l in links_idx_local for i_g in range(self._links[i_l].geom_start, self._links[i_l].geom_end)
-        ]
-
-        self._solver.set_geoms_friction_ratio(geoms_friction_ratio, geoms_idx, envs_idx)
 
     def set_friction(self, friction):
         """
@@ -4528,6 +4543,8 @@ class RigidEntity(KinematicEntity):
         ----
         The friction coefficient associated with a pair of geometries in contact is defined as the maximum between
         their respective values, so one must be careful the set the friction coefficient properly for both of them.
+        Declaring it for the two materials through 'RigidMaterial.set_friction_pair' fixes it for their contacts
+        instead, whatever either geometry carries.
 
         Warning
         -------
@@ -4552,8 +4569,9 @@ class RigidEntity(KinematicEntity):
         Note
         ----
         The torsional friction coefficient associated with a pair of geometries in contact is defined as the maximum
-        between their respective values (see 'gs.materials.Rigid'). Only effective when torsional friction is enabled
-        at the scene level (see 'RigidOptions.enable_torsional_friction').
+        between their respective values (see 'gs.materials.Rigid'). Declaring it for the two materials through
+        'RigidMaterial.set_friction_pair' fixes it for their contacts instead. Only effective when torsional friction
+        is enabled at the scene level (see 'RigidOptions.enable_torsional_friction').
 
         Parameters
         ----------
@@ -4573,8 +4591,9 @@ class RigidEntity(KinematicEntity):
         Note
         ----
         The rolling friction coefficient associated with a pair of geometries in contact is defined as the maximum
-        between their respective values (see 'gs.materials.Rigid'). Only effective when rolling friction is enabled
-        at the scene level (see 'RigidOptions.enable_rolling_friction').
+        between their respective values (see 'gs.materials.Rigid'). Declaring it for the two materials through
+        'RigidMaterial.set_friction_pair' fixes it for their contacts instead. Only effective when rolling friction is
+        enabled at the scene level (see 'RigidOptions.enable_rolling_friction').
 
         Parameters
         ----------
