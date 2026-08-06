@@ -385,9 +385,9 @@ def implicit_inertial_origin():
         izz="0.30",
     )
     visual = ET.SubElement(link, "visual")
-    ET.SubElement(ET.SubElement(visual, "geometry"), "sphere", radius="0.03")
+    ET.SubElement(ET.SubElement(visual, "geometry"), "sphere", radius="0.06")
     collision = ET.SubElement(link, "collision")
-    ET.SubElement(ET.SubElement(collision, "geometry"), "sphere", radius="0.03")
+    ET.SubElement(ET.SubElement(collision, "geometry"), "sphere", radius="0.06")
     return ET.tostring(urdf, encoding="unicode")
 
 

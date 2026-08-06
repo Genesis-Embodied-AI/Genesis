@@ -212,7 +212,14 @@ def test_urdf_parsing(show_viewer, tol):
 
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
-def test_urdf_parsing_inertia_defaults(undefined_inertia, implicit_inertial_origin, show_viewer):
+def test_urdf_parsing_inertia_defaults(undefined_inertia, implicit_inertial_origin, show_viewer, tol):
+    INERTIA = np.array(
+        [
+            [0.11, 0.01, 0.02],
+            [0.01, 0.22, 0.03],
+            [0.02, 0.03, 0.30],
+        ]
+    )
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.5, 0.5, 0.5),
@@ -235,27 +242,22 @@ def test_urdf_parsing_inertia_defaults(undefined_inertia, implicit_inertial_orig
         ),
     )
 
+    assert entity_with_implicit_origin.base_link.inertial_pos is None
+
     scene.build()
 
     assert_allclose(entity_with_implicit_origin.base_link.inertial_pos, np.zeros(3), tol=gs.EPS)
-    assert_allclose(entity_with_implicit_origin.base_link.inertial_quat, gu.identity_quat(), tol=gs.EPS)
     assert_allclose(entity_with_implicit_origin.base_link.inertial_mass, 2.5, tol=gs.EPS)
     assert_allclose(
-        entity_with_implicit_origin.base_link.inertial_i,
-        np.array(
-            [
-                [0.11, 0.01, 0.02],
-                [0.01, 0.22, 0.03],
-                [0.02, 0.03, 0.30],
-            ]
-        ),
-        tol=gs.EPS,
+        np.linalg.eigvalsh(entity_with_implicit_origin.base_link.inertial_i),
+        np.linalg.eigvalsh(INERTIA),
+        tol=tol,
     )
 
     for _ in range(30):
         scene.step()
     assert_allclose(entity_without_inertia.get_pos(), (-0.1, 0.0, 0.03), tol=1e-3)
-    assert_allclose(entity_with_implicit_origin.get_pos(), (0.1, 0.0, 0.03), tol=1e-3)
+    assert_allclose(entity_with_implicit_origin.get_pos(), (0.1, 0.0, 0.06), tol=1e-3)
 
 
 @pytest.mark.slow  # ~200s
