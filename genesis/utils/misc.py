@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import field
 from importlib import import_module
 from itertools import combinations
-from typing import Any, NoReturn, Optional, Sequence
+from typing import Any, NoReturn, Sequence
 
 import cpuinfo
 import quadrants as qd
@@ -24,7 +24,7 @@ import torch
 
 
 import genesis as gs
-from genesis.typing import is_sequence
+from genesis.typing import IndexType, is_sequence
 
 
 LOGGER = logging.getLogger(__name__)
@@ -168,7 +168,9 @@ def set_random_seed(seed):
     torch.cuda.manual_seed_all(seed)
 
 
-def get_device(backend: gs.constants.backend, device_idx: Optional[int] = None):
+def get_device(
+    backend: gs.constants.backend, device_idx: int | None = None
+) -> tuple[torch.device, str, float, gs.constants.backend]:
     if backend == gs.gpu:
         if torch.cuda.is_available():
             if torch.version.hip:
@@ -235,21 +237,21 @@ def fits_in_gpu_shared_memory(*dims: int) -> bool:
     return math.prod(dims) * itemsize <= qd.lang.impl.get_max_shared_memory_bytes(is_lowerbound_ok=True)
 
 
-def get_src_dir():
+def get_src_dir() -> str:
     return os.path.dirname(gs.__file__)
 
 
-def get_gen_log_dir():
+def get_gen_log_dir() -> str:
     current_time = datetime.datetime.now()
     unique_id = current_time.strftime("%Y%m%d_%H%M%S_%f")
     return os.path.join(os.path.dirname(gs.__file__), "gen", "logs", unique_id)
 
 
-def get_assets_dir():
+def get_assets_dir() -> str:
     return os.path.join(get_src_dir(), "assets")
 
 
-def get_cache_dir():
+def get_cache_dir() -> str:
     cache_dir = os.environ.get("GS_CACHE_FILE_PATH")
     if cache_dir is not None:
         return cache_dir
@@ -261,51 +263,51 @@ def get_cache_dir():
     return os.path.join(root_cache_dir, "genesis")
 
 
-def get_gsd_cache_dir():
+def get_gsd_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "gsd")
 
 
-def get_gnd_cache_dir():
+def get_gnd_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "terrain")
 
 
-def get_cvx_cache_dir():
+def get_cvx_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "cvx")
 
 
-def get_ptc_cache_dir():
+def get_ptc_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "ptc")
 
 
-def get_fps_pc_cache_dir():
+def get_fps_pc_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "fps_pc")
 
 
-def get_tet_cache_dir():
+def get_tet_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "tet")
 
 
-def get_gel_cache_dir():
+def get_gel_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "gel")
 
 
-def get_remesh_cache_dir():
+def get_remesh_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "rm")
 
 
-def get_wt_cache_dir():
+def get_wt_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "wt")
 
 
-def get_wth_cache_dir():
+def get_wth_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "wth")
 
 
-def get_exr_cache_dir():
+def get_exr_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "exr")
 
 
-def get_usd_cache_dir():
+def get_usd_cache_dir() -> str:
     return os.path.join(get_cache_dir(), "usd")
 
 
@@ -393,7 +395,7 @@ def assert_gs_tensor(x):
         gs.raise_exception("Only accepts genesis.Tensor.")
 
 
-def to_gs_tensor(x, dtype: torch.dtype | None = None):
+def to_gs_tensor(x: "np.typing.ArrayLike", dtype: torch.dtype | None = None):
     if isinstance(x, gs.Tensor):
         tensor = x
     elif isinstance(x, torch.Tensor):
@@ -458,7 +460,11 @@ def gaussian_crosstalk_kernel(n_rows: int, n_cols: int, sigma: float, spacing: f
 
 
 def concat_with_tensor(
-    tensor: torch.Tensor, value, expand: tuple[int, ...] | None = None, dim: int = 0, flatten: bool = False
+    tensor: torch.Tensor,
+    value: "np.typing.ArrayLike",
+    expand: tuple[int, ...] | None = None,
+    dim: int = 0,
+    flatten: bool = False,
 ):
     """Helper method to concatenate a value (not necessarily a tensor) with a tensor."""
     if not isinstance(value, torch.Tensor):
@@ -679,8 +685,8 @@ def _apply_masks(out, value, row_mask, col_mask, keepdim, copy, *, to_torch):
 
 def qd_to_torch(
     value: qd.Tensor | qd.Field | qd.Ndarray,
-    row_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
-    col_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
+    row_mask: IndexType = None,
+    col_mask: IndexType = None,
     keepdim: bool = True,
     transpose: bool = False,
     *,
@@ -743,8 +749,8 @@ def qd_to_torch(
 
 def qd_to_numpy(
     value: qd.Tensor | qd.Field | qd.Ndarray,
-    row_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
-    col_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
+    row_mask: IndexType = None,
+    col_mask: IndexType = None,
     keepdim: bool = True,
     transpose: bool = False,
     *,
@@ -847,7 +853,7 @@ def qd_zero_grad(value) -> None:
 
 
 def sanitize_index(
-    index: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None,
+    index: IndexType,
     expected_size: int,
     max_size: int,
     dim: int,
@@ -890,7 +896,7 @@ def sanitize_index(
 
 
 def sanitize_indices(
-    indices: Sequence[int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None],
+    indices: Sequence[IndexType],
     expected_shape: Sequence[int],
     max_shape: Sequence[int],
     dim_names: tuple[str, ...] | list[str],
@@ -977,7 +983,7 @@ def broadcast_tensor(
 def sanitize_indexed_tensor(
     tensor: "np.typing.ArrayLike | None",
     dtype: torch.dtype,
-    indices: Sequence[int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None],
+    indices: Sequence[IndexType],
     expected_shape: tuple[int, ...] | list[int],
     max_shape: tuple[int, ...] | list[int],
     dim_names: tuple[str, ...] | list[str],
@@ -993,7 +999,7 @@ def sanitize_indexed_tensor(
     return tensor, tuple(indices_)
 
 
-def get_indexed_shape(tensor_shape, indices):
+def get_indexed_shape(tensor_shape, indices) -> tuple[int, ...]:
     """Compute the resulting shape after advanced indexing without performing the operation."""
     ndim = len(tensor_shape)
 

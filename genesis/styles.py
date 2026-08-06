@@ -11,7 +11,7 @@ class COLORS:
         pass
 
     @property
-    def GREEN(self):
+    def GREEN(self) -> str:
         if gs._theme == "dark":
             return "\x1b[38;5;119m"
         elif gs._theme == "light":
@@ -20,7 +20,7 @@ class COLORS:
             return ""
 
     @property
-    def BLUE(self):
+    def BLUE(self) -> str:
         if gs._theme == "dark":
             return "\x1b[38;5;159m"
         elif gs._theme == "light":
@@ -29,7 +29,7 @@ class COLORS:
             return ""
 
     @property
-    def YELLOW(self):
+    def YELLOW(self) -> str:
         if gs._theme == "dark":
             return "\x1b[38;5;226m"
         elif gs._theme == "light":
@@ -38,7 +38,7 @@ class COLORS:
             return ""
 
     @property
-    def RED(self):
+    def RED(self) -> str:
         if gs._theme == "dark":
             return "\x1b[38;5;9m"
         elif gs._theme == "light":
@@ -47,7 +47,7 @@ class COLORS:
             return ""
 
     @property
-    def CORN(self):
+    def CORN(self) -> str:
         if gs._theme == "dark":
             return "\x1b[38;5;11m"
         elif gs._theme == "light":
@@ -56,7 +56,7 @@ class COLORS:
             return ""
 
     @property
-    def GRAY(self):
+    def GRAY(self) -> str:
         if gs._theme == "dark":
             return "\x1b[38;5;247m"
         elif gs._theme == "light":
@@ -65,7 +65,7 @@ class COLORS:
             return ""
 
     @property
-    def MINT(self):
+    def MINT(self) -> str:
         if gs._theme == "dark":
             return "\x1b[38;5;121m"
         elif gs._theme == "light":
@@ -79,28 +79,28 @@ class FORMATS:
         pass
 
     @property
-    def BOLD(self):
+    def BOLD(self) -> str:
         if gs._theme == "dumb":
             return ""
         else:
             return "\x1b[1m"
 
     @property
-    def ITALIC(self):
+    def ITALIC(self) -> str:
         if gs._theme == "dumb":
             return ""
         else:
             return "\x1b[3m"
 
     @property
-    def UNDERLINE(self):
+    def UNDERLINE(self) -> str:
         if gs._theme == "dumb":
             return ""
         else:
             return "\x1b[4m"
 
     @property
-    def RESET(self):
+    def RESET(self) -> str:
         if gs._theme == "dumb":
             return ""
         else:

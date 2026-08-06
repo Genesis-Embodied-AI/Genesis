@@ -1,10 +1,12 @@
 import functools
 
 import quadrants as qd
+import numpy as np
 import torch
 
 import genesis as gs
 from genesis.engine.states.entities import MPMEntityState
+from genesis.typing import IndexType
 from genesis.utils.misc import to_gs_tensor
 
 from .particle_entity import assert_active, ParticleEntity
@@ -275,7 +277,7 @@ class MPMEntity(ParticleEntity):
         super().process_input_grad()
 
     @gs.assert_built
-    def get_state(self):
+    def get_state(self) -> MPMEntityState:
         """
         Get the current physical state of the particle entity.
 
@@ -351,7 +353,9 @@ class MPMEntity(ParticleEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def set_particles_pos(self, poss, particles_idx_local=None, envs_idx=None):
+    def set_particles_pos(
+        self, poss: "np.typing.ArrayLike", particles_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx)
         particles_idx = particles_idx_local + self._particle_start
@@ -364,7 +368,7 @@ class MPMEntity(ParticleEntity):
             self._sim.cur_substep_local, self._particle_start, self._n_particles, poss_grad
         )
 
-    def get_particles_pos(self, envs_idx=None):
+    def get_particles_pos(self, envs_idx: IndexType = None) -> torch.Tensor:
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         poss = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx, (3,))
         self.solver._kernel_get_particles_pos(
@@ -375,7 +379,9 @@ class MPMEntity(ParticleEntity):
         return poss
 
     @gs.assert_built
-    def set_particles_vel(self, vels, particles_idx_local=None, envs_idx=None):
+    def set_particles_vel(
+        self, vels: "np.typing.ArrayLike", particles_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx)
         particles_idx = particles_idx_local + self._particle_start
@@ -388,7 +394,7 @@ class MPMEntity(ParticleEntity):
             self._sim.cur_substep_local, self._particle_start, self._n_particles, vels_grad
         )
 
-    def get_particles_vel(self, envs_idx=None):
+    def get_particles_vel(self, envs_idx: IndexType = None) -> torch.Tensor:
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         vels = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx, (3,))
         self.solver._kernel_get_particles_vel(
@@ -399,7 +405,9 @@ class MPMEntity(ParticleEntity):
         return vels
 
     @gs.assert_built
-    def set_particles_active(self, actives, particles_idx_local=None, envs_idx=None):
+    def set_particles_active(
+        self, actives: "np.typing.ArrayLike", particles_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx)
         particles_idx = particles_idx_local + self._particle_start
@@ -411,7 +419,7 @@ class MPMEntity(ParticleEntity):
 
         self.solver._kernel_set_particles_active(self._sim.cur_substep_local, particles_idx, envs_idx, actives)
 
-    def get_particles_active(self, envs_idx=None):
+    def get_particles_active(self, envs_idx: IndexType = None) -> torch.Tensor:
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         actives = self._sanitize_particles_tensor(None, gs.tc_bool, None, envs_idx)
         self.solver._kernel_get_particles_active(
@@ -422,7 +430,7 @@ class MPMEntity(ParticleEntity):
         return actives
 
     @assert_muscle
-    def set_actuation(self, actus, envs_idx=None):
+    def set_actuation(self, actus: "np.typing.ArrayLike", envs_idx: IndexType = None):
         """
         Set actuation values for each muscle group individually.
 
@@ -440,7 +448,9 @@ class MPMEntity(ParticleEntity):
 
     @assert_muscle
     @gs.assert_built
-    def set_particles_actu(self, actus, particles_idx_local=None, envs_idx=None):
+    def set_particles_actu(
+        self, actus: "np.typing.ArrayLike", particles_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Set particle actuation values.
 
@@ -475,7 +485,7 @@ class MPMEntity(ParticleEntity):
             self._sim.cur_substep_local, self._particle_start, self._n_particles, actu_grad
         )
 
-    def get_particles_actu(self, envs_idx=None):
+    def get_particles_actu(self, envs_idx: IndexType = None) -> torch.Tensor:
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         actus = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx, (self.material.n_groups,))
         self.solver._kernel_get_particles_actu(
@@ -507,7 +517,7 @@ class MPMEntity(ParticleEntity):
 
     @assert_muscle
     @assert_active
-    def get_muscle_group(self):
+    def get_muscle_group(self) -> torch.Tensor:
         """
         Retrieve the muscle group index for each particle.
 
@@ -581,7 +591,7 @@ class MPMEntity(ParticleEntity):
         self.solver._kernel_set_particles_free(particles_idx, free)
 
     @assert_active
-    def get_free(self):
+    def get_free(self) -> torch.Tensor:
         """
         Get free/fixed status for all particles.
 
@@ -599,7 +609,7 @@ class MPMEntity(ParticleEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_particles_in_bbox(self, bbox_min, bbox_max):
+    def get_particles_in_bbox(self, bbox_min, bbox_max) -> torch.Tensor:
         """
         Get boolean mask for particles within a bounding box.
 
@@ -628,7 +638,7 @@ class MPMEntity(ParticleEntity):
         return mask
 
     @gs.assert_built
-    def set_particle_constraints(self, particles_mask, link_idx, stiffness):
+    def set_particle_constraints(self, particles_mask: torch.Tensor, link_idx: int, stiffness: float):
         """
         Attach MPM particles to a rigid link using soft constraints.
 

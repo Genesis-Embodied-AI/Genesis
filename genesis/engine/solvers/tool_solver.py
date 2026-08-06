@@ -3,8 +3,9 @@ from typing import TYPE_CHECKING
 import quadrants as qd
 
 from genesis.engine.boundaries import FloorBoundary
-from genesis.engine.states.solvers import ToolSolverState
 from genesis.engine.entities.tool_entity.tool_entity import ToolEntity
+from genesis.engine.states.solvers import ToolSolverState
+from genesis.typing import IndexType
 from genesis.utils.misc import *
 
 from .base_solver import Solver
@@ -40,13 +41,20 @@ class ToolSolver(Solver):
             entity.build()
 
     @property
-    def is_active(self):
+    def is_active(self) -> bool:
         return self.n_entities > 0
 
     def setup_boundary(self):
         self.boundary = FloorBoundary(height=self.floor_height)
 
-    def add_entity(self, idx, material, morph, surface, name: str | None = None) -> "ToolEntity":
+    def add_entity(
+        self,
+        idx: int,
+        material: "gs.materials.Tool",
+        morph: "gs.morphs.Morph",
+        surface: "gs.surfaces.Surface",
+        name: str | None = None,
+    ) -> "ToolEntity":
         entity = ToolEntity(
             scene=self._scene,
             idx=idx,
@@ -63,7 +71,7 @@ class ToolSolver(Solver):
         for entity in self._entities:
             entity.reset_grad()
 
-    def get_state(self, f):
+    def get_state(self, f) -> ToolSolverState:
         if self.is_active:
             state = ToolSolverState(self._scene)
             for entity in self._entities:
@@ -72,7 +80,7 @@ class ToolSolver(Solver):
             state = None
         return state
 
-    def set_state(self, f, state, envs_idx=None):
+    def set_state(self, f: int, state: ToolSolverState, envs_idx: IndexType = None):
         if state is not None:
             assert len(state) == len(self._entities)
             for i, entity in enumerate(self._entities):

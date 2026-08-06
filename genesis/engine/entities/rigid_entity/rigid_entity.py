@@ -1,9 +1,9 @@
 import inspect
 import math
 import os
-from itertools import chain
-from typing import TYPE_CHECKING, Literal, Any, Hashable
 from functools import wraps
+from itertools import chain
+from typing import TYPE_CHECKING, Any, Hashable, Literal, NoReturn, Sequence
 
 import quadrants as qd
 import numpy as np
@@ -13,8 +13,10 @@ import trimesh
 import genesis as gs
 from genesis.engine.materials.base import Material
 from genesis.engine.mesh import InertialProperties
+from genesis.engine.states.entities import RigidEntityState
 from genesis.options.morphs import Morph
 from genesis.options.surfaces import Surface
+from genesis.typing import IndexType, UnitVec4FType, Vec3FType
 from genesis.utils import array_class
 from genesis.utils import geom as gu
 from genesis.utils import mesh as mu
@@ -22,12 +24,10 @@ from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
 from genesis.utils.misc import DeprecationError, broadcast_tensor, qd_to_numpy, qd_to_torch, tensor_to_array
-from genesis.typing import UnitVec4FType, Vec3FType
-from genesis.engine.states.entities import RigidEntityState
 
 from ..base_entity import Entity
 from .rigid_equality import RigidEquality
-from .rigid_geom import RigidGeom
+from .rigid_geom import RigidGeom, RigidVisGeom
 from .rigid_joint import RigidJoint
 from .rigid_link import (
     RHO_MUJOCO,
@@ -45,8 +45,8 @@ from .rigid_link import (
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
-    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
     from genesis.engine.solvers.kinematic_solver import KinematicSolver
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
 
 # Wrapper to track the arguments of a function and save them in the target buffer
@@ -1429,7 +1429,7 @@ class KinematicEntity(Entity):
     @gs.assert_unbuilt
     def attach(
         self,
-        parent_entity,
+        parent_entity: "KinematicEntity",
         parent_link_name: str | None = None,
         pos: Vec3FType | None = None,
         quat: UnitVec4FType | None = None,
@@ -1444,7 +1444,7 @@ class KinematicEntity(Entity):
 
         Parameters
         ----------
-        parent_entity : genesis.Entity
+        parent_entity : KinematicEntity
             The entity in the scene that will be a parent of kinematic tree.
         parent_link_name : str
             The name of the link in the parent entity to be linked. Default to the latest link the parent kinematic
@@ -1674,7 +1674,7 @@ class KinematicEntity(Entity):
         self._tgt_buffer.clear()
 
     @gs.assert_built
-    def get_state(self):
+    def get_state(self) -> RigidEntityState:
         state = RigidEntityState(self, self._sim.cur_step_global)
 
         solver_state = self._solver.get_state()
@@ -1735,7 +1735,7 @@ class KinematicEntity(Entity):
 
         return idx_global
 
-    def get_joint(self, name=None, uid=None):
+    def get_joint(self, name=None, uid=None) -> RigidJoint:
         """
         Get a RigidJoint object by name or uid.
 
@@ -1769,7 +1769,7 @@ class KinematicEntity(Entity):
         else:
             gs.raise_exception("Neither `name` nor `uid` is provided.")
 
-    def get_link(self, name=None, uid=None):
+    def get_link(self, name=None, uid=None) -> RigidLink:
         """
         Get a RigidLink object by name or uid.
 
@@ -1804,7 +1804,7 @@ class KinematicEntity(Entity):
             gs.raise_exception("Neither `name` nor `uid` is provided.")
 
     @gs.assert_built
-    def get_pos(self, envs_idx=None, *, relative=True):
+    def get_pos(self, envs_idx: IndexType = None, *, relative: bool = True) -> torch.Tensor:
         """
         Returns position of the entity's base link.
 
@@ -1824,7 +1824,7 @@ class KinematicEntity(Entity):
         return self._solver.get_links_pos(self.base_link_idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
-    def get_quat(self, envs_idx=None, *, relative=True):
+    def get_quat(self, envs_idx: IndexType = None, *, relative: bool = True) -> torch.Tensor:
         """
         Returns quaternion of the entity's base link.
 
@@ -1844,7 +1844,7 @@ class KinematicEntity(Entity):
         return self._solver.get_links_quat(self.base_link_idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
-    def get_vel(self, envs_idx=None):
+    def get_vel(self, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Returns linear velocity of the entity's base link.
 
@@ -1861,7 +1861,7 @@ class KinematicEntity(Entity):
         return self._solver.get_links_vel(self.base_link_idx, envs_idx)[..., 0, :]
 
     @gs.assert_built
-    def get_ang(self, envs_idx=None):
+    def get_ang(self, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Returns angular velocity of the entity's base link.
 
@@ -1878,7 +1878,9 @@ class KinematicEntity(Entity):
         return self._solver.get_links_ang(self.base_link_idx, envs_idx)[..., 0, :]
 
     @gs.assert_built
-    def get_links_pos(self, links_idx_local=None, envs_idx=None, *, relative=True):
+    def get_links_pos(
+        self, links_idx_local: IndexType = None, envs_idx: IndexType = None, *, relative: bool = True
+    ) -> torch.Tensor:
         """
         Returns the position of a given reference point for all the entity's links.
 
@@ -1901,7 +1903,9 @@ class KinematicEntity(Entity):
         return self._solver.get_links_pos(links_idx, envs_idx, relative=relative)
 
     @gs.assert_built
-    def get_links_quat(self, links_idx_local=None, envs_idx=None, *, relative=True):
+    def get_links_quat(
+        self, links_idx_local: IndexType = None, envs_idx: IndexType = None, *, relative: bool = True
+    ) -> torch.Tensor:
         """
         Returns quaternion of all the entity's links.
 
@@ -1924,7 +1928,7 @@ class KinematicEntity(Entity):
         return self._solver.get_links_quat(links_idx, envs_idx, relative=relative)
 
     @gs.assert_built
-    def get_vAABB(self, envs_idx=None):
+    def get_vAABB(self, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Get the axis-aligned bounding box (AABB) of the entity in world frame by aggregating all the visual
         geometries associated with this entity.
@@ -1960,7 +1964,7 @@ class KinematicEntity(Entity):
         return torch.stack((aabbs[..., 0, :].min(dim=-2).values, aabbs[..., 1, :].max(dim=-2).values), dim=-2)
 
     @gs.assert_built
-    def get_terrain_height(self, positions, envs_idx=None):
+    def get_terrain_height(self, positions: "np.typing.ArrayLike", envs_idx: IndexType = None) -> torch.Tensor:
         """
         Return terrain surface heights in meters at world-frame x-y positions.
 
@@ -1997,7 +2001,7 @@ class KinematicEntity(Entity):
         return self._solver.get_terrain_height(positions, self.base_link_idx, envs_idx)
 
     @gs.assert_built
-    def get_links_vel(self, links_idx_local=None, envs_idx=None):
+    def get_links_vel(self, links_idx_local: IndexType = None, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Returns linear velocity of all the entity's links expressed at a given reference position in world coordinates.
 
@@ -2017,7 +2021,7 @@ class KinematicEntity(Entity):
         return self._solver.get_links_vel(links_idx, envs_idx)
 
     @gs.assert_built
-    def get_links_ang(self, links_idx_local=None, envs_idx=None):
+    def get_links_ang(self, links_idx_local: IndexType = None, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Returns angular velocity of all the entity's links in world coordinates.
 
@@ -2038,7 +2042,15 @@ class KinematicEntity(Entity):
 
     @gs.assert_built
     @tracked
-    def set_pos(self, pos, envs_idx=None, *, zero_velocity=False, relative=True, skip_forward=False):
+    def set_pos(
+        self,
+        pos: "np.typing.ArrayLike",
+        envs_idx: IndexType = None,
+        *,
+        zero_velocity: bool = False,
+        relative: bool = True,
+        skip_forward: bool = False,
+    ):
         """
         Set position of the entity's base link.
 
@@ -2064,12 +2076,20 @@ class KinematicEntity(Entity):
         self._solver.set_base_links_pos(pos, self.base_link_idx, envs_idx, relative=relative, skip_forward=skip_forward)
 
     @gs.assert_built
-    def set_pos_grad(self, envs_idx, relative, pos_grad):
+    def set_pos_grad(self, envs_idx: IndexType, relative: bool, pos_grad: torch.Tensor):
         self._solver.set_base_links_pos_grad(self.base_link_idx, envs_idx, relative, pos_grad.data)
 
     @gs.assert_built
     @tracked
-    def set_quat(self, quat, envs_idx=None, *, zero_velocity=False, relative=True, skip_forward=False):
+    def set_quat(
+        self,
+        quat: "np.typing.ArrayLike",
+        envs_idx: IndexType = None,
+        *,
+        zero_velocity: bool = False,
+        relative: bool = True,
+        skip_forward: bool = False,
+    ):
         """
         Set quaternion of the entity's base link.
 
@@ -2096,11 +2116,19 @@ class KinematicEntity(Entity):
         )
 
     @gs.assert_built
-    def set_quat_grad(self, envs_idx, relative, quat_grad):
+    def set_quat_grad(self, envs_idx: IndexType, relative: bool, quat_grad: torch.Tensor):
         self._solver.set_base_links_quat_grad(self.base_link_idx, envs_idx, relative, quat_grad.data)
 
     @gs.assert_built
-    def set_qpos(self, qpos, qs_idx_local=None, envs_idx=None, *, zero_velocity=False, skip_forward=False):
+    def set_qpos(
+        self,
+        qpos: "np.typing.ArrayLike",
+        qs_idx_local: IndexType = None,
+        envs_idx: IndexType = None,
+        *,
+        zero_velocity: bool = False,
+        skip_forward: bool = False,
+    ):
         """
         Set the entity's qpos.
 
@@ -2123,7 +2151,14 @@ class KinematicEntity(Entity):
 
     @gs.assert_built
     @tracked
-    def set_dofs_velocity(self, velocity=None, dofs_idx_local=None, envs_idx=None, *, skip_forward=False):
+    def set_dofs_velocity(
+        self,
+        velocity: "np.typing.ArrayLike | None" = None,
+        dofs_idx_local: IndexType = None,
+        envs_idx: IndexType = None,
+        *,
+        skip_forward: bool = False,
+    ):
         """
         Set the entity's dofs' velocity.
 
@@ -2140,7 +2175,14 @@ class KinematicEntity(Entity):
         self._solver.set_dofs_velocity(velocity, dofs_idx, envs_idx, skip_forward=skip_forward)
 
     @gs.assert_built
-    def set_dofs_position(self, position, dofs_idx_local=None, envs_idx=None, *, zero_velocity=False):
+    def set_dofs_position(
+        self,
+        position: "np.typing.ArrayLike",
+        dofs_idx_local: IndexType = None,
+        envs_idx: IndexType = None,
+        *,
+        zero_velocity: bool = False,
+    ):
         """
         Set the entity's dofs' position.
 
@@ -2162,7 +2204,7 @@ class KinematicEntity(Entity):
         self._solver.set_dofs_position(position, dofs_idx, envs_idx)
 
     @gs.assert_built
-    def get_qpos(self, qs_idx_local=None, envs_idx=None):
+    def get_qpos(self, qs_idx_local: IndexType = None, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Get the entity's qpos.
 
@@ -2185,7 +2227,7 @@ class KinematicEntity(Entity):
         return self._solver.get_qpos(qs_idx, envs_idx)
 
     @gs.assert_built
-    def get_dofs_velocity(self, dofs_idx_local=None, envs_idx=None):
+    def get_dofs_velocity(self, dofs_idx_local: IndexType = None, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Get the entity's dofs' velocity.
 
@@ -2205,7 +2247,7 @@ class KinematicEntity(Entity):
         return self._solver.get_dofs_velocity(dofs_idx, envs_idx)
 
     @gs.assert_built
-    def get_dofs_position(self, dofs_idx_local=None, envs_idx=None):
+    def get_dofs_position(self, dofs_idx_local: IndexType = None, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Get the entity's dofs' position.
 
@@ -2225,7 +2267,9 @@ class KinematicEntity(Entity):
         return self._solver.get_dofs_position(dofs_idx, envs_idx)
 
     @gs.assert_built
-    def get_dofs_limit(self, dofs_idx_local=None, envs_idx=None):
+    def get_dofs_limit(
+        self, dofs_idx_local: IndexType = None, envs_idx: IndexType = None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Get the positional limits (min and max) for the entity's dofs.
 
@@ -2247,7 +2291,7 @@ class KinematicEntity(Entity):
         return self._solver.get_dofs_limit(dofs_idx, envs_idx)
 
     @gs.assert_built
-    def zero_all_dofs_velocity(self, envs_idx=None, *, skip_forward=False):
+    def zero_all_dofs_velocity(self, envs_idx: IndexType = None, *, skip_forward: bool = False):
         """
         Zero the velocity of all the entity's dofs.
 
@@ -2272,40 +2316,40 @@ class KinematicEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     @property
-    def is_built(self):
+    def is_built(self) -> bool:
         """
         Whether this rigid entity is built.
         """
         return self._is_built
 
     @property
-    def is_attached(self):
+    def is_attached(self) -> bool:
         """
         Whether this rigid entity has already been attached to another one.
         """
         return self._is_attached
 
     @property
-    def init_qpos(self):
+    def init_qpos(self) -> np.ndarray:
         """The initial qpos of the entity."""
         if self.joints:
             return np.concatenate([joint.init_qpos for joint in self.joints])
         return np.array([])
 
     @property
-    def n_qs(self):
+    def n_qs(self) -> int:
         """The number of `q` (generalized coordinates) of the entity."""
         if self._is_built:
             return self._n_qs
         return sum(joint.n_qs for joint in self.joints)
 
     @property
-    def n_links(self):
+    def n_links(self) -> int:
         """The number of `RigidLink` in the entity."""
         return len(self._links)
 
     @property
-    def morph(self):
+    def morph(self) -> Morph:
         """The morph of the entity.
 
         Raises an exception for heterogeneous entities, which have multiple morph variants: use morphs for all
@@ -2319,12 +2363,12 @@ class KinematicEntity(Entity):
         return self._morph
 
     @property
-    def main_morph(self):
+    def main_morph(self) -> Morph:
         """The main morph of the entity (first morph for heterogeneous entities)."""
         return self._morph
 
     @property
-    def morphs(self):
+    def morphs(self) -> gs.List[Morph]:
         """All morphs of the entity (main morph + heterogeneous variants if any)."""
         return gs.List((self._morph, *self._morph_heterogeneous))
 
@@ -2334,96 +2378,96 @@ class KinematicEntity(Entity):
         return f"{self.main_morph}"
 
     @property
-    def n_joints(self):
+    def n_joints(self) -> int:
         """The number of `RigidJoint` in the entity."""
         return sum(map(len, self._joints))
 
     @property
-    def n_dofs(self):
+    def n_dofs(self) -> int:
         """The number of degrees of freedom (DOFs) of the entity."""
         if self._is_built:
             return self._n_dofs
         return sum(joint.n_dofs for joint in self.joints)
 
     @property
-    def n_vgeoms(self):
+    def n_vgeoms(self) -> int:
         """The number of vgeoms (visual geoms - `RigidVisGeom`) in the entity."""
         return sum(link.n_vgeoms for link in self._links)
 
     @property
-    def n_vverts(self):
+    def n_vverts(self) -> int:
         """The number of vverts (visual vertices, from vgeoms) in the entity."""
         return sum([link.n_vverts for link in self._links])
 
     @property
-    def n_vfaces(self):
+    def n_vfaces(self) -> int:
         """The number of vfaces (visual faces, from vgeoms) in the entity."""
         return sum([link.n_vfaces for link in self._links])
 
     @property
-    def base_link_idx(self):
+    def base_link_idx(self) -> int:
         """The index of the entity's base link in the scene."""
         return self._link_start
 
     @property
-    def link_start(self):
+    def link_start(self) -> int:
         """The index of the entity's first RigidLink in the scene."""
         return self._link_start
 
     @property
-    def link_end(self):
+    def link_end(self) -> int:
         """The index of the entity's last RigidLink in the scene *plus one*."""
         return self._link_start + self.n_links
 
     @property
-    def joint_start(self):
+    def joint_start(self) -> int:
         """The index of the entity's first RigidJoint in the scene."""
         return self._joint_start
 
     @property
-    def joint_end(self):
+    def joint_end(self) -> int:
         """The index of the entity's last RigidJoint in the scene *plus one*."""
         return self._joint_start + self.n_joints
 
     @property
-    def dof_start(self):
+    def dof_start(self) -> int:
         """The index of the entity's first degree of freedom (DOF) in the scene."""
         return self._dof_start
 
     @property
-    def dof_end(self):
+    def dof_end(self) -> int:
         """The index of the entity's last degree of freedom (DOF) in the scene *plus one*."""
         return self._dof_start + self.n_dofs
 
     @property
-    def vvert_start(self):
+    def vvert_start(self) -> int:
         """The index of the entity's first `vvert` (visual vertex) in the scene."""
         return self._vvert_start
 
     @property
-    def vface_start(self):
+    def vface_start(self) -> int:
         """The index of the entity's first `vface` (visual face) in the scene."""
         return self._vface_start
 
     @property
-    def q_start(self):
+    def q_start(self) -> int:
         """The index of the entity's first `q` (generalized coordinates) in the scene."""
         return self._q_start
 
     @property
-    def q_end(self):
+    def q_end(self) -> int:
         """The index of the entity's last `q` (generalized coordinates) in the scene *plus one*."""
         return self._q_start + self.n_qs
 
     @property
-    def vgeoms(self):
+    def vgeoms(self) -> gs.List[RigidVisGeom]:
         """The list of visual geoms (`RigidVisGeom`) in the entity."""
         if self.is_built:
             return self._vgeoms
         return gs.List(vgeom for link in self._links for vgeom in link.vgeoms)
 
     @gs.assert_built
-    def set_vverts(self, vverts, envs_idx=None):
+    def set_vverts(self, vverts: "np.typing.ArrayLike | None", envs_idx: IndexType = None):
         """Override this entity's visual vertex positions for rendering and sensors.
 
         vverts is broadcast to (len(envs_idx), n_vverts, 3); scalars, (3,) and (n_vverts, 3) are accepted. vverts=None
@@ -2445,7 +2489,7 @@ class KinematicEntity(Entity):
         )
 
     @gs.assert_built
-    def get_vverts(self, envs_idx=None):
+    def get_vverts(self, envs_idx: IndexType = None) -> torch.Tensor:
         """Return a copy of this entity's visual vertex positions in world space.
 
         For entities created with enable_custom_vverts=True the positions are read from the engine custom buffer; for
@@ -2479,7 +2523,7 @@ class KinematicEntity(Entity):
         return gs.List(chain.from_iterable(self._joints))
 
     @property
-    def joints_by_links(self):
+    def joints_by_links(self) -> gs.List[gs.List[RigidJoint]]:
         """The list of joints (`RigidJoint`) in the entity grouped by parent links."""
         return self._joints
 
@@ -2899,7 +2943,7 @@ class RigidEntity(KinematicEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_jacobian(self, link, local_point=None):
+    def get_jacobian(self, link, local_point=None) -> torch.Tensor:
         """
         Get the spatial Jacobian for a point on a target link.
 
@@ -3045,23 +3089,23 @@ class RigidEntity(KinematicEntity):
     @gs.assert_built
     def inverse_kinematics(
         self,
-        link,
-        pos=None,
-        quat=None,
-        local_point=None,
-        init_qpos=None,
-        respect_joint_limit=True,
-        max_samples=50,
-        max_solver_iters=20,
-        damping=0.01,
-        pos_tol=5e-4,  # 0.5 mm
-        rot_tol=5e-3,  # 0.28 degree
-        pos_mask=[True, True, True],
-        rot_mask=[True, True, True],
-        max_step_size=0.5,
-        dofs_idx_local=None,
-        return_error=False,
-        envs_idx=None,
+        link: RigidLink,
+        pos: "np.typing.ArrayLike | None" = None,
+        quat: "np.typing.ArrayLike | None" = None,
+        local_point: "np.typing.ArrayLike | None" = None,
+        init_qpos: "np.typing.ArrayLike | None" = None,
+        respect_joint_limit: bool = True,
+        max_samples: int = 50,
+        max_solver_iters: int = 20,
+        damping: float = 0.01,
+        pos_tol: float = 5e-4,  # 0.5 mm
+        rot_tol: float = 5e-3,  # 0.28 degree
+        pos_mask: "np.typing.ArrayLike" = [True, True, True],
+        rot_mask: "np.typing.ArrayLike" = [True, True, True],
+        max_step_size: float = 0.5,
+        dofs_idx_local: IndexType = None,
+        return_error: bool = False,
+        envs_idx: IndexType = None,
     ):
         """
         Compute inverse kinematics for a single target link.
@@ -3153,23 +3197,23 @@ class RigidEntity(KinematicEntity):
     @gs.assert_built
     def inverse_kinematics_multilink(
         self,
-        links,
-        poss=None,
-        quats=None,
-        local_points=None,
-        init_qpos=None,
-        respect_joint_limit=True,
-        max_samples=50,
-        max_solver_iters=20,
-        damping=0.01,
-        pos_tol=5e-4,  # 0.5 mm
-        rot_tol=5e-3,  # 0.28 degree
-        pos_mask=[True, True, True],
-        rot_mask=[True, True, True],
-        max_step_size=0.5,
-        dofs_idx_local=None,
-        return_error=False,
-        envs_idx=None,
+        links: Sequence[RigidLink],
+        poss: "Sequence[np.typing.ArrayLike | None] | None" = None,
+        quats: "Sequence[np.typing.ArrayLike | None] | None" = None,
+        local_points: "Sequence[np.typing.ArrayLike | None] | None" = None,
+        init_qpos: "np.typing.ArrayLike | None" = None,
+        respect_joint_limit: bool = True,
+        max_samples: int = 50,
+        max_solver_iters: int = 20,
+        damping: float = 0.01,
+        pos_tol: float = 5e-4,  # 0.5 mm
+        rot_tol: float = 5e-3,  # 0.28 degree
+        pos_mask: "np.typing.ArrayLike" = [True, True, True],
+        rot_mask: "np.typing.ArrayLike" = [True, True, True],
+        max_step_size: float = 0.5,
+        dofs_idx_local: IndexType = None,
+        return_error: bool = False,
+        envs_idx: IndexType = None,
     ):
         """
         Compute inverse kinematics for multiple target links.
@@ -3356,7 +3400,13 @@ class RigidEntity(KinematicEntity):
         return qpos
 
     @gs.assert_built
-    def forward_kinematics(self, qpos, qs_idx_local=None, links_idx_local=None, envs_idx=None):
+    def forward_kinematics(
+        self,
+        qpos: "np.typing.ArrayLike",
+        qs_idx_local: IndexType = None,
+        links_idx_local: IndexType = None,
+        envs_idx: IndexType = None,
+    ):
         """
         Compute forward kinematics for a single target link.
 
@@ -3465,21 +3515,21 @@ class RigidEntity(KinematicEntity):
     @gs.assert_built
     def plan_path(
         self,
-        qpos_goal,
-        qpos_start=None,
-        max_nodes=2000,
-        resolution=0.05,
-        timeout=None,
-        max_retry=1,
-        smooth_path=True,
-        num_waypoints=300,
-        ignore_collision=False,
-        planner="RRTConnect",
-        envs_idx=None,
-        return_valid_mask=False,
+        qpos_goal: "np.typing.ArrayLike",
+        qpos_start: "np.typing.ArrayLike | None" = None,
+        max_nodes: int = 2000,
+        resolution: float = 0.05,
+        timeout: float | None = None,
+        max_retry: int = 1,
+        smooth_path: bool = True,
+        num_waypoints: int = 300,
+        ignore_collision: bool = False,
+        planner: Literal["RRT", "RRTConnect"] = "RRTConnect",
+        envs_idx: IndexType = None,
+        return_valid_mask: bool = False,
         *,
-        ee_link_name=None,
-        with_entity=None,
+        ee_link_name: str | None = None,
+        with_entity: "RigidEntity | None" = None,
         **kwargs,
     ):
         """
@@ -3492,12 +3542,12 @@ class RigidEntity(KinematicEntity):
         qpos_start : None | array_like, optional
             The start state. If None, the current state of the rigid entity will be used.
             Defaults to None. [B, Nq] or [1, Nq]
-        resolution : float, optiona
+        resolution : float, optional
             Joint-space resolution. It corresponds to the maximum distance between states to be checked
             for validity along a path segment.
         timeout : float, optional
             The max time to spend for each planning in seconds. Note that the timeout is not exact.
-        max_retry : float, optional
+        max_retry : int, optional
             Maximum number of retry in case of timeout or convergence failure. Default to 1.
         smooth_path : bool, optional
             Whether to smooth the path after finding a solution. Defaults to True.
@@ -3593,7 +3643,7 @@ class RigidEntity(KinematicEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_state(self):
+    def get_state(self) -> RigidEntityState:
         state = RigidEntityState(self, self._sim.cur_step_global)
 
         solver_state = self._solver.get_state()
@@ -3610,7 +3660,7 @@ class RigidEntity(KinematicEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_AABB(self, envs_idx=None, *, allow_fast_approx: bool = False):
+    def get_AABB(self, envs_idx: IndexType = None, *, allow_fast_approx: bool = False) -> torch.Tensor:
         """
         Get the axis-aligned bounding box (AABB) of the entity in world frame by aggregating all the collision
         geometries associated with this entity.
@@ -3657,18 +3707,18 @@ class RigidEntity(KinematicEntity):
         verts = self.get_verts()[envs_idx if envs_idx is not None else ()]
         return torch.stack((verts.min(dim=-2).values, verts.max(dim=-2).values), dim=-2)
 
-    def get_aabb(self):
+    def get_aabb(self) -> NoReturn:
         raise DeprecationError("This method has been removed. Please use 'get_AABB()' instead.")
 
     @gs.assert_built
     def get_links_pos(
         self,
-        links_idx_local=None,
-        envs_idx=None,
+        links_idx_local: IndexType = None,
+        envs_idx: IndexType = None,
         *,
         ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
-        relative=True,
-    ):
+        relative: bool = True,
+    ) -> torch.Tensor:
         """
         Returns the position of a given reference point for all the entity's links.
 
@@ -3698,8 +3748,12 @@ class RigidEntity(KinematicEntity):
 
     @gs.assert_built
     def get_links_vel(
-        self, links_idx_local=None, envs_idx=None, *, ref: Literal["link_origin", "link_com"] = "link_origin"
-    ):
+        self,
+        links_idx_local: IndexType = None,
+        envs_idx: IndexType = None,
+        *,
+        ref: Literal["link_origin", "link_com"] = "link_origin",
+    ) -> torch.Tensor:
         """
         Returns linear velocity of all the entity's links expressed at a given reference position in world coordinates.
 
@@ -3721,12 +3775,12 @@ class RigidEntity(KinematicEntity):
         return self._solver.get_links_vel(links_idx, envs_idx, ref=ref)
 
     @gs.assert_built
-    def get_links_acc(self, links_idx_local=None, envs_idx=None):
+    def get_links_acc(self, links_idx_local: IndexType = None, envs_idx: IndexType = None) -> torch.Tensor:
         links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         return self._solver.get_links_acc(links_idx, envs_idx)
 
     @gs.assert_built
-    def get_links_acc_ang(self, links_idx_local=None, envs_idx=None):
+    def get_links_acc_ang(self, links_idx_local: IndexType = None, envs_idx: IndexType = None) -> torch.Tensor:
         links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         return self._solver.get_links_acc_ang(links_idx, envs_idx)
 
@@ -3735,12 +3789,12 @@ class RigidEntity(KinematicEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_links_inertial_mass(self, links_idx_local=None, envs_idx=None):
+    def get_links_inertial_mass(self, links_idx_local: IndexType = None, envs_idx: IndexType = None) -> torch.Tensor:
         links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         return self._solver.get_links_inertial_mass(links_idx, envs_idx)
 
     @gs.assert_built
-    def get_links_invweight(self, links_idx_local=None, envs_idx=None):
+    def get_links_invweight(self, links_idx_local: IndexType = None, envs_idx: IndexType = None) -> torch.Tensor:
         links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         return self._solver.get_links_invweight(links_idx, envs_idx)
 
@@ -3750,7 +3804,15 @@ class RigidEntity(KinematicEntity):
 
     @gs.assert_built
     @tracked
-    def set_pos(self, pos, envs_idx=None, *, zero_velocity=True, relative=True, skip_forward=False):
+    def set_pos(
+        self,
+        pos: "np.typing.ArrayLike",
+        envs_idx: IndexType = None,
+        *,
+        zero_velocity: bool = True,
+        relative: bool = True,
+        skip_forward: bool = False,
+    ):
         """
         Set position of the entity's base link.
 
@@ -3778,12 +3840,20 @@ class RigidEntity(KinematicEntity):
         super().set_pos(pos, envs_idx, zero_velocity=zero_velocity, relative=relative, skip_forward=skip_forward)
 
     @gs.assert_built
-    def set_pos_grad(self, envs_idx, relative, pos_grad):
+    def set_pos_grad(self, envs_idx: IndexType, relative: bool, pos_grad: torch.Tensor):
         self._solver.set_base_links_pos_grad(self.base_link_idx, envs_idx, relative, pos_grad.data)
 
     @gs.assert_built
     @tracked
-    def set_quat(self, quat, envs_idx=None, *, zero_velocity=True, relative=True, skip_forward=False):
+    def set_quat(
+        self,
+        quat: "np.typing.ArrayLike",
+        envs_idx: IndexType = None,
+        *,
+        zero_velocity: bool = True,
+        relative: bool = True,
+        skip_forward: bool = False,
+    ):
         """
         Set quaternion of the entity's base link.
 
@@ -3811,11 +3881,11 @@ class RigidEntity(KinematicEntity):
         super().set_quat(quat, envs_idx, zero_velocity=zero_velocity, relative=relative, skip_forward=skip_forward)
 
     @gs.assert_built
-    def set_quat_grad(self, envs_idx, relative, quat_grad):
+    def set_quat_grad(self, envs_idx: IndexType, relative: bool, quat_grad: torch.Tensor):
         self._solver.set_base_links_quat_grad(self.base_link_idx, envs_idx, relative, quat_grad.data)
 
     @gs.assert_built
-    def get_verts(self):
+    def get_verts(self) -> torch.Tensor:
         """
         Get the all vertices of the entity based on collision geometries.
 
@@ -3850,7 +3920,15 @@ class RigidEntity(KinematicEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def set_qpos(self, qpos, qs_idx_local=None, envs_idx=None, *, zero_velocity=True, skip_forward=False):
+    def set_qpos(
+        self,
+        qpos: "np.typing.ArrayLike",
+        qs_idx_local: IndexType = None,
+        envs_idx: IndexType = None,
+        *,
+        zero_velocity: bool = True,
+        skip_forward: bool = False,
+    ):
         """
         Set the entity's qpos.
 
@@ -3874,7 +3952,7 @@ class RigidEntity(KinematicEntity):
         super().set_qpos(qpos, qs_idx_local, envs_idx, zero_velocity=zero_velocity, skip_forward=skip_forward)
 
     @gs.assert_built
-    def set_dofs_kp(self, kp, dofs_idx_local=None, envs_idx=None):
+    def set_dofs_kp(self, kp: "np.typing.ArrayLike", dofs_idx_local: IndexType = None, envs_idx: IndexType = None):
         """
         Set the entity's dofs' positional gains for the PD controller.
 
@@ -3891,7 +3969,7 @@ class RigidEntity(KinematicEntity):
         self._solver.set_dofs_kp(kp, dofs_idx, envs_idx)
 
     @gs.assert_built
-    def set_dofs_kv(self, kv, dofs_idx_local=None, envs_idx=None):
+    def set_dofs_kv(self, kv: "np.typing.ArrayLike", dofs_idx_local: IndexType = None, envs_idx: IndexType = None):
         """
         Set the entity's dofs' velocity gains for the PD controller.
 
@@ -3908,7 +3986,9 @@ class RigidEntity(KinematicEntity):
         self._solver.set_dofs_kv(kv, dofs_idx, envs_idx)
 
     @gs.assert_built
-    def set_dofs_act_gain(self, act_gain, dofs_idx_local=None, envs_idx=None):
+    def set_dofs_act_gain(
+        self, act_gain: "np.typing.ArrayLike", dofs_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Set the actuator gain for the entity's dofs. Invalidates PD-reducibility.
 
@@ -3925,7 +4005,14 @@ class RigidEntity(KinematicEntity):
         self._solver.set_dofs_act_gain(act_gain, dofs_idx, envs_idx)
 
     @gs.assert_built
-    def set_dofs_act_bias(self, bias0, bias1, bias2, dofs_idx_local=None, envs_idx=None):
+    def set_dofs_act_bias(
+        self,
+        bias0: "np.typing.ArrayLike",
+        bias1: "np.typing.ArrayLike",
+        bias2: "np.typing.ArrayLike",
+        dofs_idx_local: IndexType = None,
+        envs_idx: IndexType = None,
+    ):
         """
         Set the actuator bias for the entity's dofs.
 
@@ -3946,7 +4033,13 @@ class RigidEntity(KinematicEntity):
         self._solver.set_dofs_act_bias(bias0, bias1, bias2, dofs_idx, envs_idx)
 
     @gs.assert_built
-    def set_dofs_force_range(self, lower, upper, dofs_idx_local=None, envs_idx=None):
+    def set_dofs_force_range(
+        self,
+        lower: "np.typing.ArrayLike",
+        upper: "np.typing.ArrayLike",
+        dofs_idx_local: IndexType = None,
+        envs_idx: IndexType = None,
+    ):
         """
         Set the entity's dofs' force range.
 
@@ -3965,12 +4058,16 @@ class RigidEntity(KinematicEntity):
         self._solver.set_dofs_force_range(lower, upper, dofs_idx, envs_idx)
 
     @gs.assert_built
-    def set_dofs_stiffness(self, stiffness, dofs_idx_local=None, envs_idx=None):
+    def set_dofs_stiffness(
+        self, stiffness: "np.typing.ArrayLike", dofs_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.set_dofs_stiffness(stiffness, dofs_idx, envs_idx)
 
     @gs.assert_built
-    def set_dofs_invweight(self, invweight, dofs_idx_local=None, envs_idx=None):
+    def set_dofs_invweight(
+        self, invweight: "np.typing.ArrayLike", dofs_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         raise DeprecationError(
             "This method has been removed because dof invweights are supposed to be a by-product of link properties "
             "(mass, pose, and inertia matrix), joint placements, and dof armatures. Please consider using the "
@@ -3978,17 +4075,23 @@ class RigidEntity(KinematicEntity):
         )
 
     @gs.assert_built
-    def set_dofs_armature(self, armature, dofs_idx_local=None, envs_idx=None):
+    def set_dofs_armature(
+        self, armature: "np.typing.ArrayLike", dofs_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.set_dofs_armature(armature, dofs_idx, envs_idx)
 
     @gs.assert_built
-    def set_dofs_damping(self, damping, dofs_idx_local=None, envs_idx=None):
+    def set_dofs_damping(
+        self, damping: "np.typing.ArrayLike", dofs_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.set_dofs_damping(damping, dofs_idx, envs_idx)
 
     @gs.assert_built
-    def set_dofs_frictionloss(self, frictionloss, dofs_idx_local=None, envs_idx=None):
+    def set_dofs_frictionloss(
+        self, frictionloss: "np.typing.ArrayLike", dofs_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Set the entity's dofs' friction loss.
         Parameters
@@ -4004,12 +4107,12 @@ class RigidEntity(KinematicEntity):
         self._solver.set_dofs_frictionloss(frictionloss, dofs_idx, envs_idx)
 
     @gs.assert_built
-    def set_dofs_velocity_grad(self, dofs_idx_local, envs_idx, velocity_grad):
+    def set_dofs_velocity_grad(self, dofs_idx_local: IndexType, envs_idx: IndexType, velocity_grad: torch.Tensor):
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.set_dofs_velocity_grad(dofs_idx, envs_idx, velocity_grad.data)
 
     @gs.assert_built
-    def set_dofs_force_grad(self, dofs_idx_local, envs_idx, force_grad):
+    def set_dofs_force_grad(self, dofs_idx_local: IndexType, envs_idx: IndexType, force_grad: torch.Tensor):
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.set_dofs_force_grad(dofs_idx, envs_idx, force_grad.data)
 
@@ -4018,7 +4121,14 @@ class RigidEntity(KinematicEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def set_dofs_position(self, position, dofs_idx_local=None, envs_idx=None, *, zero_velocity=True):
+    def set_dofs_position(
+        self,
+        position: "np.typing.ArrayLike",
+        dofs_idx_local: IndexType = None,
+        envs_idx: IndexType = None,
+        *,
+        zero_velocity: bool = True,
+    ):
         """
         Set the entity's dofs' position.
 
@@ -4047,7 +4157,9 @@ class RigidEntity(KinematicEntity):
 
     @gs.assert_built
     @tracked
-    def control_dofs_force(self, force, dofs_idx_local=None, envs_idx=None):
+    def control_dofs_force(
+        self, force: "np.typing.ArrayLike", dofs_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Control the entity's dofs' motor force. This is used for force/torque control.
 
@@ -4070,7 +4182,9 @@ class RigidEntity(KinematicEntity):
 
     @gs.assert_built
     @tracked
-    def control_dofs_velocity(self, velocity, dofs_idx_local=None, envs_idx=None):
+    def control_dofs_velocity(
+        self, velocity: "np.typing.ArrayLike", dofs_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Set the PD controller's target velocity for the entity's dofs. This is used for velocity control.
 
@@ -4093,7 +4207,9 @@ class RigidEntity(KinematicEntity):
 
     @gs.assert_built
     @tracked
-    def control_dofs_position(self, position, dofs_idx_local=None, envs_idx=None):
+    def control_dofs_position(
+        self, position: "np.typing.ArrayLike", dofs_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Set the position controller's target position for the entity's dofs. The controller is a proportional term
         plus a velocity damping term (virtual friction).
@@ -4117,7 +4233,13 @@ class RigidEntity(KinematicEntity):
 
     @gs.assert_built
     @tracked
-    def control_dofs_position_velocity(self, position, velocity, dofs_idx_local=None, envs_idx=None):
+    def control_dofs_position_velocity(
+        self,
+        position: "np.typing.ArrayLike",
+        velocity: "np.typing.ArrayLike",
+        dofs_idx_local: IndexType = None,
+        envs_idx: IndexType = None,
+    ):
         """
         Set a PD controller's target position and velocity for the entity's dofs. This is used for position control.
 
@@ -4141,7 +4263,7 @@ class RigidEntity(KinematicEntity):
         self._solver.control_dofs_position_velocity(position, velocity, dofs_idx, envs_idx)
 
     @gs.assert_built
-    def get_dofs_control_force(self, dofs_idx_local=None, envs_idx=None):
+    def get_dofs_control_force(self, dofs_idx_local: IndexType = None, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Get the entity's dofs' internal control force, computed based on the position/velocity control command.
 
@@ -4161,7 +4283,7 @@ class RigidEntity(KinematicEntity):
         return self._solver.get_dofs_control_force(dofs_idx, envs_idx)
 
     @gs.assert_built
-    def get_dofs_force(self, dofs_idx_local=None, envs_idx=None):
+    def get_dofs_force(self, dofs_idx_local: IndexType = None, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Get the entity's dofs' internal force at the current time step.
 
@@ -4189,7 +4311,7 @@ class RigidEntity(KinematicEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_dofs_kp(self, dofs_idx_local=None, envs_idx=None):
+    def get_dofs_kp(self, dofs_idx_local: IndexType = None, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Get the positional gain (kp) for the entity's dofs used by the PD controller.
 
@@ -4209,7 +4331,7 @@ class RigidEntity(KinematicEntity):
         return self._solver.get_dofs_kp(dofs_idx, envs_idx)
 
     @gs.assert_built
-    def get_dofs_kv(self, dofs_idx_local=None, envs_idx=None):
+    def get_dofs_kv(self, dofs_idx_local: IndexType = None, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Get the velocity gain (kv) for the entity's dofs used by the PD controller.
 
@@ -4229,7 +4351,7 @@ class RigidEntity(KinematicEntity):
         return self._solver.get_dofs_kv(dofs_idx, envs_idx)
 
     @gs.assert_built
-    def get_dofs_act_gain(self, dofs_idx_local=None, envs_idx=None):
+    def get_dofs_act_gain(self, dofs_idx_local: IndexType = None, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Get the actuator gain for the entity's dofs.
 
@@ -4241,7 +4363,9 @@ class RigidEntity(KinematicEntity):
         return self._solver.get_dofs_act_gain(dofs_idx, envs_idx)
 
     @gs.assert_built
-    def get_dofs_act_bias(self, dofs_idx_local=None, envs_idx=None):
+    def get_dofs_act_bias(
+        self, dofs_idx_local: IndexType = None, envs_idx: IndexType = None
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Get the actuator bias [constant, pos_coeff, vel_coeff] for the entity's dofs.
 
@@ -4253,7 +4377,9 @@ class RigidEntity(KinematicEntity):
         return self._solver.get_dofs_act_bias(dofs_idx, envs_idx)
 
     @gs.assert_built
-    def get_dofs_force_range(self, dofs_idx_local=None, envs_idx=None):
+    def get_dofs_force_range(
+        self, dofs_idx_local: IndexType = None, envs_idx: IndexType = None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Get the force range (min and max limits) for the entity's dofs.
 
@@ -4275,27 +4401,27 @@ class RigidEntity(KinematicEntity):
         return self._solver.get_dofs_force_range(dofs_idx, envs_idx)
 
     @gs.assert_built
-    def get_dofs_stiffness(self, dofs_idx_local=None, envs_idx=None):
+    def get_dofs_stiffness(self, dofs_idx_local: IndexType = None, envs_idx: IndexType = None) -> torch.Tensor:
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         return self._solver.get_dofs_stiffness(dofs_idx, envs_idx)
 
     @gs.assert_built
-    def get_dofs_invweight(self, dofs_idx_local=None, envs_idx=None):
+    def get_dofs_invweight(self, dofs_idx_local: IndexType = None, envs_idx: IndexType = None) -> torch.Tensor:
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         return self._solver.get_dofs_invweight(dofs_idx, envs_idx)
 
     @gs.assert_built
-    def get_dofs_armature(self, dofs_idx_local=None, envs_idx=None):
+    def get_dofs_armature(self, dofs_idx_local: IndexType = None, envs_idx: IndexType = None) -> torch.Tensor:
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         return self._solver.get_dofs_armature(dofs_idx, envs_idx)
 
     @gs.assert_built
-    def get_dofs_damping(self, dofs_idx_local=None, envs_idx=None):
+    def get_dofs_damping(self, dofs_idx_local: IndexType = None, envs_idx: IndexType = None) -> torch.Tensor:
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         return self._solver.get_dofs_damping(dofs_idx, envs_idx)
 
     @gs.assert_built
-    def get_dofs_frictionloss(self, dofs_idx_local=None, envs_idx=None):
+    def get_dofs_frictionloss(self, dofs_idx_local: IndexType = None, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Get the friction loss for the entity's dofs.
 
@@ -4319,12 +4445,14 @@ class RigidEntity(KinematicEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_mass_mat(self, envs_idx=None, decompose=False):
+    def get_mass_mat(
+        self, envs_idx: IndexType = None, decompose: bool = False
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         dofs_idx = self._get_global_idx(None, self.n_dofs, self._dof_start, unsafe=True)
         return self._solver.get_mass_mat(dofs_idx, envs_idx, decompose)
 
     @gs.assert_built
-    def get_kinetic_energy(self, envs_idx=None) -> torch.Tensor:
+    def get_kinetic_energy(self, envs_idx: IndexType = None) -> torch.Tensor:
         """Get the total kinetic energy of the entity in Joules [J] (translational + rotational).
 
         Summed over the entity's links, each contributing ``0.5 * V^T * I * V`` for its spatial velocity ``V`` and
@@ -4345,7 +4473,7 @@ class RigidEntity(KinematicEntity):
         return self._solver.get_kinetic_energy(links_idx, dofs_idx, envs_idx)
 
     @gs.assert_built
-    def get_potential_energy(self, envs_idx=None) -> torch.Tensor:
+    def get_potential_energy(self, envs_idx: IndexType = None) -> torch.Tensor:
         """Get the total potential energy of the entity in Joules [J] (gravitational + joint springs).
 
         Gravity contributes ``-sum_i(m_i * g^T * p_i)`` over the entity's links, where ``p_i`` is the center-of-mass
@@ -4367,7 +4495,7 @@ class RigidEntity(KinematicEntity):
         return self._solver.get_potential_energy(links_idx, dofs_idx, envs_idx)
 
     @gs.assert_built
-    def get_total_energy(self, envs_idx=None) -> torch.Tensor:
+    def get_total_energy(self, envs_idx: IndexType = None) -> torch.Tensor:
         """Get the total mechanical energy of the entity in Joules [J] (kinetic + potential).
 
         Parameters
@@ -4382,7 +4510,7 @@ class RigidEntity(KinematicEntity):
         return self.get_kinetic_energy(envs_idx=envs_idx) + self.get_potential_energy(envs_idx=envs_idx)
 
     @gs.assert_built
-    def detect_collision(self, env_idx=0):
+    def detect_collision(self, env_idx: int = 0):
         """
         Detects collision for the entity. This only supports a single environment.
 
@@ -4403,7 +4531,7 @@ class RigidEntity(KinematicEntity):
         return collision_pairs
 
     @gs.assert_built
-    def get_contacts(self, with_entity=None, exclude_self_contact=False):
+    def get_contacts(self, with_entity=None, exclude_self_contact=False) -> dict[str, torch.Tensor]:
         """
         Returns contact information computed during the most recent `scene.step()`.
         If `with_entity` is provided, only returns contact information involving the caller and the specified entity.
@@ -4477,7 +4605,7 @@ class RigidEntity(KinematicEntity):
 
         return contact_data
 
-    def get_links_net_contact_force(self, envs_idx=None):
+    def get_links_net_contact_force(self, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Returns net force applied on each links due to direct external contacts.
 
@@ -4494,7 +4622,9 @@ class RigidEntity(KinematicEntity):
     # ----------------------------------- friction ---------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def set_friction_ratio(self, friction_ratio, links_idx_local=None, envs_idx=None):
+    def set_friction_ratio(
+        self, friction_ratio: "np.typing.ArrayLike", links_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Set the friction ratio of the geoms of the specified links.
 
@@ -4591,7 +4721,9 @@ class RigidEntity(KinematicEntity):
     # --------------------------------- mass / inertia -----------------------------------
     # ------------------------------------------------------------------------------------
 
-    def set_mass_shift(self, mass_shift, links_idx_local=None, envs_idx=None):
+    def set_mass_shift(
+        self, mass_shift: "np.typing.ArrayLike", links_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Set the mass shift of specified links.
 
@@ -4607,7 +4739,9 @@ class RigidEntity(KinematicEntity):
         links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         self._solver.set_links_mass_shift(mass_shift, links_idx, envs_idx)
 
-    def set_COM_shift(self, com_shift, links_idx_local=None, envs_idx=None):
+    def set_COM_shift(
+        self, com_shift: "np.typing.ArrayLike", links_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Set the center of mass (COM) shift of specified links.
 
@@ -4624,12 +4758,16 @@ class RigidEntity(KinematicEntity):
         self._solver.set_links_COM_shift(com_shift, links_idx, envs_idx)
 
     @gs.assert_built
-    def set_links_inertial_mass(self, inertial_mass, links_idx_local=None, envs_idx=None):
+    def set_links_inertial_mass(
+        self, inertial_mass: "np.typing.ArrayLike", links_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         self._solver.set_links_inertial_mass(inertial_mass, links_idx, envs_idx)
 
     @gs.assert_built
-    def set_links_invweight(self, invweight, links_idx_local=None, envs_idx=None):
+    def set_links_invweight(
+        self, invweight: "np.typing.ArrayLike", links_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         raise DeprecationError(
             "This method has been removed because links invweights are supposed to be a by-product of link properties "
             "(mass, pose, and inertia matrix), joint placements, and dof armatures. Please consider using the "
@@ -4651,7 +4789,7 @@ class RigidEntity(KinematicEntity):
             link.set_mass(link.get_mass() * ratio)
 
     @gs.assert_built
-    def get_mass(self):
+    def get_mass(self) -> float | np.ndarray:
         """
         Get the total mass of the entity in kg.
 
@@ -4680,74 +4818,74 @@ class RigidEntity(KinematicEntity):
     # ------------------------------------------------------------------------------------
 
     @property
-    def visualize_contact(self):
+    def visualize_contact(self) -> bool:
         """Whether to visualize contact force."""
         return self._visualize_contact
 
     @property
-    def n_geoms(self):
+    def n_geoms(self) -> int:
         """The number of collision geom `RigidGeom` in the entity."""
         if self._is_built:
             return self._n_geoms
         return sum(link.n_geoms for link in self._links)
 
     @property
-    def n_cells(self):
+    def n_cells(self) -> int:
         """The number of sdf cells in the entity."""
         return sum(link.n_cells for link in self._links)
 
     @property
-    def n_verts(self):
+    def n_verts(self) -> int:
         """The number of vertices (from collision geom `RigidGeom`) in the entity."""
         return sum(link.n_verts for link in self._links)
 
     @property
-    def n_faces(self):
+    def n_faces(self) -> int:
         """The number of faces (from collision geom `RigidGeom`) in the entity."""
         return sum(link.n_faces for link in self._links)
 
     @property
-    def n_edges(self):
+    def n_edges(self) -> int:
         """The number of edges (from collision geom `RigidGeom`) in the entity."""
         return sum(link.n_edges for link in self._links)
 
     @property
-    def geom_start(self):
+    def geom_start(self) -> int:
         """The index of the entity's first RigidGeom in the scene."""
         return self._geom_start
 
     @property
-    def geom_end(self):
+    def geom_end(self) -> int:
         """The index of the entity's last RigidGeom in the scene *plus one*."""
         return self._geom_start + self.n_geoms
 
     @property
-    def cell_start(self):
+    def cell_start(self) -> int:
         """The start index the entity's sdf cells in the scene."""
         return self._cell_start
 
     @property
-    def cell_end(self):
+    def cell_end(self) -> int:
         """The end index the entity's sdf cells in the scene *plus one*."""
         return self._cell_start + self.n_cells
 
     @property
-    def gravity_compensation(self):
+    def gravity_compensation(self) -> float:
         """Apply a force to compensate gravity. A value of 1 will make a zero-gravity behavior. Default to 0"""
         return self.material.gravity_compensation
 
     @property
-    def vert_start(self):
+    def vert_start(self) -> int:
         """The index of the entity's first `vert` (collision vertex) in the scene."""
         return self._vert_start
 
     @property
-    def face_start(self):
+    def face_start(self) -> int:
         """The index of the entity's first `face` (collision face) in the scene."""
         return self._face_start
 
     @property
-    def edge_start(self):
+    def edge_start(self) -> int:
         """The index of the entity's first `edge` (collision edge) in the scene."""
         return self._edge_start
 
@@ -4759,22 +4897,22 @@ class RigidEntity(KinematicEntity):
         return gs.List(geom for link in self._links for geom in link.geoms)
 
     @property
-    def n_equalities(self):
+    def n_equalities(self) -> int:
         """The number of equality constraints in the entity."""
         return len(self._equalities)
 
     @property
-    def equality_start(self):
+    def equality_start(self) -> int:
         """The index of the entity's first RigidEquality in the scene."""
         return self._equality_start
 
     @property
-    def equality_end(self):
+    def equality_end(self) -> int:
         """The index of the entity's last RigidEquality in the scene *plus one*."""
         return self._equality_start + self.n_equalities
 
     @property
-    def equalities(self):
+    def equalities(self) -> gs.List[RigidEquality]:
         """The list of equality constraints (`RigidEquality`) in the entity."""
         return self._equalities
 
@@ -4783,6 +4921,6 @@ class RigidEntity(KinematicEntity):
         raise DeprecationError("This property has been removed.")
 
     @property
-    def is_local_collision_mask(self):
+    def is_local_collision_mask(self) -> bool:
         """Whether the contype and conaffinity bitmasks of this entity only applies to self-collision."""
         return self._is_local_collision_mask

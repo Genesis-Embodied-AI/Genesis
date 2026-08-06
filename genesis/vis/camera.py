@@ -10,6 +10,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.constants import IMAGE_TYPE
 from genesis.repr_base import RBC
+from genesis.typing import IndexType
 from genesis.utils.image_exporter import as_grayscale_image
 from genesis.utils.misc import tensor_to_array
 from genesis.utils.video_encoder import VideoEncoder
@@ -580,7 +581,14 @@ class Camera(RBC):
         point_cloud = point_cloud[..., :3].reshape((*depth_arr.shape, 3))
         return point_cloud, mask
 
-    def set_pose(self, transform=None, pos=None, lookat=None, up=None, envs_idx=None):
+    def set_pose(
+        self,
+        transform: "np.typing.ArrayLike | None" = None,
+        pos: "np.typing.ArrayLike | None" = None,
+        lookat: "np.typing.ArrayLike | None" = None,
+        up: "np.typing.ArrayLike | None" = None,
+        envs_idx: IndexType = None,
+    ):
         """
         Set the pose of the camera.
         Note that `transform` has a higher priority than `pos`, `lookat`, and `up`.
@@ -829,7 +837,7 @@ class Camera(RBC):
         if error is not None:
             raise error
 
-    def get_pos(self, envs_idx=None):
+    def get_pos(self, envs_idx: IndexType = None) -> torch.Tensor:
         """The current position of the camera."""
         assert self._env_idx is None or envs_idx is None
         envs_idx = () if envs_idx is None else envs_idx
@@ -838,7 +846,7 @@ class Camera(RBC):
             pos = pos + self._envs_offset[envs_idx]
         return pos
 
-    def get_lookat(self, envs_idx=None):
+    def get_lookat(self, envs_idx: IndexType = None) -> torch.Tensor:
         """The current lookat point of the camera."""
         assert self._env_idx is None or envs_idx is None
         envs_idx = () if envs_idx is None else envs_idx
@@ -847,19 +855,19 @@ class Camera(RBC):
             lookat = lookat + self._envs_offset[envs_idx]
         return lookat
 
-    def get_up(self, envs_idx=None):
+    def get_up(self, envs_idx: IndexType = None) -> torch.Tensor:
         """The current up vector of the camera."""
         assert self._env_idx is None or envs_idx is None
         envs_idx = () if envs_idx is None else envs_idx
         return self._up[envs_idx]
 
-    def get_quat(self, envs_idx=None):
+    def get_quat(self, envs_idx: IndexType = None) -> torch.Tensor:
         """The current quaternion of the camera."""
         assert self._env_idx is None or envs_idx is None
         envs_idx = () if envs_idx is None else envs_idx
         return self._quat[envs_idx]
 
-    def get_transform(self, envs_idx=None):
+    def get_transform(self, envs_idx: IndexType = None) -> torch.Tensor:
         """
         The current transform matrix of the camera.
         """
@@ -875,42 +883,42 @@ class Camera(RBC):
         return f"{self.__repr_name__()}: idx: {self._idx}, pos: {self.pos}, lookat: {self.lookat}"
 
     @property
-    def is_built(self):
+    def is_built(self) -> bool:
         """Whether the camera is built."""
         return self._is_built
 
     @property
-    def idx(self):
+    def idx(self) -> int:
         """The global integer index of the camera."""
         return self._idx
 
     @property
-    def uid(self):
+    def uid(self) -> "gs.UID":
         """The unique ID of the camera"""
         return self._uid
 
     @property
-    def model(self):
+    def model(self) -> str:
         """The camera model: `pinhole`, `thinlens` or `fisheye`."""
         return self._model
 
     @property
-    def res(self):
+    def res(self) -> tuple[int, int]:
         """The resolution of the camera."""
         return self._res
 
     @property
-    def fov(self):
+    def fov(self) -> float:
         """The field of view of the camera."""
         return self._fov
 
     @property
-    def aperture(self):
+    def aperture(self) -> float:
         """The aperture of the camera."""
         return self._aperture
 
     @property
-    def focal_len(self):
+    def focal_len(self) -> float:
         """The focal length for thinlens camera. Returns -1 for pinhole camera."""
         tan_half_fov = np.tan(np.deg2rad(self._fov / 2))
         if self.model == "thinlens":
@@ -924,12 +932,12 @@ class Camera(RBC):
             return self._res[0] / (2.0 * tan_half_fov)
 
     @property
-    def focus_dist(self):
+    def focus_dist(self) -> float:
         """The focus distance of the camera."""
         return self._focus_dist
 
     @property
-    def GUI(self):
+    def GUI(self) -> bool:
         """Whether the camera will display the rendered images in a separate window."""
         return self._GUI
 
@@ -938,60 +946,60 @@ class Camera(RBC):
         self._GUI = value
 
     @property
-    def spp(self):
+    def spp(self) -> int:
         """Samples per pixel of the camera."""
         return self._spp
 
     @property
-    def denoise(self):
+    def denoise(self) -> bool:
         """Whether the camera will denoise the rendered image in raytracer."""
         return self._denoise
 
     @property
-    def near(self):
+    def near(self) -> float:
         """The near plane of the camera."""
         return self._near
 
     @property
-    def far(self):
+    def far(self) -> float:
         """The far plane of the camera."""
         return self._far
 
     @property
-    def aspect_ratio(self):
+    def aspect_ratio(self) -> float:
         """The aspect ratio of the camera."""
         return self._aspect_ratio
 
     @property
-    def env_idx(self):
+    def env_idx(self) -> int | None:
         """Index of the environment bound to the camera, if any."""
         return self._env_idx
 
     @property
-    def debug(self):
+    def debug(self) -> bool:
         """Whether the camera is a debug camera."""
         return self._debug
 
     @property
-    def pos(self):
+    def pos(self) -> np.ndarray:
         """The current position of the camera for the tracked environment."""
         envs_idx = self._env_idx if self._is_batched else None
         return tensor_to_array(self.get_pos(envs_idx), dtype=np.float32)
 
     @property
-    def lookat(self):
+    def lookat(self) -> np.ndarray:
         """The current lookat point of the camera for the tracked environment."""
         envs_idx = self._env_idx if self._is_batched else None
         return tensor_to_array(self.get_lookat(envs_idx), dtype=np.float32)
 
     @property
-    def up(self):
+    def up(self) -> np.ndarray:
         """The current up vector of the camera for the tracked environment."""
         envs_idx = self._env_idx if self._is_batched else None
         return tensor_to_array(self.get_up(envs_idx), dtype=np.float32)
 
     @property
-    def transform(self):
+    def transform(self) -> np.ndarray:
         """The current transform matrix of the camera for the tracked environment."""
         envs_idx = self._env_idx if self._is_batched else None
         return tensor_to_array(self.get_transform(envs_idx), dtype=np.float32)

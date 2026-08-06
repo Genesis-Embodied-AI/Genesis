@@ -1,5 +1,6 @@
 from functools import wraps
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import igl
 import numpy as np
@@ -11,14 +12,19 @@ import genesis as gs
 import genesis.utils.element as eu
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
-from genesis.engine.entities.rigid_entity import RigidLink
 from genesis.engine.couplers import SAPCoupler
+from genesis.engine.entities.rigid_entity import RigidLink
 from genesis.engine.states.cache import QueriedStates
 from genesis.engine.states.entities import FEMEntityState
 from genesis.repr_base import RBC
-from genesis.utils.misc import to_gs_tensor, tensor_to_array, broadcast_tensor
+from genesis.typing import IndexType
+from genesis.utils.misc import broadcast_tensor, tensor_to_array, to_gs_tensor
 
 from .base_entity import Entity
+
+if TYPE_CHECKING:
+    from genesis.engine.mesh import Mesh
+    from genesis.options.surfaces import Surface
 
 
 class FEMVisGeom(RBC):
@@ -37,72 +43,72 @@ class FEMVisGeom(RBC):
         self._vmesh = vmesh
         self._sim_verts_idx = sim_verts_idx
 
-    def get_trimesh(self):
+    def get_trimesh(self) -> "trimesh.Trimesh":
         """The underlying `trimesh.Trimesh` of the render mesh."""
         return self._vmesh.trimesh
 
     @property
-    def uid(self):
+    def uid(self) -> "gs.UID":
         """Unique ID of the vgeom."""
         return self._uid
 
     @property
-    def entity(self):
+    def entity(self) -> "FEMEntity":
         """The FEM entity the vgeom belongs to."""
         return self._entity
 
     @property
-    def vmesh(self):
+    def vmesh(self) -> "Mesh":
         """The render mesh."""
         return self._vmesh
 
     @property
-    def sim_verts_idx(self):
+    def sim_verts_idx(self) -> np.ndarray:
         """Map from render-mesh vertex index to the entity's simulated vertex index."""
         return self._sim_verts_idx
 
     @property
-    def surface(self):
+    def surface(self) -> "Surface":
         """Surface object of the vgeom."""
         return self._vmesh.surface
 
     @property
-    def uvs(self):
+    def uvs(self) -> np.ndarray | None:
         """UV coordinates of the vgeom."""
         return self._vmesh.uvs
 
     @property
-    def metadata(self):
+    def metadata(self) -> dict:
         """Metadata of the render mesh."""
         return self._vmesh.metadata
 
     @property
-    def n_vverts(self):
+    def n_vverts(self) -> int:
         """Number of render vertices of the vgeom."""
         return len(self._vmesh.verts)
 
     @property
-    def n_vfaces(self):
+    def n_vfaces(self) -> int:
         """Number of render faces of the vgeom."""
         return len(self._vmesh.faces)
 
     @property
-    def vvert_start(self):
+    def vvert_start(self) -> int:
         """Starting index of the vgeom's render vertices in the FEM solver."""
         return self._vvert_start
 
     @property
-    def vface_start(self):
+    def vface_start(self) -> int:
         """Starting index of the vgeom's render faces in the FEM solver."""
         return self._vface_start
 
     @property
-    def vvert_end(self):
+    def vvert_end(self) -> int:
         """Ending index of the vgeom's render vertices in the FEM solver."""
         return self._vvert_start + self.n_vverts
 
     @property
-    def vface_end(self):
+    def vface_end(self) -> int:
         """Ending index of the vgeom's render faces in the FEM solver."""
         return self._vface_start + self.n_vfaces
 
@@ -227,7 +233,7 @@ class FEMEntity(Entity):
     # ----------------------------------- basic entity ops -------------------------------
     # ------------------------------------------------------------------------------------
 
-    def _sanitize_verts_idx_local(self, verts_idx_local=None, envs_idx=None):
+    def _sanitize_verts_idx_local(self, verts_idx_local: IndexType = None, envs_idx: IndexType = None):
         if verts_idx_local is None:
             verts_idx_local = range(self.n_vertices)
 
@@ -244,7 +250,9 @@ class FEMEntity(Entity):
 
         return verts_idx_local_.contiguous()
 
-    def _sanitize_verts_tensor(self, tensor, dtype, verts_idx=None, envs_idx=None, element_shape=(), *, batched=True):
+    def _sanitize_verts_tensor(
+        self, tensor, dtype, verts_idx: IndexType = None, envs_idx: IndexType = None, element_shape=(), *, batched=True
+    ):
         n_vertices = verts_idx.shape[-1] if verts_idx is not None else self.n_vertices
         if batched:
             assert envs_idx is not None
@@ -424,7 +432,7 @@ class FEMEntity(Entity):
 
             self.set_muscle_direction(muscle_direction)
 
-    def get_state(self):
+    def get_state(self) -> FEMEntityState:
         state = FEMEntityState(self, self._sim.cur_step_global)
         self.get_frame(self._sim.cur_substep_local, state.pos, state.vel, state.active)
 
@@ -953,7 +961,13 @@ class FEMEntity(Entity):
         )
 
     def set_vertex_constraints(
-        self, verts_idx_local, target_poss=None, link=None, is_soft_constraint=False, stiffness=0.0, envs_idx=None
+        self,
+        verts_idx_local: IndexType,
+        target_poss: "np.typing.ArrayLike | None" = None,
+        link: RigidLink | None = None,
+        is_soft_constraint: bool = False,
+        stiffness: float = 0.0,
+        envs_idx: IndexType = None,
     ):
         """
         Set vertex constraints for specified vertices.
@@ -1021,7 +1035,9 @@ class FEMEntity(Entity):
             envs_idx,
         )
 
-    def update_constraint_targets(self, verts_idx_local, target_poss, envs_idx=None):
+    def update_constraint_targets(
+        self, verts_idx_local: IndexType, target_poss: "np.typing.ArrayLike", envs_idx: IndexType = None
+    ):
         """Update target positions for existing constraints."""
         if not self._solver._constraints_initialized:
             gs.logger.warning("Ignoring update_constraint_targets; constraints have not been initialized.")
@@ -1035,7 +1051,7 @@ class FEMEntity(Entity):
 
         self._solver._kernel_update_constraint_targets(verts_idx, target_poss, envs_idx)
 
-    def remove_vertex_constraints(self, verts_idx_local=None, envs_idx=None):
+    def remove_vertex_constraints(self, verts_idx_local: IndexType = None, envs_idx: IndexType = None):
         """Remove constraints from specified vertices, or all if None."""
         if not self._solver._constraints_initialized:
             gs.logger.warning("Ignoring remove_vertex_constraints; constraints have not been initialized.")
@@ -1060,7 +1076,7 @@ class FEMEntity(Entity):
             for j in qd.static(range(3)):
                 pos[i_b, i_v_, j] = self._solver.elements_v[f, i_v, i_b].pos[j]
 
-    def get_el2v(self):
+    def get_el2v(self) -> "gs.Tensor":
         """
         Retrieve the element-to-vertex mapping.
 
@@ -1150,82 +1166,82 @@ class FEMEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     @property
-    def n_vertices(self):
+    def n_vertices(self) -> int:
         """Number of vertices in the FEM entity."""
         return len(self.init_positions)
 
     @property
-    def vgeoms(self):
+    def vgeoms(self) -> "gs.List[FEMVisGeom]":
         """The list of visual geoms (`FEMVisGeom`) in the entity, one per morph sub-mesh."""
         return self._vgeoms
 
     @property
-    def n_elements(self):
+    def n_elements(self) -> int:
         """Number of simulation elements: surface triangles for Cloth material, tetrahedra otherwise."""
         return len(self.elems)
 
     @property
-    def n_surfaces(self):
+    def n_surfaces(self) -> int:
         """Number of surface triangles extracted from the FEM mesh."""
         return self._n_surfaces
 
     @property
-    def v_start(self):
+    def v_start(self) -> int:
         """Global vertex index offset for this entity."""
         return self._v_start
 
     @property
-    def el_start(self):
+    def el_start(self) -> int:
         """Global element index offset for this entity."""
         return self._el_start
 
     @property
-    def s_start(self):
+    def s_start(self) -> int:
         """Global surface triangle index offset for this entity."""
         return self._s_start
 
     @property
-    def n_vverts(self):
+    def n_vverts(self) -> int:
         """Number of render vertices in the FEM entity, summed over its visual geoms."""
         return sum(vgeom.n_vverts for vgeom in self._vgeoms)
 
     @property
-    def n_vfaces(self):
+    def n_vfaces(self) -> int:
         """Number of render faces in the FEM entity, summed over its visual geoms."""
         return sum(vgeom.n_vfaces for vgeom in self._vgeoms)
 
     @property
-    def vvert_start(self):
+    def vvert_start(self) -> int:
         """Global render vertex index offset for this entity."""
         return self._vvert_start
 
     @property
-    def vface_start(self):
+    def vface_start(self) -> int:
         """Global render face index offset for this entity."""
         return self._vface_start
 
     @property
-    def vvert_end(self):
+    def vvert_end(self) -> int:
         """Global render vertex index past this entity's last one."""
         return self._vvert_start + self.n_vverts
 
     @property
-    def vface_end(self):
+    def vface_end(self) -> int:
         """Global render face index past this entity's last one."""
         return self._vface_start + self.n_vfaces
 
     @property
-    def n_surface_vertices(self):
+    def n_surface_vertices(self) -> int:
         """Number of unique vertices involved in surface triangles."""
         return self._n_surface_vertices
 
     @property
-    def surface_triangles(self):
+    def surface_triangles(self) -> np.ndarray:
         """Surface triangles of the FEM mesh."""
         return self._surface_tri_np
 
     @property
-    def tet_cfg(self):
+    def tet_cfg(self) -> dict:
         """Configuration of tetrahedralization."""
         tet_cfg = mu.generate_tetgen_config_from_morph(self.morph)
         return tet_cfg

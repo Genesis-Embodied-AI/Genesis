@@ -16,7 +16,7 @@ CS_ENCODE = {
 }
 
 
-def get_input_attribute_value(shader: UsdShade.Shader, input_name, input_type=None):
+def get_input_attribute_value(shader: UsdShade.Shader, input_name: str, input_type: str | None = None) -> tuple:
     shader_input = shader.GetInput(input_name)
 
     if input_type != "value":
@@ -54,7 +54,7 @@ def get_shader(prim: Usd.Prim, output_name: str) -> UsdShade.Shader:
         gs.raise_exception(f"Invalid shader type: {prim.GetTypeName()} at {prim.GetPath()}.")
 
 
-def parse_preview_surface(prim: Usd.Prim, output_name):
+def parse_preview_surface(prim: Usd.Prim, output_name: str):
     shader = get_shader(prim, output_name)
     shader_id = shader.GetShaderId()
 

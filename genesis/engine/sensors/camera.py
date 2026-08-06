@@ -18,6 +18,7 @@ from genesis.options.sensors import (
     SensorOptions,
 )
 from genesis.options.vis import VisOptions
+from genesis.typing import IndexType
 from genesis.utils.geom import (
     T_to_quat,
     T_to_trans,
@@ -112,14 +113,14 @@ class BatchRendererCameraWrapper(BaseCameraWrapper):
         self._up = up
         self.transform = pos_lookat_up_to_T(pos, lookat, up)
 
-    def get_pos(self):
+    def get_pos(self) -> torch.Tensor:
         """Get camera position (for batch renderer)."""
         n_envs = self.sensor._manager._sim.n_envs
         if self._pos.ndim > 1 or n_envs == 0:
             return self._pos
         return self._pos[None].expand((n_envs, -1))
 
-    def get_quat(self):
+    def get_quat(self) -> torch.Tensor:
         """Get camera quaternion (for batch renderer)."""
         quat = T_to_quat(self.transform)
         n_envs = self.sensor._manager._sim.n_envs
@@ -264,7 +265,9 @@ class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, None, SharedSensor
         pass
 
     @classmethod
-    def reset(cls, shared_metadata: SharedSensorMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
+    def reset(
+        cls, shared_metadata: SharedSensorMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx: torch.Tensor
+    ):
         super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
         # Reset can restore a different state at the last rendered timestep, so force the next read to rerender.
         # FIXME: the frame cache keys on a single timestep for the whole batch, so a partial-env reset invalidates
@@ -355,7 +358,7 @@ class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, None, SharedSensor
         return np.asarray(envs_idx)
 
     @gs.assert_built
-    def read(self, envs_idx=None) -> CameraReturnType:
+    def read(self, envs_idx: IndexType = None) -> CameraReturnType:
         """Render if needed, then read the cached image from the backend-specific cache."""
         self._ensure_rendered_for_current_state()
         cached_image = self._get_image_cache_entry()

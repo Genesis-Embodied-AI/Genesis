@@ -18,6 +18,7 @@ from ..raycast import RaycasterViewerPlugin
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
     from genesis.ext.pyrender.node import Node
+    from genesis.ext.pyrender.viewer import Viewer
 
 
 MIN_PICKABLE_MASS = 1e-3  # kg - links below this threshold are skipped to avoid numerical instability
@@ -64,7 +65,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
         self._unit_cylinder_mesh = None
         self._plane_mesh = None
 
-    def build(self, viewer, camera: "Node", scene: "Scene"):
+    def build(self, viewer: "Viewer", camera: "Node", scene: "Scene"):
         super().build(viewer, camera, scene)
         self._last_step_t = self.scene.t
         self._prev_mouse_screen_pos = (self.viewer._viewport_size[0] // 2, self.viewer._viewport_size[1] // 2)

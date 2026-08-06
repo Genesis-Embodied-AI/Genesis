@@ -134,12 +134,12 @@ class FrameImageExporter:
 
     def export_frame_single_camera(
         self,
-        i_step,
-        i_cam,
-        rgb=None,
-        depth=None,
-        segmentation=None,
-        normal=None,
+        i_step: int,
+        i_cam: int,
+        rgb: np.ndarray | None = None,
+        depth: np.ndarray | None = None,
+        segmentation: np.ndarray | None = None,
+        normal: np.ndarray | None = None,
         *,
         compress_level: int | None = None,
         executor: Executor | None = None,

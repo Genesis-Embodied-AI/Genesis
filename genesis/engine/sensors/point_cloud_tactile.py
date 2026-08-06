@@ -754,7 +754,9 @@ class ProximityTaxelSensor(
         return gs.tc_float
 
     @classmethod
-    def reset(cls, shared_metadata: ProximityTaxelMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
+    def reset(
+        cls, shared_metadata: ProximityTaxelMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx: torch.Tensor
+    ):
         super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
         shared_metadata.taxel_signal_buf[:, envs_idx] = 0.0
 
@@ -2196,7 +2198,12 @@ class ElastomerTaxelSensor(
         return gs.tc_float
 
     @classmethod
-    def reset(cls, shared_metadata: ElastomerTaxelSensorMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
+    def reset(
+        cls,
+        shared_metadata: ElastomerTaxelSensorMetadata,
+        shared_ground_truth_cache: torch.Tensor,
+        envs_idx: torch.Tensor,
+    ):
         super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
         # Only the hysteresis flag needs clearing on env reset. probe_depth_buf is overwritten every
         # step; surface_pos/entry/depth are only consumed where surface_initialized=True so they're

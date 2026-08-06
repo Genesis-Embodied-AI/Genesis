@@ -112,7 +112,7 @@ class BasePlotter(Recorder):
         """
         raise NotImplementedError(f"[{type(self).__name__}] _update_plot() is not implemented.")
 
-    def get_image_array(self):
+    def get_image_array(self) -> np.ndarray:
         """
         Capture the plot image as a video frame.
 
@@ -222,15 +222,15 @@ class LinePlotHelper:
                         break  # empty, nothing to do.
 
     @property
-    def history_length(self):
+    def history_length(self) -> int:
         return self._history_length
 
     @property
-    def is_dict_data(self):
+    def is_dict_data(self) -> bool:
         return self._is_dict_data
 
     @property
-    def subplot_structure(self):
+    def subplot_structure(self) -> dict[str, tuple[str, ...]]:
         return self._subplot_structure
 
 
@@ -282,7 +282,7 @@ class BasePyQtPlotter(BasePlotter):
     def run_in_thread(self) -> bool:
         return False
 
-    def get_image_array(self):
+    def get_image_array(self) -> np.ndarray:
         """
         Capture the plot image as a video frame.
 
@@ -441,7 +441,7 @@ class BaseMPLPlotter(BasePlotter):
             finally:
                 self.fig = None
 
-    def get_image_array(self):
+    def get_image_array(self) -> np.ndarray:
         """
         Capture the plot image as a video frame.
 

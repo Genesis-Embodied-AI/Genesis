@@ -26,6 +26,7 @@ from .tactile_shared import (
 )
 
 if TYPE_CHECKING:
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
     from genesis.utils.ring_buffer import TensorRingBuffer
     from genesis.vis.rasterizer_context import RasterizerContext
 
@@ -44,7 +45,7 @@ class TriangleMeshBVH(BVHMetadata):
 
     tri_verts: torch.Tensor = make_tensor_field((0, 3, 3))
 
-    def append_sensor(self, track_link_idx: np.ndarray, solver) -> None:
+    def append_sensor(self, track_link_idx: np.ndarray, solver: "RigidSolver") -> None:
         """
         Build per-tracked-link chunks for one sensor (link-local triangle BVH) and append into the flat tensors.
 
@@ -376,7 +377,12 @@ class SurfaceDistanceProbeSensor(
         self._shared_metadata.bvh.append_sensor(track_link_idx, self._shared_metadata.solver)
 
     @classmethod
-    def reset(cls, shared_metadata: SurfaceDistanceProbeMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
+    def reset(
+        cls,
+        shared_metadata: SurfaceDistanceProbeMetadata,
+        shared_ground_truth_cache: torch.Tensor,
+        envs_idx: torch.Tensor,
+    ):
         super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
         # Pre-first-step placeholder. The kernel writes world-frame nearest points on each step; before that, an
         # uninitialized read returns zeros rather than misleading link-local positions.

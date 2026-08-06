@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 import numpy as np
 import quadrants as qd
@@ -12,6 +12,7 @@ from genesis.engine.boundaries import CubeBoundary
 from genesis.engine.entities import MPMEntity
 from genesis.engine.states.solvers import MPMSolverState
 from genesis.options.solvers import MPMOptions
+from genesis.typing import IndexType
 from genesis.utils.misc import DeprecationError, qd_to_torch
 
 from .base_solver import Solver
@@ -19,8 +20,8 @@ from .base_solver import Solver
 if TYPE_CHECKING:
     from genesis.engine.entities import MPMEntity
     from genesis.engine.scene import Scene
-    from genesis.engine.solvers.base_solver import Solver
     from genesis.engine.simulator import Simulator
+    from genesis.engine.solvers.base_solver import Solver
 
 
 @qd.data_oriented
@@ -256,10 +257,17 @@ class MPMSolver(Solver):
     # ------------------------------------------------------------------------------------
 
     @property
-    def is_active(self):
+    def is_active(self) -> bool:
         return self.n_particles > 0
 
-    def add_entity(self, idx, material, morph, surface, name: str | None = None) -> "MPMEntity":
+    def add_entity(
+        self,
+        idx: int,
+        material: "gs.materials.MPM.Base",
+        morph: "gs.morphs.Morph",
+        surface: "gs.surfaces.Surface",
+        name: str | None = None,
+    ) -> "MPMEntity":
         self.add_material(material)
 
         # create entity
@@ -822,7 +830,7 @@ class MPMSolver(Solver):
             for entity in self._entities:
                 entity.load_ckpt(ckpt_name=ckpt_name)
 
-    def set_state(self, f, state, envs_idx=None):
+    def set_state(self, f: int, state: MPMSolverState, envs_idx: IndexType = None):
         if self.is_active:
             self._kernel_set_state(f, state.pos, state.vel, state.C, state.F, state.Jp, state.active)
 
@@ -850,7 +858,7 @@ class MPMSolver(Solver):
             self.particles[f, i_p, i_b].Jp = Jp[i_b, i_p]
             self.particles_ng[f, i_p, i_b].active = active[i_b, i_p]
 
-    def get_state(self, f):
+    def get_state(self, f) -> MPMSolverState:
         if not self.is_active:
             return None
 
@@ -1226,97 +1234,97 @@ class MPMSolver(Solver):
     # ------------------------------------------------------------------------------------
 
     @property
-    def n_particles(self):
+    def n_particles(self) -> int:
         if self.is_built:
             return self._n_particles
         return sum(entity.n_particles for entity in self._entities)
 
     @property
-    def n_vverts(self):
+    def n_vverts(self) -> int:
         if self.is_built:
             return self._n_vverts
         return sum(entity.n_vverts for entity in self._entities)
 
     @property
-    def n_vfaces(self):
+    def n_vfaces(self) -> int:
         if self.is_built:
             return self._n_vfaces
         return sum(entity.n_vfaces for entity in self._entities)
 
     @property
-    def grid_density(self):
+    def grid_density(self) -> float:
         return self._grid_density
 
     @property
-    def particle_size(self):
+    def particle_size(self) -> float:
         return self._particle_size
 
     @property
-    def particle_radius(self):
+    def particle_radius(self) -> float:
         return self._particle_size / 2.0
 
     @property
-    def upper_bound(self):
+    def upper_bound(self) -> np.ndarray:
         return self._upper_bound
 
     @property
-    def lower_bound(self):
+    def lower_bound(self) -> np.ndarray:
         return self._lower_bound
 
     @property
-    def leaf_block_size(self):
+    def leaf_block_size(self) -> NoReturn:
         raise DeprecationError("This property has been removed.")
 
     @property
-    def use_sparse_grid(self):
-        return DeprecationError("This property has been removed.")
+    def use_sparse_grid(self) -> NoReturn:
+        raise DeprecationError("This property has been removed.")
 
     @property
-    def dx(self):
+    def dx(self) -> float:
         return self._dx
 
     @property
-    def inv_dx(self):
+    def inv_dx(self) -> float:
         return self._inv_dx
 
     @property
-    def particle_volume_real(self):
+    def particle_volume_real(self) -> float:
         return self._particle_volume_real
 
     @property
-    def particle_volume(self):
+    def particle_volume(self) -> float:
         return self._particle_volume
 
     @property
-    def particle_volume_scale(self):
+    def particle_volume_scale(self) -> float:
         return self._particle_volume_scale
 
     @property
-    def is_built(self):
+    def is_built(self) -> bool:
         return self._scene._is_built
 
     @property
-    def lower_bound_cell(self):
+    def lower_bound_cell(self) -> np.ndarray:
         return self._lower_bound_cell
 
     @property
-    def upper_bound_cell(self):
+    def upper_bound_cell(self) -> np.ndarray:
         return self._upper_bound_cell
 
     @property
-    def grid_res(self):
+    def grid_res(self) -> np.ndarray:
         return self._grid_res
 
     @property
-    def grid_offset(self):
+    def grid_offset(self) -> "qd.Vector":
         return self._grid_offset
 
     @property
-    def enable_CPIC(self):
+    def enable_CPIC(self) -> bool:
         return self._enable_CPIC
 
     @property
-    def enable_particle_constraints(self):
+    def enable_particle_constraints(self) -> bool:
         return self._enable_particle_constraints
 
 

@@ -1,7 +1,10 @@
 import quadrants as qd
+import numpy as np
+import torch
 
 import genesis as gs
 from genesis.engine.states.entities import SPHEntityState
+from genesis.typing import IndexType
 
 from .particle_entity import ParticleEntity
 
@@ -119,7 +122,7 @@ class SPHEntity(ParticleEntity):
                 vel[i_b, i_p_, j] = self.solver.particles[i_p, i_b].vel[j]
 
     @gs.assert_built
-    def get_state(self):
+    def get_state(self) -> SPHEntityState:
         """
         Get the current state of the SPHEntity including positions, velocities, .
 
@@ -141,14 +144,16 @@ class SPHEntity(ParticleEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def set_particles_pos(self, poss, particles_idx_local=None, envs_idx=None):
+    def set_particles_pos(
+        self, poss: "np.typing.ArrayLike", particles_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx)
         particles_idx = particles_idx_local + self._particle_start
         poss = self._sanitize_particles_tensor(poss, gs.tc_float, particles_idx, envs_idx, (3,))
         self.solver._kernel_set_particles_pos(particles_idx, envs_idx, poss)
 
-    def get_particles_pos(self, envs_idx=None):
+    def get_particles_pos(self, envs_idx: IndexType = None) -> torch.Tensor:
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         poss = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx, (3,))
         self.solver._kernel_get_particles_pos(self._particle_start, self.n_particles, envs_idx, poss)
@@ -156,18 +161,20 @@ class SPHEntity(ParticleEntity):
             poss = poss[0]
         return poss
 
-    def get_position(self, envs_idx=None):
+    def get_position(self, envs_idx: IndexType = None) -> torch.Tensor:
         return self.get_particles_pos(envs_idx)
 
     @gs.assert_built
-    def set_particles_vel(self, vels, particles_idx_local=None, envs_idx=None):
+    def set_particles_vel(
+        self, vels: "np.typing.ArrayLike", particles_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx)
         particles_idx = particles_idx_local + self._particle_start
         vels = self._sanitize_particles_tensor(vels, gs.tc_float, particles_idx, envs_idx, (3,))
         self.solver._kernel_set_particles_vel(particles_idx, envs_idx, vels)
 
-    def get_particles_vel(self, envs_idx=None):
+    def get_particles_vel(self, envs_idx: IndexType = None) -> torch.Tensor:
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         vels = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx, (3,))
         self.solver._kernel_get_particles_vel(self._particle_start, self.n_particles, envs_idx, vels)
@@ -176,14 +183,16 @@ class SPHEntity(ParticleEntity):
         return vels
 
     @gs.assert_built
-    def set_particles_active(self, actives, particles_idx_local=None, envs_idx=None):
+    def set_particles_active(
+        self, actives: "np.typing.ArrayLike", particles_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx)
         particles_idx = particles_idx_local + self._particle_start
         actives = self._sanitize_particles_tensor(actives, gs.tc_bool, particles_idx, envs_idx)
         self.solver._kernel_set_particles_active(particles_idx, envs_idx, actives)
 
-    def get_particles_active(self, envs_idx=None):
+    def get_particles_active(self, envs_idx: IndexType = None) -> torch.Tensor:
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         actives = self._sanitize_particles_tensor(None, gs.tc_bool, None, envs_idx)
         self.solver._kernel_get_particles_active(self._particle_start, self.n_particles, envs_idx, actives)

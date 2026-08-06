@@ -1,5 +1,6 @@
 import functools
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import quadrants as qd
@@ -11,9 +12,16 @@ import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
 from genesis.engine.states.cache import QueriedStates
-from genesis.utils.misc import to_gs_tensor, broadcast_tensor
+from genesis.typing import IndexType
+from genesis.utils.misc import broadcast_tensor, to_gs_tensor
 
 from .base_entity import Entity
+
+if TYPE_CHECKING:
+    from genesis.engine.materials.base import Material
+    from genesis.engine.mesh import Mesh
+    from genesis.options.morphs import Morph
+    from genesis.options.surfaces import Surface
 
 
 def assert_active(method):
@@ -110,7 +118,7 @@ class ParticleEntity(Entity):
         # Note that this attribute must only be used in forward pass
         self.active = False
 
-    def _sanitize_particles_idx_local(self, particles_idx_local=None, envs_idx=None):
+    def _sanitize_particles_idx_local(self, particles_idx_local: IndexType = None, envs_idx: IndexType = None):
         if particles_idx_local is None:
             particles_idx_local = range(self._n_particles)
 
@@ -128,7 +136,14 @@ class ParticleEntity(Entity):
         return particles_idx_local_.contiguous()
 
     def _sanitize_particles_tensor(
-        self, tensor, dtype, particles_idx=None, envs_idx=None, element_shape=(), *, batched=True
+        self,
+        tensor,
+        dtype,
+        particles_idx: IndexType = None,
+        envs_idx: IndexType = None,
+        element_shape=(),
+        *,
+        batched=True,
     ):
         n_particles = particles_idx.shape[-1] if particles_idx is not None else self._n_particles
         if batched:
@@ -495,7 +510,7 @@ class ParticleEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     @assert_active
-    def _set_particles_target_state(self, key, name, element_shape, dtype, tensor, envs_idx=None):
+    def _set_particles_target_state(self, key, name, element_shape, dtype, tensor, envs_idx: IndexType = None):
         if self.sim.requires_grad and self.sim.cur_t > 0.0:
             gs.logger.warning(
                 f"Manually setting particle '{name}'. This is not recommended because it breaks gradient flow."
@@ -504,7 +519,7 @@ class ParticleEntity(Entity):
         vel_ = self._sanitize_particles_tensor(tensor, dtype, None, envs_idx, element_shape)
         self._tgt[key] = to_gs_tensor(vel_)
 
-    def set_position(self, value, envs_idx=None):
+    def set_position(self, value: "np.typing.ArrayLike", envs_idx: IndexType = None):
         """
         Set the position of all the particles individually, or the center of mass wrt the initial configuration of the
         particles as a whole.
@@ -524,7 +539,9 @@ class ParticleEntity(Entity):
         self._set_particles_target_state("pos", "position", (3,), gs.tc_float, poss, envs_idx)
 
     @gs.assert_built
-    def set_particles_pos(self, poss, particles_idx_local=None, envs_idx=None):
+    def set_particles_pos(
+        self, poss: "np.typing.ArrayLike", particles_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Set the position of some particles.
 
@@ -552,7 +569,7 @@ class ParticleEntity(Entity):
         raise NotImplementedError
 
     @gs.assert_built
-    def get_particles_pos(self, envs_idx=None):
+    def get_particles_pos(self, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Retrieve current particle positions from the solver.
 
@@ -568,7 +585,7 @@ class ParticleEntity(Entity):
         """
         raise NotImplementedError
 
-    def set_velocity(self, vels, envs_idx=None):
+    def set_velocity(self, vels: "np.typing.ArrayLike", envs_idx: IndexType = None):
         """
         Set the velocity of all the particles individually.
 
@@ -582,7 +599,9 @@ class ParticleEntity(Entity):
         self._set_particles_target_state("vel", "velocity", (3,), gs.tc_float, vels, envs_idx)
 
     @gs.assert_built
-    def set_particles_vel(self, vels, particles_idx_local=None, envs_idx=None):
+    def set_particles_vel(
+        self, vels: "np.typing.ArrayLike", particles_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Set the velocity of some particles.
 
@@ -610,7 +629,7 @@ class ParticleEntity(Entity):
         raise NotImplementedError
 
     @gs.assert_built
-    def get_particles_vel(self, envs_idx=None):
+    def get_particles_vel(self, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Retrieve current particle velocities from the solver.
 
@@ -626,7 +645,7 @@ class ParticleEntity(Entity):
         """
         raise NotImplementedError
 
-    def set_active(self, actives, envs_idx=None):
+    def set_active(self, actives: "np.typing.ArrayLike", envs_idx: IndexType = None):
         """
         Set the activeness state of all the particles individually.
 
@@ -655,7 +674,9 @@ class ParticleEntity(Entity):
         self.set_active(gs.INACTIVE)
 
     @gs.assert_built
-    def set_particles_active(self, actives, particles_idx_local=None, envs_idx=None):
+    def set_particles_active(
+        self, actives: "np.typing.ArrayLike", particles_idx_local: IndexType = None, envs_idx: IndexType = None
+    ):
         """
         Set the velocity of some particles.
 
@@ -670,7 +691,7 @@ class ParticleEntity(Entity):
         """
         raise NotImplementedError
 
-    def get_particles_active(self, envs_idx=None):
+    def get_particles_active(self, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Retrieve current particle activeness boolean flags from the solver.
 
@@ -687,7 +708,7 @@ class ParticleEntity(Entity):
         raise NotImplementedError
 
     @gs.assert_built
-    def get_mass(self, envs_idx=None):
+    def get_mass(self, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Return the total mass of the entity.
 
@@ -711,7 +732,7 @@ class ParticleEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def find_closest_particle(self, pos, envs_idx=None):
+    def find_closest_particle(self, pos: "np.typing.ArrayLike", envs_idx: IndexType = None):
         """
         Find the index of the particle closest to a given position.
 
@@ -764,86 +785,86 @@ class ParticleEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     @property
-    def uid(self):
+    def uid(self) -> "gs.UID":
         """Unique identifier for the entity."""
         return self._uid
 
     @property
-    def idx(self):
+    def idx(self) -> int:
         """Index of the entity within the simulation."""
         return self._idx
 
     @property
-    def morph(self):
+    def morph(self) -> "Morph":
         """Morphological representation used for particle sampling."""
         return self._morph
 
     @property
-    def vmesh(self):
+    def vmesh(self) -> "Mesh | None":
         """Visual mesh used for skinning and rendering."""
         return self._vmesh
 
     @property
-    def n_vverts(self):
+    def n_vverts(self) -> int:
         """Number of visual mesh vertices."""
         return len(self._vverts)
 
     @property
-    def n_vfaces(self):
+    def n_vfaces(self) -> int:
         """Number of visual mesh faces."""
         return len(self._vfaces)
 
     @property
-    def n_particles(self):
+    def n_particles(self) -> int:
         """Number of particles"""
         return self._n_particles
 
     @property
-    def particle_start(self):
+    def particle_start(self) -> int:
         """Starting index of the entity's particles in the global buffer."""
         return self._particle_start
 
     @property
-    def particle_end(self):
+    def particle_end(self) -> int:
         """Ending index (exclusive) of the entity's particles."""
         return self._particle_start + self._n_particles
 
     @property
-    def vvert_start(self):
+    def vvert_start(self) -> int:
         """Starting index for visual mesh vertices."""
         return self._vvert_start
 
     @property
-    def vvert_end(self):
+    def vvert_end(self) -> int:
         """Ending index (exclusive) for visual mesh vertices."""
         return self._vvert_start + self.n_vverts
 
     @property
-    def vface_start(self):
+    def vface_start(self) -> int:
         """Starting index for visual mesh faces."""
         return self._vface_start
 
     @property
-    def vface_end(self):
+    def vface_end(self) -> int:
         """Ending index (exclusive) for visual mesh faces."""
         return self._vface_start + self.n_vfaces
 
     @property
-    def particle_size(self):
+    def particle_size(self) -> float:
         """Diameter of individual particles."""
         return self._particle_size
 
     @property
-    def init_particles(self):
+    def init_particles(self) -> np.ndarray:
         """Initial sampled particle positions."""
         return self._particles
 
     @property
-    def material(self):
+    def material(self) -> "Material":
         """Material of this entity."""
         return self._material
 
     @property
-    def surface(self):
+    def surface(self) -> "Surface":
         """Surface for rendering."""
         return self._surface

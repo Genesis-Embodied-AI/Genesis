@@ -96,36 +96,36 @@ class DroneEntity(RigidEntity):
             )
 
     @property
-    def model(self):
+    def model(self) -> str:
         """The model type of the drone."""
         return self._model
 
     @property
-    def KF(self):
+    def KF(self) -> float:
         """The drone's thrust coefficient."""
         return self._KF
 
     @property
-    def KM(self):
+    def KM(self) -> float:
         """The drone's moment coefficient."""
         return self._KM
 
     @property
-    def n_propellers(self):
+    def n_propellers(self) -> int:
         """The number of propellers on the drone."""
         return self._n_propellers
 
     @property
-    def COM_link_idx(self):
+    def COM_link_idx(self) -> int:
         """The index of the center-of-mass (COM) link of the drone."""
         return self._COM_link_idx
 
     @property
-    def propellers_idx(self):
+    def propellers_idx(self) -> torch.Tensor:
         """The indices of the drone's propeller links."""
         return self._propellers_link_idx
 
     @property
-    def propellers_spin(self):
+    def propellers_spin(self) -> torch.Tensor:
         """The spin direction for each propeller."""
         return self._propellers_spin

@@ -35,22 +35,34 @@ from genesis.options import (
     VisOptions,
 )
 from genesis.options.morphs import Morph
-from genesis.options.surfaces import Surface
-from genesis.options.renderers import Rasterizer, RendererOptions
 from genesis.options.recorders import RecorderOptions
+from genesis.options.renderers import Rasterizer, RendererOptions
+from genesis.options.surfaces import Surface
 from genesis.recorders import RecorderManager
 from genesis.repr_base import RBC
+from genesis.typing import IndexType
+from genesis.utils.misc import sanitize_index, tensor_to_array
 from genesis.utils.tools import FPSTracker
-from genesis.utils.misc import tensor_to_array, sanitize_index
-from genesis.vis import Visualizer
 from genesis.utils.warnings import warn_once
+from genesis.vis import Visualizer
 
 if TYPE_CHECKING:
     from genesis.engine.entities.base_entity import Entity
+    from genesis.engine.entities.emitter import Emitter
     from genesis.engine.entities.rigid_entity import RigidEntity
     from genesis.engine.sensors.base_sensor import Sensor
-    from genesis.recorders import Recorder
+    from genesis.engine.simulator import Simulator
+    from genesis.engine.solvers.base_solver import Solver
+    from genesis.engine.solvers.fem_solver import FEMSolver
+    from genesis.engine.solvers.kinematic_solver import KinematicSolver
+    from genesis.engine.solvers.mpm_solver import MPMSolver
+    from genesis.engine.solvers.pbd_solver import PBDSolver
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
+    from genesis.engine.solvers.sph_solver import SPHSolver
+    from genesis.engine.solvers.tool_solver import ToolSolver
+    from genesis.ext.pyrender.viewer import Viewer
     from genesis.options.sensors.options import SensorOptions, SensorT
+    from genesis.recorders import Recorder
 
 
 @gs.assert_initialized
@@ -655,7 +667,7 @@ class Scene(RBC):
         return self._sim._sensor_manager.create_sensor(sensor_options)
 
     @gs.assert_built
-    def read_sensors(self, envs_idx=None) -> "dict[type[Sensor], torch.Tensor]":
+    def read_sensors(self, envs_idx: IndexType = None) -> "dict[type[Sensor], torch.Tensor]":
         """
         Read every sensor in the scene as a tensor per sensor class.
 
@@ -699,21 +711,21 @@ class Scene(RBC):
     @gs.assert_unbuilt
     def add_camera(
         self,
-        model="pinhole",
-        res=(320, 320),
-        pos=(0.5, 2.5, 3.5),
-        lookat=(0.5, 0.5, 0.5),
-        up=(0.0, 0.0, 1.0),
-        fov=30,
-        aperture=2.0,
-        focus_dist=None,
-        GUI=False,
-        spp=256,
-        denoise=None,
-        near=0.1,
-        far=20.0,
-        env_idx=None,
-        debug=False,
+        model: str = "pinhole",
+        res: tuple[int, int] = (320, 320),
+        pos: "np.typing.ArrayLike" = (0.5, 2.5, 3.5),
+        lookat: "np.typing.ArrayLike" = (0.5, 0.5, 0.5),
+        up: "np.typing.ArrayLike" = (0.0, 0.0, 1.0),
+        fov: float = 30,
+        aperture: float = 2.0,
+        focus_dist: float | None = None,
+        GUI: bool = False,
+        spp: int = 256,
+        denoise: bool | None = None,
+        near: float = 0.1,
+        far: float = 20.0,
+        env_idx: int | None = None,
+        debug: bool = False,
     ):
         """
         Add a camera to the scene.
@@ -789,7 +801,7 @@ class Scene(RBC):
     def add_emitter(
         self,
         material: Material,
-        max_particles=20000,
+        max_particles: int = 20000,
         surface: Surface | None = None,
     ):
         """
@@ -864,11 +876,11 @@ class Scene(RBC):
     @gs.assert_unbuilt
     def build(
         self,
-        n_envs=0,
-        env_spacing=(0.0, 0.0),
+        n_envs: int = 0,
+        env_spacing: tuple[float, float] = (0.0, 0.0),
         n_envs_per_row: int | None = None,
-        center_envs_at_origin=True,
-        compile_kernels=None,
+        center_envs_at_origin: bool = True,
+        compile_kernels: bool | None = None,
     ):
         """
         Builds the scene once all entities have been added. This operation is required before running the simulation.
@@ -979,7 +991,7 @@ class Scene(RBC):
         self._para_level = int(os.environ.get("GS_PARA_LEVEL", para_level))
 
     @gs.assert_built
-    def reset(self, state: SimState | None = None, envs_idx=None):
+    def reset(self, state: SimState | None = None, envs_idx: IndexType = None):
         """
         Resets the scene to its initial state.
 
@@ -995,7 +1007,7 @@ class Scene(RBC):
         self._reset(state, envs_idx=envs_idx)
         self._recorder_manager.reset(envs_idx)
 
-    def _reset(self, state: SimState | None = None, *, envs_idx=None, keep_init: bool = False):
+    def _reset(self, state: SimState | None = None, *, envs_idx: IndexType = None, keep_init: bool = False):
         if self._is_built:
             if state is None:
                 state = self._init_state
@@ -1064,7 +1076,7 @@ class Scene(RBC):
         return self._sim.get_state()
 
     @gs.assert_built
-    def get_state(self):
+    def get_state(self) -> SimState:
         """
         Returns the current state of the scene.
 
@@ -1388,7 +1400,14 @@ class Scene(RBC):
             return self._visualizer.context.draw_debug_mesh(merged)
 
     @gs.assert_built
-    def draw_debug_path(self, qposs, entity, link_idx=-1, density=0.3, frame_scaling=1.0):
+    def draw_debug_path(
+        self,
+        qposs: "np.typing.ArrayLike",
+        entity: "RigidEntity",
+        link_idx: int = -1,
+        density: float = 0.3,
+        frame_scaling: float = 1.0,
+    ):
         """
         Draws a planned joint trajectory in the scene for visualization.
 
@@ -1594,9 +1613,7 @@ class Scene(RBC):
     # ----------------------------------- utilities --------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def _sanitize_envs_idx(
-        self, envs_idx: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None
-    ) -> torch.Tensor:
+    def _sanitize_envs_idx(self, envs_idx: IndexType) -> torch.Tensor:
         if envs_idx is None:
             return self._envs_idx
 
@@ -1620,27 +1637,27 @@ class Scene(RBC):
     # ------------------------------------------------------------------------------------
 
     @property
-    def uid(self):
+    def uid(self) -> "gs.UID":
         """The unique ID of the scene."""
         return self._uid
 
     @property
-    def dt(self):
+    def dt(self) -> float:
         """The time duration for each simulation step."""
         return self._sim.dt
 
     @property
-    def t(self):
+    def t(self) -> int:
         """The current simulation time step."""
         return self._t
 
     @property
-    def substeps(self):
+    def substeps(self) -> int:
         """The number of substeps per simulation step."""
         return self._sim.substeps
 
     @property
-    def requires_grad(self):
+    def requires_grad(self) -> bool:
         """Whether the scene is in differentiable mode."""
         return self._sim.requires_grad
 
@@ -1650,43 +1667,43 @@ class Scene(RBC):
         return self._is_built
 
     @property
-    def show_FPS(self):
+    def show_FPS(self) -> bool:
         """Whether to print the frames per second (FPS) in the terminal."""
         warn_once("Scene.show_FPS is deprecated. Please use profiling_options.show_FPS")
         return self.profiling_options.show_FPS
 
     @property
-    def gravity(self):
+    def gravity(self) -> np.ndarray:
         """The gravity in the scene."""
         return self._sim.gravity
 
     @property
-    def viewer(self):
+    def viewer(self) -> "Viewer | None":
         """The viewer object for the scene."""
         return self._visualizer.viewer
 
     @property
-    def visualizer(self):
+    def visualizer(self) -> "Visualizer":
         """The visualizer object for the scene."""
         return self._visualizer
 
     @property
-    def sim(self):
+    def sim(self) -> "Simulator":
         """The scene's top-level simulator."""
         return self._sim
 
     @property
-    def cur_t(self):
+    def cur_t(self) -> float:
         """The current simulation time."""
         return self._sim.cur_t
 
     @property
-    def solvers(self):
+    def solvers(self) -> "list[Solver]":
         """All the solvers managed by the scene's simulator."""
         return self._sim.solvers
 
     @property
-    def active_solvers(self):
+    def active_solvers(self) -> "list[Solver]":
         """All the active solvers managed by the scene's simulator."""
         return self._sim.active_solvers
 
@@ -1739,47 +1756,47 @@ class Scene(RBC):
             gs.raise_exception(f"Entity not found for uid: '{uid}'.")
 
     @property
-    def emitters(self):
+    def emitters(self) -> "gs.List[Emitter]":
         """All the emitters in the scene."""
         return self._emitters
 
     @property
-    def tool_solver(self):
+    def tool_solver(self) -> "ToolSolver":
         """The scene's `tool_solver`, managing all the `ToolEntity` in the scene."""
         return self._sim.tool_solver
 
     @property
-    def rigid_solver(self):
+    def rigid_solver(self) -> "RigidSolver":
         """The scene's `rigid_solver`, managing all the `RigidEntity` in the scene."""
         return self._sim.rigid_solver
 
     @property
-    def kinematic_solver(self):
+    def kinematic_solver(self) -> "KinematicSolver":
         """The scene's `kinematic_solver`, managing all the kinematic (visualization-only) entities in the scene."""
         return self._sim.kinematic_solver
 
     @property
-    def mpm_solver(self):
+    def mpm_solver(self) -> "MPMSolver":
         """The scene's `mpm_solver`, managing all the `MPMEntity` in the scene."""
         return self._sim.mpm_solver
 
     @property
-    def sph_solver(self):
+    def sph_solver(self) -> "SPHSolver":
         """The scene's `sph_solver`, managing all the `SPHEntity` in the scene."""
         return self._sim.sph_solver
 
     @property
-    def fem_solver(self):
+    def fem_solver(self) -> "FEMSolver":
         """The scene's `fem_solver`, managing all the `FEMEntity` in the scene."""
         return self._sim.fem_solver
 
     @property
-    def pbd_solver(self):
+    def pbd_solver(self) -> "PBDSolver":
         """The scene's `pbd_solver`, managing all the `PBDEntity` in the scene."""
         return self._sim.pbd_solver
 
     @property
-    def segmentation_idx_dict(self):
+    def segmentation_idx_dict(self) -> dict:
         """
         Returns a dictionary mapping segmentation indices to scene entities.
 

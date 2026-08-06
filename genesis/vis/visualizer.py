@@ -1,5 +1,7 @@
 import sys
+from typing import TYPE_CHECKING
 
+import numpy as np
 import pyglet
 
 import genesis as gs
@@ -7,6 +9,14 @@ from genesis.repr_base import RBC
 
 from .camera import Camera
 from .rasterizer import Rasterizer
+
+if TYPE_CHECKING:
+    from genesis.engine.scene import Scene
+    from genesis.ext.pyrender.viewer import Viewer
+
+    from .batch_renderer import BatchRenderer
+    from .rasterizer_context import RasterizerContext
+    from .raytracer import Raytracer
 
 VIEWER_DEFAULT_HEIGHT_RATIO = 0.5
 VIEWER_DEFAULT_ASPECT_RATIO = 0.75
@@ -134,7 +144,22 @@ class Visualizer(RBC):
         self._renderer = None
 
     def add_camera(
-        self, res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise, near, far, env_idx, debug
+        self,
+        res: tuple[int, int],
+        pos: "np.typing.ArrayLike",
+        lookat: "np.typing.ArrayLike",
+        up: "np.typing.ArrayLike",
+        model: str,
+        fov: float,
+        aperture: float,
+        focus_dist: float | None,
+        GUI: bool,
+        spp: int,
+        denoise: bool,
+        near: float,
+        far: float,
+        env_idx: int | None,
+        debug: bool,
     ):
         cam_idx = len([camera for camera in self._cameras if camera.debug == debug])
         camera = Camera(
@@ -272,16 +297,16 @@ class Visualizer(RBC):
         return self._is_built
 
     @property
-    def viewer(self):
+    def viewer(self) -> "Viewer | None":
         return self._viewer
 
     @property
-    def rasterizer(self):
+    def rasterizer(self) -> "Rasterizer | None":
         return self._rasterizer
 
     @property
     @gs.assert_built
-    def is_software(self):
+    def is_software(self) -> bool:
         if self._batch_renderer is not None or self._raytracer is not None:
             return False
         if self._viewer is not None:
@@ -291,35 +316,35 @@ class Visualizer(RBC):
         return self._rasterizer._renderer._is_software
 
     @property
-    def batch_renderer(self):
+    def batch_renderer(self) -> "BatchRenderer | None":
         return self._batch_renderer
 
     @property
-    def context(self):
+    def context(self) -> "RasterizerContext":
         return self._context
 
     @property
-    def raytracer(self):
+    def raytracer(self) -> "Raytracer | None":
         return self._raytracer
 
     @property
-    def renderer(self):
+    def renderer(self) -> "BatchRenderer | Raytracer | Rasterizer | None":
         return self._renderer
 
     @property
-    def scene(self):
+    def scene(self) -> "Scene":
         return self._scene
 
     @property
-    def has_display(self):
+    def has_display(self) -> bool:
         return self._has_display
 
     @property
-    def cameras(self):
+    def cameras(self) -> "gs.List[Camera]":
         return self._cameras
 
     @property
-    def segmentation_idx_dict(self):
+    def segmentation_idx_dict(self) -> dict:
         if self._batch_renderer is not None:
             return self._batch_renderer.seg_idxc_map
         else:

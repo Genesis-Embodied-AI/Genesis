@@ -9,7 +9,7 @@ from typing_extensions import TypeVar as TypeVarWithDefault
 
 import genesis as gs
 from genesis.repr_base import RBC
-from genesis.typing import NumArrayType, NumericType
+from genesis.typing import IndexType, NumArrayType, NumericType
 from genesis.utils.geom import euler_to_quat
 from genesis.utils.misc import broadcast_tensor, concat_with_tensor, make_tensor_field
 
@@ -140,7 +140,7 @@ class SharedSensorContext(ABC):
         """Refresh the resource for the current step; manager-driven once per step. Must no-op when inactive."""
 
     @abstractmethod
-    def reset(self, envs_idx) -> None:
+    def reset(self, envs_idx: torch.Tensor) -> None:
         """Reset the resource; manager-driven on ``scene.reset()``. Must no-op when inactive."""
 
     @abstractmethod
@@ -307,7 +307,9 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorContextT, SharedSensorMetadataT,
             self._shared_metadata.has_any_delay = True
 
     @classmethod
-    def reset(cls, shared_metadata: SharedSensorMetadataT, shared_ground_truth_cache: torch.Tensor, envs_idx):
+    def reset(
+        cls, shared_metadata: SharedSensorMetadataT, shared_ground_truth_cache: torch.Tensor, envs_idx: torch.Tensor
+    ):
         """
         Reset the sensor.
 
@@ -472,7 +474,7 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorContextT, SharedSensorMetadataT,
     # =============================== public shared methods ===============================
 
     @gs.assert_built
-    def read(self, envs_idx=None) -> DataT:
+    def read(self, envs_idx: IndexType = None) -> DataT:
         """
         Read the sensor data (with noise applied if applicable).
 
@@ -482,7 +484,7 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorContextT, SharedSensorMetadataT,
         return self._get_formatted_data(self._manager.get_cloned_from_cache(self), envs_idx)
 
     @gs.assert_built
-    def read_ground_truth(self, envs_idx=None) -> DataT:
+    def read_ground_truth(self, envs_idx: IndexType = None) -> DataT:
         """
         Read the ground truth sensor data (without noise). Pure view into the per-class ground-truth return cache.
         """
@@ -509,7 +511,7 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorContextT, SharedSensorMetadataT,
 
     # =============================== private shared methods ===============================
 
-    def _get_formatted_data(self, tensor: torch.Tensor, envs_idx=None) -> torch.Tensor:
+    def _get_formatted_data(self, tensor: torch.Tensor, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Returns tensor(s) matching the return format.
 
@@ -534,7 +536,7 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorContextT, SharedSensorMetadataT,
     def _sanitize_envs_idx(self, envs_idx) -> torch.Tensor:
         return self._manager._sim._scene._sanitize_envs_idx(envs_idx)
 
-    def _set_metadata_field(self, value, field, field_start, field_size, envs_idx=None):
+    def _set_metadata_field(self, value, field, field_start, field_size, envs_idx: IndexType = None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
         if field.ndim == 2:
             # Flat field structure: per-sensor spans may differ in size (e.g. cache-sized imperfection fields), so the
@@ -626,11 +628,11 @@ class _LinkAttachedSensorMixin:
         raise NotImplementedError
 
     @gs.assert_built
-    def set_pos_offset(self, pos_offset, envs_idx=None):
+    def set_pos_offset(self, pos_offset: "np.typing.ArrayLike", envs_idx: IndexType = None):
         self._set_metadata_field(pos_offset, self._shared_metadata.offsets_pos, self._idx, 3, envs_idx)
 
     @gs.assert_built
-    def set_quat_offset(self, quat_offset, envs_idx=None):
+    def set_quat_offset(self, quat_offset: "np.typing.ArrayLike", envs_idx: IndexType = None):
         self._set_metadata_field(quat_offset, self._shared_metadata.offsets_quat, self._idx, 4, envs_idx)
 
 
@@ -708,31 +710,31 @@ class SimpleSensor(Sensor[OptionsT, SharedSensorContextT, SharedSensorMetadataT,
     uses_ring_pipeline: ClassVar[bool] = True
 
     @gs.assert_built
-    def set_resolution(self, resolution, envs_idx=None):
+    def set_resolution(self, resolution: "np.typing.ArrayLike", envs_idx: IndexType = None):
         self._set_metadata_field(
             resolution, self._shared_metadata.resolution, self._cache_offset, self._cache_size, envs_idx
         )
         self._shared_metadata.has_any_resolution = bool((self._shared_metadata.resolution > gs.EPS).any().item())
 
     @gs.assert_built
-    def set_bias(self, bias, envs_idx=None):
+    def set_bias(self, bias: "np.typing.ArrayLike", envs_idx: IndexType = None):
         self._set_metadata_field(bias, self._shared_metadata.bias, self._cache_offset, self._cache_size, envs_idx)
         self._shared_metadata.has_any_bias = bool((self._shared_metadata.bias != 0).any().item())
 
     @gs.assert_built
-    def set_random_walk(self, random_walk, envs_idx=None):
+    def set_random_walk(self, random_walk: "np.typing.ArrayLike", envs_idx: IndexType = None):
         self._set_metadata_field(
             random_walk, self._shared_metadata.random_walk, self._cache_offset, self._cache_size, envs_idx
         )
         self._shared_metadata.has_any_random_walk = bool((self._shared_metadata.random_walk > gs.EPS).any().item())
 
     @gs.assert_built
-    def set_noise(self, noise, envs_idx=None):
+    def set_noise(self, noise: "np.typing.ArrayLike", envs_idx: IndexType = None):
         self._set_metadata_field(noise, self._shared_metadata.noise, self._cache_offset, self._cache_size, envs_idx)
         self._shared_metadata.has_any_noise = bool((self._shared_metadata.noise > gs.EPS).any().item())
 
     @gs.assert_built
-    def set_jitter(self, jitter, envs_idx=None):
+    def set_jitter(self, jitter: "np.typing.ArrayLike", envs_idx: IndexType = None):
         jitter_np = np.asarray(jitter, dtype=gs.np_float)
         if np.any(jitter_np < 0):
             gs.raise_exception(f"Sensor jitter must be non-negative; got jitter={tuple(jitter_np.ravel())}.")
@@ -803,7 +805,9 @@ class SimpleSensor(Sensor[OptionsT, SharedSensorContextT, SharedSensorMetadataT,
             self._shared_metadata.has_any_resolution = True
 
     @classmethod
-    def reset(cls, shared_metadata: SharedSensorMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
+    def reset(
+        cls, shared_metadata: SharedSensorMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx: torch.Tensor
+    ):
         super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
         shared_metadata._cur_random_walk[envs_idx, ...].fill_(0.0)
 

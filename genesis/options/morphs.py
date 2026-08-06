@@ -1479,7 +1479,7 @@ class Terrain(Morph):
         return self.name if self.name else super()._identifier()
 
     @property
-    def default_params(self):
+    def default_params(self) -> dict[str, dict]:
         return {
             "flat_terrain": {},
             "fractal_terrain": {
@@ -1525,7 +1525,7 @@ class Terrain(Morph):
         }
 
     @property
-    def subterrain_params(self):
+    def subterrain_params(self) -> dict[str, dict]:
         return self.subterrain_parameters
 
 

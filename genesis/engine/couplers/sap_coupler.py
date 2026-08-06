@@ -6,16 +6,18 @@ import numpy as np
 import quadrants as qd
 
 import genesis as gs
-import genesis.utils.element as eu
 import genesis.utils.array_class as array_class
+import genesis.utils.element as eu
 import genesis.utils.geom as gu
 from genesis.constants import IntEnum
 from genesis.engine.bvh import AABB, LBVH, FEMSurfaceTetLBVH, RigidTetLBVH
 from genesis.options.solvers import SAPCouplerOptions
 from genesis.repr_base import RBC
+from genesis.typing import IndexType
 
 if TYPE_CHECKING:
     from genesis.engine.simulator import Simulator
+    from genesis.engine.solvers.base_solver import Solver
 
 MARCHING_TETS_EDGE_TABLE = (
     (-1, -1, -1, -1),
@@ -284,7 +286,7 @@ class SAPCoupler(RBC):
         self._init_pcg_fields()
         self._init_linesearch_fields()
 
-    def reset(self, envs_idx=None):
+    def reset(self, envs_idx: IndexType = None):
         pass
 
     def _init_tet_tables(self):
@@ -1790,7 +1792,7 @@ class SAPCoupler(RBC):
     # ----------------------------------- Properties -------------------------------------
     # ------------------------------------------------------------------------------------
     @property
-    def active_solvers(self):
+    def active_solvers(self) -> "list[Solver]":
         """All the active solvers managed by the scene's simulator."""
         return self.sim.active_solvers
 

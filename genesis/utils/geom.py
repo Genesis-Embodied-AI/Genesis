@@ -708,7 +708,7 @@ def inv_T(T):
     return T_inv
 
 
-def normalize(x, eps: float = 1e-12):
+def normalize(x: np.ndarray | torch.Tensor, eps: float = 1e-12):
     if isinstance(x, torch.Tensor):
         return x / torch.linalg.vector_norm(x, ord=2, dim=-1, keepdim=True).clamp(min=eps, max=None)
     elif isinstance(x, np.ndarray):
@@ -1708,7 +1708,7 @@ def _np_polar(A: np.ndarray, pure_rotation: bool, side: Literal["right", "left"]
         return _np_polar_core_single(A, pure_rotation, side_int)
 
 
-def polar(A, pure_rotation: bool = True, side: Literal["right", "left"] = "right"):
+def polar(A: np.ndarray | torch.Tensor, pure_rotation: bool = True, side: Literal["right", "left"] = "right"):
     """
     Compute the polar decomposition of a matrix or batch of matrices.
 

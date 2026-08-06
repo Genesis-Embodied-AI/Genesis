@@ -90,7 +90,7 @@ class Logger:
         self._logger.removeHandler(handler)
 
     @property
-    def INFO_length(self):
+    def INFO_length(self) -> int:
         return self._formatter.INFO_length
 
     @contextmanager
@@ -151,13 +151,13 @@ class Logger:
         return TimeElapser(self, refresh_rate, end_msg)
 
     @property
-    def handler(self):
+    def handler(self) -> logging.StreamHandler:
         return self._handler
 
     @property
-    def last_output(self):
+    def last_output(self) -> str:
         return self._formatter.last_output
 
     @property
-    def level(self):
+    def level(self) -> int:
         return self._logger.level

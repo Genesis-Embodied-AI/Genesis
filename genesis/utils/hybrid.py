@@ -30,7 +30,7 @@ def trimesh_to_gelmesh(tmesh):
     return hmesh.Manifold.from_triangles(vertices=tmesh.vertices, faces=tmesh.faces)
 
 
-def get_gel_path(positions, nodes, sampling):
+def get_gel_path(positions, nodes, sampling) -> str:
     hasher = hashlib.sha256()
     hasher.update(positions.tobytes())
     hasher.update(nodes.tobytes())

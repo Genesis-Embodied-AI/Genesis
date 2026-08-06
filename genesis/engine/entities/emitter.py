@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING
+
 import numpy as np
 import torch
 
@@ -5,6 +7,10 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.particle as pu
 from genesis.repr_base import RBC
+
+if TYPE_CHECKING:
+    from genesis.engine.entities.base_entity import Entity
+    from genesis.engine.solvers.base_solver import Solver
 
 
 class Emitter(RBC):
@@ -250,26 +256,26 @@ class Emitter(RBC):
         gs.logger.debug(f"Emitted {n_particles} particles. Next particle index: {self._next_particle}.")
 
     @property
-    def uid(self):
+    def uid(self) -> "gs.UID":
         """The unique identifier of the emitter."""
         return self._uid
 
     @property
-    def entity(self):
+    def entity(self) -> "Entity":
         """The entity associated with the emitter."""
         return self._entity
 
     @property
-    def max_particles(self):
+    def max_particles(self) -> int:
         """The maximum number of particles this emitter can emit."""
         return self._max_particles
 
     @property
-    def solver(self):
+    def solver(self) -> "Solver":
         """The solver used by the emitter's associated entity."""
         return self._solver
 
     @property
-    def next_particle(self):
+    def next_particle(self) -> int:
         """The index of the next particle to be emitted."""
         return self._next_particle

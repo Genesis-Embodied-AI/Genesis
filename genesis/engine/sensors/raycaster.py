@@ -11,6 +11,7 @@ from genesis.engine.solvers.base_solver import StateChange, Subscriber
 from genesis.engine.solvers.rigid.rigid_solver import RigidSolver, kernel_update_all_verts
 from genesis.options.sensors import Raycaster as RaycasterOptions
 from genesis.options.sensors import RaycastPattern
+from genesis.typing import IndexType
 from genesis.utils.geom import normalize, transform_by_quat, transform_by_trans_quat
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, qd_to_numpy, qd_to_torch
 from genesis.utils.raycast_qd import (
@@ -451,7 +452,7 @@ class RaycastContext(SharedSensorContext):
                 entry.bvh.build()
             entry.needs_rebuild = False
 
-    def reset(self, envs_idx):
+    def reset(self, envs_idx: torch.Tensor):
         # A reset may change otherwise-static geometry (re-randomized terrain, teleported obstacles), so force every
         # entry to rebuild once; static entries resume skipping on subsequent steps. The BVHs are geometry-global, not
         # per-env, so ``envs_idx`` is unused. No-op when inactive (``_bvh_contexts`` is empty).
@@ -578,7 +579,7 @@ class RaycasterSensor(
             return (shape,)
         return ((*shape, 3), shape)
 
-    def _get_formatted_data(self, tensor: torch.Tensor, envs_idx=None) -> RaycasterReturnType:
+    def _get_formatted_data(self, tensor: torch.Tensor, envs_idx: IndexType = None) -> RaycasterReturnType:
         # With points disabled the base class returns a bare distances tensor; re-wrap it as RaycasterReturnType so
         # the (points, distances) NamedTuple contract holds, with points=None.
         data = super()._get_formatted_data(tensor, envs_idx)

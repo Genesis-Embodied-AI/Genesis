@@ -56,7 +56,7 @@ class SDF:
         self._is_active = True
 
     @property
-    def is_active(self):
+    def is_active(self) -> bool:
         return self._is_active
 
 

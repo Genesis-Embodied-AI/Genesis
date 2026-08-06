@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING, NoReturn
+
 import numpy as np
 import quadrants as qd
 import torch
@@ -5,9 +7,14 @@ import torch
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
+from genesis.repr_base import RBC
 from genesis.utils import array_class
 from genesis.utils.misc import DeprecationError, tensor_to_array
-from genesis.repr_base import RBC
+
+if TYPE_CHECKING:
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
+
+    from .rigid_entity import RigidEntity
 
 
 class RigidJoint(RBC):
@@ -91,7 +98,7 @@ class RigidJoint(RBC):
     # -------------------------------- real-time state -----------------------------------
     # ------------------------------------------------------------------------------------
 
-    def get_pos(self):
+    def get_pos(self) -> NoReturn:
         """
         Get the position of the joint in the world frame.
         """
@@ -100,7 +107,7 @@ class RigidJoint(RBC):
             "word frame. Alternatively, 'get_anchor_pos' returns the anchor position of the joint in the world frame."
         )
 
-    def get_quat(self):
+    def get_quat(self) -> NoReturn:
         """
         Get the quaternion of the joint in the world frame.
         """
@@ -110,7 +117,7 @@ class RigidJoint(RBC):
         )
 
     @gs.assert_built
-    def get_anchor_pos(self):
+    def get_anchor_pos(self) -> torch.Tensor:
         """
         Get the anchor position of the joint in the world frame.
 
@@ -126,7 +133,7 @@ class RigidJoint(RBC):
         return tensor
 
     @gs.assert_built
-    def get_anchor_axis(self):
+    def get_anchor_axis(self) -> torch.Tensor:
         """
         Get the anchor axis of the joint in the world frame.
 
@@ -148,7 +155,7 @@ class RigidJoint(RBC):
             self._sol_params = sol_params
 
     @property
-    def sol_params(self):
+    def sol_params(self) -> torch.Tensor | np.ndarray:
         """
         Returns the solver parameters of the joint.
         """
@@ -161,119 +168,119 @@ class RigidJoint(RBC):
     # ------------------------------------------------------------------------------------
 
     @property
-    def uid(self):
+    def uid(self) -> "gs.UID":
         """
         Returns the unique id of the joint.
         """
         return self._uid
 
     @property
-    def name(self):
+    def name(self) -> str:
         """
         Returns the name of the joint.
         """
         return self._name
 
     @property
-    def entity(self):
+    def entity(self) -> "RigidEntity":
         """
         Returns the entity that the joint belongs to.
         """
         return self._entity
 
     @property
-    def solver(self):
+    def solver(self) -> "RigidSolver":
         """
         The RigidSolver object that the joint belongs to.
         """
         return self._solver
 
     @property
-    def link(self):
+    def link(self) -> RigidLink:
         """
         Returns the child link that of the joint.
         """
         return self._solver.links[self._link_idx]
 
     @property
-    def idx(self):
+    def idx(self) -> int:
         """
         Returns the global index of the joint in the rigid solver.
         """
         return self._idx
 
     @property
-    def idx_local(self):
+    def idx_local(self) -> int:
         """
         Returns the local index of the joint in the entity.
         """
         return self._idx - self._entity.joint_start
 
     @property
-    def init_qpos(self):
+    def init_qpos(self) -> np.ndarray:
         """
         Returns the initial joint position.
         """
         return self._init_qpos
 
     @property
-    def n_qs(self):
+    def n_qs(self) -> int:
         """
         Returns the number of `q` (generalized coordinate) variables that the joint has.
         """
         return self._n_qs
 
     @property
-    def n_dofs(self):
+    def n_dofs(self) -> int:
         """
         Returns the number of dofs that the joint has.
         """
         return self._n_dofs
 
     @property
-    def type(self):
+    def type(self) -> "gs.JOINT_TYPE":
         """
         Returns the type of the joint.
         """
         return self._type
 
     @property
-    def pos(self):
+    def pos(self) -> np.ndarray:
         """
         Returns the initial position of the joint in the world frame.
         """
         return self._pos
 
     @property
-    def quat(self):
+    def quat(self) -> np.ndarray:
         """
         Returns the initial quaternion of the joint in the world frame.
         """
         return self._quat
 
     @property
-    def q_start(self):
+    def q_start(self) -> int:
         """
         Returns the starting index of the `q` variables of the joint in the rigid solver.
         """
         return self._q_start
 
     @property
-    def dof_start(self):
+    def dof_start(self) -> int:
         """
         Returns the starting index of the dofs of the joint in the rigid solver.
         """
         return self._dof_start
 
     @property
-    def q_end(self):
+    def q_end(self) -> int:
         """
         Returns the ending index of the `q` variables of the joint in the rigid solver.
         """
         return self._n_qs + self.q_start
 
     @property
-    def dof_end(self):
+    def dof_end(self) -> int:
         """
         Returns the ending index of the dofs of the joint in the rigid solver.
         """
@@ -293,7 +300,7 @@ class RigidJoint(RBC):
         return self.dofs_idx
 
     @property
-    def dofs_idx(self):
+    def dofs_idx(self) -> list[int]:
         """
         Returns all the Degrees' of Freedom (DoF) indices of the joint in the rigid solver as a sequence.
         """
@@ -313,7 +320,7 @@ class RigidJoint(RBC):
         return self.dofs_idx_local
 
     @property
-    def dofs_idx_local(self):
+    def dofs_idx_local(self) -> list[int]:
         """
         Returns the local Degrees of Freedom indices of the joint in the entity.
         """
@@ -334,7 +341,7 @@ class RigidJoint(RBC):
             return self.qs_idx
 
     @property
-    def qs_idx(self):
+    def qs_idx(self) -> list[int]:
         """
         Returns all the position indices of the joint in the rigid solver.
         """
@@ -352,36 +359,36 @@ class RigidJoint(RBC):
             return self.qs_idx_local
 
     @property
-    def qs_idx_local(self):
+    def qs_idx_local(self) -> list[int]:
         """
         Returns all the local `q` indices of the joint in the entity.
         """
         return list(range(self.q_start - self._entity.q_start, self.q_end - self._entity.q_start))
 
     @property
-    def dofs_motion_ang(self):
+    def dofs_motion_ang(self) -> np.ndarray:
         return self._dofs_motion_ang
 
     @property
-    def dofs_motion_vel(self):
+    def dofs_motion_vel(self) -> np.ndarray:
         return self._dofs_motion_vel
 
     @property
-    def dofs_limit(self):
+    def dofs_limit(self) -> np.ndarray:
         """
         Returns the range limit of the dofs of the joint.
         """
         return self._dofs_limit
 
     @property
-    def dofs_invweight(self):
+    def dofs_invweight(self) -> np.ndarray:
         """
         Returns the invweight of the dofs of the joint.
         """
         return self._dofs_invweight
 
     @property
-    def dofs_length(self):
+    def dofs_length(self) -> np.ndarray:
         """
         Returns the characteristic length of each dof, used to put dof velocities on a common linear (m/s) scale.
         Shape is (n_dofs,), or (n_dofs, n_envs) for a heterogeneous entity whose variants differ per environment.
@@ -455,56 +462,56 @@ class RigidJoint(RBC):
         return lengths
 
     @property
-    def dofs_frictionloss(self):
+    def dofs_frictionloss(self) -> np.ndarray:
         """
         Returns the frictionloss of the dofs of the joint.
         """
         return self._dofs_frictionloss
 
     @property
-    def dofs_stiffness(self):
+    def dofs_stiffness(self) -> np.ndarray:
         """
         Returns the stiffness of the dofs of the joint.
         """
         return self._dofs_stiffness
 
     @property
-    def dofs_damping(self):
+    def dofs_damping(self) -> np.ndarray:
         """
         Returns the damping of the dofs of the joint.
         """
         return self._dofs_damping
 
     @property
-    def dofs_armature(self):
+    def dofs_armature(self) -> np.ndarray:
         """
         Returns the armature of the dofs of the joint.
         """
         return self._dofs_armature
 
     @property
-    def dofs_act_gain(self):
+    def dofs_act_gain(self) -> np.ndarray:
         """
         Returns the actuator gain of the dofs of the joint.
         """
         return self._dofs_act_gain
 
     @property
-    def dofs_act_bias(self):
+    def dofs_act_bias(self) -> np.ndarray:
         """
         Returns the actuator bias [constant, pos_coeff, vel_coeff] of the dofs of the joint.
         """
         return self._dofs_act_bias
 
     @property
-    def dofs_force_range(self):
+    def dofs_force_range(self) -> np.ndarray:
         """
         Returns the force range of the dofs of the joint.
         """
         return self._dofs_force_range
 
     @property
-    def is_built(self):
+    def is_built(self) -> bool:
         """
         Returns whether the entity the joint belongs to is built.
         """

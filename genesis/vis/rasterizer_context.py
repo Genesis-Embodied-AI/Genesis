@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING
+
 import numpy as np
 import torch
 import trimesh
@@ -8,7 +10,10 @@ import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
 from genesis.ext import pyrender
 from genesis.ext.pyrender.jit_render import JITRenderer
-from genesis.utils.misc import tensor_to_array, qd_to_numpy
+from genesis.utils.misc import qd_to_numpy, tensor_to_array
+
+if TYPE_CHECKING:
+    from genesis.vis.camera import Camera
 
 
 class SegmentationColorMap:
@@ -938,7 +943,13 @@ class RasterizerContext:
         return node
 
     def draw_debug_arrow(
-        self, pos, vec=(0.0, 0.0, 1.0), radius=0.006, color=(1.0, 0.0, 0.0, 0.5), persistent=True, env_idx=None
+        self,
+        pos: "np.typing.ArrayLike",
+        vec: "np.typing.ArrayLike" = (0.0, 0.0, 1.0),
+        radius: float = 0.006,
+        color: "np.typing.ArrayLike" = (1.0, 0.0, 0.0, 0.5),
+        persistent: bool = True,
+        env_idx: int | None = None,
     ):
         vec = tensor_to_array(vec, dtype=np.float32)
         length = np.linalg.norm(vec)
@@ -1005,7 +1016,14 @@ class RasterizerContext:
         self.add_external_node(node)
         return node
 
-    def draw_contact_arrow(self, pos, radius=0.005, force=(0, 0, 1), color=(0.0, 0.9, 0.8, 1.0), env_idx=None):
+    def draw_contact_arrow(
+        self,
+        pos: "np.typing.ArrayLike",
+        radius: float = 0.005,
+        force: "np.typing.ArrayLike" = (0, 0, 1),
+        color: "np.typing.ArrayLike" = (0.0, 0.9, 0.8, 1.0),
+        env_idx: int | None = None,
+    ):
         length = (tensor_to_array(force) * self.contact_force_scale,)
         self.draw_debug_arrow(pos, length, radius, color=color, persistent=False, env_idx=env_idx)
 
@@ -1203,9 +1221,9 @@ class RasterizerContext:
         return self.seg_color_map.colorize_seg_idxc_arr(seg_idxc_arr)
 
     @property
-    def cameras(self):
+    def cameras(self) -> "gs.List[Camera]":
         return self.visualizer.cameras
 
     @property
-    def seg_idxc_map(self):
+    def seg_idxc_map(self) -> dict:
         return self.seg_color_map.idxc_map

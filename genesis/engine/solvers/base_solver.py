@@ -10,10 +10,11 @@ import torch
 
 import genesis as gs
 import genesis.utils.array_class as array_class
-from genesis.utils.misc import qd_to_torch, sanitize_index, tensor_to_array
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.states import QueriedStates
 from genesis.repr_base import RBC
+from genesis.typing import IndexType
+from genesis.utils.misc import qd_to_torch, sanitize_index, tensor_to_array
 
 
 if TYPE_CHECKING:
@@ -238,7 +239,7 @@ class Solver(RBC):
             self._gravity.from_numpy(gravity)
 
     @gs.assert_built
-    def set_gravity(self, gravity, envs_idx=None):
+    def set_gravity(self, gravity: "np.typing.ArrayLike", envs_idx: IndexType = None):
         if self._gravity is None:
             gs.logger.debug("Gravity is not defined, skipping `set_gravity`.")
             return
@@ -249,7 +250,7 @@ class Solver(RBC):
         gravity_arg = self._gravity if type(self._gravity) is qd.VectorTensor else qd.wrap(self._gravity)
         _kernel_set_gravity(gravity, envs_idx, gravity_arg)
 
-    def get_gravity(self, envs_idx=None):
+    def get_gravity(self, envs_idx: IndexType = None) -> torch.Tensor:
         tensor = qd_to_torch(self._gravity, envs_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
@@ -329,31 +330,31 @@ class Solver(RBC):
     # ------------------------------------------------------------------------------------
 
     @property
-    def uid(self):
+    def uid(self) -> "gs.UID":
         return self._uid
 
     @property
-    def scene(self):
+    def scene(self) -> "Scene":
         return self._scene
 
     @property
-    def sim(self):
+    def sim(self) -> "Simulator":
         return self._sim
 
     @property
-    def dt(self):
+    def dt(self) -> float:
         return self._dt
 
     @property
-    def is_built(self):
+    def is_built(self) -> bool:
         return self._scene._is_built
 
     @property
-    def substep_dt(self):
+    def substep_dt(self) -> float:
         return self._substep_dt
 
     @property
-    def gravity(self):
+    def gravity(self) -> np.ndarray | None:
         return self._gravity.to_numpy() if self._gravity is not None else None
 
     @property
@@ -361,7 +362,7 @@ class Solver(RBC):
         return self._entities
 
     @property
-    def n_entities(self):
+    def n_entities(self) -> int:
         return len(self._entities)
 
     def _repr_brief(self):

@@ -1,6 +1,9 @@
+from typing import Any
+
 import quadrants as qd
 
 import genesis as gs
+from genesis.typing import IndexType
 
 from .base_solver import Solver
 
@@ -79,7 +82,7 @@ class SFSolver(Solver):
     # ------------------------------------------------------------------------------------
 
     @property
-    def is_active(self):
+    def is_active(self) -> bool:
         return bool(self.jets)
 
     def set_jets(self, jets):
@@ -288,10 +291,10 @@ class SFSolver(Solver):
     # --------------------------------------- io -----------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def get_state(self, f):
+    def get_state(self, f) -> None:
         pass
 
-    def set_state(self, f, state, envs_idx=None):
+    def set_state(self, f: int, state: Any, envs_idx: IndexType = None):
         pass
 
     def save_ckpt(self, ckpt_name):

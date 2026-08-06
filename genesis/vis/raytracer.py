@@ -1,5 +1,6 @@
 import os
 import sys
+from typing import TYPE_CHECKING
 
 import numpy as np
 import trimesh
@@ -16,6 +17,9 @@ try:
     import LuisaRenderPy
 except ImportError as e:
     gs.raise_exception_from("Failed to import LuisaRenderer.", e)
+
+if TYPE_CHECKING:
+    from genesis.vis.camera import Camera
 
 logging_class = {
     "debug": LuisaRenderPy.LogLevel.DEBUG,
@@ -340,13 +344,13 @@ class Raytracer:
                     for vgeom in fem_entity.vgeoms:
                         self.add_deformable(str(vgeom.uid))
 
-    def get_transform(self, matrix):
+    def get_transform(self, matrix) -> "LuisaRenderPy.MatrixTransform | None":
         if matrix is None:
             return None
         assert matrix.shape == (4, 4)
         return LuisaRenderPy.MatrixTransform(np.ascontiguousarray(matrix))
 
-    def get_texture(self, texture):
+    def get_texture(self, texture) -> "LuisaRenderPy.ColorTexture | LuisaRenderPy.ImageTexture | None":
         if texture is None:
             return None
 
@@ -820,5 +824,5 @@ class Raytracer:
         LuisaRenderPy.destroy()
 
     @property
-    def cameras(self):
+    def cameras(self) -> "gs.List[Camera]":
         return self.visualizer.cameras

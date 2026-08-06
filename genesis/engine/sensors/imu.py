@@ -10,6 +10,7 @@ import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.options.sensors import IMU as IMUOptions
 from genesis.options.sensors import CrossCouplingAxisType
+from genesis.typing import IndexType
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 
 from .base_sensor import SimpleSensor, RigidSensorMetadataMixin, RigidSensorMixin, SimpleSensorMetadata
@@ -149,19 +150,19 @@ class IMUSensor(RigidSensorMixin[IMUSharedMetadata], SimpleSensor[IMUOptions, No
         self.pos_offset: torch.Tensor
 
     @gs.assert_built
-    def set_acc_cross_axis_coupling(self, cross_axis_coupling: CrossCouplingAxisType, envs_idx=None):
+    def set_acc_cross_axis_coupling(self, cross_axis_coupling: CrossCouplingAxisType, envs_idx: IndexType = None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
         rot_matrix = _get_cross_axis_coupling_to_alignment_matrix(cross_axis_coupling)
         self._shared_metadata.alignment_rot_matrix[envs_idx, self._idx * 3, :, :] = rot_matrix
 
     @gs.assert_built
-    def set_gyro_cross_axis_coupling(self, cross_axis_coupling: CrossCouplingAxisType, envs_idx=None):
+    def set_gyro_cross_axis_coupling(self, cross_axis_coupling: CrossCouplingAxisType, envs_idx: IndexType = None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
         rot_matrix = _get_cross_axis_coupling_to_alignment_matrix(cross_axis_coupling)
         self._shared_metadata.alignment_rot_matrix[envs_idx, self._idx * 3 + 1, :, :] = rot_matrix
 
     @gs.assert_built
-    def set_mag_cross_axis_coupling(self, cross_axis_coupling: CrossCouplingAxisType, envs_idx=None):
+    def set_mag_cross_axis_coupling(self, cross_axis_coupling: CrossCouplingAxisType, envs_idx: IndexType = None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
         rot_matrix = _get_cross_axis_coupling_to_alignment_matrix(cross_axis_coupling)
         self._shared_metadata.alignment_rot_matrix[envs_idx, self._idx * 3 + 2, :, :] = rot_matrix

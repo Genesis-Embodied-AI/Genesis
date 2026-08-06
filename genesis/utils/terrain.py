@@ -1,5 +1,5 @@
-import os
 import math
+import os
 import pickle as pkl
 from pathlib import Path
 
@@ -10,11 +10,12 @@ import trimesh
 import genesis as gs
 from genesis.ext.isaacgym import terrain_utils as isaacgym_terrain_utils
 from genesis.options.morphs import Terrain
+from genesis.options.surfaces import Surface
 
 from .mesh import get_gnd_path
 
 
-def parse_terrain(morph: Terrain, surface):
+def parse_terrain(morph: Terrain, surface: Surface):
     """
     Generate mesh (and height field) according to configurations passed by morph.
 

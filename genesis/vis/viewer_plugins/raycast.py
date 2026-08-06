@@ -7,6 +7,7 @@ from typing_extensions import override
 
 import genesis as gs
 from genesis.ext.pyrender.camera import OrthographicCamera
+from genesis.typing import IndexType
 from genesis.utils.misc import qd_to_numpy, qd_to_torch, with_lock
 from genesis.utils.raycast import Ray, RayHit
 
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
     from genesis.engine.scene import Scene
     from genesis.engine.solvers.kinematic_solver import KinematicSolver
     from genesis.ext.pyrender.node import Node
+    from genesis.ext.pyrender.viewer import Viewer
     from genesis.utils.array_class import RaycastResult
 
 
@@ -125,7 +127,7 @@ class Raycaster:
 
     @with_lock
     def cast(
-        self, ray_origin: np.ndarray, ray_direction: np.ndarray, max_range: float = 1000.0, envs_idx=None
+        self, ray_origin: np.ndarray, ray_direction: np.ndarray, max_range: float = 1000.0, envs_idx: IndexType = None
     ) -> RayHit | None:
         """
         Cast a single ray against the BVH of each env in parallel and return the closest hit across envs and solvers.
@@ -207,7 +209,7 @@ class RaycasterViewerPlugin(ViewerPlugin):
         self.use_visual_geom = use_visual_geom
         self._raycaster: "Raycaster | None" = None
 
-    def build(self, viewer, camera: "Node", scene: "Scene"):
+    def build(self, viewer: "Viewer", camera: "Node", scene: "Scene"):
         super().build(viewer, camera, scene)
 
         self._raycaster = Raycaster(self.scene, self.use_visual_geom)

@@ -12,8 +12,9 @@ import genesis.utils.array_class as array_class
 from genesis.engine.boundaries import FloorBoundary
 from genesis.engine.entities.fem_entity import FEMEntity
 from genesis.engine.states.solvers import FEMSolverState
-from genesis.utils.misc import qd_to_torch
+from genesis.typing import IndexType
 from genesis.utils.geom import qd_transform_by_quat, qd_transform_quat_by_quat
+from genesis.utils.misc import qd_to_torch
 
 from .base_solver import Solver
 
@@ -385,10 +386,17 @@ class FEMSolver(Solver):
             self._gravity.from_numpy(gravity)
 
     @property
-    def is_active(self):
+    def is_active(self) -> bool:
         return self.n_elements_max > 0
 
-    def add_entity(self, idx, material, morph, surface, name: str | None = None) -> "FEMEntity":
+    def add_entity(
+        self,
+        idx: int,
+        material: "gs.materials.FEM.Base",
+        morph: "gs.morphs.Morph",
+        surface: "gs.surfaces.Surface",
+        name: str | None = None,
+    ) -> "FEMEntity":
         # add material's update methods if not matching any existing material
         exist = False
         for mat in self._mats:
@@ -1096,11 +1104,11 @@ class FEMSolver(Solver):
     # --------------------------------------- io -----------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def set_state(self, f, state, envs_idx=None):
+    def set_state(self, f: int, state: FEMSolverState, envs_idx: IndexType = None):
         if self.is_active:
             self._kernel_set_state(f, state.pos, state.vel, state.active)
 
-    def get_state(self, f):
+    def get_state(self, f) -> FEMSolverState:
         if self.is_active:
             state = FEMSolverState(self._scene)
             self._kernel_get_state(f, state.pos, state.vel, state.active)
@@ -1108,7 +1116,7 @@ class FEMSolver(Solver):
             state = None
         return state
 
-    def get_state_render(self, f):
+    def get_state_render(self, f) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor] | tuple[None, None, None]:
         """
         Refresh and return the render geometry of every visual geom, laid out contiguously.
 
@@ -1124,7 +1132,7 @@ class FEMSolver(Solver):
         self._kernel_get_state_render(f)
         return self.vverts_render.pos, self.vverts_uvs, self.vfaces_indices
 
-    def get_forces(self):
+    def get_forces(self) -> torch.Tensor:
         """
         Get forces on all vertices.
 
@@ -1455,51 +1463,51 @@ class FEMSolver(Solver):
     # ------------------------------------------------------------------------------------
 
     @property
-    def floor_height(self):
+    def floor_height(self) -> float:
         return self._floor_height
 
     @property
-    def damping(self):
+    def damping(self) -> float:
         return self._damping
 
     @property
-    def n_vertices(self):
+    def n_vertices(self) -> int:
         return sum([entity.n_vertices for entity in self._entities])
 
     @property
-    def n_elements(self):
+    def n_elements(self) -> int:
         return sum([entity.n_elements for entity in self._entities])
 
     @property
-    def n_surfaces(self):
+    def n_surfaces(self) -> int:
         return sum([entity.n_surfaces for entity in self.entities])
 
     @property
-    def n_vverts(self):
+    def n_vverts(self) -> int:
         return sum([entity.n_vverts for entity in self._entities])
 
     @property
-    def n_vfaces(self):
+    def n_vfaces(self) -> int:
         return sum([entity.n_vfaces for entity in self._entities])
 
     @property
-    def n_vertices_max(self):
+    def n_vertices_max(self) -> int:
         return self._n_vertices_max
 
     @property
-    def n_elements_max(self):
+    def n_elements_max(self) -> int:
         return self._n_elements_max
 
     @property
-    def vol_scale(self):
+    def vol_scale(self) -> float:
         return self._vol_scale
 
     @property
-    def n_surface_vertices(self):
+    def n_surface_vertices(self) -> int:
         return self.surface_vertices.shape[0]
 
     @property
-    def n_surface_elements(self):
+    def n_surface_elements(self) -> int:
         return self.surface_elements.shape[0]
 
     # ------------------------------------------------------------------------------------

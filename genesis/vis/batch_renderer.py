@@ -52,7 +52,7 @@ class GenesisGeomRetriever:
         self.geom_idxc = torch.tensor(self.geom_idxc, dtype=torch.int32, device=gs.device)
         self.seg_color_map.generate_seg_colors()
 
-    def get_seg_key(self, vgeom):
+    def get_seg_key(self, vgeom) -> tuple[int, int, int]:
         if self.seg_level == "geom":
             return (vgeom.entity.idx, vgeom.link.idx, vgeom.idx)
         elif self.seg_level == "link":
@@ -229,39 +229,39 @@ class Light:
         self._attenuation = attenuation
 
     @property
-    def pos(self):
+    def pos(self) -> tuple[float, float, float]:
         return self._pos
 
     @property
-    def dir(self):
+    def dir(self) -> tuple[float, float, float]:
         return self._dir
 
     @property
-    def color(self):
+    def color(self) -> tuple[float, float, float, float]:
         return self._color
 
     @property
-    def intensity(self):
+    def intensity(self) -> float:
         return self._intensity
 
     @property
-    def directional(self):
+    def directional(self) -> bool:
         return self._directional
 
     @property
-    def castshadow(self):
+    def castshadow(self) -> bool:
         return self._castshadow
 
     @property
-    def cutoffRad(self):
+    def cutoffRad(self) -> float:
         return math.radians(self._cutoff)
 
     @property
-    def cutoffDeg(self):
+    def cutoffDeg(self) -> float:
         return self._cutoff
 
     @property
-    def attenuation(self):
+    def attenuation(self) -> tuple[float, float, float]:
         return self._attenuation
 
 
@@ -457,13 +457,13 @@ class BatchRenderer(RBC):
         self._t = -1
 
     @property
-    def lights(self):
+    def lights(self) -> "gs.List":
         return self._lights
 
     @property
-    def cameras(self):
+    def cameras(self) -> "gs.List":
         return self._cameras
 
     @property
-    def seg_idxc_map(self):
+    def seg_idxc_map(self) -> dict:
         return self._geom_retriever.seg_color_map.idxc_map

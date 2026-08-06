@@ -7,6 +7,7 @@ from ..base import ViewerPlugin
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
     from genesis.ext.pyrender.node import Node
+    from genesis.ext.pyrender.viewer import Viewer
 
 
 class DefaultControlsPlugin(ViewerPlugin):
@@ -19,7 +20,7 @@ class DefaultControlsPlugin(ViewerPlugin):
     def __init__(self):
         super().__init__()
 
-    def build(self, viewer, camera: "Node", scene: "Scene"):
+    def build(self, viewer: "Viewer", camera: "Node", scene: "Scene"):
         super().build(viewer, camera, scene)
 
         self.viewer.register_keybinds(

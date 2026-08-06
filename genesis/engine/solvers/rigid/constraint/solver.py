@@ -11,6 +11,7 @@ import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.engine.solvers.rigid.abd import func_solve_mass_batch
 from genesis.engine.solvers.rigid.abd.misc import linear_to_lower_tri
+from genesis.typing import IndexType
 from genesis.utils.misc import qd_to_torch, indices_to_mask, assign_indexed_tensor
 
 from .island import (
@@ -201,7 +202,7 @@ class ConstraintSolver:
                 self._solver.dyn_state, self.constraint_state, self._solver.dyn_info, self._solver.rigid_config
             )
 
-    def reset(self, envs_idx=None):
+    def reset(self, envs_idx: IndexType = None):
         self._eq_const_info_cache.clear()
 
         if gs.use_zerocopy:
@@ -224,7 +225,7 @@ class ConstraintSolver:
         envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
         constraint_solver_kernel_reset(envs_idx, self.constraint_state, self._solver.rigid_config)
 
-    def clear(self, envs_idx=None):
+    def clear(self, envs_idx: IndexType = None):
         self.reset(envs_idx)
 
         if gs.use_zerocopy and (
@@ -321,7 +322,9 @@ class ConstraintSolver:
             self._solver.rigid_config,
         )
 
-    def get_equality_constraints(self, as_tensor: bool = True, to_torch: bool = True):
+    def get_equality_constraints(
+        self, as_tensor: bool = True, to_torch: bool = True
+    ) -> dict[str, torch.Tensor | np.ndarray]:
         # Early return if already pre-computed
         eq_const_info = self._eq_const_info_cache.get((as_tensor, to_torch))
         if eq_const_info is not None:
@@ -370,7 +373,9 @@ class ConstraintSolver:
 
         return eq_const_info.copy()
 
-    def get_weld_constraints(self, as_tensor: bool = True, to_torch: bool = True):
+    def get_weld_constraints(
+        self, as_tensor: bool = True, to_torch: bool = True
+    ) -> dict[str, torch.Tensor | np.ndarray]:
         eq_const_info = self.get_equality_constraints(as_tensor, to_torch)
         eq_type = eq_const_info.pop("type")
 
@@ -405,7 +410,7 @@ class ConstraintSolver:
 
         return weld_const_info
 
-    def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None):
+    def add_weld_constraint(self, link1_idx: int, link2_idx: int, envs_idx: IndexType = None):
         envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
         link1_idx, link2_idx = int(link1_idx), int(link2_idx)
 
@@ -435,7 +440,7 @@ class ConstraintSolver:
                 "RigidSolver's option 'max_dynamic_constraints'."
             )
 
-    def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx=None):
+    def delete_weld_constraint(self, link1_idx: int, link2_idx: int, envs_idx: IndexType = None):
         envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
         self._eq_const_info_cache.clear()
         kernel_delete_weld_constraint(

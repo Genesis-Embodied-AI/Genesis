@@ -270,7 +270,7 @@ class Mesh(RBC):
         self._inertial_info = None
         self._inertial_info_source = None
 
-    def get_unique_edges(self):
+    def get_unique_edges(self) -> np.ndarray:
         """
         Get the unique edges of the mesh.
         """
@@ -285,7 +285,7 @@ class Mesh(RBC):
 
         return self._unique_edges
 
-    def get_inertial_info(self):
+    def get_inertial_info(self) -> MeshInertialInfo:
         """
         Get the mass properties of the geometry in its own frame as a MeshInertialInfo.
 
@@ -328,7 +328,7 @@ class Mesh(RBC):
                     self._inertial_info = MeshInertialInfo(0.0, None)
         return self._inertial_info
 
-    def get_vert_adjacency(self):
+    def get_vert_adjacency(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Get the per-vertex adjacency graph as flat arrays (vert_neighbors, vert_n_neighbors, vert_neighbor_start).
 
@@ -564,14 +564,14 @@ class Mesh(RBC):
         self._invalidate_geometry_cache()
 
     @property
-    def uid(self):
+    def uid(self) -> "gs.UID":
         """
         Return the mesh's uid.
         """
         return self._uid
 
     @property
-    def trimesh(self):
+    def trimesh(self) -> trimesh.Trimesh:
         """
         Return the mesh's trimesh object.
         """
@@ -598,14 +598,14 @@ class Mesh(RBC):
         return self._mesh.is_watertight
 
     @property
-    def metadata(self):
+    def metadata(self) -> dict[str, Any]:
         """
         Metadata of the mesh.
         """
         return self._metadata
 
     @property
-    def verts(self):
+    def verts(self) -> np.ndarray:
         """
         Vertices of the mesh.
         """
@@ -621,42 +621,42 @@ class Mesh(RBC):
         self._invalidate_geometry_cache()
 
     @property
-    def faces(self):
+    def faces(self) -> np.ndarray:
         """
         Faces of the mesh.
         """
         return self._mesh.faces
 
     @property
-    def normals(self):
+    def normals(self) -> np.ndarray:
         """
         Normals of the mesh.
         """
         return self._mesh.vertex_normals
 
     @property
-    def surface(self):
+    def surface(self) -> "Surface":
         """
         Surface of the mesh.
         """
         return self._surface
 
     @property
-    def uvs(self):
+    def uvs(self) -> np.ndarray | None:
         """
         UVs of the mesh.
         """
         return self._uvs
 
     @property
-    def area(self):
+    def area(self) -> float:
         """
         Surface area of the mesh.
         """
         return self._mesh.area
 
     @property
-    def volume(self):
+    def volume(self) -> float:
         """
         Volume of the mesh.
         """

@@ -1,14 +1,18 @@
 import os
 import sys
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 import OpenGL
 
 import genesis as gs
-from genesis.repr_base import RBC
 from genesis.ext import pyrender
+from genesis.repr_base import RBC
 from genesis.vis.camera import Camera
+
+if TYPE_CHECKING:
+    from genesis.ext.pyrender.viewer import Viewer
 
 
 class Rasterizer(RBC):
@@ -191,9 +195,9 @@ class Rasterizer(RBC):
         self._camera_targets.clear()
 
     @property
-    def viewer(self):
+    def viewer(self) -> "Viewer | None":
         return self._viewer
 
     @property
-    def offscreen(self):
+    def offscreen(self) -> bool:
         return self._offscreen

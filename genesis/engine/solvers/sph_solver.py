@@ -8,6 +8,7 @@ import genesis.utils.geom as gu
 from genesis.engine.boundaries import CubeBoundary
 from genesis.engine.entities import SPHEntity
 from genesis.engine.states.solvers import SPHSolverState
+from genesis.typing import IndexType
 
 from .base_solver import Solver
 
@@ -169,10 +170,17 @@ class SPHSolver(Solver):
     # ------------------------------------------------------------------------------------
 
     @property
-    def is_active(self):
+    def is_active(self) -> bool:
         return self.n_particles > 0
 
-    def add_entity(self, idx, material, morph, surface, name: str | None = None) -> "SPHEntity":
+    def add_entity(
+        self,
+        idx: int,
+        material: "gs.materials.SPH.Base",
+        morph: "gs.morphs.Morph",
+        surface: "gs.surfaces.Surface",
+        name: str | None = None,
+    ) -> "SPHEntity":
         entity = SPHEntity(
             scene=self.scene,
             solver=self,
@@ -771,7 +779,7 @@ class SPHSolver(Solver):
     def load_ckpt(self, ckpt_name):
         pass
 
-    def set_state(self, f, state, envs_idx=None):
+    def set_state(self, f: int, state: SPHSolverState, envs_idx: IndexType = None):
         if self.is_active:
             self._kernel_set_state(f, state.pos, state.vel, state.active)
 
@@ -789,7 +797,7 @@ class SPHSolver(Solver):
                 self.particles[i_p, i_b].vel[j] = vel[i_b, i_p, j]
             self.particles_ng[i_p, i_b].active = active[i_b, i_p]
 
-    def get_state(self, f):
+    def get_state(self, f) -> SPHSolverState:
         if self.is_active:
             state = SPHSolverState(self.scene)
             self._kernel_get_state(f, state.pos, state.vel, state.active)
@@ -953,40 +961,40 @@ class SPHSolver(Solver):
     # ------------------------------------------------------------------------------------
 
     @property
-    def n_particles(self):
+    def n_particles(self) -> int:
         if self.is_built:
             return self._n_particles
         else:
             return sum([entity.n_particles for entity in self._entities])
 
     @property
-    def particle_volume(self):
+    def particle_volume(self) -> float:
         return self._particle_volume
 
     @property
-    def particle_size(self):
+    def particle_size(self) -> float:
         return self._particle_size
 
     @property
-    def particle_radius(self):
+    def particle_radius(self) -> float:
         return self._particle_size / 2.0
 
     @property
-    def support_radius(self):
+    def support_radius(self) -> float:
         return self._support_radius
 
     @property
-    def hash_grid_res(self):
+    def hash_grid_res(self) -> np.ndarray:
         return self.sh.grid_res
 
     @property
-    def hash_grid_cell_size(self):
+    def hash_grid_cell_size(self) -> float:
         return self.sh.cell_size
 
     @property
-    def upper_bound(self):
+    def upper_bound(self) -> np.ndarray:
         return self._upper_bound
 
     @property
-    def lower_bound(self):
+    def lower_bound(self) -> np.ndarray:
         return self._lower_bound

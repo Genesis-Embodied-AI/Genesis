@@ -144,7 +144,7 @@ class RigidInfo:
     EPS: qd.Tensor
 
 
-def get_rigid_info(solver, kinematic_only):
+def get_rigid_info(solver, kinematic_only) -> RigidInfo:
     _B = solver._B
 
     mass_mat_shape = (solver.n_dofs_, solver.n_dofs_, _B)
@@ -270,7 +270,7 @@ class IslandSlices:
     start: qd.Tensor
 
 
-def get_slices(solver, is_active=True):
+def get_slices(solver, is_active=True) -> IslandSlices:
     _B = solver._B
     # An island is a dynamic component (a floating-base kinematic subtree), so there are at most n_links islands (each
     # link can be its own component). Slices are therefore indexed by island in [0, n_links).
@@ -351,7 +351,7 @@ class IslandState:
     rcm_tree_order: qd.Tensor
 
 
-def get_island_state(solver, collider):
+def get_island_state(solver, collider) -> IslandState:
     _B = solver._B
     n_links = max(solver.n_links, 1)
     n_dofs = max(solver.n_dofs, 1)
@@ -527,7 +527,7 @@ class ConstraintState:
     early_exit_flag: qd.Tensor
 
 
-def get_constraint_state(constraint_solver, solver, collider):
+def get_constraint_state(constraint_solver, solver, collider) -> ConstraintState:
     _B = solver._B
     len_constraints_ = constraint_solver.len_constraints_
 
@@ -704,7 +704,7 @@ class ContactData:
     pair_idx: qd.Tensor
 
 
-def get_contact_data(solver, max_candidate_contacts, requires_grad):
+def get_contact_data(solver, max_candidate_contacts, requires_grad) -> ContactData:
     _B = solver._B
     max_candidate_contacts_ = max(max_candidate_contacts, 1)
 
@@ -753,7 +753,7 @@ class DiffContactInput:
     ref_penetration: qd.Tensor
 
 
-def get_diff_contact_input(_B, max_contacts_per_pair, is_active, requires_grad=False):
+def get_diff_contact_input(_B, max_contacts_per_pair, is_active, requires_grad=False) -> DiffContactInput:
     shape = maybe_shape((_B, max_contacts_per_pair), is_active and requires_grad)
     return DiffContactInput(
         geom_a=V(dtype=gs.qd_int, shape=shape),
@@ -780,7 +780,7 @@ class SortBuffer:
     is_max: qd.Tensor
 
 
-def get_sort_buffer(solver):
+def get_sort_buffer(solver) -> SortBuffer:
     _B = solver._B
 
     return SortBuffer(
@@ -797,7 +797,7 @@ class ContactCache:
     penetration: qd.Tensor
 
 
-def get_contact_cache(solver, n_possible_pairs):
+def get_contact_cache(solver, n_possible_pairs) -> ContactCache:
     _B = solver._B
     return ContactCache(
         normal=V_VEC(3, dtype=gs.qd_float, shape=(n_possible_pairs, _B)),
@@ -821,7 +821,7 @@ class NarrowphaseWorkQueues:
     mpr_work_counter: qd.Tensor
 
 
-def get_narrowphase_work_queues(max_entries):
+def get_narrowphase_work_queues(max_entries) -> NarrowphaseWorkQueues:
     return NarrowphaseWorkQueues(
         mpr_i_b=V(dtype=gs.qd_int, shape=(max_entries,)),
         mpr_i_ga=V(dtype=gs.qd_int, shape=(max_entries,)),
@@ -875,7 +875,7 @@ class ColliderState:
 
 def get_collider_state(
     solver, rigid_config, n_possible_pairs, max_collision_pairs_broad_k, collider_info, collider_static_config
-):
+) -> ColliderState:
     _B = solver._B
     n_geoms = solver.n_geoms_
     max_collision_pairs = min(solver.max_collision_pairs, n_possible_pairs)
@@ -946,7 +946,7 @@ class VertsSpatialGrid:
     geoms_inv_cell_size: qd.Tensor
 
 
-def get_verts_spatial_grid(solver):
+def get_verts_spatial_grid(solver) -> VertsSpatialGrid:
     return VertsSpatialGrid(
         verts_idx=V(dtype=gs.qd_int, shape=(solver.n_verts_,)),
         verts_pos=V_VEC(3, dtype=gs.qd_float, shape=(solver.n_verts_,)),
@@ -996,7 +996,7 @@ class MPRSimplexSupport:
     v: qd.Tensor
 
 
-def get_mpr_simplex_support(B_):
+def get_mpr_simplex_support(B_) -> MPRSimplexSupport:
     return MPRSimplexSupport(
         v1=V_VEC(3, dtype=gs.qd_float, shape=(4, B_)),
         v2=V_VEC(3, dtype=gs.qd_float, shape=(4, B_)),
@@ -1013,7 +1013,7 @@ class MPRState:
     portal_status: qd.Tensor
 
 
-def get_mpr_state(B_):
+def get_mpr_state(B_) -> MPRState:
     return MPRState(
         simplex_support=get_mpr_simplex_support(B_),
         simplex_size=V(dtype=gs.qd_int, shape=(B_,)),
@@ -1028,7 +1028,7 @@ class MPRInfo:
     CCD_ITERATIONS: qd.Tensor
 
 
-def get_mpr_info(**kwargs):
+def get_mpr_info(**kwargs) -> MPRInfo:
     return MPRInfo(
         CCD_EPS=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["CCD_EPS"]),
         CCD_TOLERANCE=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["CCD_TOLERANCE"]),
@@ -1051,7 +1051,7 @@ class MDVertex:
     mink: qd.Tensor
 
 
-def get_gjk_simplex_vertex(_B, is_active):
+def get_gjk_simplex_vertex(_B, is_active) -> MDVertex:
     shape = maybe_shape((_B, 4), is_active)
     return MDVertex(
         obj1=V_VEC(3, dtype=gs.qd_float, shape=shape),
@@ -1064,7 +1064,7 @@ def get_gjk_simplex_vertex(_B, is_active):
     )
 
 
-def get_epa_polytope_vertex(_B, gjk_info, is_active):
+def get_epa_polytope_vertex(_B, gjk_info, is_active) -> MDVertex:
     max_num_polytope_verts = 5 + gjk_info.epa_max_iterations[None]
     shape = maybe_shape((_B, max_num_polytope_verts), is_active)
     return MDVertex(
@@ -1084,7 +1084,7 @@ class GJKSimplex:
     dist: qd.Tensor
 
 
-def get_gjk_simplex(_B, is_active):
+def get_gjk_simplex(_B, is_active) -> GJKSimplex:
     shape = maybe_shape((_B,), is_active)
     return GJKSimplex(nverts=V(dtype=gs.qd_int, shape=shape), dist=V(dtype=gs.qd_float, shape=shape))
 
@@ -1095,7 +1095,7 @@ class GJKSimplexBuffer:
     sdist: qd.Tensor
 
 
-def get_gjk_simplex_buffer(_B, is_active):
+def get_gjk_simplex_buffer(_B, is_active) -> GJKSimplexBuffer:
     shape = maybe_shape((_B, 4), is_active)
     return GJKSimplexBuffer(normal=V_VEC(3, dtype=gs.qd_float, shape=shape), sdist=V(dtype=gs.qd_float, shape=shape))
 
@@ -1109,7 +1109,7 @@ class EPAPolytope:
     horizon_w: qd.Tensor
 
 
-def get_epa_polytope(_B, is_active):
+def get_epa_polytope(_B, is_active) -> EPAPolytope:
     shape = maybe_shape((_B,), is_active)
     return EPAPolytope(
         nverts=V(dtype=gs.qd_int, shape=shape),
@@ -1130,7 +1130,7 @@ class EPAPolytopeFace:
     visited: qd.Tensor
 
 
-def get_epa_polytope_face(_B, polytope_max_faces, is_active):
+def get_epa_polytope_face(_B, polytope_max_faces, is_active) -> EPAPolytopeFace:
     shape = maybe_shape((_B, polytope_max_faces), is_active)
     return EPAPolytopeFace(
         verts_idx=V_VEC(3, dtype=gs.qd_int, shape=shape),
@@ -1148,7 +1148,7 @@ class EPAPolytopeHorizonData:
     edge_idx: qd.Tensor
 
 
-def get_epa_polytope_horizon_data(_B, polytope_max_horizons, is_active):
+def get_epa_polytope_horizon_data(_B, polytope_max_horizons, is_active) -> EPAPolytopeHorizonData:
     shape = maybe_shape((_B, polytope_max_horizons), is_active)
     return EPAPolytopeHorizonData(face_idx=V(dtype=gs.qd_int, shape=shape), edge_idx=V(dtype=gs.qd_int, shape=shape))
 
@@ -1164,7 +1164,7 @@ class ContactFace:
     id2: qd.Tensor
 
 
-def get_contact_face(_B, max_contact_polygon_verts, is_active):
+def get_contact_face(_B, max_contact_polygon_verts, is_active) -> ContactFace:
     shape = maybe_shape((_B, max_contact_polygon_verts), is_active)
     return ContactFace(
         vert1=V_VEC(3, dtype=gs.qd_float, shape=shape),
@@ -1184,7 +1184,7 @@ class ContactNormal:
     id: qd.Tensor
 
 
-def get_contact_normal(_B, max_contact_polygon_verts, is_active):
+def get_contact_normal(_B, max_contact_polygon_verts, is_active) -> ContactNormal:
     shape = maybe_shape((_B, max_contact_polygon_verts), is_active)
     return ContactNormal(
         endverts=V_VEC(3, dtype=gs.qd_float, shape=shape),
@@ -1199,7 +1199,7 @@ class ContactHalfspace:
     dist: qd.Tensor
 
 
-def get_contact_halfspace(_B, max_contact_polygon_verts, is_active):
+def get_contact_halfspace(_B, max_contact_polygon_verts, is_active) -> ContactHalfspace:
     shape = maybe_shape((_B, max_contact_polygon_verts), is_active)
     return ContactHalfspace(normal=V_VEC(3, dtype=gs.qd_float, shape=shape), dist=V(dtype=gs.qd_float, shape=shape))
 
@@ -1210,7 +1210,7 @@ class Witness:
     point_obj2: qd.Tensor
 
 
-def get_witness(_B, max_contacts_per_pair, is_active):
+def get_witness(_B, max_contacts_per_pair, is_active) -> Witness:
     shape = maybe_shape((_B, max_contacts_per_pair), is_active)
     return Witness(
         point_obj1=V_VEC(3, dtype=gs.qd_float, shape=shape), point_obj2=V_VEC(3, dtype=gs.qd_float, shape=shape)
@@ -1255,7 +1255,7 @@ class GJKState:
     diff_penetration: qd.Tensor
 
 
-def get_gjk_state(_B, rigid_config, gjk_info, is_active, requires_grad=False):
+def get_gjk_state(_B, rigid_config, gjk_info, is_active, requires_grad=False) -> GJKState:
     enable_mujoco_compatibility = rigid_config.enable_mujoco_compatibility
     polytope_max_faces = gjk_info.polytope_max_faces[None]
     max_contacts_per_pair = gjk_info.max_contacts_per_pair[None]
@@ -1301,7 +1301,7 @@ def get_gjk_state(_B, rigid_config, gjk_info, is_active, requires_grad=False):
     )
 
 
-def get_gjk_state_contact_only(_B):
+def get_gjk_state_contact_only(_B) -> GJKState:
     """Minimal GJK state for contact detection only (no EPA, no multi-contact).
 
     Used by kernel 1 to run func_gjk as a boolean overlap test. All EPA polytope,
@@ -1410,7 +1410,7 @@ class GJKInfo:
     diff_contact_min_penetration: qd.Tensor
 
 
-def get_gjk_info(**kwargs):
+def get_gjk_info(**kwargs) -> GJKInfo:
     return GJKInfo(
         max_contacts_per_pair=V_SCALAR_FROM(dtype=gs.qd_int, value=kwargs["max_contacts_per_pair"]),
         max_contact_polygon_verts=V_SCALAR_FROM(dtype=gs.qd_int, value=kwargs["max_contact_polygon_verts"]),
@@ -1458,7 +1458,7 @@ class SupportFieldInfo:
     support_res: qd.Tensor
 
 
-def get_support_field_info(n_geoms, n_support_cells, support_res):
+def get_support_field_info(n_geoms, n_support_cells, support_res) -> SupportFieldInfo:
     return SupportFieldInfo(
         support_cell_start=V(dtype=gs.qd_int, shape=(max(n_geoms, 1),)),
         support_v=V_VEC(3, dtype=gs.qd_float, shape=(max(n_support_cells, 1),)),
@@ -1482,7 +1482,7 @@ class SDFGeomInfo:
     sdf_coarse_cell_start: qd.Tensor
 
 
-def get_sdf_geom_info(n_geoms):
+def get_sdf_geom_info(n_geoms) -> SDFGeomInfo:
     return SDFGeomInfo(
         T_mesh_to_sdf=V_MAT(n=4, m=4, dtype=gs.qd_float, shape=(n_geoms,)),
         sdf_res=V_VEC(3, dtype=gs.qd_int, shape=(n_geoms,)),
@@ -1504,7 +1504,7 @@ class SDFInfo:
     geoms_sdf_coarse_val: qd.Tensor
 
 
-def get_sdf_info(n_geoms, n_cells, n_coarse_cells):
+def get_sdf_info(n_geoms, n_cells, n_coarse_cells) -> SDFInfo:
     if math.prod((n_cells, 3)) > np.iinfo(np.int32).max:
         gs.raise_exception(
             f"SDF Gradient shape (n_cells={n_cells}, 3) is too large. Consider manually setting larger "
@@ -1579,7 +1579,7 @@ def get_collider_info(
     support_field_info,
     sdf_info,
     **kwargs,
-):
+) -> ColliderInfo:
     for geom in solver.geoms:
         if geom.type == gs.GEOM_TYPE.TERRAIN:
             terrain_hf_shape = geom.entity.terrain_hf.shape
@@ -1640,7 +1640,7 @@ class DofsInfo:
     dof_length: qd.Tensor
 
 
-def get_dofs_info(solver):
+def get_dofs_info(solver) -> DofsInfo:
     shape = (solver.n_dofs_, solver._B) if solver._options.batch_dofs_info else (solver.n_dofs_,)
 
     return DofsInfo(
@@ -1693,7 +1693,7 @@ class DofsState:
     is_hibernated: qd.Tensor
 
 
-def get_dofs_state(solver):
+def get_dofs_state(solver) -> DofsState:
     shape = (solver.n_dofs_, solver._B)
     requires_grad = solver._requires_grad
     shape_bw = maybe_shape((2, *shape), requires_grad)
@@ -1785,7 +1785,7 @@ class LinksState:
     awake_steps: qd.Tensor
 
 
-def get_links_state(solver):
+def get_links_state(solver) -> LinksState:
     shape = (solver.n_links_, solver._B)
     requires_grad = solver._requires_grad
     # The backward joint buffers hold one slot per joint of a link plus the link itself; collapsed when grad is off.
@@ -1867,7 +1867,7 @@ class LinksInfo:
     vgeom_end: qd.Tensor
 
 
-def get_links_info(solver):
+def get_links_info(solver) -> LinksInfo:
     links_info_shape = (solver.n_links_, solver._B) if solver._options.batch_links_info else solver.n_links_
 
     return LinksInfo(
@@ -1912,7 +1912,7 @@ class JointsInfo:
     pos: qd.Tensor
 
 
-def get_joints_info(solver):
+def get_joints_info(solver) -> JointsInfo:
     shape = (solver.n_joints_, solver._B) if solver._options.batch_joints_info else (solver.n_joints_,)
 
     return JointsInfo(
@@ -1933,7 +1933,7 @@ class JointsState:
     xaxis: qd.Tensor
 
 
-def get_joints_state(solver):
+def get_joints_state(solver) -> JointsState:
     shape = (solver.n_joints_, solver._B)
     requires_grad = solver._requires_grad
 
@@ -1981,7 +1981,7 @@ class GeomsInfo:
     coup_restitution: qd.Tensor
 
 
-def get_geoms_info(solver, is_active=True):
+def get_geoms_info(solver, is_active=True) -> GeomsInfo:
     shape = (solver.n_geoms_,) if is_active else ()
 
     return GeomsInfo(
@@ -2032,7 +2032,7 @@ class GeomsState:
     friction_ratio: qd.Tensor
 
 
-def get_geoms_state(solver, is_active=True):
+def get_geoms_state(solver, is_active=True) -> GeomsState:
     shape = (solver.n_geoms_, solver._B) if is_active else ()
     requires_grad = solver.rigid_config.requires_grad
 
@@ -2062,7 +2062,7 @@ class VertsInfo:
     is_fixed: qd.Tensor
 
 
-def get_verts_info(solver, is_active=True):
+def get_verts_info(solver, is_active=True) -> VertsInfo:
     shape = (solver.n_verts_,) if is_active else ()
 
     return VertsInfo(
@@ -2084,7 +2084,7 @@ class FacesInfo:
     geom_idx: qd.Tensor
 
 
-def get_faces_info(solver, is_active=True):
+def get_faces_info(solver, is_active=True) -> FacesInfo:
     shape = (solver.n_faces_,) if is_active else ()
 
     return FacesInfo(verts_idx=V(dtype=gs.qd_ivec3, shape=shape), geom_idx=V(dtype=gs.qd_int, shape=shape))
@@ -2100,7 +2100,7 @@ class EdgesInfo:
     length: qd.Tensor
 
 
-def get_edges_info(solver, is_active=True):
+def get_edges_info(solver, is_active=True) -> EdgesInfo:
     shape = (solver.n_edges_,) if is_active else ()
 
     return EdgesInfo(
@@ -2116,11 +2116,11 @@ class VertsState:
     pos: qd.Tensor
 
 
-def get_free_verts_state(solver, is_active=True):
+def get_free_verts_state(solver, is_active=True) -> VertsState:
     return VertsState(pos=V(dtype=gs.qd_vec3, shape=(solver.n_free_verts_, solver._B) if is_active else ()))
 
 
-def get_fixed_verts_state(solver, is_active=True):
+def get_fixed_verts_state(solver, is_active=True) -> VertsState:
     return VertsState(pos=V(dtype=gs.qd_vec3, shape=(solver.n_fixed_verts_,) if is_active else ()))
 
 
@@ -2135,7 +2135,7 @@ class VVertsInfo:
     vverts_state_idx: qd.Tensor
 
 
-def get_vverts_info(solver):
+def get_vverts_info(solver) -> VVertsInfo:
     shape = (solver.n_vverts_,)
 
     return VVertsInfo(
@@ -2154,7 +2154,7 @@ class VVertsState:
     pos: qd.Tensor
 
 
-def get_vverts_state(solver, is_active=True):
+def get_vverts_state(solver, is_active=True) -> VVertsState:
     if not is_active:
         return VVertsState(pos=V(dtype=gs.qd_vec3, shape=()))
     if math.prod((solver.n_custom_vverts_, solver._B, 3)) > np.iinfo(np.int32).max:
@@ -2174,7 +2174,7 @@ class VFacesInfo:
     vgeom_idx: qd.Tensor
 
 
-def get_vfaces_info(solver):
+def get_vfaces_info(solver) -> VFacesInfo:
     shape = (solver.n_vfaces_,)
 
     return VFacesInfo(vverts_idx=V(dtype=gs.qd_ivec3, shape=shape), vgeom_idx=V(dtype=gs.qd_int, shape=shape))
@@ -2197,7 +2197,7 @@ class VGeomsInfo:
     color: qd.Tensor
 
 
-def get_vgeoms_info(solver):
+def get_vgeoms_info(solver) -> VGeomsInfo:
     shape = (solver.n_vgeoms_,)
 
     return VGeomsInfo(
@@ -2223,7 +2223,7 @@ class VGeomsState:
     quat: qd.Tensor
 
 
-def get_vgeoms_state(solver, is_active=True):
+def get_vgeoms_state(solver, is_active=True) -> VGeomsState:
     shape = (solver.n_vgeoms_, solver._B) if is_active else ()
 
     return VGeomsState(pos=V(dtype=gs.qd_vec3, shape=shape), quat=V(dtype=gs.qd_vec4, shape=shape))
@@ -2241,7 +2241,7 @@ class EqualitiesInfo:
     sol_params: qd.Tensor
 
 
-def get_equalities_info(solver, is_active=True):
+def get_equalities_info(solver, is_active=True) -> EqualitiesInfo:
     shape = (solver.n_candidate_equalities_, solver._B) if is_active else ()
 
     return EqualitiesInfo(
@@ -2271,7 +2271,7 @@ class EntitiesInfo:
     is_local_collision_mask: qd.Tensor
 
 
-def get_entities_info(solver):
+def get_entities_info(solver) -> EntitiesInfo:
     shape = (solver.n_entities_,)
 
     return EntitiesInfo(
@@ -2297,7 +2297,7 @@ class EntitiesState:
     is_hibernated: qd.Tensor
 
 
-def get_entities_state(solver, is_active=True):
+def get_entities_state(solver, is_active=True) -> EntitiesState:
     return EntitiesState(is_hibernated=V(dtype=gs.qd_int, shape=(solver.n_entities_, solver._B) if is_active else ()))
 
 
@@ -2314,7 +2314,7 @@ class RigidAdjointCache:
     dofs_acc: qd.Tensor
 
 
-def get_rigid_adjoint_cache(solver):
+def get_rigid_adjoint_cache(solver) -> RigidAdjointCache:
     substeps_local = solver._sim.substeps_local
     requires_grad = solver._requires_grad
 
@@ -2369,7 +2369,7 @@ class DynState:
     vgeoms: VGeomsState
 
 
-def get_dyn_state_adjoint_cache(solver):
+def get_dyn_state_adjoint_cache(solver) -> DynState:
     return DynState(
         dofs=get_dofs_state(solver),
         links=get_links_state(solver),
@@ -2590,7 +2590,7 @@ class RaycastResult:
     normal: qd.Tensor
 
 
-def get_raycast_result(n_envs: int):
+def get_raycast_result(n_envs: int) -> RaycastResult:
     return RaycastResult(
         distance=V(dtype=gs.qd_float, shape=(n_envs,)),
         geom_idx=V(dtype=gs.qd_int, shape=(n_envs,)),
