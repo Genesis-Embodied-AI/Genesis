@@ -19,6 +19,8 @@ env:
   # Note that secrets are not passed to workflows that are triggered by a pull request from a fork
   HF_TOKEN: ${{ secrets.HF_TOKEN }}
   HF_HUB_DOWNLOAD_TIMEOUT: 60
+  # Increment to switch new jobs to fresh caches before deleting the previous version.
+  CACHE_VERSION: "1"
   GENESIS_IMAGE_VER: "1_25"
   TIMEOUT_MINUTES: 60
   FORCE_COLOR: 1
@@ -58,15 +60,19 @@ jobs:
                --container-name=${CONTAINER_NAME} \
                --container-mounts=\
           ${{ github.workspace }}:/root/workspace,\
-          ${HOME}/.cache/uv:/root/.cache/uv,\
-          ${HOME}/.cache/genesis:/root/.cache/genesis,\
-          ${HOME}/.cache/quadrants:/root/.cache/quadrants,\
-          ${HOME}/.cache/huggingface:/root/.cache/huggingface \
+          ${HOME}/.cache/${CACHE_VERSION}/uv:/root/.cache/uv,\
+          ${HOME}/.cache/${CACHE_VERSION}/genesis:/root/.cache/genesis,\
+          ${HOME}/.cache/${CACHE_VERSION}/quadrants:/root/.cache/quadrants,\
+          ${HOME}/.cache/${CACHE_VERSION}/huggingface:/root/.cache/huggingface \
                --no-container-mount-home \
                --container-workdir=/root/workspace"
           SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
 
-          mkdir -p ${HOME}/.cache/uv ${HOME}/.cache/genesis ${HOME}/.cache/quadrants ${HOME}/.cache/huggingface
+          mkdir -p \
+            "${HOME}/.cache/${CACHE_VERSION}/uv" \
+            "${HOME}/.cache/${CACHE_VERSION}/genesis" \
+            "${HOME}/.cache/${CACHE_VERSION}/quadrants" \
+            "${HOME}/.cache/${CACHE_VERSION}/huggingface"
 
           JOBID_FIFO="${{ github.workspace }}/.slurm_job_id_fifo"
           [[ -e "$JOBID_FIFO" ]] && rm -f "$JOBID_FIFO"
@@ -145,14 +151,16 @@ jobs:
                --container-mounts=\
           /mnt/data/artifacts:/mnt/data/artifacts,\
           ${{ github.workspace }}:/root/workspace,\
-          ${HOME}/.cache/uv:/root/.cache/uv,\
-          ${HOME}/.cache/huggingface:/root/.cache/huggingface \
+          ${HOME}/.cache/${CACHE_VERSION}/uv:/root/.cache/uv,\
+          ${HOME}/.cache/${CACHE_VERSION}/huggingface:/root/.cache/huggingface \
                --no-container-mount-home \
                --container-workdir=/root/workspace"
           SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
           if [[ "${{ github.repository }}" == 'Genesis-Embodied-AI/genesis-world' && "${{ github.ref }}" == 'refs/heads/main' ]] ; then
             SLURM_ENV_VARS="${SLURM_ENV_VARS},WANDB_API_KEY"
           fi
+
+          mkdir -p "${HOME}/.cache/${CACHE_VERSION}/uv" "${HOME}/.cache/${CACHE_VERSION}/huggingface"
 
           JOBID_FIFO="${{ github.workspace }}/.slurm_job_id_fifo"
           [[ -e "$JOBID_FIFO" ]] && rm -f "$JOBID_FIFO"
