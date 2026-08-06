@@ -1026,9 +1026,14 @@ class RigidLink(KinematicLink):
         self._invweight = self._invweight / ratio[..., None]
 
     @gs.assert_built
-    def get_mass(self) -> float:
+    def get_mass(self) -> float | np.ndarray:
         """
         Get the mass of the link.
+
+        Returns
+        -------
+        mass : float | np.ndarray
+            The mass of the link, an array of shape (n_envs,) once 'set_mass' assigned a per-environment mass.
         """
         return self._inertial_mass
 
@@ -1088,9 +1093,9 @@ class RigidLink(KinematicLink):
         return self._inertial_quat
 
     @property
-    def inertial_mass(self) -> float | None:
+    def inertial_mass(self) -> float | np.ndarray | None:
         """
-        The initial mass of the link.
+        The mass of the link, as a per-environment array once 'set_mass' assigned a per-environment mass.
         """
         return self._inertial_mass
 

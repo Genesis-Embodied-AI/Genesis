@@ -155,7 +155,7 @@ class Visualizer(RBC):
         focus_dist: float | None,
         GUI: bool,
         spp: int,
-        denoise: bool | None,
+        denoise: bool,
         near: float,
         far: float,
         env_idx: int | None,
