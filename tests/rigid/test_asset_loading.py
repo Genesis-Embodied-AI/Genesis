@@ -485,19 +485,19 @@ def test_urdf_joint_dynamics(joint_damping, joint_friction, xml_path):
 def test_default_armature_freeflyer(xml_path):
     DEFAULT_ARMATURE = 1000.0
 
-    if xml_path.endswith(".urdf"):
-        morph = gs.morphs.URDF(
-            file=xml_path,
-            default_armature=DEFAULT_ARMATURE,
-        )
-    else:
-        morph = gs.morphs.MJCF(
-            file=xml_path,
-            default_armature=DEFAULT_ARMATURE,
-        )
+    morph_class = gs.morphs.URDF if xml_path.endswith(".urdf") else gs.morphs.MJCF
+    morph = morph_class(
+        file=xml_path,
+        default_armature=DEFAULT_ARMATURE,
+    )
+    morph_without_armature = morph_class(
+        file=xml_path,
+        pos=(1.0, 0.0, 0.0),
+    )
 
     scene = gs.Scene()
     robot = scene.add_entity(morph)
+    robot_without_armature = scene.add_entity(morph_without_armature)
     scene.build()
 
     armature = robot.get_dofs_armature()
@@ -506,6 +506,11 @@ def test_default_armature_freeflyer(xml_path):
     if xml_path.endswith(".xml"):
         assert_allclose(armature[7], 42.0, tol=gs.EPS)
         assert_allclose(armature[8], 0.0002, tol=gs.EPS)
+
+    # Rotor inertia adds to the effective inertia of the joint it is applied to, so it must lower the inverse weight
+    # the solver derives from it. An inverse weight parsed before the armature was applied leaves the rotor inertia
+    # out of every constraint it scales.
+    assert robot.get_dofs_invweight()[6] < robot_without_armature.get_dofs_invweight()[6]
 
 
 @pytest.mark.slow  # ~200s
