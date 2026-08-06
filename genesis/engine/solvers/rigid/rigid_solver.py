@@ -1318,6 +1318,11 @@ class RigidSolver(KinematicSolver):
                 f"Exceeding max number of post-pruning contact points ({max_contacts}) supported by the constraint "
                 "solver. Please increase the value of RigidSolver's option 'max_contacts'."
             )
+        if errno & array_class.ErrorCode.INVALID_CONTACT_NAN:
+            gs.raise_exception(
+                "Collision detection reported a contact whose position, normal or penetration is not finite. This is a "
+                "solver-internal error, please report it."
+            )
         if errno & array_class.ErrorCode.INVALID_FORCE_NAN:
             gs.raise_exception("Invalid constraint forces causing 'nan'. Please decrease Rigid simulation timestep.")
         if errno & array_class.ErrorCode.INVALID_ACC_NAN:
