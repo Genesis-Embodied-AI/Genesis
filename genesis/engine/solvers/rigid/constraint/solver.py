@@ -1441,6 +1441,8 @@ def _sort_contacts_per_island(
                         collider_state.contact_data.pos,
                         collider_state.contact_data.geom_a,
                         collider_state.contact_data.geom_b,
+                        dyn_state.geoms.pos,
+                        dyn_state.geoms.quat,
                     )
                     i_island = i_island + _K
                 qd.simt.block.sync()
@@ -1468,6 +1470,8 @@ def _sort_contacts_per_island(
                         collider_state.contact_data.pos,
                         collider_state.contact_data.geom_a,
                         collider_state.contact_data.geom_b,
+                        dyn_state.geoms.pos,
+                        dyn_state.geoms.quat,
                     )
             total = func_island_contacts_total(i_b, constraint_state)
             for i_c in range(total):
@@ -1508,6 +1512,8 @@ def add_inequality_constraints(
                 collider_state.contact_data.pos,
                 collider_state.contact_data.geom_a,
                 collider_state.contact_data.geom_b,
+                dyn_state.geoms.pos,
+                dyn_state.geoms.quat,
             )
 
     add_frictionloss_constraints(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
