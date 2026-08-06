@@ -178,10 +178,9 @@ def parse_urdf(morph, surface):
         l_info["inertial_i"] = None
         l_info["inertial_mass"] = None
         if link.inertial is not None:
-            # Unified Robot Description Format (URDF) inertial elements without an origin use the link frame.
-            inertial_origin = link.inertial.origin if link.inertial.origin is not None else np.eye(4)
-            l_info["inertial_pos"] = inertial_origin[:3, 3]
-            l_info["inertial_quat"] = gu.R_to_quat(inertial_origin[:3, :3])
+            if link.inertial.origin is not None:
+                l_info["inertial_pos"] = link.inertial.origin[:3, 3]
+                l_info["inertial_quat"] = gu.R_to_quat(link.inertial.origin[:3, :3])
             if link.inertial.inertia is not None:
                 l_info["inertial_i"] = link.inertial.inertia
             if link.inertial.mass is not None:

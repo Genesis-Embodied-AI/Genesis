@@ -195,9 +195,10 @@ def finalize_inertial(
     """Resolve a link's local inertial from its parsed explicit values and a geometry-derived estimate (hint).
 
     Explicit values are used when given; otherwise the geometry estimate is used, and an explicit mass rescales a
-    geometry-derived inertia. The hint comes from the load-time inertial info ('compose_inertial_from_g_infos' over
-    the parsed geom infos, feeding both 'RigidLink._build' and the align anchor) - the single resolution path keeps
-    the rigid dynamics inertia and the align anchor in lockstep.
+    geometry-derived inertia. An omitted center of mass defaults to the link-frame origin when an explicit inertia
+    matrix is provided. The hint comes from the load-time inertial info ('compose_inertial_from_g_infos' over the
+    parsed geom infos, feeding both 'RigidLink._build' and the align anchor) - the single resolution path keeps the
+    rigid dynamics inertia and the align anchor in lockstep.
 
     With ``clamp_min_mass`` the resolved mass is floored at ``gs.EPS`` so a geometry-less moving link stays
     non-singular in the dynamics; the align stash passes ``False`` so a genuinely massless link keeps its ``0.0``
@@ -209,6 +210,8 @@ def finalize_inertial(
         hint_mass = mass
     if mass is None:
         mass = hint_mass
+    if com is None and inertia is not None:
+        com = gu.zero_pos()
     if com is None or inertia is None:
         com, inertia, quat = hint_com, hint_inertia, gu.identity_quat()
     if quat is None:
@@ -821,7 +824,7 @@ class RigidLink(KinematicLink):
                         "from geometry [" + inertias_str[1] + "]."
                     )
 
-        if self._inertial_mass is None or self._inertial_pos is None or self._inertial_i is None:
+        if self._inertial_mass is None or self._inertial_i is None:
             if not self._is_fixed and self._vgeoms and not self._geoms:
                 gs.logger.info(
                     f"Mass is not specified and collision geoms can not be found for link '{self.name}'. "
@@ -830,10 +833,6 @@ class RigidLink(KinematicLink):
             if self._inertial_pos is not None and self._inertial_i is None:
                 gs.logger.warning(
                     f"Ignoring center of mass of link '{self.name}' because inertia matrix is not specified."
-                )
-            elif self._inertial_pos is None and self._inertial_i is not None:
-                gs.logger.warning(
-                    f"Ignoring inertia matrix of link '{self.name}' because center of mass is not specified."
                 )
             self._invweight = None
 
