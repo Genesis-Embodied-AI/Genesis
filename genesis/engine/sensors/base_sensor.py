@@ -741,6 +741,13 @@ class SimpleSensor(Sensor[OptionsT, SharedSensorContextT, SharedSensorMetadataT,
                 f"Sensor jitter must not exceed the simulation step dt={self._dt}; got "
                 f"jitter={tuple(jitter_np.ravel())}."
             )
+        # The return-space ring reserves the extra slot a jittered read reaches only for sensors declaring a delay at
+        # build time, so jitter stays bounded by the delay here just as it is at option level.
+        if np.any(jitter_np > self._options.delay):
+            gs.raise_exception(
+                f"Sensor jitter must not exceed the read delay={self._options.delay}; got "
+                f"jitter={tuple(jitter_np.ravel())}."
+            )
         self._set_metadata_field(jitter_np / self._dt, self._shared_metadata.jitter_ts, self._idx, 1, envs_idx)
         # Recompute the slow-path flag from the freshly-written class metadata. One GPU->CPU sync at setter call time;
         # setters are not hot path. The check covers partial envs_idx writes and other sensors.

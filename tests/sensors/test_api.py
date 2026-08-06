@@ -272,6 +272,7 @@ def test_pipeline_contract(tol):
 
     DT = 1e-2
     DELAY_STEPS = 2
+    DEEP_DELAY_STEPS = 3
     HISTORY_LEN = 3
     scene = gs.Scene(sim_options=gs.options.SimOptions(dt=DT), show_viewer=False)
     scene.add_entity(gs.morphs.Plane())  # minimum scene; the sensors do not depend on any physics.
@@ -288,8 +289,14 @@ def test_pipeline_contract(tol):
     s_delay = scene.add_sensor(FakeSimpleOptions(delay=DELAY_STEPS * DT))
     s_both = scene.add_sensor(FakeSimpleOptions(history_length=HISTORY_LEN, delay=DELAY_STEPS * DT))
     s_jitter = scene.add_sensor(FakeSimpleOptions(delay=DELAY_STEPS * DT, jitter=DT))
+    s_late_jitter = scene.add_sensor(FakeSimpleOptions(delay=DEEP_DELAY_STEPS * DT))
     scene.build()
     scene.reset()  # zero the build-warmup counter increment so step 1 sees raw = 1.
+    # `set_jitter` enables jitter on a sensor built without it, so the ring reservation keys off the delay.
+    # `s_late_jitter` holds the class's deepest delay, so its sampling is what wraps if the extra slot is missing.
+    s_late_jitter.set_jitter(DT)
+    with pytest.raises(Exception, match="read delay"):
+        s_baseline.set_jitter(DT)
 
     n_steps = 8
     gt_observed = np.zeros((n_steps, len(paths)), dtype=np.float32)
@@ -299,6 +306,7 @@ def test_pipeline_contract(tol):
     delay_observed = np.zeros(n_steps, dtype=np.float32)
     both_observed = np.zeros((n_steps, HISTORY_LEN), dtype=np.float32)
     jitter_observed = np.zeros(n_steps, dtype=np.float32)
+    late_jitter_observed = np.zeros(n_steps, dtype=np.float32)
     for i in range(n_steps):
         scene.step()
         gt_observed[i] = tensor_to_array(sensor.read_ground_truth()).reshape(-1)
@@ -308,6 +316,7 @@ def test_pipeline_contract(tol):
         delay_observed[i] = tensor_to_array(s_delay.read()).item()
         both_observed[i] = tensor_to_array(s_both.read()).reshape(-1)
         jitter_observed[i] = tensor_to_array(s_jitter.read()).item()
+        late_jitter_observed[i] = tensor_to_array(s_late_jitter.read()).item()
 
     # Analytical expectation for the vector sensor, per component. Let raw[k] = k, and (P, M, A, H) be the per-
     # component vectors.
@@ -351,8 +360,10 @@ def test_pipeline_contract(tol):
     assert_allclose(both_observed, expected_history, tol=tol)
     # `jitter == dt` shifts a read by zero or one extra slot, so every sample is bracketed by the delayed sequence and
     # the raw value one step older.
-    jitter_lo = np.where(raw - DELAY_STEPS - 1 >= 1, raw - DELAY_STEPS - 1, 0.0)
-    assert ((jitter_observed >= jitter_lo) & (jitter_observed <= expected_delay)).all()
+    for observed, delay_steps in ((jitter_observed, DELAY_STEPS), (late_jitter_observed, DEEP_DELAY_STEPS)):
+        hi = np.where(raw - delay_steps >= 1, raw - delay_steps, 0.0)
+        lo = np.where(raw - delay_steps - 1 >= 1, raw - delay_steps - 1, 0.0)
+        assert ((observed >= lo) & (observed <= hi)).all()
 
 
 @pytest.mark.required

@@ -164,9 +164,9 @@ class SensorManager:
             for sensor in sensors:
                 sensor._cache_offset = cls_offset
                 cache_size_per_dtype[intermediate_dtype] += sensor._cache_size
-                # Jitter reaches one slot past `_delay_ts`; without it addressable, `at()` wraps modulo the depth and
-                # returns the newest frame as the oldest.
-                cls_delay_depth = max(cls_delay_depth, sensor._delay_ts + (2 if sensor._options.jitter > 0.0 else 1))
+                # A delay reserves one slot past `_delay_ts` for the jitter shift, which `set_jitter` can raise at any
+                # time; without that slot, `at()` wraps modulo the depth and returns the newest frame as the oldest.
+                cls_delay_depth = max(cls_delay_depth, sensor._delay_ts + (2 if sensor._options.delay > 0.0 else 1))
                 hist = sensor._options.history_length
                 if hist > 0:
                     max_history_per_dtype[intermediate_dtype] = max(
