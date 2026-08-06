@@ -291,7 +291,14 @@ def test_pick_heterogenous_objects(show_viewer):
 
 
 @pytest.mark.required
-def test_invalid_material_raises():
+def test_invalid_variant_specification_raises():
+    # Restricting variants to a single family is what keeps the inertial parsed per variant aligned with the variant
+    # index: only URDF and MJCF variants record one, so admitting a basic object among them would shift every
+    # subsequent lookup onto the wrong variant.
+    MJCF_SPHERE = (
+        '<mujoco><worldbody><body><joint type="free"/><geom type="sphere" size="0.1"/></body></worldbody></mujoco>'
+    )
+
     scene = gs.Scene(
         show_viewer=False,
     )
@@ -302,10 +309,22 @@ def test_invalid_material_raises():
     )
 
     # PBD material should raise an exception
-    with pytest.raises(gs.GenesisException):
+    with pytest.raises(gs.GenesisException, match="only supported for Rigid and Kinematic"):
         scene.add_entity(
             morph=morphs_heterogeneous,
             material=gs.materials.PBD.Cloth(),
+        )
+
+    # A morph family that cannot be a variant at all
+    with pytest.raises(gs.GenesisException, match="only support Primitive, Mesh, URDF and MJCF"):
+        scene.add_entity(
+            morph=(gs.morphs.Box(size=(1.0, 1.0, 1.0)), gs.morphs.Terrain()),
+        )
+
+    # A basic object and an articulated robot in the same entity
+    with pytest.raises(gs.GenesisException, match="must be consistent"):
+        scene.add_entity(
+            morph=(gs.morphs.Box(size=(1.0, 1.0, 1.0)), gs.morphs.MJCF(file=MJCF_SPHERE)),
         )
 
 
