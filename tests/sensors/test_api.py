@@ -244,8 +244,7 @@ def test_pipeline_contract(tol):
     H = np.array([row[3] for row in paths], dtype=np.float32)
 
     # Companion simple sensor for the ring-allocation paths. No knobs, no overrides beyond raw write - the read
-    # just echoes the shared per-class step counter. Five instances cover (delay=0, history=0), history-only,
-    # delay-only, (delay + history), and (delay + jitter).
+    # just echoes the shared per-class step counter.
     @dataclass
     class FakeSimpleMetadata(SimpleSensorMetadata):
         step_counter: int = 0
@@ -350,9 +349,8 @@ def test_pipeline_contract(tol):
     # The combined delay + history sensor returns the same history as the history-only sensor (delay is bypassed
     # by the ring-gather history path); verify they match.
     assert_allclose(both_observed, expected_history, tol=tol)
-    # `jitter == dt` shifts a read by exactly zero or one extra slot, so every jittered sample is bracketed by the
-    # raw values `DELAY_STEPS` and `DELAY_STEPS + 1` back. The upper bound is the un-jittered delayed sequence; a
-    # read fresher than it means the deepest slot wrapped around the ring onto the newest one.
+    # `jitter == dt` shifts a read by zero or one extra slot, so every sample is bracketed by the delayed sequence and
+    # the raw value one step older.
     jitter_lo = np.where(raw - DELAY_STEPS - 1 >= 1, raw - DELAY_STEPS - 1, 0.0)
     assert ((jitter_observed >= jitter_lo) & (jitter_observed <= expected_delay)).all()
 

@@ -758,10 +758,9 @@ class SimpleSensor(Sensor[OptionsT, SharedSensorContextT, SharedSensorMetadataT,
 
         batch_size = self._manager._sim._B
 
-        # Jitter must not exceed the simulation step so a single jittered read can only shift by at most one extra ring
-        # slot, which is the margin the return-space ring is sized for (see `cls_delay_depth` in sensor_manager.py); a
-        # larger jitter would wrap modulo the ring depth and silently return wrong-frame data. An EPS slack lets
-        # `jitter == dt` pass cleanly despite float quantization.
+        # Jitter must not exceed the step, so a read shifts by at most one extra ring slot - the margin the return-space
+        # ring is sized for (see `cls_delay_depth` in sensor_manager.py). An EPS slack lets `jitter == dt` pass cleanly
+        # despite float quantization.
         jitter_np = np.asarray(self._options.jitter, dtype=gs.np_float)
         if np.any(jitter_np >= self._dt + gs.EPS):
             gs.raise_exception(
