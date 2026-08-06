@@ -156,6 +156,7 @@ from .abd.accessor import (
     kernel_set_dofs_damping,
     kernel_set_dofs_frictionloss,
     kernel_set_dofs_limit,
+    kernel_set_dofs_vel_limit,
     kernel_set_dofs_velocity,
     kernel_set_dofs_velocity_grad,
     kernel_set_dofs_zero_velocity,
@@ -1215,6 +1216,8 @@ class RigidSolver(KinematicSolver):
 
     def _init_collider(self):
         self.collider = Collider(self)
+        # The motion planner is created lazily on the first plan_path call - scenes that never plan pay nothing.
+        self.planner = None
 
     def _init_constraint_solver(self):
         # Islands are a per-island Newton solve inside ConstraintSolver.resolve, gated on use_contact_island.
@@ -2451,6 +2454,7 @@ class RigidSolver(KinematicSolver):
             "damping",
             "frictionloss",
             "limit",
+            "vel_limit",
         }:
             mask = indices_to_mask(*((envs_idx, dofs_idx) if self._options.batch_dofs_info else (dofs_idx,)))
             if name == "kp":
@@ -2509,6 +2513,8 @@ class RigidSolver(KinematicSolver):
             kernel_set_dofs_frictionloss(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self.rigid_config)
         elif name == "limit":
             kernel_set_dofs_limit(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self.rigid_config)
+        elif name == "vel_limit":
+            kernel_set_dofs_vel_limit(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self.rigid_config)
         elif name == "act_gain":
             kernel_set_dofs_act_gain(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self.rigid_config)
         elif name == "act_bias":
@@ -2545,6 +2551,9 @@ class RigidSolver(KinematicSolver):
 
     def set_dofs_limit(self, lower, upper, dofs_idx=None, envs_idx=None):
         self._set_dofs_info([lower, upper], dofs_idx, "limit", envs_idx)
+
+    def set_dofs_vel_limit(self, vel_limit, dofs_idx=None, envs_idx=None):
+        self._set_dofs_info([vel_limit], dofs_idx, "vel_limit", envs_idx)
 
     @mutates(StateChange.GEOMETRY, links=MutatedLinks.ARTICULATED)
     def set_dofs_position(self, position, dofs_idx=None, envs_idx=None):
@@ -2955,6 +2964,12 @@ class RigidSolver(KinematicSolver):
         if self.n_envs == 0 and self._options.batch_dofs_info:
             tensor = tensor[0]
         return tensor[..., 0], tensor[..., 1]
+
+    def get_dofs_vel_limit(self, dofs_idx=None, envs_idx=None):
+        if not self._options.batch_dofs_info and envs_idx is not None:
+            gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
+        tensor = qd_to_torch(self.dyn_info.dofs.vel_limit, envs_idx, dofs_idx, transpose=True, copy=True)
+        return tensor[0] if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_dofs_stiffness(self, dofs_idx=None, envs_idx=None):
         if not self._options.batch_dofs_info and envs_idx is not None:

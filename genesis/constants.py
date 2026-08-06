@@ -146,6 +146,29 @@ class broadphase_traversal(IntEnum):
     ALL_VS_ALL = 1
 
 
+class planner_arm(IntEnum):
+    """
+    Execution arm of the motion planner.
+
+    Attributes
+    ----------
+    SERIAL : int
+        Small seed and particle budgets with serialized housekeeping - minimizes single-plan latency when
+        candidates are few (the CPU regime).
+    BATCHED : int
+        Large seed budgets parallelized over the folded env x seed axis - maximizes throughput when thousands of
+        candidates run concurrently (the GPU regime).
+
+    Notes
+    -----
+    ``RigidOptions.planner_arm`` defaults to ``None``, which selects ``SERIAL`` on the CPU backend and ``BATCHED``
+    otherwise.
+    """
+
+    SERIAL = 0
+    BATCHED = 1
+
+
 # backend
 class backend(IntEnum):
     cpu = 0

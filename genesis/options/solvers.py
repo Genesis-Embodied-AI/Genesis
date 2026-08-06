@@ -529,6 +529,23 @@ class RigidOptions(Options):
         Broadphase traversal strategy. ``SAP`` (sweep-and-prune) or ``ALL_VS_ALL`` (parallel pair iteration). Defaults
         to ``None`` (auto: ``SAP`` on CPU or when hibernation/heterogeneous entities are enabled, ``ALL_VS_ALL`` on GPU
         otherwise). See ``gs.broadphase_traversal`` for details on each strategy.
+    planner_arm : gs.planner_arm, optional
+        Execution arm of the motion planner. ``SERIAL`` minimizes single-plan latency with small seed budgets,
+        ``BATCHED`` maximizes throughput with large ones. Defaults to ``None`` (auto: ``SERIAL`` on CPU, ``BATCHED``
+        on GPU). See ``gs.planner_arm``.
+    planner_n_seeds : int, optional
+        Trajectory seeds optimized in parallel per env by the motion planner. More seeds raise the odds of finding
+        and certifying a path on the first attempt at the cost of memory and per-plan time. Defaults to ``None``
+        (auto per arm and env count).
+    planner_n_knots : int, optional
+        Trajectory knots optimized by the motion planner. More knots track tighter detours around obstacles but
+        slow every plan down; the output waypoint count is independent (interpolated on demand). Defaults to 32.
+    planner_edge_check_density : float, optional
+        How finely the motion planner verifies the motion between two configurations. Higher values accept motions
+        through narrower gaps, since a coarser verification must allow for how far the robot travels between checks
+        and so demands more clearance to accept the same motion; lower values make every plan faster, and on a
+        cluttered scene can leave no route the planner will accept. A returned path is certified collision-free at
+        any value. Defaults to 4.0.
 
     Warning
     -------
@@ -589,6 +606,12 @@ class RigidOptions(Options):
 
     # broadphase configuration
     broadphase_traversal: gs.broadphase_traversal | None = None
+
+    # motion planner configuration
+    planner_arm: gs.planner_arm | None = None
+    planner_n_seeds: PositiveInt | None = None
+    planner_n_knots: PositiveInt = 32
+    planner_edge_check_density: PositiveFloat = 4.0
 
     def __init__(self, *, contact_resolve_time: float | None = None, **data):
         super().__init__(**data)

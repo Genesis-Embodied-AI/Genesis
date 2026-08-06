@@ -99,10 +99,10 @@ def test_pick_and_place(mode, show_viewer):
     )
     # gripper open pos
     qpos[-2:] = 0.04
-    path = franka.plan_path(qpos_goal=qpos, num_waypoints=300, resolution=0.05, max_retry=10)
+    path = franka.plan_path(qpos_goal=qpos, num_waypoints=300, max_retry=2)
     # execute the planned path
     franka.control_dofs_position(np.array([0.15, 0.15]), fingers_dof)
-    for waypoint in path:
+    for waypoint in path.qpos:
         franka.control_dofs_position(waypoint)
         scene.step()
 
@@ -145,12 +145,11 @@ def test_pick_and_place(mode, show_viewer):
     path = franka.plan_path(
         qpos_goal=qpos,
         num_waypoints=100,
-        resolution=0.05,
-        max_retry=10,
+        max_retry=2,
         ee_link_name="hand",
         with_entity=cube,
     )
-    for waypoint in path:
+    for waypoint in path.qpos:
         franka.control_dofs_position(waypoint[:-2], motors_dof)
         scene.step()
 

@@ -793,6 +793,23 @@ def kernel_set_dofs_limit(
 
 
 @qd.kernel(fastcache=True)
+def kernel_set_dofs_vel_limit(
+    dofs_idx: qd.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
+    vel_limit: qd.types.ndarray(),
+    dyn_info: array_class.DynInfo,
+    rigid_config: qd.template(),
+):
+    qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
+    if qd.static(rigid_config.batch_dofs_info):
+        for i_d_, i_b_ in qd.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+            dyn_info.dofs.vel_limit[dofs_idx[i_d_], envs_idx[i_b_]] = vel_limit[i_b_, i_d_]
+    else:
+        for i_d_ in range(dofs_idx.shape[0]):
+            dyn_info.dofs.vel_limit[dofs_idx[i_d_]] = vel_limit[i_d_]
+
+
+@qd.kernel(fastcache=True)
 def kernel_set_dofs_velocity(
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),

@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import trimesh
 
-from genesis.utils.misc import get_assets_dir
+from genesis.utils.misc import get_assets_dir, qd_to_torch
 
 
 @pytest.fixture
@@ -849,7 +849,7 @@ def merged_overlapping_models():
     ET.SubElement(palm, "geom", type="box", size="0.15 0.03 0.03", pos="-0.1 0 0", mass="0.2")
     return ET.tostring(arm, encoding="unicode"), ET.tostring(hand, encoding="unicode")
 
-
+  
 @pytest.fixture(scope="session")
 def spring_double_pendulum():
     """Generate an MJCF model for an undamped two-link arm whose hinges are held by stiff springs.
@@ -865,3 +865,34 @@ def spring_double_pendulum():
     ET.SubElement(lower, "joint", name="elbow", type="hinge", axis="0 1 0", stiffness="20.0", damping="0")
     ET.SubElement(lower, "geom", type="capsule", fromto="0 0 0 0.2 0 0", size="0.02", density="1000")
     return ET.tostring(mjcf, encoding="unicode")
+
+
+@pytest.fixture
+def max_true_penetration():
+    """Deepest real penetration of the given obstacles over a waypoint sequence, through the collider itself.
+
+    Ground truth independent of any sphere proxy a caller may have planned against. The returned callable mutates
+    the scene, so callers restore the configuration afterwards, and it doubles as the interactive replay of a
+    trajectory for tests that never step the scene.
+    """
+
+    def measure(scene, entity, qpos_waypoints, obstacles, show_viewer):
+        collider_state = scene.rigid_solver.collider._collider_state
+        obstacle_geoms = {geom.idx for obstacle in obstacles for link in obstacle.links for geom in link.geoms}
+        penetration_max = 0.0
+        for waypoint in qpos_waypoints:
+            entity.set_qpos(waypoint, zero_velocity=False)
+            if show_viewer:
+                scene.visualizer.update()
+            scene.rigid_solver.collider.detection()
+            n_contacts = qd_to_torch(collider_state.n_contacts)
+            geom_a = qd_to_torch(collider_state.contact_data.geom_a)
+            geom_b = qd_to_torch(collider_state.contact_data.geom_b)
+            penetration = qd_to_torch(collider_state.contact_data.penetration)
+            for i_b in range(max(scene.n_envs, 1)):
+                for i_c in range(int(n_contacts[i_b])):
+                    if int(geom_a[i_c, i_b]) in obstacle_geoms or int(geom_b[i_c, i_b]) in obstacle_geoms:
+                        penetration_max = max(penetration_max, float(penetration[i_c, i_b]))
+        return penetration_max
+
+    return measure

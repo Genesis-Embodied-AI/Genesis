@@ -406,6 +406,7 @@ class KinematicSolver(Solver):
                 np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float),
                 np.concatenate([joint.dofs_motion_vel for joint in joints], dtype=gs.np_float),
                 np.concatenate([joint.dofs_limit for joint in joints], dtype=gs.np_float),
+                np.concatenate([joint.dofs_vel_limit for joint in joints], dtype=gs.np_float),
                 np.concatenate([joint.dofs_invweight for joint in joints], dtype=gs.np_float),
                 np.concatenate([joint.dofs_stiffness for joint in joints], dtype=gs.np_float),
                 np.concatenate([joint.dofs_damping for joint in joints], dtype=gs.np_float),

@@ -304,6 +304,7 @@ def parse_urdf(morph, surface):
             j_info["dofs_motion_ang"] = np.zeros((0, 3))
             j_info["dofs_motion_vel"] = np.zeros((0, 3))
             j_info["dofs_limit"] = np.zeros((0, 2))
+            j_info["dofs_vel_limit"] = np.zeros((0,))
             j_info["dofs_stiffness"] = np.zeros((0))
 
             j_info["type"] = gs.JOINT_TYPE.FIXED
@@ -322,6 +323,7 @@ def parse_urdf(morph, surface):
                     ]
                 ]
             )
+            j_info["dofs_vel_limit"] = np.array([joint.limit.velocity if joint.limit.velocity is not None else np.inf])
             j_info["dofs_stiffness"] = np.array([0.0])
 
             j_info["type"] = gs.JOINT_TYPE.REVOLUTE
@@ -332,6 +334,9 @@ def parse_urdf(morph, surface):
             j_info["dofs_motion_ang"] = np.array([joint.axis])
             j_info["dofs_motion_vel"] = np.zeros((1, 3))
             j_info["dofs_limit"] = np.array([[-np.inf, np.inf]])
+            j_info["dofs_vel_limit"] = np.array(
+                [joint.limit.velocity if joint.limit is not None and joint.limit.velocity is not None else np.inf]
+            )
             j_info["dofs_stiffness"] = np.array([0.0])
 
             j_info["type"] = gs.JOINT_TYPE.REVOLUTE
@@ -349,6 +354,9 @@ def parse_urdf(morph, surface):
                     ]
                 ]
             )
+            j_info["dofs_vel_limit"] = np.array(
+                [morph.scale * joint.limit.velocity if joint.limit.velocity is not None else np.inf]
+            )
             j_info["dofs_stiffness"] = np.array([0.0])
 
             j_info["type"] = gs.JOINT_TYPE.PRISMATIC
@@ -359,6 +367,7 @@ def parse_urdf(morph, surface):
             j_info["dofs_motion_ang"] = np.eye(6, 3, -3)
             j_info["dofs_motion_vel"] = np.eye(6, 3)
             j_info["dofs_limit"] = np.tile([-np.inf, np.inf], (6, 1))
+            j_info["dofs_vel_limit"] = np.full((6,), np.inf)
             j_info["dofs_stiffness"] = np.zeros(6)
 
             j_info["type"] = gs.JOINT_TYPE.FREE

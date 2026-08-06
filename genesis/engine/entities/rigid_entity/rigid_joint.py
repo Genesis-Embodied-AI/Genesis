@@ -33,6 +33,7 @@ class RigidJoint(RBC):
         dofs_motion_ang,
         dofs_motion_vel,
         dofs_limit,
+        dofs_vel_limit,
         dofs_invweight,
         dofs_frictionloss,
         dofs_stiffness,
@@ -62,6 +63,7 @@ class RigidJoint(RBC):
         self._dofs_motion_ang = dofs_motion_ang
         self._dofs_motion_vel = dofs_motion_vel
         self._dofs_limit = dofs_limit
+        self._dofs_vel_limit = dofs_vel_limit
         self._dofs_invweight = dofs_invweight
         self._dofs_frictionloss = dofs_frictionloss
         self._dofs_stiffness = dofs_stiffness
@@ -372,6 +374,13 @@ class RigidJoint(RBC):
         Returns the range limit of the dofs of the joint.
         """
         return self._dofs_limit
+
+    @property
+    def dofs_vel_limit(self):
+        """
+        Returns the maximum absolute velocity of the dofs of the joint. Infinite when the asset carries no limit.
+        """
+        return self._dofs_vel_limit
 
     @property
     def dofs_invweight(self):

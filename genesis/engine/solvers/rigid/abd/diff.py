@@ -290,7 +290,7 @@ def kernel_copy_next_to_curr_no_check(
 def func_integrate_dq_entity(
     i_e,
     i_b,
-    dq,
+    dq: qd.Tensor,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
