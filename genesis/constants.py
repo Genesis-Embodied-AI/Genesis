@@ -16,7 +16,8 @@ class IntEnum(enum.IntEnum):
 # geom type in rigid solver
 class GEOM_TYPE(IntEnum):
     """
-    Collision shape of a rigid geom, as reported by `RigidGeom.type`.
+    Collision shape of a rigid geom, as reported by
+    `~genesis.engine.entities.rigid_entity.rigid_geom.RigidGeom.type`.
 
     Attributes
     ----------
@@ -33,7 +34,8 @@ class GEOM_TYPE(IntEnum):
     BOX : int
         Rectangular cuboid.
     MESH : int
-        Triangle mesh of any shape, convex or not, as `RigidGeom.is_convex` reports.
+        Triangle mesh of any shape, convex when
+        `~genesis.engine.entities.rigid_entity.rigid_geom.RigidGeom.is_convex` reports so.
     TERRAIN : int
         Heightfield on a regular grid.
     """
@@ -52,7 +54,8 @@ class GEOM_TYPE(IntEnum):
 # joint type in rigid solver, ranked by number of dofs
 class JOINT_TYPE(IntEnum):
     """
-    Kinematic type of a rigid joint, as reported by `RigidJoint.type`, ranked by degree-of-freedom (dof) count.
+    Kinematic type of a rigid joint, as reported by
+    `~genesis.engine.entities.rigid_entity.rigid_joint.RigidJoint.type`, ranked by degree-of-freedom (dof) count.
 
     Attributes
     ----------
@@ -77,7 +80,8 @@ class JOINT_TYPE(IntEnum):
 
 class EQUALITY_TYPE(IntEnum):
     """
-    Kind of equality constraint tying two objects together, as reported by `RigidEquality.type`.
+    Kind of equality constraint tying two objects together, as reported by
+    `~genesis.engine.entities.rigid_entity.rigid_equality.RigidEquality.type`.
 
     Attributes
     ----------
@@ -87,7 +91,7 @@ class EQUALITY_TYPE(IntEnum):
         Holds two frames at a fixed relative pose, removing all 6 dofs.
     JOINT : int
         Couples two scalar joints so one follows the other through a degree-4 polynomial in the driving joint's
-        position, removing 1 dof.
+        displacement from its reference position, removing 1 dof.
     """
 
     CONNECT = 0
@@ -124,19 +128,22 @@ class integrator(IntEnum):
     effective mass so that a stiff damping force cannot overshoot. The schemes differ in which other forces they fold in
     and at what point of the step. `Euler` and `implicitfast` apply the correction in a second factorization of the mass
     matrix, performed for the entities that need it: those carrying damping, and under `implicitfast` those also
-    carrying actuator bias. Setting `enable_mujoco_compatibility` skips that selection and refactors unconditionally.
+    carrying actuator bias. Under `implicitfast`, setting `enable_mujoco_compatibility` skips that selection and
+    refactors unconditionally.
 
     Attributes
     ----------
     Euler : int
         Damping only. Standalone free bodies take the plain position update.
     implicitfast : int
-        Adds the velocity-actuator bias of every degree of freedom (dof) under position or velocity control, and
-        advances standalone free bodies by the implicit midpoint rule.
+        Adds the velocity-actuator bias of every degree of freedom (dof) under position or velocity control.
     approximate_implicitfast : int
         Folds the same two corrections into the mass matrix as it is built, so one factorization serves the step. The
         correction then also reaches the accelerations produced by constraints and external forces, which it does not
         model.
+
+    Both `implicitfast` and `approximate_implicitfast` advance standalone free bodies by the implicit midpoint rule,
+    outside the differentiable path, where `Euler` takes the plain position update.
     """
 
     Euler = 0
@@ -177,6 +184,9 @@ class friction_cone(IntEnum):
         The exact cone: friction is isotropic and bounded in every direction by its true Euclidean limit
         ``sqrt(f_t1^2 + f_t2^2) <= mu * f_n``, and with a high `impratio` it holds resting stacks without the slow
         tangential creep of regularized friction, in return for being harder to solve and more sensitive numerically.
+
+    Prefer `pyramidal` for robustness, and `elliptic` when isotropic friction or firm static friction matters, such as
+    objects that must stay put at rest instead of slowly creeping.
     """
 
     pyramidal = 0
@@ -205,6 +215,8 @@ class contact_resolution(IntEnum):
         of Alexis Duburcq, "Learning and Optimization of the Locomotion with an Exoskeleton for Paraplegic People", PhD
         thesis, Universite Paris Sciences et Lettres, 2022 (HAL tel-04166955), Appendix C, whose Signorini condition is
         what forbids the normal force from absorbing tangential demand.
+
+    Prefer `signorini` whenever sliding contact matters, and `convex` when a stiff scene converges better under it.
     """
 
     convex = 0
@@ -280,7 +292,7 @@ class backend(IntEnum):
 # image types for visualization
 class IMAGE_TYPE(IntEnum):
     """
-    Image channel a camera renders, in the order `Camera.render` returns them.
+    Image channel a camera renders, in the order `~genesis.vis.camera.Camera.render` returns them.
 
     Attributes
     ----------

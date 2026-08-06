@@ -520,7 +520,6 @@ class RigidOptions(Options):
         needs more iterations and tolerates a large timestep less well. Raised to twice the substep timestep when set
         below it, since no constraint can resolve faster than the step that integrates it. A model may override it per
         constraint. Defaults to 0.01.
-        (https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters). Defaults to 0.01.
     use_contact_island : bool, optional
         Whether to partition the constraint solve into independent per-island blocks. It has no effect on a scene that
         is a single dense-coupled tree (one island) or is differentiable, where the dense whole-scene solve is used

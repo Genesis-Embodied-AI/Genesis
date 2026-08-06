@@ -337,7 +337,7 @@ class RigidSolver(KinematicSolver):
         self._ckpt = dict()
 
     def init_ckpt(self):
-        """Allocate the checkpoint storage of the solver."""
+        """Hook for allocating checkpoint storage, which the rigid solver allocates lazily in `save_ckpt` instead."""
         pass
 
     def add_entity(self, idx, material, morph, surface, visualize_contact, name: str | None = None) -> RigidEntity:
@@ -358,6 +358,11 @@ class RigidSolver(KinematicSolver):
             Draw the contact forces acting on the entity.
         name : str | None, optional
             Name of the entity. Defaults to None.
+
+        Returns
+        -------
+        RigidEntity
+            The entity created from the morph.
         """
         # Handle heterogeneous morphs (list/tuple of morphs)
         morph_heterogeneous = []
@@ -1067,7 +1072,7 @@ class RigidSolver(KinematicSolver):
                 self.dyn_info,
             )
 
-            # Set active_envs on geoms — indicates which environments each geom is active in
+            # Set active_envs on geoms - indicates which environments each geom is active in
             for geom in link.geoms:
                 active_envs_mask = (geom_starts <= geom.idx) & (geom.idx < geom_ends)
                 geom.active_envs_mask = torch.tensor(active_envs_mask, device=gs.device)
@@ -1320,7 +1325,7 @@ class RigidSolver(KinematicSolver):
 
     def check_errno(self):
         """Raise for any error the kernels recorded during the substeps since the previous check."""
-        # FIXME: qd.atomic_or return value is broken on Metal — always returns 0.
+        # FIXME: qd.atomic_or return value is broken on Metal - always returns 0.
         # See repro_metal_kernel_return.py. Falling back to numpy reduction.
         if gs.use_zerocopy or sys.platform == "darwin":
             errno = np.bitwise_or.reduce(qd_to_numpy(self._errno))
@@ -1364,6 +1369,11 @@ class RigidSolver(KinematicSolver):
         ----------
         env_idx : int, optional
             Index of the environment to report contacts for. Defaults to 0.
+
+        Returns
+        -------
+        numpy.ndarray, shape (n_contacts, 2)
+            Scene-level indices of the two geoms of each contacting pair.
         """
         # TODO: support batching
         self._kernel_detect_collision()
@@ -1842,7 +1852,7 @@ class RigidSolver(KinematicSolver):
         state : RigidSolverState
             The state to restore.
         envs_idx : None | array_like, optional
-            Indices of the environments to restore. If None, every environment is restore. Defaults to None.
+            Indices of the environments to restore. If None, every environment is restored. Defaults to None.
         partial : bool, optional
             Reset the collider and constraint solver rather than clearing them. Defaults to False.
         """
@@ -2063,8 +2073,8 @@ class RigidSolver(KinematicSolver):
         Parameters
         ----------
         ckpt_name : str
-            Key the snapshot is held under in the solver's in-memory checkpoint store. Writing state to a file goes
-            through `~genesis.engine.scene.Scene.save_checkpoint` instead.
+            Key the snapshot is held under in the solver's in-memory checkpoint store. Reading state from a file goes
+            through `~genesis.engine.scene.Scene.load_checkpoint` instead.
         """
         # Set first frame
         self.rigid_info.qpos.from_numpy(self._ckpt[ckpt_name]["qpos"][0])
@@ -2118,7 +2128,7 @@ class RigidSolver(KinematicSolver):
         Parameters
         ----------
         pos : array_like
-            Positions in metres.
+            Positions in meters.
         links_idx : None | array_like, optional
             Scene-level indices of the links to set. If None, every entity's base link is set. Defaults to None.
         envs_idx : None | array_like, optional
@@ -2436,7 +2446,7 @@ class RigidSolver(KinematicSolver):
         Parameters
         ----------
         com : array_like
-            Offsets in metres, in the link frame.
+            Offsets in meters, in the link frame.
         links_idx : None | array_like, optional
             Scene-level indices of the links to set. If None, every link is set. Defaults to None.
         envs_idx : None | array_like, optional
@@ -2464,8 +2474,8 @@ class RigidSolver(KinematicSolver):
 
         Note
         ----
-        Specifying `envs_idx` requires `batch_links_info` on `~genesis.options.solvers.RigidOptions`, and raises
-        otherwise.
+        Setting it per environment requires `batch_links_info` on `~genesis.options.solvers.RigidOptions`;
+        without it `envs_idx` is ignored and the value is shared by every environment.
         """
         mass, links_idx, envs_idx = self._sanitize_io_variables(
             mass,
@@ -2495,8 +2505,8 @@ class RigidSolver(KinematicSolver):
 
         Note
         ----
-        Specifying `envs_idx` requires `batch_links_info` on `~genesis.options.solvers.RigidOptions`, and raises
-        otherwise.
+        Setting it per environment requires `batch_links_info` on `~genesis.options.solvers.RigidOptions`;
+        without it `envs_idx` is ignored and the value is shared by every environment.
         """
         if gs.use_zerocopy:
             mass_data = qd_to_torch(self.dyn_info.links.inertial_mass, transpose=True, copy=False)
@@ -2556,7 +2566,7 @@ class RigidSolver(KinematicSolver):
         Parameters
         ----------
         qpos : array_like
-            Generalized coordinates, in metres or radians.
+            Generalized coordinates, in meters or radians.
         qs_idx : None | array_like, optional
             Scene-level indices of the coordinates to set. If None, every coordinate is set. Defaults to None.
         envs_idx : None | array_like, optional
@@ -2701,6 +2711,8 @@ class RigidSolver(KinematicSolver):
         kernel_set_sol_params(inputs_idx, envs_idx, sol_params_, self.dyn_info, self.rigid_config, constraint_type)
 
     def _set_dofs_info(self, tensor_list, dofs_idx, name, envs_idx=None):
+        # FIXME: with `batch_dofs_info` off, `envs_idx` is ignored instead of raising, and the value is written to the
+        # field in all envs. Same in set_links_inertial_mass and set_links_inertia.
         if gs.use_zerocopy and name in {
             "kp",
             "kv",
@@ -2790,8 +2802,9 @@ class RigidSolver(KinematicSolver):
             Indices of the environments to set. If None, every environment is set. Defaults to None.
         Note
         ----
-        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
-        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        This is a model parameter rather than state. Setting it per environment requires `batch_dofs_info`
+        on `~genesis.options.solvers.RigidOptions`; without it `envs_idx` is ignored and the value is
+        shared by every environment.
         """
         self._set_dofs_info([kp], dofs_idx, "kp", envs_idx)
 
@@ -2809,8 +2822,9 @@ class RigidSolver(KinematicSolver):
             Indices of the environments to set. If None, every environment is set. Defaults to None.
         Note
         ----
-        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
-        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        This is a model parameter rather than state. Setting it per environment requires `batch_dofs_info`
+        on `~genesis.options.solvers.RigidOptions`; without it `envs_idx` is ignored and the value is
+        shared by every environment.
         """
         self._set_dofs_info([kv], dofs_idx, "kv", envs_idx)
 
@@ -2828,8 +2842,9 @@ class RigidSolver(KinematicSolver):
             Indices of the environments to set. If None, every environment is set. Defaults to None.
         Note
         ----
-        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
-        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        This is a model parameter rather than state. Setting it per environment requires `batch_dofs_info`
+        on `~genesis.options.solvers.RigidOptions`; without it `envs_idx` is ignored and the value is
+        shared by every environment.
         """
         self._set_dofs_info([act_gain], dofs_idx, "act_gain", envs_idx)
 
@@ -2851,8 +2866,9 @@ class RigidSolver(KinematicSolver):
             Indices of the environments to set. If None, every environment is set. Defaults to None.
         Note
         ----
-        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
-        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        This is a model parameter rather than state. Setting it per environment requires `batch_dofs_info`
+        on `~genesis.options.solvers.RigidOptions`; without it `envs_idx` is ignored and the value is
+        shared by every environment.
         """
         self._set_dofs_info([bias0, bias1, bias2], dofs_idx, "act_bias", envs_idx)
 
@@ -2863,17 +2879,18 @@ class RigidSolver(KinematicSolver):
         Parameters
         ----------
         lower : array_like
-            Lower bounds, in newtons or newton-metres.
+            Lower bounds, in newtons or newton-meters.
         upper : array_like
-            Upper bounds, in newtons or newton-metres.
+            Upper bounds, in newtons or newton-meters.
         dofs_idx : None | array_like, optional
             Scene-level indices of the dofs to set. If None, every dof is set. Defaults to None.
         envs_idx : None | array_like, optional
             Indices of the environments to set. If None, every environment is set. Defaults to None.
         Note
         ----
-        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
-        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        This is a model parameter rather than state. Setting it per environment requires `batch_dofs_info`
+        on `~genesis.options.solvers.RigidOptions`; without it `envs_idx` is ignored and the value is
+        shared by every environment.
         """
         self._set_dofs_info([lower, upper], dofs_idx, "force_range", envs_idx)
 
@@ -2891,8 +2908,9 @@ class RigidSolver(KinematicSolver):
             Indices of the environments to set. If None, every environment is set. Defaults to None.
         Note
         ----
-        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
-        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        This is a model parameter rather than state. Setting it per environment requires `batch_dofs_info`
+        on `~genesis.options.solvers.RigidOptions`; without it `envs_idx` is ignored and the value is
+        shared by every environment.
         """
         self._set_dofs_info([stiffness], dofs_idx, "stiffness", envs_idx)
 
@@ -2910,8 +2928,9 @@ class RigidSolver(KinematicSolver):
             Indices of the environments to set. If None, every environment is set. Defaults to None.
         Note
         ----
-        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
-        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        This is a model parameter rather than state. Setting it per environment requires `batch_dofs_info`
+        on `~genesis.options.solvers.RigidOptions`; without it `envs_idx` is ignored and the value is
+        shared by every environment.
         """
         self._set_dofs_info([armature], dofs_idx, "armature", envs_idx)
 
@@ -2929,8 +2948,9 @@ class RigidSolver(KinematicSolver):
             Indices of the environments to set. If None, every environment is set. Defaults to None.
         Note
         ----
-        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
-        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        This is a model parameter rather than state. Setting it per environment requires `batch_dofs_info`
+        on `~genesis.options.solvers.RigidOptions`; without it `envs_idx` is ignored and the value is
+        shared by every environment.
         """
         self._set_dofs_info([damping], dofs_idx, "damping", envs_idx)
 
@@ -2941,15 +2961,16 @@ class RigidSolver(KinematicSolver):
         Parameters
         ----------
         frictionloss : array_like
-            Friction loss, in newtons or newton-metres.
+            Friction loss, in newtons or newton-meters.
         dofs_idx : None | array_like, optional
             Scene-level indices of the dofs to set. If None, every dof is set. Defaults to None.
         envs_idx : None | array_like, optional
             Indices of the environments to set. If None, every environment is set. Defaults to None.
         Note
         ----
-        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
-        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        This is a model parameter rather than state. Setting it per environment requires `batch_dofs_info`
+        on `~genesis.options.solvers.RigidOptions`; without it `envs_idx` is ignored and the value is
+        shared by every environment.
         """
         self._set_dofs_info([frictionloss], dofs_idx, "frictionloss", envs_idx)
 
@@ -2960,17 +2981,18 @@ class RigidSolver(KinematicSolver):
         Parameters
         ----------
         lower : array_like
-            Lower limits, in metres or radians.
+            Lower limits, in meters or radians.
         upper : array_like
-            Upper limits, in metres or radians.
+            Upper limits, in meters or radians.
         dofs_idx : None | array_like, optional
             Scene-level indices of the dofs to set. If None, every dof is set. Defaults to None.
         envs_idx : None | array_like, optional
             Indices of the environments to set. If None, every environment is set. Defaults to None.
         Note
         ----
-        This is a model parameter rather than state. Specifying `envs_idx` requires `batch_dofs_info` on
-        `~genesis.options.solvers.RigidOptions`, and raises otherwise.
+        This is a model parameter rather than state. Setting it per environment requires `batch_dofs_info`
+        on `~genesis.options.solvers.RigidOptions`; without it `envs_idx` is ignored and the value is
+        shared by every environment.
         """
         self._set_dofs_info([lower, upper], dofs_idx, "limit", envs_idx)
 
@@ -2982,7 +3004,7 @@ class RigidSolver(KinematicSolver):
         Parameters
         ----------
         position : array_like
-            Positions in metres or radians.
+            Positions in meters or radians.
         dofs_idx : None | array_like, optional
             Scene-level indices of the dofs to set. If None, every dof is set. Defaults to None.
         envs_idx : None | array_like, optional
@@ -3039,7 +3061,7 @@ class RigidSolver(KinematicSolver):
         Parameters
         ----------
         velocity : array_like
-            Velocities in metres or radians per second.
+            Velocities in meters or radians per second.
         dofs_idx : None | array_like, optional
             Scene-level indices of the dofs to set. If None, every dof is set. Defaults to None.
         envs_idx : None | array_like, optional
@@ -3062,7 +3084,7 @@ class RigidSolver(KinematicSolver):
         Parameters
         ----------
         force : array_like
-            Forces in newtons or newton-metres.
+            Forces in newtons or newton-meters.
         dofs_idx : None | array_like, optional
             Scene-level indices of the dofs to set. If None, every dof is set. Defaults to None.
         envs_idx : None | array_like, optional
@@ -3094,7 +3116,7 @@ class RigidSolver(KinematicSolver):
         Parameters
         ----------
         velocity : array_like
-            Target velocities in metres or radians per second.
+            Target velocities in meters or radians per second.
         dofs_idx : None | array_like, optional
             Scene-level indices of the dofs to set. If None, every dof is set. Defaults to None.
         envs_idx : None | array_like, optional
@@ -3128,7 +3150,7 @@ class RigidSolver(KinematicSolver):
         Parameters
         ----------
         position : array_like
-            Target positions in metres or radians.
+            Target positions in meters or radians.
         dofs_idx : None | array_like, optional
             Scene-level indices of the dofs to set. If None, every dof is set. Defaults to None.
         envs_idx : None | array_like, optional
@@ -3162,9 +3184,9 @@ class RigidSolver(KinematicSolver):
         Parameters
         ----------
         position : array_like
-            Target positions in metres or radians.
+            Target positions in meters or radians.
         velocity : array_like
-            Target velocities in metres or radians per second.
+            Target velocities in meters or radians per second.
         dofs_idx : None | array_like, optional
             Scene-level indices of the dofs to set. If None, every dof is set. Defaults to None.
         envs_idx : None | array_like, optional
@@ -3255,7 +3277,7 @@ class RigidSolver(KinematicSolver):
         Returns
         -------
         torch.Tensor, shape ([n_envs,] n_links, 3)
-            Positions in metres, in the world frame.
+            Positions in meters, in the world frame.
         """
         if not gs.use_zerocopy:
             _, links_idx, envs_idx = self._sanitize_io_variables(
@@ -3302,7 +3324,7 @@ class RigidSolver(KinematicSolver):
         Returns
         -------
         torch.Tensor, shape ([n_envs,] n_links, 3)
-            Velocities in metres per second, in the world frame.
+            Velocities in meters per second, in the world frame.
         """
         if gs.use_zerocopy:
             mask = (0, *indices_to_mask(links_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, links_idx)
@@ -3343,7 +3365,7 @@ class RigidSolver(KinematicSolver):
         Returns
         -------
         torch.Tensor, shape ([n_envs,] n_links, 3)
-            Accelerations in metres per second squared, in the world frame.
+            Accelerations in meters per second squared, in the world frame.
         """
         _tensor, links_idx, envs_idx = self._sanitize_io_variables(
             None, links_idx, self.n_links, "links_idx", envs_idx, (3,)
@@ -3414,7 +3436,7 @@ class RigidSolver(KinematicSolver):
         Returns
         -------
         torch.Tensor, shape ([n_envs,] n_links, 3)
-            Offsets in metres, in the link frame.
+            Offsets in meters, in the link frame.
         """
         tensor = qd_to_torch(self.dyn_state.links.i_pos_shift, envs_idx, links_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
@@ -3506,7 +3528,7 @@ class RigidSolver(KinematicSolver):
         Returns
         -------
         torch.Tensor, shape ([n_envs,] n_geoms, 3)
-            Positions in metres, in the world frame.
+            Positions in meters, in the world frame.
         """
         tensor = qd_to_torch(self.dyn_state.geoms.pos, envs_idx, geoms_idx, transpose=True, copy=True)
         if relative and self._geoms_offset_pos is not None:
@@ -3552,8 +3574,8 @@ class RigidSolver(KinematicSolver):
             Indices of the environments to read. If None, every environment is read. Defaults to None.
         Returns
         -------
-        tensor : torch.Tensor, shape ([n_envs,] n_dofs)
-            Control force in newtons for a translational dof, newton-metres for a rotational one.
+        torch.Tensor, shape ([n_envs,] n_dofs)
+            Control force in newtons for a translational dof, newton-meters for a rotational one.
         """
         _tensor, dofs_idx, envs_idx = self._sanitize_io_variables(None, dofs_idx, self.n_dofs, "dofs_idx", envs_idx)
         tensor = _tensor[None] if self.n_envs == 0 else _tensor
@@ -3610,8 +3632,8 @@ class RigidSolver(KinematicSolver):
             Indices of the environments to read. If None, every environment is read. Defaults to None.
         Returns
         -------
-        tensor : torch.Tensor, shape ([n_envs,] n_dofs)
-            Force in newtons for a translational dof, newton-metres for a rotational one.
+        torch.Tensor, shape ([n_envs,] n_dofs)
+            Force in newtons for a translational dof, newton-meters for a rotational one.
         """
         tensor = qd_to_torch(self.dyn_state.dofs.force, envs_idx, dofs_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
@@ -3632,7 +3654,7 @@ class RigidSolver(KinematicSolver):
         `~genesis.options.solvers.RigidOptions`, and raises otherwise.
         Returns
         -------
-        tensor : torch.Tensor, shape ([n_envs,] n_dofs)
+        torch.Tensor, shape ([n_envs,] n_dofs)
             Positional gain.
         """
         if not self._options.batch_dofs_info and envs_idx is not None:
@@ -3669,7 +3691,7 @@ class RigidSolver(KinematicSolver):
         `~genesis.options.solvers.RigidOptions`, and raises otherwise.
         Returns
         -------
-        tensor : torch.Tensor, shape ([n_envs,] n_dofs)
+        torch.Tensor, shape ([n_envs,] n_dofs)
             Velocity gain.
         """
         if not self._options.batch_dofs_info and envs_idx is not None:
@@ -3706,7 +3728,7 @@ class RigidSolver(KinematicSolver):
         `~genesis.options.solvers.RigidOptions`, and raises otherwise.
         Returns
         -------
-        tensor : torch.Tensor, shape ([n_envs,] n_dofs)
+        torch.Tensor, shape ([n_envs,] n_dofs)
             Actuator gain.
         """
         if not self._options.batch_dofs_info and envs_idx is not None:
@@ -3757,7 +3779,7 @@ class RigidSolver(KinematicSolver):
         Returns
         -------
         lower, upper : torch.Tensor, shape ([n_envs,] n_dofs)
-            Lower and upper force bounds, in newtons or newton-metres.
+            Lower and upper force bounds, in newtons or newton-meters.
         """
         if not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
@@ -3782,7 +3804,7 @@ class RigidSolver(KinematicSolver):
         `~genesis.options.solvers.RigidOptions`, and raises otherwise.
         Returns
         -------
-        tensor : torch.Tensor, shape ([n_envs,] n_dofs)
+        torch.Tensor, shape ([n_envs,] n_dofs)
             Stiffness.
         """
         if not self._options.batch_dofs_info and envs_idx is not None:
@@ -3806,7 +3828,7 @@ class RigidSolver(KinematicSolver):
         `~genesis.options.solvers.RigidOptions`, and raises otherwise.
         Returns
         -------
-        tensor : torch.Tensor, shape ([n_envs,] n_dofs)
+        torch.Tensor, shape ([n_envs,] n_dofs)
             Inverse weight, taken from the diagonal of the articulated-body inverse inertia.
         """
         if not self._options.batch_dofs_info and envs_idx is not None:
@@ -3830,7 +3852,7 @@ class RigidSolver(KinematicSolver):
         `~genesis.options.solvers.RigidOptions`, and raises otherwise.
         Returns
         -------
-        tensor : torch.Tensor, shape ([n_envs,] n_dofs)
+        torch.Tensor, shape ([n_envs,] n_dofs)
             Armature.
         """
         if not self._options.batch_dofs_info and envs_idx is not None:
@@ -3854,7 +3876,7 @@ class RigidSolver(KinematicSolver):
         `~genesis.options.solvers.RigidOptions`, and raises otherwise.
         Returns
         -------
-        tensor : torch.Tensor, shape ([n_envs,] n_dofs)
+        torch.Tensor, shape ([n_envs,] n_dofs)
             Damping.
         """
         if not self._options.batch_dofs_info and envs_idx is not None:
@@ -3878,8 +3900,8 @@ class RigidSolver(KinematicSolver):
         `~genesis.options.solvers.RigidOptions`, and raises otherwise.
         Returns
         -------
-        tensor : torch.Tensor, shape ([n_envs,] n_dofs)
-            Friction loss, in newtons or newton-metres.
+        torch.Tensor, shape ([n_envs,] n_dofs)
+            Friction loss, in newtons or newton-meters.
         """
         if not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
@@ -4058,7 +4080,7 @@ class RigidSolver(KinematicSolver):
         Returns
         -------
         torch.Tensor, shape ([n_envs,] n_geoms, 2, 3), or ([n_envs,] 2, n_entities, 3) when `entities_idx` is given
-            Lower and upper corner of each box, in metres.
+            Lower and upper corner of each box, in meters.
         """
         from genesis.engine.couplers import LegacyCoupler
 
@@ -4113,7 +4135,7 @@ class RigidSolver(KinematicSolver):
         Parameters
         ----------
         friction_torsional : float
-            Effective contact-patch radius in metres, resisting spin about the contact normal.
+            Effective contact-patch radius in meters, resisting spin about the contact normal.
         geoms_idx : int
             Scene-level index of the geom.
         """
@@ -4126,7 +4148,7 @@ class RigidSolver(KinematicSolver):
         Parameters
         ----------
         friction_rolling : float
-            Effective contact-patch radius in metres, resisting rolling about the contact tangents.
+            Effective contact-patch radius in meters, resisting rolling about the contact tangents.
         geoms_idx : int
             Scene-level index of the geom.
         """
@@ -4159,7 +4181,7 @@ class RigidSolver(KinematicSolver):
         Parameters
         ----------
         friction_torsional : array_like
-            Effective contact-patch radii in metres, resisting spin about the contact normal.
+            Effective contact-patch radii in meters, resisting spin about the contact normal.
         geoms_idx : None | array_like, optional
             Scene-level indices of the geoms to set. If None, every geom is set. Defaults to None.
 
@@ -4179,7 +4201,7 @@ class RigidSolver(KinematicSolver):
         Parameters
         ----------
         friction_rolling : array_like
-            Effective contact-patch radii in metres, resisting rolling about the contact tangents.
+            Effective contact-patch radii in meters, resisting rolling about the contact tangents.
         geoms_idx : None | array_like, optional
             Scene-level indices of the geoms to set. If None, every geom is set. Defaults to None.
 
@@ -4332,8 +4354,8 @@ class RigidSolver(KinematicSolver):
 
         Parameters
         ----------
-        geoms_idx : None | array_like, optional
-            Scene-level indices of the geoms to refresh. If None, every geom is refreshed. Defaults to None.
+        geoms_idx : array_like
+            Scene-level indices of the geoms to refresh.
         """
         _, geoms_idx, _ = self._sanitize_io_variables(
             None, geoms_idx, self.n_geoms, "geoms_idx", envs_idx=None, skip_allocation=True
