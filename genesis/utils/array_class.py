@@ -1009,7 +1009,7 @@ def get_mpr_simplex_support(B_):
 class MPRState:
     simplex_support: MPRSimplexSupport
     simplex_size: qd.Tensor
-    # Reliability of the portal in simplex_support[1..3] after a contact, a PORTAL_STATUS value (INVALID/UNKNOWN/VALID).
+    # What the depth of the contact in simplex_support[1..3] is worth, a PORTAL_STATUS value. Zero means no portal.
     # Only VALID portals are reused (perturbation reconstruction, EPA seeding); INVALID forces a GJK refine.
     portal_status: qd.Tensor
 
