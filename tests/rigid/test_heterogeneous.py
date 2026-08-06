@@ -85,6 +85,38 @@ def test_physics_parity(show_viewer, tol):
 
 
 @pytest.mark.required
+def test_variant_inertia_matches_standalone(undefined_inertia, implicit_inertial_origin, tol):
+    # A variant must resolve whatever its asset leaves unspecified exactly as the same asset loaded on its own. The
+    # second URDF omits its inertial origin, which resolves to the link frame and keeps the authored mass and inertia
+    # tensor, while the first has no inertial element at all and falls back to its geometry. These cannot be folded
+    # into 'test_physics_parity': its variants come from MJCF, whose root joint carries a format-determined name that
+    # no URDF variant can match.
+    scene = gs.Scene(show_viewer=False)
+    files = (undefined_inertia, implicit_inertial_origin)
+    references = [
+        scene.add_entity(
+            gs.morphs.URDF(
+                file=file,
+                pos=(0.0, 0.5 * i_file, 0.1),
+            ),
+        )
+        for i_file, file in enumerate(files)
+    ]
+    het_obj = scene.add_entity(
+        morph=tuple(
+            gs.morphs.URDF(
+                file=file,
+                pos=(0.5, 0.5 * i_file, 0.1),
+            )
+            for i_file, file in enumerate(files)
+        ),
+    )
+    scene.build(n_envs=len(files))
+
+    assert_allclose(het_obj.get_mass(), [reference.get_mass() for reference in references], tol=tol)
+
+
+@pytest.mark.required
 def test_fewer_envs_than_variants():
     # With n_envs < n_variants, environment i gets variant i and the variants beyond n_envs stay unused.
     scene = gs.Scene(

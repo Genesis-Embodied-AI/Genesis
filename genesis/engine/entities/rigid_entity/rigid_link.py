@@ -884,34 +884,18 @@ class RigidLink(KinematicLink):
                     )
                     continue
 
-                # For URDF/MJCF variants, use parsed inertial from the variant file
-                # (index v-1 because variant 0 is the primary)
+                # Resolve the inertial parsed from the variant file (index v-1 because variant 0 is the primary)
+                # against this variant's own geometry estimate. Going through the shared resolution path is what makes
+                # a variant behave like the same asset loaded on its own, whatever it leaves unspecified. A
+                # Primitive/Mesh variant has no parsed inertial, and 'recompute_inertia' discards it on purpose, so
+                # both fall back to the estimate alone.
+                v_mass, v_pos, v_quat, v_i = None, None, None, None
                 if self._variant_scene_inertial is not None:
                     morph_v, v_mass, v_pos, v_quat, v_i = self._variant_scene_inertial[v - 1]
-                    if (
-                        not (morph_v.recompute_inertia and not self._is_fixed)
-                        and v_mass is not None
-                        and v_pos is not None
-                        and v_i is not None
-                    ):
-                        self._variant_inertial.append(
-                            LinkInertial(
-                                v_mass,
-                                np.asarray(v_pos, dtype=gs.np_float),
-                                np.asarray(v_quat, dtype=gs.np_float) if v_quat is not None else gu.identity_quat(),
-                                np.asarray(v_i, dtype=gs.np_float),
-                            )
-                        )
-                        continue
-
-                # Compute from geometry (Primitive/Mesh variants, or recompute_inertia), using this variant's
-                # load-time inertial estimate.
-                mass, com, inertia = self.entity._links_inertial_info[self.idx - self.entity._link_start][v].hint
-                if mass <= 0.0:
-                    mass = gs.EPS
-                    com = np.zeros(3, dtype=gs.np_float)
-                    inertia = np.zeros((3, 3), dtype=gs.np_float)
-                self._variant_inertial.append(LinkInertial(mass, com, gu.identity_quat(), inertia))
+                    if morph_v.recompute_inertia and not self._is_fixed:
+                        v_mass, v_pos, v_quat, v_i = None, None, None, None
+                hint = self.entity._links_inertial_info[self.idx - self.entity._link_start][v].hint
+                self._variant_inertial.append(finalize_inertial(v_mass, v_pos, v_quat, v_i, *hint))
 
     def _add_geom(
         self,
