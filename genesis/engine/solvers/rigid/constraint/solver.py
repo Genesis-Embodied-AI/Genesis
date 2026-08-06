@@ -2587,7 +2587,16 @@ def func_island_assemble_factor_solve_tiled(
                 for t in range(T):
                     v = L_sh[lk0:lk1, lj0 + t]
                     L_kk -= qd.outer(v, v)
-            L_kk.cholesky_(EPS)
+            # Floor each pivot relative to that row's ORIGINAL diagonal rather than at the bare unit roundoff: a pivot of the
+            # Newton system is an inertia and falls with the fifth power of the body size, so an absolute floor takes over the
+            # factorization below unit scale and inflates it by an amount the constraint jacobian - hence the orientation -
+            # decides. `eps` is read only on the lane owning the pivot, so a per-lane value costs nothing, and the diagonal
+            # read here is still the original one: the left-looking factor writes this block only after the call.
+            d_row = gk0 + tid
+            diag_orig = gs.qd_float(1.0)
+            if d_row < gk1:
+                diag_orig = constraint_state.nt_H[i_b, d_row, d_row]
+            L_kk.cholesky_(EPS * qd.max(diag_orig, EPS))
             for ib in range(kb + 1, N_BLOCKS):
                 li0 = ib * T
                 li1 = qd.min(li0 + T, n)
@@ -2694,7 +2703,16 @@ def func_island_assemble_factor_solve_tiled(
                 for t in range(T):
                     v = constraint_state.nt_H[i_b, gk0:gk1, gbase + lj0 + t]
                     L_kk -= qd.outer(v, v)
-            L_kk.cholesky_(EPS)
+            # Floor each pivot relative to that row's ORIGINAL diagonal rather than at the bare unit roundoff: a pivot of the
+            # Newton system is an inertia and falls with the fifth power of the body size, so an absolute floor takes over the
+            # factorization below unit scale and inflates it by an amount the constraint jacobian - hence the orientation -
+            # decides. `eps` is read only on the lane owning the pivot, so a per-lane value costs nothing, and the diagonal
+            # read here is still the original one: the left-looking factor writes this block only after the call.
+            d_row = gk0 + tid
+            diag_orig = gs.qd_float(1.0)
+            if d_row < gk1:
+                diag_orig = constraint_state.nt_H[i_b, d_row, d_row]
+            L_kk.cholesky_(EPS * qd.max(diag_orig, EPS))
             for ib in range(kb + 1, N_BLOCKS):
                 li0 = ib * T
                 li1 = qd.min(li0 + T, n)
@@ -2996,11 +3014,12 @@ def func_cholesky_factor_direct_batch(
         for i_d in range(n):
             i_dg = constraint_state.island.dof_id[dof_base + i_d, i_b]
             i_start = constraint_state.island.dof_env_start_local[dof_base + i_d, i_b]
-            tmp = constraint_state.nt_H[i_b, i_dg, i_dg]
+            hess_diag = constraint_state.nt_H[i_b, i_dg, i_dg]
+            tmp = hess_diag
             for j_d in range(i_start, i_d):
                 j_dg = constraint_state.island.dof_id[dof_base + j_d, i_b]
                 tmp = tmp - constraint_state.nt_H[i_b, i_dg, j_dg] ** 2
-            constraint_state.nt_H[i_b, i_dg, i_dg] = qd.sqrt(qd.max(tmp, EPS))
+            constraint_state.nt_H[i_b, i_dg, i_dg] = qd.sqrt(qd.max(tmp, EPS * qd.max(hess_diag, EPS)))
             inv = 1.0 / constraint_state.nt_H[i_b, i_dg, i_dg]
             # Only rows whose envelope reaches column i_d can be nonzero there. The CPU per-island path always
             # computes dof_env_col_end in its solve init, so it can bound the row sweep by the column height; other
@@ -3026,10 +3045,11 @@ def func_cholesky_factor_direct_batch(
     if qd.static(rigid_config.sparse_envelope):
         for i_d in range(n_dofs):
             i_start = constraint_state.nt_H_env_start[i_b, i_d]
-            tmp = constraint_state.nt_H[i_b, i_d, i_d]
+            hess_diag = constraint_state.nt_H[i_b, i_d, i_d]
+            tmp = hess_diag
             for k_d in range(i_start, i_d):
                 tmp = tmp - constraint_state.nt_H[i_b, i_d, k_d] ** 2
-            constraint_state.nt_H[i_b, i_d, i_d] = qd.sqrt(qd.max(tmp, EPS))
+            constraint_state.nt_H[i_b, i_d, i_d] = qd.sqrt(qd.max(tmp, EPS * qd.max(hess_diag, EPS)))
 
             tmp = 1.0 / constraint_state.nt_H[i_b, i_d, i_d]
             for j_d in range(i_d + 1, n_dofs):
@@ -3041,10 +3061,11 @@ def func_cholesky_factor_direct_batch(
                     constraint_state.nt_H[i_b, j_d, i_d] = (constraint_state.nt_H[i_b, j_d, i_d] - dot) * tmp
     else:
         for i_d in range(n_dofs):
-            tmp = constraint_state.nt_H[i_b, i_d, i_d]
+            hess_diag = constraint_state.nt_H[i_b, i_d, i_d]
+            tmp = hess_diag
             for j_d in range(i_d):
                 tmp = tmp - constraint_state.nt_H[i_b, i_d, j_d] ** 2
-            constraint_state.nt_H[i_b, i_d, i_d] = qd.sqrt(qd.max(tmp, EPS))
+            constraint_state.nt_H[i_b, i_d, i_d] = qd.sqrt(qd.max(tmp, EPS * qd.max(hess_diag, EPS)))
 
             tmp = 1.0 / constraint_state.nt_H[i_b, i_d, i_d]
             for j_d in range(i_d + 1, n_dofs):
@@ -3094,6 +3115,7 @@ def _cholesky_factor_direct_tiled_impl(
     qd.loop_config(name="cholesky_factor_direct_tiled", block_dim=T)
     for i in range(_B * T):
         i_b = i // T
+        tid = i % T
         if i_b >= _B:
             continue
         if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
@@ -3118,7 +3140,16 @@ def _cholesky_factor_direct_tiled_impl(
                     L_kk -= qd.outer(v, v)
 
             # Factor diagonal tile in-place
-            L_kk.cholesky_(EPS)
+            # Floor each pivot relative to that row's ORIGINAL diagonal rather than at the bare unit roundoff: a pivot of the
+            # Newton system is an inertia and falls with the fifth power of the body size, so an absolute floor takes over the
+            # factorization below unit scale and inflates it by an amount the constraint jacobian - hence the orientation -
+            # decides. `eps` is read only on the lane owning the pivot, so a per-lane value costs nothing, and the diagonal
+            # read here is still the original one: the left-looking factor writes this block only after the call.
+            d_row = k0 + tid
+            diag_orig = gs.qd_float(1.0)
+            if d_row < n_dofs:
+                diag_orig = constraint_state.nt_H[i_b, d_row, d_row]
+            L_kk.cholesky_(EPS * qd.max(diag_orig, EPS))
 
             # Solve off-diagonal tiles: L[i,k] = (H[i,k] - sum_j L[i,j] L[k,j]^T) @ inv(L[k,k]^T)
             for ib in range(kb + 1, N_BLOCKS):
@@ -3211,7 +3242,16 @@ def _cholesky_and_solve_fused_tiled_impl(
                     L_kk -= qd.outer(v, v)
 
             # Factor diagonal tile in-place
-            L_kk.cholesky_(EPS)
+            # Floor each pivot relative to that row's ORIGINAL diagonal rather than at the bare unit roundoff: a pivot of the
+            # Newton system is an inertia and falls with the fifth power of the body size, so an absolute floor takes over the
+            # factorization below unit scale and inflates it by an amount the constraint jacobian - hence the orientation -
+            # decides. `eps` is read only on the lane owning the pivot, so a per-lane value costs nothing, and the diagonal
+            # read here is still the original one: the left-looking factor writes this block only after the call.
+            d_row = k0 + tid
+            diag_orig = gs.qd_float(1.0)
+            if d_row < n_dofs:
+                diag_orig = constraint_state.nt_H[i_b, d_row, d_row]
+            L_kk.cholesky_(EPS * qd.max(diag_orig, EPS))
 
             # Solve off-diagonal tiles and store in shared memory (not global)
             for ib in range(kb + 1, N_BLOCKS):
@@ -4950,11 +4990,23 @@ def func_linesearch_batch(
     n_dofs = constraint_state.search.shape[0]
     ## use adaptive linesearch tolerance
     snorm = gs.qd_float(0.0)
+    grad_sqnorm = gs.qd_float(0.0)
     for jd in range(n_dofs):
         snorm = snorm + constraint_state.search[jd, i_b] ** 2
+        grad_sqnorm = grad_sqnorm + constraint_state.grad[jd, i_b] ** 2
     snorm = qd.sqrt(snorm)
     scale = rigid_info.meaninertia[i_b] * qd.max(1, n_dofs)
-    gtol = rigid_info.tolerance[None] * rigid_info.ls_tolerance[None] * snorm * scale
+    ls_ratio = rigid_info.tolerance[None] * rigid_info.ls_tolerance[None]
+    if qd.static(not rigid_config.enable_mujoco_compatibility):
+        # What is bounded is a cost derivative along the search direction, a mass times an acceleration squared, and
+        # the mean inertia carries only the mass: the gradient norm supplies the missing acceleration, where the mass
+        # alone leaves the bound slack by whatever accelerations the scene carries and rounding picks the trial point.
+        # The ratio is floored at the working precision's resolution, below which no derivative assembled from this
+        # gradient resolves. Reproducing the reference behaviour keeps the mass and the bare ratio.
+        scale = qd.sqrt(grad_sqnorm)
+        LS_NOISE_RATIO = qd.static(10.0)
+        ls_ratio = qd.max(ls_ratio, LS_NOISE_RATIO * rigid_info.EPS[None])
+    gtol = ls_ratio * snorm * scale
     constraint_state.gtol[i_b] = gtol
 
     constraint_state.ls_it[i_b] = 0
@@ -5082,9 +5134,17 @@ def _func_cone_zone(rows_jaref, rows_efc_D, con_mu, rows_friction, rigid_config:
             u = rows_friction[i_r] * rows_jaref[i_r]
             T_sq = T_sq + u**2
         T = qd.sqrt(T_sq)
+        # A residual on the polar boundary leaves the sign of con_mu * N + T to rounding, and the two zones supply
+        # different curvature models, so two rigidly rotated copies of one scene take different search directions from
+        # the same iterate. Claiming the band for the coupled zone keeps the choice a property of the geometry: force
+        # and cost agree across the boundary, only the Hessian differs. The reference behaviour keeps the bare sign.
+        POLAR_TIE_RATIO = qd.static(1e-3)
+        polar_tie_tol = gs.qd_float(0.0)
+        if qd.static(not rigid_config.enable_mujoco_compatibility):
+            polar_tie_tol = POLAR_TIE_RATIO * T
         if N >= con_mu * T or (T <= 0.0 and N >= 0.0):
             zone = 0
-        elif con_mu * N + T <= 0.0 or (T <= 0.0 and N < 0.0):
+        elif con_mu * N + T <= -polar_tie_tol or (T <= 0.0 and N < 0.0):
             zone = 1
     return zone, N, T
 
