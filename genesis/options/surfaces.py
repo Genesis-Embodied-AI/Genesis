@@ -22,14 +22,15 @@ class Surface(Options):
     """
     Base class for all surfaces types in Genesis.
 
-    A ``Surface`` object encapsulates all visual information used for rendering an entity or its sub-components (links,
+    A `Surface` object encapsulates all visual information used for rendering an entity or its sub-components (links,
     geoms, ...). The surface contains different types of textures depending on the surface type (e.g. diffuse, specular,
-    roughness, metallic, normal, emissive). Each one of them is a `gs.textures.Texture` object.
+    roughness, metallic, normal, emissive). Each one of them is a
+    `gs.textures.Texture <genesis.options.textures.Texture>` object.
 
     Tip
     ---
-    If any of the textures only has single value (instead of a map), you can use the shortcut parameter (e.g., `color`,
-    `roughness`, `metallic`, `emissive`) instead of creating a texture object.
+    If any of the textures only has single value (instead of a map), you can use the shortcut parameter (e.g.,
+    `color`, `roughness`, `metallic`, `emissive`) instead of creating a texture object.
 
     Note
     ----
@@ -54,11 +55,11 @@ class Surface(Options):
         to 1.0.
     vis_mode : str | None, optional
         How the entity should be visualized, e.g.
-        - 'visual': Render the entity's visual geometry.
-        - 'collision': Render the entity's collision geometry.
-        - 'particle': Render the entity's particle representation (if applicable).
-        - 'sdf': Render the reconstructed surface mesh of the entity's sdf.
-        - 'recon': Render the reconstructed surface mesh of the entity's particle representation.
+        - ``"visual"``: Render the entity's visual geometry.
+        - ``"collision"``: Render the entity's collision geometry.
+        - ``"particle"``: Render the entity's particle representation (if applicable).
+        - ``"sdf"``: Render the reconstructed surface mesh of the entity's sdf.
+        - ``"recon"``: Render the reconstructed surface mesh of the entity's particle representation.
     smooth : bool, optional
         Whether to smooth face normals by interpolating vertex normals.
     double_sided : bool | None, optional
@@ -69,7 +70,8 @@ class Surface(Options):
     normal_diff_clamp : float, optional
         Controls the threshold for computing surface normals by interpolating vertex normals.
     recon_backend : str, optional
-        Backend for surface reconstruction. Possible values are ['splashsurf', 'openvdb']. Defaults to 'splashsurf'.
+        Backend for surface reconstruction. Possible values are [``"splashsurf"``, ``"openvdb"``]. Defaults to
+        ``"splashsurf"``.
     generate_foam : bool, optional
         Whether to generate foam particles for visual effects for particle-based entities.
     foam_options : gs.options.FoamOptions, optional
@@ -78,7 +80,7 @@ class Surface(Options):
 
     _color_target: ClassVar[str] = "diffuse_texture"
 
-    # Shortcut fields — resolved to texture fields by _resolve_shortcuts, excluded from serialization.
+    # Shortcut fields - resolved to texture fields by _resolve_shortcuts, excluded from serialization.
     color: FArrayType | None = Field(default=None, exclude=True, repr=False)
     opacity: UnitInterval | None = Field(default=None, exclude=True, repr=False)
     roughness: UnitInterval | None = Field(default=None, exclude=True, repr=False)
@@ -330,7 +332,7 @@ class Glass(Surface):
     subsurface : bool
         Whether to apply a simple BSSRDF subsurface to the glass material.
     thickness : float | None, optional
-        The thickness of the top surface when 'subsurface' is set to True. Shortcut for `thickness_texture`.
+        The thickness of the top surface when `subsurface` is set to True. Shortcut for `thickness_texture`.
     specular_texture : gs.textures.Texture | None, optional
         Specular texture of the surface.
     diffuse_texture : gs.textures.Texture | None, optional
@@ -427,8 +429,9 @@ class Metal(Surface):
     color : tuple | None, optional
         Diffuse color of the surface. Shortcut for `diffuse_texture` with a single color.
     metal_type : str, optional
-        Type of metal, indicating a specific index of refraction (IOR). Possible values are ['aluminium', 'gold',
-        'copper', 'brass', 'iron', 'titanium', 'vanadium', 'lithium']. Defaults to 'iron'.
+        Type of metal, indicating a specific index of refraction (IOR). Possible values are [``"aluminium"``,
+        ``"gold"``, ``"copper"``, ``"brass"``, ``"iron"``, ``"titanium"``, ``"vanadium"``, ``"lithium"``]. Defaults to
+        ``"iron"``.
     diffuse_texture : gs.textures.Texture | None, optional
         Diffuse (basic color) texture of the surface.
     opacity_texture : gs.textures.Texture | None, optional
@@ -796,7 +799,7 @@ class Water(Glass):
 
 class Iron(Metal):
     """
-    Shortcut for a metallic surface with `metal_type = 'iron'`.
+    Shortcut for a metallic surface with ``metal_type="iron"``.
     """
 
     pass
@@ -804,7 +807,7 @@ class Iron(Metal):
 
 class Aluminium(Metal):
     """
-    Shortcut for a metallic surface with `metal_type = 'aluminium'`.
+    Shortcut for a metallic surface with ``metal_type="aluminium"``.
     """
 
     metal_type: MetalType = "aluminium"
@@ -812,7 +815,7 @@ class Aluminium(Metal):
 
 class Copper(Metal):
     """
-    Shortcut for a metallic surface with `metal_type = 'copper'`.
+    Shortcut for a metallic surface with ``metal_type="copper"``.
     """
 
     metal_type: MetalType = "copper"
@@ -820,7 +823,7 @@ class Copper(Metal):
 
 class Gold(Metal):
     """
-    Shortcut for a metallic surface with `metal_type = 'gold'`.
+    Shortcut for a metallic surface with ``metal_type="gold"``.
     """
 
     metal_type: MetalType = "gold"

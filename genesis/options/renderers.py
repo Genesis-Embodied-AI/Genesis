@@ -41,8 +41,8 @@ class SphereLight(Options):
 
 class RendererOptions(Options):
     """
-    This is the base class for all `gs.renderers.*` classes.
-    Note that this is not an actual renderer, but rather a renderer configuration specifying which renderer to use and its parameters.
+    This is the base class for all ``gs.renderers.*`` classes. Note that this is not an actual renderer, but rather a
+    renderer configuration specifying which renderer to use and its parameters.
     """
 
     pass
@@ -54,7 +54,9 @@ class Rasterizer(RendererOptions):
 
     Note
     ----
-    You can set which renderer to use for cameras, but the interactive viewer always uses the rasterizer rendering backend. If you want to configure properties like shadow, lights, etc., you should use `gs.options.VisOptions` instead.
+    You can set which renderer to use for cameras, but the interactive viewer always uses the rasterizer rendering
+    backend. If you want to configure properties like shadow, lights, etc., you should use
+    `gs.options.VisOptions <genesis.options.VisOptions>` instead.
     """
 
     pass

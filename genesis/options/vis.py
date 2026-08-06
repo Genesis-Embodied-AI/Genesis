@@ -22,7 +22,7 @@ class ViewerOptions(Options):
 
     Note
     ----
-    The viewer's camera uses the `Rasterizer` backend regardless of `gs.renderers.*` when creating the scene.
+    The viewer's camera uses the `Rasterizer` backend regardless of ``gs.renderers.*`` when creating the scene.
 
     Parameters
     ----------
@@ -154,10 +154,11 @@ class VisOptions(Options):
     visualize_pbd_boundary : bool
         Whether to visualize the boundary of the PBD Solver.
     segmentation_level : str
-        The segmentation level used for segmentation mask rendering. Should be one of ['entity', 'link', 'geom'].
-        Defaults to 'link'.
+        The segmentation level used for segmentation mask rendering. Should be one of [``"entity"``, ``"link"``,
+        ``"geom"``]. Defaults to ``"link"``.
     render_particle_as : str
-        How particles in the scene should be rendered. Should be one of ['sphere', 'tet']. Defaults to 'sphere'.
+        How particles in the scene should be rendered. Should be one of [``"sphere"``, ``"tet"``]. Defaults to
+        ``"sphere"``.
     particle_size_scale : float
         Scale applied to actual particle size for rendering. Defaults to 1.0.
     contact_force_scale : float = 0.02

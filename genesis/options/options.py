@@ -11,8 +11,8 @@ from genesis.styles import colors, formats
 
 class Options(RBC, BaseModel):
     """
-    This is the base class for all `gs.options.*` classes. An `Options` object is a group of parameters for setting a
-    specific component in the scene.
+    This is the base class for all ``gs.options.*`` classes. An `Options` object is a group of parameters for setting
+    a specific component in the scene.
 
     Note
     ----

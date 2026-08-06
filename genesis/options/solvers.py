@@ -20,9 +20,14 @@ class SimOptions(Options):
 
     Note
     ----
-    1. `SimOptions` specifies the global settings for the simulator. Some parameters exist both in `SimOptions` and `SolverOptions`. In this case, if such parameters are given in `SolverOptions`, it will override the one specified in `SimOptions` for this specific solver. For example, if `dt` is only given in `SimOptions`, it will be shared by all the solvers, but it's also possible to let a solver run at a different temporal speed by setting its own `dt` to be a different value.
+    1. `SimOptions` specifies the global settings for the simulator. Some parameters exist both in `SimOptions` and
+       `SolverOptions`. In this case, if such parameters are given in `SolverOptions`, it will override the one
+       specified in `SimOptions` for this specific solver. For example, if `dt` is only given in `SimOptions`, it
+       will be shared by all the solvers, but it's also possible to let a solver run at a different temporal speed by
+       setting its own `dt` to be a different value.
 
-    2. In differentiable mode, `substeps_local` must be divisible by `substeps`, as external command is input per `step`, but `substep`. If `requires_grad` is False, we can use arbitrary `substeps_local`.
+    2. In differentiable mode, `substeps_local` must be divisible by `substeps`, as external command is input per
+       `step`, but `substep`. If `requires_grad` is False, we can use arbitrary `substeps_local`.
 
     Parameters
     ----------
@@ -188,8 +193,8 @@ class IPCCouplerOptions(BaseCouplerOptions):
     """
     Options configuring the Incremental Potential Contact (IPC) coupler.
 
-    Time step, gravity, and differentiable simulation mode are derived from ``SimOptions``
-    (``dt``, ``gravity``, ``requires_grad``) and should not be set here.
+    Time step, gravity, and differentiable simulation mode are derived from `SimOptions`
+    (`dt`, `gravity`, `requires_grad`) and should not be set here.
 
     Parameters
     ----------
@@ -222,7 +227,8 @@ class IPCCouplerOptions(BaseCouplerOptions):
     Linear System Options
     ---------------------
     linear_system_solver : str, optional
-        Linear system solver type. Options: 'linear_pcg', 'direct', etc. Defaults to None (use libuipc default: 'linear_pcg').
+        Linear system solver type. Options: ``"linear_pcg"``, ``"direct"``, etc. Defaults to None (use libuipc default:
+        ``"linear_pcg"``).
     linear_system_tolerance : float, optional
         Tolerance for linear system solver. Defaults to None (use libuipc default: 1e-3).
 
@@ -236,18 +242,20 @@ class IPCCouplerOptions(BaseCouplerOptions):
         Whether to enable friction in contact. Defaults to None (use libuipc default: True).
     contact_resistance : float, optional
         Ground/default contact resistance/stiffness. It is used for ground contact pairs and
-        as the per-entity fallback when a material does not define ``contact_resistance``.
-        For ground pairs, it is combined with entity ``material.contact_resistance`` via
+        as the per-entity fallback when a material does not define `contact_resistance`.
+        For ground pairs, it is combined with entity `material.contact_resistance` via
         geometric mean. Defaults to 1e9.
     contact_eps_velocity : float, optional
         Epsilon velocity for contact. Defaults to None (use libuipc default: 0.01).
     contact_constitution : str, optional
-        Contact constitution model. Options: 'ipc', 'isometric'. Defaults to None (use libuipc default: 'ipc').
+        Contact constitution model. Options: ``"ipc"``, ``"isometric"``. Defaults to None (use libuipc default:
+        ``"ipc"``).
 
     Collision Detection Options
     ---------------------------
     collision_detection_method : str, optional
-        Collision detection method. Options: 'linear_bvh', 'spatial_hash', etc. Defaults to None (use libuipc default: 'linear_bvh').
+        Collision detection method. Options: ``"linear_bvh"``, ``"spatial_hash"``, etc. Defaults to None (use libuipc
+        default: ``"linear_bvh"``).
 
     CFL Options
     -----------
@@ -360,7 +368,8 @@ class KinematicOptions(Options):
     Parameters
     ----------
     dt : float, optional
-        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
+        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to
+        None.
     batch_links_info : bool, optional
         Whether to batch link info. Automatically enabled for heterogeneous simulation. Defaults to False.
     batch_dofs_info : bool, optional
@@ -379,7 +388,9 @@ class ToolOptions(Options):
 
     Note
     ----
-    ToolEntity is a simplified form of RigidEntity. It supports one way tool->other coupling, but has *no* internal dynamics and can only be created from a single mesh. This is a temporal workaround for differentiable rigid-soft interaction. This solver will be removed once differentiable mode is supported by the RigidSolver.
+    ToolEntity is a simplified form of RigidEntity. It supports one way tool->other coupling, but has *no* internal
+    dynamics and can only be created from a single mesh. This is a temporal workaround for differentiable rigid-soft
+    interaction. This solver will be removed once differentiable mode is supported by the RigidSolver.
 
     Parameters
     ----------
@@ -400,7 +411,8 @@ class RigidOptions(Options):
     Parameters
     ----------
     dt : float, optional
-        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
+        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to
+        None.
     gravity : tuple, optional
         Gravity force in N/kg. If none, it will inherit from `SimOptions`. Defaults to None.
     enable_collision : bool, optional
@@ -421,34 +433,29 @@ class RigidOptions(Options):
     max_contacts : int, optional
         Maximum number of simultaneous contact points per environment that the constraint solver can handle, which
         determines the size of the contact constraint buffers (3 to 10 constraint rows per contact point depending on
-        'friction_cone', 'enable_torsional_friction', and 'enable_rolling_friction'). Defaults to None.
+        `friction_cone`, `enable_torsional_friction`, and `enable_rolling_friction`). Defaults to None.
 
         This limit applies to the final contact points after pruning, not to the candidate contact points that
-        collision detection can emit (see 'max_collision_pairs'). Exceeding it at runtime halts the simulation with
+        collision detection can emit (see `max_collision_pairs`). Exceeding it at runtime halts the simulation with
         an error. None resolves it automatically: the pre-pruning worst case or, when contact pruning is enabled
-        (see 'contact_pruning_tolerance'), 32 contact points per candidate link pair but no less than 512, whichever
+        (see `contact_pruning_tolerance`), 32 contact points per candidate link pair but no less than 512, whichever
         is smaller.
     integrator : gs.integrator, optional
-        Integrator type. Current supported integrators are 'gs.integrator.Euler', 'gs.integrator.implicitfast' and
-        'gs.integrator.approximate_implicitfast'. 'Euler' and 'implicitfast' are consistent with their Mujoco
-        counterpart. 'approximate_implicitfast' is an even faster approximation of 'implicitfast', which avoid
-        computing the inverse mass matrix twice by considering the first order correction terms of the implicit
-        integration scheme systematically, including for computing the acceleration resulting from the constraints
-        and external forces. Although this approximation is wrong in theory, it works reasonably well in practice.
-        Defaults to 'approximate_implicitfast'.
+        Time integration scheme. See `~genesis.constants.integrator` for the description of each scheme. Defaults to
+        `approximate_implicitfast`.
     IK_max_targets : int, optional
         Maximum number of IK targets. Increasing this doesn't affect IK solving speed, but will increase memory usage.
         Defaults to 6.
     constraint_solver : gs.constraint_solver, optional
-        Constraint solver type. Current supported constraint solvers are 'gs.constraint_solver.CG' (conjugate gradient)
-        and 'gs.constraint_solver.Newton' (Newton's method). Defaults to 'Newton'.
+        Numerical method that solves the constraint system. See `~genesis.constants.constraint_solver` for descriptions
+        of each method. Defaults to `Newton`.
     iterations : int, optional
         Maximum number of iterations for the constraint solver; the solve exits early once its convergence tolerance
         is met, so this bound only binds on hard steps. Defaults to 50.
     tolerance : float, optional
         Tolerance for the constraint solver. If None, resolved based on the floating-point precision selected via
-        `gs.init(precision=...)`: 1e-5 for single precision ("32") and 1e-8 for double precision ("64"). Defaults
-        to None.
+        ``gs.init(precision=...)``: 1e-5 for single precision (``"32"``) and 1e-8 for double precision (``"64"``).
+        Defaults to None.
     ls_iterations : int, optional
         Number of line search iterations for the constraint solver. Defaults to 50.
     ls_tolerance : float, optional
@@ -461,38 +468,42 @@ class RigidOptions(Options):
     noslip_tolerance : float, optional
         Tolerance for the noslip solver. Defaults to 1e-6.
     friction_cone : gs.friction_cone, optional
-        Contact friction cone model, trading numerical robustness for physical accuracy. 'gs.friction_cone.pyramidal'
-        (default) is robust and easy to solve; 'gs.friction_cone.elliptic' is the exact isotropic cone, harder to solve
-        but paired with a high 'impratio' it holds resting stacks without slow tangential creep. See 'gs.friction_cone'
-        for the description of each model. Unsupported with the noslip solver or differentiable simulation.
+        Contact friction cone model, trading numerical robustness for physical accuracy.
+        `gs.friction_cone.pyramidal <genesis.constants.friction_cone.pyramidal>` (default) is robust and easy to solve;
+        `gs.friction_cone.elliptic <genesis.constants.friction_cone.elliptic>` is the exact isotropic cone, harder to
+        solve but paired with a high `impratio` it holds resting stacks without slow tangential creep. See
+        `~genesis.constants.friction_cone` for the description of each model. Unsupported with the noslip solver or
+        differentiable simulation.
     contact_resolution : gs.contact_resolution, optional
         How a contact's normal force and friction force are resolved against each other.
-        'gs.contact_resolution.signorini' bounds friction against the normal force the contact has developed, so sliding
-        never inflates it and a body launched horizontally decelerates at mu * g instead of lifting off, at the cost of
-        extra solver iterations. 'gs.contact_resolution.convex' poses the contact as a single convex program, which
-        converges more predictably on stiff scenes but lets fast sliding buy normal force. See 'gs.contact_resolution'
-        for the description of each model. Defaults to None, resolving to 'signorini' with the elliptic cone and the
-        Newton solver, and 'convex' otherwise - the pyramidal cone's rows do not separate, and the conjugate gradient
-        solver does not reach the fixed point. Always 'convex' when 'enable_mujoco_compatibility' is set.
+        `gs.contact_resolution.signorini <genesis.constants.contact_resolution.signorini>` bounds friction against the
+        normal force the contact has developed, so sliding never inflates it and a body launched horizontally
+        decelerates at mu * g instead of lifting off, at the cost of extra solver iterations.
+        `gs.contact_resolution.convex <genesis.constants.contact_resolution.convex>` poses the contact as a single
+        convex program, which converges more predictably on stiff scenes but lets fast sliding buy normal force. See
+        `~genesis.constants.contact_resolution` for the description of each model. Defaults to None, resolving to
+        `signorini` with the elliptic cone and the Newton solver, and `convex` otherwise
+        - the pyramidal cone's rows do not separate, and the conjugate gradient solver does not reach the fixed point.
+        Always `convex` when `enable_mujoco_compatibility` is set.
     enable_torsional_friction : bool, optional
         Whether contacts also resist relative spin about their normal, with strength set per geometry by the material
-        option 'friction_torsional' (see 'gs.materials.Rigid'). Enable it when spin resistance matters - a grasped
-        object twisting in a gripper, a top spinning in place - motions a point contact transmits no torque against,
-        so they persist indefinitely otherwise. The extra spin resistance slows down the constraint solve on every
-        contact, including those where spin is irrelevant. Defaults to False.
+        option `friction_torsional` (see `gs.materials.Rigid <genesis.engine.materials.rigid.Rigid>`). Enable it when
+        spin resistance matters - a grasped object twisting in a gripper, a top spinning in place - motions a point
+        contact transmits no torque against, so they persist indefinitely otherwise. The extra spin resistance slows
+        down the constraint solve on every contact, including those where spin is irrelevant. Defaults to False.
     enable_rolling_friction : bool, optional
-        Whether contacts also resist rolling, with strength set per geometry by the material option 'friction_rolling'
-        (see 'gs.materials.Rigid'). Enable it when rolling resistance matters - a ball or wheel coasting to rest, a
-        cylinder settling on a slope - motions a point contact otherwise never slows down. The extra rolling
-        resistance slows down the constraint solve on every contact, more so than torsional friction (two extra axes),
-        and requires 'enable_torsional_friction'. Defaults to False.
+        Whether contacts also resist rolling, with strength set per geometry by the material option `friction_rolling`
+        (see `gs.materials.Rigid <genesis.engine.materials.rigid.Rigid>`). Enable it when rolling resistance matters - a
+        ball or wheel coasting to rest, a cylinder settling on a slope - motions a point contact otherwise never slows
+        down. The extra rolling resistance slows down the constraint solve on every contact, more so than torsional
+        friction (two extra axes), and requires `enable_torsional_friction`. Defaults to False.
     impratio : float, optional
         Ratio of tangential (friction) to normal constraint impedance at contacts. Raising it above 1 stiffens
         friction so resting stacks and piles hold their pose under sustained shear, at the cost of a slower solve that
         turns numerically unstable once pushed too far - a stiffness-versus-stability tradeoff, so use the smallest
         value that holds the contacts. It matters mainly with the elliptic cone, which stiffens friction alone while
         leaving the normal contact response at its own impedance. Defaults to None, resolving to 100 with the elliptic
-        cone (1 when 'enable_mujoco_compatibility' is set) and 1 otherwise.
+        cone (1 when `enable_mujoco_compatibility` is set) and 1 otherwise.
     sparse_solve : bool, optional
         Whether to exploit sparsity (skyline-envelope Cholesky) in the constraint solver.
 
@@ -501,12 +512,14 @@ class RigidOptions(Options):
         Hessian band stays much tighter than its dimension. Never enabled on GPU, where the dense tiled factorization
         is faster. Set True or False to override the automatic choice; True is ignored with a warning on GPU.
     contact_resolve_time : float, optional
-        Please note that this option will be deprecated in a future version. Use 'constraint_timeconst'
+        Please note that this option will be deprecated in a future version. Use `constraint_timeconst`
         instead.
     constraint_timeconst : float
-        Lower-bound of the default time to resolve the constraint (2*dt). The smaller the value, the more stiff the
-        constraint. This parameter is called 'timeconst' in Mujoco
-        (https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters). Defaults to 0.01.
+        Time over which a constraint drives its violation to zero, in seconds. A shorter time makes contacts and joint
+        limits stiffer, so bodies penetrate less and stacks settle faster, at the cost of a worse-conditioned solve that
+        needs more iterations and tolerates a large timestep less well. Raised to twice the substep timestep when set
+        below it, since no constraint can resolve faster than the step that integrates it. A model may override it per
+        constraint. Defaults to 0.01.
     use_contact_island : bool, optional
         Whether to partition the constraint solve into independent per-island blocks. It has no effect on a scene that
         is a single dense-coupled tree (one island) or is differentiable, where the dense whole-scene solve is used
@@ -526,13 +539,9 @@ class RigidOptions(Options):
         Whether to use GJK for collision detection instead of MPR. More stable but much slower. Defaults to
         `sim_options.requires_grad`.
     broadphase_traversal : gs.broadphase_traversal, optional
-        Broadphase traversal strategy. ``SAP`` (sweep-and-prune) or ``ALL_VS_ALL`` (parallel pair iteration). Defaults
-        to ``None`` (auto: ``SAP`` on CPU or when hibernation/heterogeneous entities are enabled, ``ALL_VS_ALL`` on GPU
-        otherwise). See ``gs.broadphase_traversal`` for details on each strategy.
-
-    Warning
-    -------
-    Hibernation hasn't been robustly tested and will be fully supported soon.
+        Broadphase traversal strategy. `SAP` (sweep-and-prune) or `ALL_VS_ALL` (parallel pair iteration). Defaults
+        to ``None`` (auto: `SAP` on CPU or when hibernation/heterogeneous entities are enabled, `ALL_VS_ALL` on GPU
+        otherwise). See `~genesis.constants.broadphase_traversal` for details on each strategy.
     """
 
     dt: PositiveFloat | None = None
@@ -616,16 +625,23 @@ class MPMOptions(Options):
 
     Note
     ----
-    MPM is a hybrid lagrangian-eulerian method for simulating soft materials. In the eulerian phase, it uses a grid representation. The `upper_bound` and `lower_bound` specify the simulation domain, but a safety padding will be added to the actual grid boundary. Therefore, the actual boundary could be slightly tighter than the specified one. Note that the size of the domain affects the performance of the simulation, hence you should set it as tight as possible.
+    MPM is a hybrid lagrangian-eulerian method for simulating soft materials. In the eulerian phase, it uses a grid
+    representation. The `upper_bound` and `lower_bound` specify the simulation domain, but a safety padding will be
+    added to the actual grid boundary. Therefore, the actual boundary could be slightly tighter than the specified one.
+    Note that the size of the domain affects the performance of the simulation, hence you should set it as tight as
+    possible.
 
     Parameters
     ----------
     dt : float, optional
-        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
+        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to
+        None.
     gravity : tuple, optional
         Gravity force in N/kg. If none, it will inherit from `SimOptions`. Defaults to None.
     particle_size : float, optional
-        Particle diameter in meters. If not given, we will compute `particle_size` based on `grid_density`, where `particle_size` will be linearly proportional to the grid cell size. A reference value is `particle_size = 0.01` for `grid_density = 64`. Defaults to None.
+        Particle diameter in meters. If not given, we will compute `particle_size` based on `grid_density`, where
+        `particle_size` will be linearly proportional to the grid cell size. A reference value is
+        ``particle_size = 0.01`` for ``grid_density = 64``. Defaults to None.
     grid_density : float, optional
         Number of grid cells per meter. Defaults to 64.
     enable_CPIC : bool, optional
@@ -675,26 +691,33 @@ class SPHOptions(Options):
 
     Note
     ----
-    If spatial hashing parameters are not given, we will compute them automatically this way: For `hash_grid_cell_size`, we will set it to be the `support_radius`, which is essentially 2 * `particle_size`. For `hash_grid_res`, if a small bound is given, it's used for the hash grid; otherwise, we use a default value of a 150^3 cube. Any grid bigger than that will results in too many cells hence not ideal.
+    If spatial hashing parameters are not given, we will compute them automatically this way: For
+    `hash_grid_cell_size`, we will set it to be the `support_radius`, which is essentially 2 * `particle_size`.
+    For `hash_grid_res`, if a small bound is given, it's used for the hash grid; otherwise, we use a default value of
+    a 150^3 cube. Any grid bigger than that will results in too many cells hence not ideal.
 
     Parameters
     ----------
     dt : float, optional
-        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
+        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to
+        None.
     gravity : tuple, optional
         Gravity force in N/kg. If none, it will inherit from `SimOptions`. Defaults to None.
     particle_size : float, optional
         Particle diameter in meters. Defaults to 0.02.
     pressure_solver : str, optional
-        Pressure solver type. Current supported pressure solvers are 'WCSPH' and 'DFSPH'. Defaults to 'WCSPH'.
+        Pressure solver type. Current supported pressure solvers are ``"WCSPH"`` and ``"DFSPH"``. Defaults to
+        ``"WCSPH"``.
     lower_bound : tuple, shape (3,), optional
         Lower bound of the simulation domain. Defaults to (-100.0, -100.0, 0.0).
     upper_bound : tuple, shape (3,), optional
         Upper bound of the simulation domain. Defaults to (100.0, 100.0, 100.0).
     hash_grid_res : tuple, optional
-        Size of the spatially-repetitive spatial hashing grid in meters. If none, it will be computed automatically. Defaults to None.
+        Size of the spatially-repetitive spatial hashing grid in meters. If none, it will be computed automatically.
+        Defaults to None.
     hash_grid_cell_size : float, optional
-        Size of the lattic cell of the spatial hashing grid in meters. This should be at least 2 * `particle_size`. If none, it will be computed automatically. Defaults to None.
+        Size of the lattic cell of the spatial hashing grid in meters. This should be at least 2 * `particle_size`. If
+        none, it will be computed automatically. Defaults to None.
     max_divergence_error : float, optional
         Maximum divergence error for DFSPH. Defaults to 0.1.
     max_density_error_percent : float, optional
@@ -759,12 +782,16 @@ class PBDOptions(Options):
 
     Note
     ----
-    If spatial hashing parameters are not given, we will compute them automatically this way: For `hash_grid_cell_size`, we will set it to be 1.25 * `particle_size`. For `hash_grid_res`, if a small bound is given, it's used for the hash grid; otherwise, we use a default value of a 150^3 cube. Any grid bigger than that will results in too many cells hence not ideal.
+    If spatial hashing parameters are not given, we will compute them automatically this way: For
+    `hash_grid_cell_size`, we will set it to be 1.25 * `particle_size`. For `hash_grid_res`, if a small bound is
+    given, it's used for the hash grid; otherwise, we use a default value of a 150^3 cube. Any grid bigger than that
+    will results in too many cells hence not ideal.
 
     Parameters
     ----------
     dt : float, optional
-        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
+        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to
+        None.
     gravity : tuple, optional
         Gravity force in N/kg. If none, it will inherit from `SimOptions`. Defaults to None.
     max_stretch_solver_iterations : int, optional
@@ -780,9 +807,11 @@ class PBDOptions(Options):
     particle_size : float, optional
         Particle diameter in meters. Defaults to 1e-2.
     hash_grid_res : tuple, optional
-        Size of the spatially-repetitive spatial hashing grid in meters. If none, it will be computed automatically. Defaults to None.
+        Size of the spatially-repetitive spatial hashing grid in meters. If none, it will be computed automatically.
+        Defaults to None.
     hash_grid_cell_size : float, optional
-        Size of the lattic cell of the spatial hashing grid in meters. This should be at least 1.25 * `particle_size`. If none, it will be computed automatically. Defaults to None.
+        Size of the lattic cell of the spatial hashing grid in meters. This should be at least 1.25 * `particle_size`.
+        If none, it will be computed automatically. Defaults to None.
     lower_bound : tuple, shape (3,), optional
         Lower bound of the simulation domain. Defaults to (-100.0, -100.0, 0.0).
     upper_bound : tuple, shape (3,), optional
@@ -852,7 +881,8 @@ class FEMOptions(Options):
     Parameters
     ----------
     dt : float, optional
-        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
+        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to
+        None.
     gravity : tuple, optional
         Gravity force in N/kg. If none, it will inherit from `SimOptions`. Defaults to None.
     damping : float, optional
@@ -877,9 +907,11 @@ class FEMOptions(Options):
     linesearch_tau : float, optional
         Line search step size reduction factor. Defaults to 0.5. Only used when `use_implicit_solver` is True.
     damping_alpha : float, optional
-        Rayleigh Damping factor for the implicit solver. Defaults to 0.5. Only used when `use_implicit_solver` is True.
+        Rayleigh Damping factor for the implicit solver. Defaults to 0.5. Only used when `use_implicit_solver` is
+        True.
     damping_beta : float, optional
-        Rayleigh Damping factor for the implicit solver. Defaults to 5e-4. Only used when `use_implicit_solver` is True.
+        Rayleigh Damping factor for the implicit solver. Defaults to 5e-4. Only used when `use_implicit_solver` is
+        True.
     enable_vertex_constraints : bool, optional
         Whether to enable vertex constraints. Defaults to False.
     """
@@ -908,7 +940,8 @@ class SFOptions(Options):
     Parameters
     ----------
     dt : float, optional
-        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
+        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to
+        None.
     """
 
     dt: PositiveFloat | None = None

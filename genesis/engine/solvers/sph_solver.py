@@ -691,8 +691,8 @@ class SPHSolver(Solver):
         """
         Integral of the cubic spline smoothing kernel over the plane at distance dist from its center.
 
-        Closed form of 2 * pi * int_{|dist|}^{h} W(r) r dr. Its own integral along the plane normal equals
-        half the kernel normalization: int_{0}^{h} of this quantity over dist is exactly 1/2, which makes
+        Closed form of ``2 * pi * int_{|dist|}^{h} W(r) r dr``. Its own integral along the plane normal equals
+        half the kernel normalization: ``int_{0}^{h}`` of this quantity over dist is exactly 1/2, which makes
         forces weighted by it integrate to a per-unit-area magnitude over a covering layer of particles.
         """
         res = gs.qd_float(0.0)
