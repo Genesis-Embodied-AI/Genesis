@@ -364,7 +364,31 @@ def undefined_inertia():
     collision = ET.SubElement(link, "collision")
     geometry = ET.SubElement(collision, "geometry")
     ET.SubElement(geometry, "sphere", radius="0.03")
-    return urdf
+    return ET.tostring(urdf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
+def implicit_inertial_origin():
+    """Generate a URDF with an authored inertia whose origin defaults to the link frame."""
+    urdf = ET.Element("robot", name="implicit_inertial_origin")
+    link = ET.SubElement(urdf, "link", name="base_link")
+    inertial = ET.SubElement(link, "inertial")
+    ET.SubElement(inertial, "mass", value="2.5")
+    ET.SubElement(
+        inertial,
+        "inertia",
+        ixx="0.11",
+        ixy="0.01",
+        ixz="0.02",
+        iyy="0.22",
+        iyz="0.03",
+        izz="0.30",
+    )
+    visual = ET.SubElement(link, "visual")
+    ET.SubElement(ET.SubElement(visual, "geometry"), "sphere", radius="0.03")
+    collision = ET.SubElement(link, "collision")
+    ET.SubElement(ET.SubElement(collision, "geometry"), "sphere", radius="0.03")
+    return ET.tostring(urdf, encoding="unicode")
 
 
 @pytest.fixture(scope="session")

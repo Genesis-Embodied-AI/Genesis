@@ -20,58 +20,6 @@ from ..utils import (
 
 
 @pytest.mark.required
-def test_urdf_inertial_origin_defaults_to_link_frame():
-    robot = ET.Element("robot", name="implicit_inertial_origin")
-    link = ET.SubElement(robot, "link", name="body")
-    inertial = ET.SubElement(link, "inertial")
-    ET.SubElement(inertial, "mass", value="2.5")
-    ET.SubElement(
-        inertial,
-        "inertia",
-        ixx="0.11",
-        ixy="0.01",
-        ixz="0.02",
-        iyy="0.22",
-        iyz="0.03",
-        izz="0.30",
-    )
-
-    morph = gs.morphs.URDF(
-        file=ET.tostring(robot, encoding="unicode"),
-        merge_fixed_links=False,
-    )
-    l_infos, _, _, _ = uu.parse_urdf(morph, gs.surfaces.Default())
-
-    assert len(l_infos) == 1
-    assert_allclose(l_infos[0]["inertial_pos"], np.zeros(3), tol=gs.EPS)
-    assert_allclose(l_infos[0]["inertial_quat"], gu.identity_quat(), tol=gs.EPS)
-    assert_allclose(l_infos[0]["inertial_mass"], 2.5, tol=gs.EPS)
-    assert_allclose(
-        l_infos[0]["inertial_i"],
-        np.array(
-            [
-                [0.11, 0.01, 0.02],
-                [0.01, 0.22, 0.03],
-                [0.02, 0.03, 0.30],
-            ]
-        ),
-        tol=gs.EPS,
-    )
-
-    robot_without_inertial = ET.Element("robot", name="absent_inertial")
-    ET.SubElement(robot_without_inertial, "link", name="body")
-    morph_without_inertial = gs.morphs.URDF(
-        file=ET.tostring(robot_without_inertial, encoding="unicode"),
-        merge_fixed_links=False,
-    )
-    absent_infos, _, _, _ = uu.parse_urdf(morph_without_inertial, gs.surfaces.Default())
-
-    assert absent_infos[0]["inertial_pos"] is None
-    assert absent_infos[0]["inertial_mass"] is None
-    assert absent_infos[0]["inertial_i"] is None
-
-
-@pytest.mark.required
 @pytest.mark.parametrize("model_name", ["depth_first_tree_mjcf", "depth_first_tree_urdf"])
 def test_depth_first_link_ordering(xml_path, model_name, show_viewer):
     # Links must be parsed depth-first so every subtree - hence every free body's DOFs - occupies a contiguous index
@@ -264,8 +212,7 @@ def test_urdf_parsing(show_viewer, tol):
 
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
-@pytest.mark.parametrize("model_name", ["undefined_inertia"])
-def test_urdf_parsing_undefined_inertia(xml_path, show_viewer):
+def test_urdf_parsing_inertia_defaults(undefined_inertia, implicit_inertial_origin, show_viewer):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.5, 0.5, 0.5),
@@ -275,18 +222,40 @@ def test_urdf_parsing_undefined_inertia(xml_path, show_viewer):
     )
     scene.add_entity(gs.morphs.Plane())
 
-    entity = scene.add_entity(
+    entity_without_inertia = scene.add_entity(
         morph=gs.morphs.URDF(
-            file=xml_path,
-            pos=(0.0, 0.0, 0.1),
-        )
+            file=undefined_inertia,
+            pos=(-0.1, 0.0, 0.1),
+        ),
+    )
+    entity_with_implicit_origin = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=implicit_inertial_origin,
+            pos=(0.1, 0.0, 0.1),
+        ),
     )
 
     scene.build()
 
-    for i in range(30):
+    assert_allclose(entity_with_implicit_origin.base_link.inertial_pos, np.zeros(3), tol=gs.EPS)
+    assert_allclose(entity_with_implicit_origin.base_link.inertial_quat, gu.identity_quat(), tol=gs.EPS)
+    assert_allclose(entity_with_implicit_origin.base_link.inertial_mass, 2.5, tol=gs.EPS)
+    assert_allclose(
+        entity_with_implicit_origin.base_link.inertial_i,
+        np.array(
+            [
+                [0.11, 0.01, 0.02],
+                [0.01, 0.22, 0.03],
+                [0.02, 0.03, 0.30],
+            ]
+        ),
+        tol=gs.EPS,
+    )
+
+    for _ in range(30):
         scene.step()
-    assert_allclose(entity.get_pos(), (0, 0, 0.03), tol=1e-3)
+    assert_allclose(entity_without_inertia.get_pos(), (-0.1, 0.0, 0.03), tol=1e-3)
+    assert_allclose(entity_with_implicit_origin.get_pos(), (0.1, 0.0, 0.03), tol=1e-3)
 
 
 @pytest.mark.slow  # ~200s
