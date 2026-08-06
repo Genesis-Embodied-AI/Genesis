@@ -150,10 +150,10 @@ def test_pipeline_contract(tol):
     #     (physics_imp, measured_only_imp, transform_alpha, hardware_imp) path, so GT-cleanliness, physics
     #     propagation through transform recurrence, the `is_measured` gate on `_apply_transform`, and HW non-
     #     compounding are all verified in one batched pass.
-    #   * `FakeSimpleSensor` instances cover the three return-space ring allocation paths: no-ring (delay=0,
-    #     history=0), history-only ring, and delay+history ring. All four instances of `FakeSimpleSensor` share
-    #     the same per-class step counter, so they all see the same raw value at each step and the expected
-    #     outputs are simple shifts / windows of that sequence.
+    #   * `FakeSimpleSensor` instances cover the return-space ring allocation paths: no-ring (delay=0,
+    #     history=0), history-only ring, delay+history ring, sub-step delay, and jitter declared at build or
+    #     enabled afterwards. Every instance shares the same per-class step counter, so they all see the same
+    #     raw value at each step and the expected outputs are simple shifts / windows of that sequence.
     from dataclasses import dataclass
 
     from genesis.engine.sensors.base_sensor import SimpleSensor, SimpleSensorMetadata
@@ -290,6 +290,7 @@ def test_pipeline_contract(tol):
     s_both = scene.add_sensor(FakeSimpleOptions(history_length=HISTORY_LEN, delay=DELAY_STEPS * DT))
     s_jitter = scene.add_sensor(FakeSimpleOptions(delay=DELAY_STEPS * DT, jitter=DT))
     s_late_jitter = scene.add_sensor(FakeSimpleOptions(delay=DEEP_DELAY_STEPS * DT))
+    s_substep_delay = scene.add_sensor(FakeSimpleOptions(delay=DT / 4))
     scene.build()
     scene.reset()  # zero the build-warmup counter increment so step 1 sees raw = 1.
     # `set_jitter` enables jitter on a sensor built without it, so the ring reservation keys off the delay.
@@ -307,6 +308,7 @@ def test_pipeline_contract(tol):
     both_observed = np.zeros((n_steps, HISTORY_LEN), dtype=np.float32)
     jitter_observed = np.zeros(n_steps, dtype=np.float32)
     late_jitter_observed = np.zeros(n_steps, dtype=np.float32)
+    substep_delay_observed = np.zeros(n_steps, dtype=np.float32)
     for i in range(n_steps):
         scene.step()
         gt_observed[i] = tensor_to_array(sensor.read_ground_truth()).reshape(-1)
@@ -317,6 +319,7 @@ def test_pipeline_contract(tol):
         both_observed[i] = tensor_to_array(s_both.read()).reshape(-1)
         jitter_observed[i] = tensor_to_array(s_jitter.read()).item()
         late_jitter_observed[i] = tensor_to_array(s_late_jitter.read()).item()
+        substep_delay_observed[i] = tensor_to_array(s_substep_delay.read()).item()
 
     # Analytical expectation for the vector sensor, per component. Let raw[k] = k, and (P, M, A, H) be the per-
     # component vectors.
@@ -353,6 +356,8 @@ def test_pipeline_contract(tol):
             expected_history[k - 1, h] = past_step if past_step >= 1 else 0.0
 
     assert_allclose(baseline_observed, expected_baseline, tol=tol)
+    # A delay under half a step rounds to zero slots, so the read is undelayed.
+    assert_allclose(substep_delay_observed, expected_baseline, tol=tol)
     assert_allclose(delay_observed, expected_delay, tol=tol)
     assert_allclose(history_observed, expected_history, tol=tol)
     # The combined delay + history sensor returns the same history as the history-only sensor (delay is bypassed

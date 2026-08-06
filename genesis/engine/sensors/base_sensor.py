@@ -741,8 +741,8 @@ class SimpleSensor(Sensor[OptionsT, SharedSensorContextT, SharedSensorMetadataT,
                 f"Sensor jitter must not exceed the simulation step dt={self._dt}; got "
                 f"jitter={tuple(jitter_np.ravel())}."
             )
-        # The return-space ring reserves the extra slot a jittered read reaches only for sensors declaring a delay at
-        # build time, so jitter stays bounded by the delay here just as it is at option level.
+        # Same bound as `SensorOptions.model_post_init`, enforced here because only a sensor declaring a delay at build
+        # time gets the ring slot a jittered read reaches (see `cls_delay_depth` in sensor_manager.py).
         if np.any(jitter_np > self._options.delay):
             gs.raise_exception(
                 f"Sensor jitter must not exceed the read delay={self._options.delay}; got "
