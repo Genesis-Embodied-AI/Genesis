@@ -2120,7 +2120,7 @@ class RigidSolver(KinematicSolver):
         pos : array_like
             Positions in metres.
         links_idx : None | array_like, optional
-            Scene-level indices of the links to set. If None, every link is set. Defaults to None.
+            Scene-level indices of the links to set. If None, every entity's base link is set. Defaults to None.
         envs_idx : None | array_like, optional
             Indices of the environments to set. If None, every environment is set. Defaults to None.
         relative : bool, optional
@@ -2130,8 +2130,8 @@ class RigidSolver(KinematicSolver):
 
         Note
         ----
-        Defaults to the base links. Forward kinematics recomputes every other link's pose from the joint positions,
-        so setting one of those directly does not persist.
+        Forward kinematics recomputes every other link's pose from the joint positions, so setting one of those
+        directly does not persist.
         """
         if links_idx is None:
             links_idx = self._base_links_idx
@@ -2270,7 +2270,7 @@ class RigidSolver(KinematicSolver):
         quat : array_like
             Quaternions in w-x-y-z order.
         links_idx : None | array_like, optional
-            Scene-level indices of the links to set. If None, every link is set. Defaults to None.
+            Scene-level indices of the links to set. If None, every entity's base link is set. Defaults to None.
         envs_idx : None | array_like, optional
             Indices of the environments to set. If None, every environment is set. Defaults to None.
         relative : bool, optional
@@ -2280,8 +2280,8 @@ class RigidSolver(KinematicSolver):
 
         Note
         ----
-        Defaults to the base links. Forward kinematics recomputes every other link's pose from the joint positions,
-        so setting one of those directly does not persist.
+        Forward kinematics recomputes every other link's pose from the joint positions, so setting one of those
+        directly does not persist.
         """
         if links_idx is None:
             links_idx = self._base_links_idx
@@ -3730,8 +3730,8 @@ class RigidSolver(KinematicSolver):
         `~genesis.options.solvers.RigidOptions`, and raises otherwise.
         Returns
         -------
-        tensor : torch.Tensor, shape ([n_envs,] n_dofs, 3)
-            Bias coefficients, ordered as passed to `set_dofs_act_bias`.
+        bias0, bias1, bias2 : torch.Tensor, shape ([n_envs,] n_dofs)
+            Constant term, coefficient on position, and coefficient on velocity, as passed to `set_dofs_act_bias`.
         """
         if not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
@@ -3897,12 +3897,15 @@ class RigidSolver(KinematicSolver):
         envs_idx : None | array_like, optional
             Indices of the environments to read. If None, every environment is read. Defaults to None.
         decompose : bool, optional
-            Return the L of the mass matrix's LTDL factorization rather than the matrix itself. Defaults to False.
+            Return the L and D factors of the mass matrix's LTDL factorization rather than the matrix itself. Defaults
+            to False.
 
         Returns
         -------
         torch.Tensor, shape ([n_envs,] n_dofs, n_dofs)
-            The mass matrix, or its factor.
+            The mass matrix, when `decompose` is False.
+        mass_mat_L, mass_mat_D_inv : torch.Tensor, shape ([n_envs,] n_dofs, n_dofs) and ([n_envs,] n_dofs)
+            The unit lower-triangular factor and the inverse of the diagonal factor, when `decompose` is True.
         """
         tensor = qd_to_torch(self.mass_mat_L if decompose else self.mass_mat, envs_idx, transpose=True, copy=True)
         if dofs_idx is not None:
@@ -4038,12 +4041,13 @@ class RigidSolver(KinematicSolver):
 
     def get_AABB(self, entities_idx=None, envs_idx=None):
         """
-        Get the axis-aligned bounding box of each entity, over all of its collision geoms.
+        Get the axis-aligned bounding box of each collision geom, or one box per entity over the geoms it owns.
 
         Parameters
         ----------
         entities_idx : None | array_like, optional
-            Scene-level indices of the entities to read. If None, every entity is read. Defaults to None.
+            Scene-level indices of the entities whose geoms are aggregated into a single box each. If None, every
+            collision geom keeps its own box. Defaults to None.
         envs_idx : None | array_like, optional
             Indices of the environments to read. If None, every environment is read. Defaults to None.
 
@@ -4053,7 +4057,7 @@ class RigidSolver(KinematicSolver):
 
         Returns
         -------
-        torch.Tensor, shape ([n_envs,] n_entities, 2, 3)
+        torch.Tensor, shape ([n_envs,] n_geoms, 2, 3), or ([n_envs,] 2, n_entities, 3) when `entities_idx` is given
             Lower and upper corner of each box, in metres.
         """
         from genesis.engine.couplers import LegacyCoupler
