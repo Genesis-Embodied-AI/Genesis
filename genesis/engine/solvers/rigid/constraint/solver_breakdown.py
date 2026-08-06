@@ -710,14 +710,17 @@ def _func_update_gradient(
 
 @qd.func
 def _func_update_search_direction(
-    constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
+    dyn_state: array_class.DynState,
+    constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
 ):
     """Step 6: Check convergence and update search direction"""
     _B = constraint_state.grad.shape[1]
     qd.loop_config(name="update_search_direction", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            solver.func_terminate_or_update_descent_batch(i_b, constraint_state, rigid_info, rigid_config)
+            solver.func_terminate_or_update_descent_batch(i_b, dyn_state, constraint_state, rigid_info, rigid_config)
 
 
 @qd.func
@@ -829,7 +832,7 @@ def _kernel_solve_graph(
             _func_update_gradient(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
         else:
             _func_update_gradient(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
-        _func_update_search_direction(constraint_state, rigid_info, rigid_config)
+        _func_update_search_direction(dyn_state, constraint_state, rigid_info, rigid_config)
         _func_check_early_exit(graph_counter, constraint_state)
 
 

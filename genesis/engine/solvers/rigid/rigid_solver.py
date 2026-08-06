@@ -408,9 +408,14 @@ class RigidSolver(KinematicSolver):
         self.n_fixed_verts_ = max(1, self.n_fixed_verts)
         self.n_candidate_equalities_ = max(1, self.n_equalities + self._options.max_dynamic_constraints)
 
-        # Resolve precision-dependent tolerance default
+        # Resolve precision-dependent tolerance default. The convergence thresholds reference the scene's free-motion
+        # cost (see func_terminate_or_update_descent_batch), which stands an order of magnitude above the bare inertia
+        # for a metre-scale scene under standard gravity, so the ratio drops by as much to leave the thresholds where
+        # they stood. Reproducing the reference behaviour compares against the inertia and keeps its value.
         if self._options.tolerance is None:
             self._options.tolerance = 1e-5 if gs.qd_float == qd.f32 else 1e-8
+            if not self._enable_mujoco_compatibility:
+                self._options.tolerance *= 0.1
 
         super().build()
 

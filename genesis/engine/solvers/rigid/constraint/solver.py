@@ -3452,10 +3452,12 @@ def func_apply_rank1_dense_whole_env(
     n_dofs = constraint_state.nt_H.shape[1]
     is_degenerated = False
     for k in range(n_dofs):
-        if qd.abs(constraint_state.nt_vec[k, i_b]) > EPS:
-            Lkk = constraint_state.nt_H[i_b, k, k]
+        # Both thresholds are relative to the pivot they act on, whose units the working vector shares, so an update
+        # counts as reaching a pivot, and a downdate as cancelling it, by the same fraction at any scene scale.
+        Lkk = constraint_state.nt_H[i_b, k, k]
+        if qd.abs(constraint_state.nt_vec[k, i_b]) > EPS * Lkk:
             tmp = Lkk**2 + sign * constraint_state.nt_vec[k, i_b] ** 2
-            if tmp < EPS:
+            if tmp < EPS * Lkk**2:
                 is_degenerated = True
                 break
             r = qd.sqrt(tmp)
@@ -3493,10 +3495,10 @@ def func_apply_rank1_sparse_whole_env(
     is_degenerated = False
     for k in range(p_min, n_dofs):
         vk = constraint_state.nt_vec[k, i_b]
-        if qd.abs(vk) > EPS:
-            Lkk = constraint_state.nt_H[i_b, k, k]
-            tmp = Lkk * Lkk + sign * vk * vk
-            if tmp < EPS:
+        Lkk = constraint_state.nt_H[i_b, k, k]
+        if qd.abs(vk) > EPS * Lkk:
+            tmp = Lkk**2 + sign * vk**2
+            if tmp < EPS * Lkk**2:
                 is_degenerated = True
                 break
             r = qd.sqrt(tmp)
@@ -3619,9 +3621,9 @@ def func_apply_staged_rank_updates_island(
         for i_u in qd.static(range(rigid_config.hessian_rank_update_batch)):
             if i_u < n_u and not is_degenerated:
                 vk = constraint_state.nt_vec[slot_base + i_u, i_b]
-                if qd.abs(vk) > EPS:
-                    tmp = Lkk * Lkk + signs[i_u] * vk * vk
-                    if tmp < EPS:
+                if qd.abs(vk) > EPS * Lkk:
+                    tmp = Lkk**2 + signs[i_u] * vk**2
+                    if tmp < EPS * Lkk**2:
                         is_degenerated = True
                     else:
                         r = qd.sqrt(tmp)
@@ -3933,7 +3935,7 @@ def func_factor_island_incremental_or_direct(
         for ld in range(n_isl_dofs):
             row_span = gs.qd_float(ld - constraint_state.island.dof_env_start_local[dof_base + ld, i_b])
             sum_span = sum_span + row_span
-            sum_span_sq = sum_span_sq + row_span * row_span
+            sum_span_sq = sum_span_sq + row_span**2
         n_passes = (n_changed + rigid_config.hessian_rank_update_batch - 1) // rigid_config.hessian_rank_update_batch
         need_rebuild = (
             gs.qd_float(n_changed + n_passes + qd.static(2 * rigid_config.rows_per_contact + 1) * cone_passes)
@@ -5982,23 +5984,41 @@ def func_update_gradient(
 
 @qd.func
 def func_terminate_or_update_descent_batch(
-    i_b, constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
+    i_b,
+    dyn_state: array_class.DynState,
+    constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
 ):
     n_dofs = constraint_state.jac.shape[1]
 
-    # Check convergence, i.e. whether the cost function is no longer decreasing or the gradient is flat. The
-    # improvement is the linesearch's shifted cost delta (see quad_gauss in array_class.py), which stays resolvable
-    # in float32 where subtracting successive absolute costs rounds to zero. A negative improvement is float32 noise
-    # around the optimum, so it must not be mistaken for convergence: keep iterating so the solver can recover
-    # instead of locking in a destabilizing step.
-    tol_scaled = (rigid_info.meaninertia[i_b] * qd.max(1, n_dofs)) * rigid_info.tolerance[None]
+    # Convergence is the cost no longer decreasing or the gradient going flat. The improvement is the linesearch's
+    # shifted cost delta (see quad_gauss in array_class.py), resolvable in float32 where successive absolute costs
+    # subtract to zero; a negative one is noise around the optimum and must not pass for convergence, or the solver
+    # locks in a destabilizing step instead of recovering. Each threshold is quoted against the scene's own gradient
+    # and cost scales, read off the free acceleration through the mass matrix; against the bare mass they hold one
+    # scene scale only. Reproducing the reference behaviour keeps the mass, and the tolerance quoted against it.
+    mass_ref = rigid_info.meaninertia[i_b] * qd.max(1, n_dofs)
+    cost_tol = mass_ref * rigid_info.tolerance[None]
+    tol_scaled = cost_tol
+    if qd.static(not rigid_config.enable_mujoco_compatibility):
+        cost_ref = gs.qd_float(0.0)
+        for i_d in range(n_dofs):
+            acc = dyn_state.dofs.acc_smooth[i_d, i_b]
+            cost_ref = cost_ref + rigid_info.mass_mat[i_d, i_d, i_b] * acc**2
+        # A scene left free of force has no free acceleration to measure against while contacts, limits and equalities
+        # still have position error to resolve; a vanishing reference would send both thresholds to zero and run the
+        # solve to its full budget however converged, so the mass alone carries the scale there.
+        if cost_ref > 0.0:
+            cost_tol = cost_ref * rigid_info.tolerance[None]
+            tol_scaled = qd.sqrt(cost_ref * mass_ref) * rigid_info.tolerance[None]
     improvement = constraint_state.ls_improvement[i_b]
     grad_norm = gs.qd_float(0.0)
     for i_d in range(n_dofs):
-        grad_norm = grad_norm + constraint_state.grad[i_d, i_b] * constraint_state.grad[i_d, i_b]
+        grad_norm = grad_norm + constraint_state.grad[i_d, i_b] ** 2
     grad_norm = qd.sqrt(grad_norm)
     is_flat = grad_norm <= tol_scaled
-    is_stalled = improvement > 0.0 and improvement < tol_scaled
+    is_stalled = improvement > 0.0 and improvement < cost_tol
     # Pre-declared: a local first bound inside a qd.static branch does not propagate out of it.
     improved = not (is_flat or is_stalled)
 
@@ -6018,7 +6038,7 @@ def func_terminate_or_update_descent_batch(
         descent = gs.qd_float(0.0)
         for i_d in range(n_dofs):
             descent = descent + constraint_state.grad[i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
-        improved = not (is_flat and 0.5 * descent <= tol_scaled)
+        improved = not (is_flat and 0.5 * descent <= cost_tol)
     constraint_state.improved[i_b] = improved
 
     # Update search direction if necessary
@@ -6047,8 +6067,8 @@ def func_terminate_or_update_descent_batch(
                 y_dot_My = y_dot_My + y * My
                 y_dot_Mgrad = y_dot_Mgrad + y * Mgrad
                 d_dot_grad = d_dot_grad + search * grad
-                d_sqnorm = d_sqnorm + search * search
-                grad_sqnorm = grad_sqnorm + grad * grad
+                d_sqnorm = d_sqnorm + search**2
+                grad_sqnorm = grad_sqnorm + grad**2
 
             # Restart to steepest descent if conjugacy is lost
             cg_beta = gs.qd_float(0.0)
@@ -6467,7 +6487,7 @@ def func_solve_iter(
                     for p in range(n_dofs):
                         row_span = gs.qd_float(p - constraint_state.nt_H_env_start[i_b, p])
                         sum_span = sum_span + row_span
-                        sum_span_sq = sum_span_sq + row_span * row_span
+                        sum_span_sq = sum_span_sq + row_span**2
                     if (
                         gs.qd_float(n_changed + qd.static(2 * rigid_config.rows_per_contact) * cone_passes) * sum_span
                         <= sum_span_sq
@@ -6510,7 +6530,7 @@ def func_solve_iter(
 
         func_update_gradient_batch(i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
 
-        func_terminate_or_update_descent_batch(i_b, constraint_state, rigid_info, rigid_config)
+        func_terminate_or_update_descent_batch(i_b, dyn_state, constraint_state, rigid_info, rigid_config)
 
 
 def _get_static_config(*args, **kwargs):
