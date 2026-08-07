@@ -974,7 +974,7 @@ def test_many_objects_collision(convexify, show_viewer, tol):
     # Total mechanical energy (KE+PE) is a state function, so its per-step rise isolates fictitious energy the
     # solver injected at contacts (a strictly dissipative pile can only lose energy).
     # FIXME: Both paths suffer from fictitious energy injection.
-    assert np.quantile(np.maximum(np.diff(energy_trace), 0.0), 0.9 if convexify else 0.75) < tol
+    assert np.quantile(np.maximum(np.diff(energy_trace), 0.0), 0.95 if convexify else 0.75) < tol
 
     if show_viewer:
         _fig, (ax_v, ax_w, ax_e) = plt.subplots(3, 1, sharex=True, figsize=(8, 8))

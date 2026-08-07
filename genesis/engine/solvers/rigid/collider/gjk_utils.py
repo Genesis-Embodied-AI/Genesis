@@ -60,21 +60,28 @@ def func_triangle_affine_coords(point, tri_v1, tri_v2, tri_v3):
             - tri_v1[i2] * tri_v2[i1]
         )
 
-    # Exclude one of the axes with the largest projection using the minors of the above linear system.
+    # Exclude one of the axes with the largest projection using the minors of the above linear system. The scan is
+    # unrolled so that every read of [ms] carries a compile-time index.
+    # FIXME: On the Metal backend, reading a fixed-size vector at a run-time index inside a dynamic loop returns 0.0
+    # while the comparisons in that same iteration see the correct values. Here that zero became the divisor of the
+    # affine coordinates, so a well-conditioned face yielded an infinite contact position. Restore the dynamic loop
+    # (with a 'break') once the backend indexes such a vector correctly.
     m_max = gs.qd_float(0.0)
     i_x, i_y = gs.qd_int(0), gs.qd_int(0)
     absms = qd.abs(ms)
-    for i in range(3):
-        if absms[i] >= absms[(i + 1) % 3] and absms[i] >= absms[(i + 2) % 3]:
+    is_found = False
+    for i in qd.static(range(3)):
+        i_x_i, i_y_i = (i + 1) % 3, (i + 2) % 3
+        if i == 1:
+            i_x_i, i_y_i = i_y_i, i_x_i
+        if not is_found and absms[i] >= absms[(i + 1) % 3] and absms[i] >= absms[(i + 2) % 3]:
             # Remove the i-th row
+            is_found = True
             m_max = ms[i]
-            i_x, i_y = (i + 1) % 3, (i + 2) % 3
-            if i == 1:
-                i_x, i_y = i_y, i_x
-            break
+            i_x, i_y = i_x_i, i_y_i
 
     cs = gs.qd_vec3(0.0, 0.0, 0.0)
-    for i in range(3):
+    for i in qd.static(range(3)):
         tv1, tv2 = tri_v2, tri_v3
         if i == 1:
             tv1, tv2 = tri_v3, tri_v1
