@@ -284,7 +284,7 @@ def mpr_find_pos(
 
     # Only look into the direction of the portal for consistency with penetration depth computation
     if qd.static(rigid_config.enable_mujoco_compatibility):
-        for i in range(4):
+        for i in qd.static(range(4)):
             i1, i2, i3 = (i % 2) + 1, (i + 2) % 4, 3 * ((i + 1) % 2)
             vec = mpr_state.simplex_support.v[i1, i_b].cross(mpr_state.simplex_support.v[i2, i_b])
             b[i] = vec.dot(mpr_state.simplex_support.v[i3, i_b]) * (1 - 2 * (((i + 1) // 2) % 2))
@@ -296,17 +296,26 @@ def mpr_find_pos(
     if sum_ <= collider_info.mpr.CCD_EPS[None] * qd.abs(b).sum():
         direction = mpr_portal_dir(i_ga, i_gb, i_b, mpr_state)
         b[0] = 0.0
-        for i in range(1, 4):
+        for i in qd.static(range(1, 4)):
             i1, i2 = i % 3 + 1, (i + 1) % 3 + 1
             vec = mpr_state.simplex_support.v[i1, i_b].cross(mpr_state.simplex_support.v[i2, i_b])
             b[i] = vec.dot(direction)
         sum_ = b.sum()
 
+    # A portal spanning no volume along its own direction leaves every weight at zero, and the position is a ratio of
+    # them: weighting the three portal vertices equally puts the contact at their centroid, which lies on the portal
+    # and keeps the ratio finite.
+    if sum_ <= collider_info.mpr.CCD_EPS[None] * qd.abs(b).sum():
+        b[0] = 0.0
+        for i in qd.static(range(1, 4)):
+            b[i] = 1.0
+        sum_ = 3.0
+
     p1 = gs.qd_vec3([0.0, 0.0, 0.0])
     p2 = gs.qd_vec3([0.0, 0.0, 0.0])
-    for i in range(4):
-        p1 += b[i] * mpr_state.simplex_support.v1[i, i_b]
-        p2 += b[i] * mpr_state.simplex_support.v2[i, i_b]
+    for i in qd.static(range(4)):
+        p1 = p1 + b[i] * mpr_state.simplex_support.v1[i, i_b]
+        p2 = p2 + b[i] * mpr_state.simplex_support.v2[i, i_b]
 
     return (0.5 / sum_) * (p1 + p2)
 
@@ -420,12 +429,12 @@ def mpr_find_penetration(
                 penetration = direction.dot(mpr_state.simplex_support.v[1, i_b])
                 normal = -direction
 
-            # Classify the portal reliability by how far the origin's projection extrapolates beyond the portal
+            # Classify what the depth is worth by how far the origin's projection extrapolates beyond the portal
             # triangle. b1,b2,b3 are the (unnormalized) barycentric coordinates of that projection; all >= 0 means the
-            # origin projects inside (exact depth, Thm 4.2 -> VALID). Outside, -min(b)/sum is the extrapolation as a
-            # fraction of the triangle: a small overshoot is a lower-bound estimate (Thm 4.3 -> DEGENERATED), a large
-            # one makes the infinite-plane depth an unreliable extrapolation (-> INVALID, refine with GJK). This is
-            # what actually matters, rather than the triangle's sliverness per se.
+            # origin projects inside, so the depth is exact (Thm 4.2 -> EXACT). Outside, -min(b)/sum is the
+            # extrapolation as a fraction of the triangle: a small overshoot leaves the depth a valid lower bound
+            # (Thm 4.3 -> LOWER_BOUND), a large one makes the infinite-plane depth an unreliable extrapolation
+            # (-> EXTRAPOLATED). This is what actually matters, rather than the triangle's sliverness per se.
             pv1 = mpr_state.simplex_support.v[1, i_b]
             pv2 = mpr_state.simplex_support.v[2, i_b]
             pv3 = mpr_state.simplex_support.v[3, i_b]
@@ -436,13 +445,17 @@ def mpr_find_penetration(
             babs = qd.abs(b1) + qd.abs(b2) + qd.abs(b3)
             min_b = qd.min(b1, qd.min(b2, b3))
             if not reached:
-                mpr_state.portal_status[i_b] = PORTAL_STATUS.INVALID  # unconverged (hit the iteration cap)
+                mpr_state.portal_status[i_b] = PORTAL_STATUS.UNCONVERGED
+            elif bsum <= collider_info.mpr.CCD_EPS[None] * babs:
+                # A portal spanning no area leaves every coordinate at zero, which satisfies min_b >= 0: the
+                # degeneracy test must come first or a portal whose depth means nothing reads as exact.
+                mpr_state.portal_status[i_b] = PORTAL_STATUS.EXTRAPOLATED
             elif min_b >= 0.0:
-                mpr_state.portal_status[i_b] = PORTAL_STATUS.VALID  # origin projects inside -> exact depth (Thm 4.2)
-            elif bsum > collider_info.mpr.CCD_EPS[None] * babs and (-min_b) <= CCD_EXTRAPOLATION_TOL * bsum:
-                mpr_state.portal_status[i_b] = PORTAL_STATUS.DEGENERATED  # small overshoot -> lower bound (Thm 4.3)
+                mpr_state.portal_status[i_b] = PORTAL_STATUS.EXACT
+            elif (-min_b) <= CCD_EXTRAPOLATION_TOL * bsum:
+                mpr_state.portal_status[i_b] = PORTAL_STATUS.LOWER_BOUND
             else:
-                mpr_state.portal_status[i_b] = PORTAL_STATUS.INVALID  # extrapolates too far / degenerate -> unreliable
+                mpr_state.portal_status[i_b] = PORTAL_STATUS.EXTRAPOLATED
 
             is_col = True
             pos = mpr_find_pos(i_ga, i_gb, i_b, mpr_state, collider_info, rigid_config)
@@ -793,7 +806,7 @@ def func_mpr_contact_from_centers(
 
     # Default for the degenerate touch/segment paths (and refine failure): a contact with no reusable refined portal.
     # The refined-portal path classifies the portal precisely inside mpr_find_penetration.
-    mpr_state.portal_status[i_b] = PORTAL_STATUS.DEGENERATED
+    mpr_state.portal_status[i_b] = PORTAL_STATUS.NONE
 
     if res == 1:
         is_col, normal, penetration, pos = mpr_find_penetr_touch(i_ga, i_gb, i_b, mpr_state)

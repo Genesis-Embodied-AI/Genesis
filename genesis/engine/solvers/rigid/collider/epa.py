@@ -1308,6 +1308,10 @@ def func_plane_normal(v1, v2, v3, collider_info: array_class.ColliderInfo):
     d31 = v3 - v1
     d32 = v3 - v2
 
+    # The three cross products are one quantity up to sign, so they differ only in rounding, and a sliver triangle
+    # cancels catastrophically in some of the orderings while resolving in the others. Every ordering is therefore
+    # tried before reporting the triangle degenerate: the whole point of the sequence is that a vanishing cross
+    # product says nothing about the ones not yet computed. Reporting it instead discards the contact entirely.
     for i in qd.static(range(3)):
         if not finished:
             n = gs.qd_vec3(0.0, 0.0, 0.0)
@@ -1320,12 +1324,7 @@ def func_plane_normal(v1, v2, v3, collider_info: array_class.ColliderInfo):
             else:
                 # Normal = (v1 - v3) x (v2 - v3)
                 n = d31.cross(d32)
-            nn = n.norm()
-            if nn == 0:
-                # Zero normal, cannot project.
-                flag = RETURN_CODE.FAIL
-                finished = True
-            elif nn > collider_info.gjk.FLOAT_MIN[None]:
+            if n.norm() > collider_info.gjk.FLOAT_MIN[None]:
                 normal = n.normalized()
                 flag = RETURN_CODE.SUCCESS
                 finished = True

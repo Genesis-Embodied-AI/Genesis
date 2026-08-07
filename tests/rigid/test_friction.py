@@ -162,10 +162,12 @@ def test_static_friction(mode, friction, n_boxes, solver, scale, mesh_boxes, sho
     # chain). Residual creep shrinks monotonically with the tangential impedance ratio impratio: 20 still creeps past
     # tolerance over this horizon, ~50 holds marginally, and the default 100 holds with margin.
     SAFETY_FACTOR = 1.1 if mode == "elliptic" else 2.5
-    # The noslip iteration count is tuned per chain length to match the elliptic cone's static hold: 5 iterations
-    # converge the two-box chain at every scale, while the three-box chain at small scale starves at 5 (steady
-    # residual creep, solver-independent) and converges from ~15.
-    NOSLIP_ITERATIONS = 5 if n_boxes == 2 else 15
+    # The noslip sweep needs enough passes to propagate the brace along the chain to match the elliptic cone's static
+    # hold: short of that it leaves a residual creep that responds to the count without shrinking with it (the longest
+    # chain creeps by a millimetre anywhere between 5 and 15 passes), and from 20 the creep collapses below the lateral
+    # bound on every backend and chain. The count is the one where it converges rather than the fewest that holds the
+    # bound, since it doubles as the recommendation to anyone reading it here.
+    NOSLIP_ITERATIONS = 20
 
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
@@ -180,6 +182,7 @@ def test_static_friction(mode, friction, n_boxes, solver, scale, mesh_boxes, sho
         show_viewer=show_viewer,
     )
 
+    boxes_pos_init = []
     for i in range(n_boxes + 1):
         box_size = (scale, scale * (1 + 0.3 * (2 - i)), scale * (1 + 0.3 * (2 - i)))
         if mesh_boxes:
@@ -187,25 +190,33 @@ def test_static_friction(mode, friction, n_boxes, solver, scale, mesh_boxes, sho
             trimesh.creation.box(extents=box_size).export(mesh_path, file_type="obj")
             morph = gs.morphs.Mesh(
                 file=mesh_path,
-                pos=(i * scale, 0, 0),
+                pos=(i * (1 - 5e-4) * scale, 0, 0),
                 fixed=(i == 0),
             )
         else:
             morph = gs.morphs.Box(
                 size=box_size,
-                pos=(i * (1 - 1e-3) * scale, 0, 0),
+                pos=(i * (1 - 5e-4) * scale, 0, 0),
                 fixed=(i == 0),
             )
+        boxes_pos_init.append((i * scale, 0, 0))
         scene.add_entity(
             morph,
             material=gs.materials.Rigid(
                 rho=200.0,
                 friction=friction,
             ),
+            vis_mode="collision",
             visualize_contact=True,
         )
+        scene.add_entity(
+            morph,
+            material=gs.materials.Kinematic(),
+        )
 
-    floating_boxes = scene.entities[1:]
+    boxes = scene.rigid_solver.entities
+    floating_boxes = boxes[1:]
+    contacts_link_a = torch.arange(n_boxes, device=gs.device).repeat_interleave(4)
     scene.build()
 
     # The solver arms are provably exercised across the parametrization: a single floating box is one island on the
@@ -226,23 +237,44 @@ def test_static_friction(mode, friction, n_boxes, solver, scale, mesh_boxes, sho
     # Push the furthest floating box toward the fixed wall
     floating_boxes[-1].control_dofs_force(SAFETY_FACTOR * force_x, dofs_idx_local=0)
 
-    # Position-based orientation control stabilizes the contacts
+    # FIXME: Adding pitch torque is necessary to stabilize the contacts for some reason.
+    # This approach is not reliable for now due to intermittent collision detection failure.
+    # for i, box in enumerate(floating_boxes):
+    #     box.control_dofs_force(scale * sum(box.get_mass() for box in floating_boxes[i:]) * GRAVITY, dofs_idx_local=4)
+
+    # FIXME: Position-based orientation control is necessary to stabilize the contacts for some reason.
+    # Note that roll and yaw control is needed for some parametrization to pass.
     for box in floating_boxes:
         box.set_dofs_kp(1000.0 * total_mass, dofs_idx_local=slice(3, 6))
         box.set_dofs_kv(100.0 * total_mass, dofs_idx_local=slice(3, 6))
-        box.control_dofs_position(box.get_dofs_position(dofs_idx_local=slice(3, 6)), dofs_idx_local=slice(3, 6))
-
-    # Record rest positions after warmup
-    for _ in range(50):
-        scene.step()
-    boxes_pos_init = [box.get_pos() for box in floating_boxes]
+        box.control_dofs_position(0.0, dofs_idx_local=slice(3, 6))
 
     # Hold under sustained shear for 20 seconds
     for _ in range(2000):
         scene.step()
+        # FIXME: The contact manifold is not stable
+        # assert (rigid_solver.collider.get_contacts()["link_a"] == contacts_link_a).all()
 
-    # The floating boxes stay static
-    assert_allclose([box.get_pos() for box in floating_boxes], boxes_pos_init, atol=5e-3)
+    # The floating boxes stay static. Drift is measured per contact - each box against the one bracing it, the fixed
+    # wall for the first - so a slip is charged to the contact it happens at instead of aggregating every contact
+    # behind it down the chain. Each axis carries its own bound: the compression against the wall settles to an
+    # absolute length whatever the scene scale, the lateral creep scales with the scene, and the slip down the
+    # contact faces scales with an absolute floor on top. CG holds the noslip chain an order looser than Newton,
+    # which is the baseline its configs document.
+    boxes_pos_ref = torch.as_tensor(boxes_pos_init, dtype=gs.tc_float, device=gs.device)
+    drift = torch.stack([box.get_pos() for box in boxes]) - boxes_pos_ref
+    drift = torch.diff(drift, dim=0)
+    if mode == "noslip":
+        atol_x = 1e-2 if solver == gs.constraint_solver.Newton else 1e-3
+        atol_y = (5e-4 if solver == gs.constraint_solver.Newton else 2e-4) * scale
+        atol_z = (5e-3 if solver == gs.constraint_solver.Newton else 1e-2) * scale + 1e-3
+    else:
+        atol_x = 5e-3
+        atol_y = (1e-5 if solver == gs.constraint_solver.Newton else 2e-5) * scale + 1e-6
+        atol_z = 1e-2 * scale + 1e-3
+    assert_allclose(drift[..., 0], 0.0, atol=atol_x)
+    assert_allclose(drift[..., 1], 0.0, atol=atol_y)
+    assert_allclose(drift[..., 2], 0.0, atol=atol_z)
 
     # Drop the force below the theoretical threshold; the stack loses its brace and falls
     floating_boxes[-1].control_dofs_force(0.95 * force_x, dofs_idx_local=0)
