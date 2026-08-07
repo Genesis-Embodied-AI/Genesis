@@ -946,7 +946,7 @@ def test_align_mesh(show_viewer, tol):
     assert_allclose(mango.get_dofs_velocity(dofs_idx_local=(3, 4, 5)), 0, tol=0.05)
     assert_allclose(mango.get_dofs_velocity(), 0, tol=0.05)
     min_z = mango.get_AABB()[:, 0, 2]
-    assert ((-0.005 < min_z) & (min_z < 0.0)).all()
+    assert ((-1e-3 < min_z) & (min_z < 0.0)).all()
 
 
 @pytest.mark.slow  # ~200s

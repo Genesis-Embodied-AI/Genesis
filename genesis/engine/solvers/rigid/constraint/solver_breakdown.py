@@ -585,7 +585,9 @@ def _func_build_changed_and_decide_hessian_mode(
 
 
 @qd.func
-def _func_patch_hessian_delta(constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo):
+def _func_patch_hessian_delta(
+    constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
+):
     """Incrementally update H with delta contributions from changed constraints.
 
     Adds or subtracts each changed constraint's J^T D J contribution depending on whether it became active or inactive.
@@ -630,23 +632,29 @@ def _func_patch_hessian_delta(constraint_state: array_class.ConstraintState, rig
                             delta = delta - D * Ji * Jj
 
             if delta != 0.0:
+                # The maintained H lives in scaled coordinates; the delta rides the stored scale (see nt_jacobi in
+                # array_class.py).
+                if qd.static(rigid_config.enable_jacobi_equilibration):
+                    delta = delta * constraint_state.nt_jacobi[i_d1, i_b] * constraint_state.nt_jacobi[i_d2, i_b]
                 constraint_state.nt_H[i_b, i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2] + delta
             elem = elem + BLOCK_DIM
 
 
 @qd.func
-def _func_newton_only_nt_hessian(constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo):
+def _func_newton_only_nt_hessian(
+    constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
+):
     """Full tiled Hessian rebuild for envs with use_full_hessian == 1 (skips others)."""
-    solver.func_hessian_direct_tiled(constraint_state, rigid_info, check_full_hessian=True)
+    solver.func_hessian_direct_tiled(constraint_state, rigid_info, rigid_config, check_full_hessian=True)
 
 
 @qd.func
 def _func_wrap_cone_hessian(
-    constraint_state: array_class.ConstraintState, rigid_config: qd.template(), scale: qd.template()
+    constraint_state: array_class.ConstraintState, rigid_config: qd.template(), is_removal: qd.template()
 ):
-    """Add (scale=+1) or remove (scale=-1) the coupled elliptic-cone Hessian block across all improved envs.
+    """Add (is_removal=False) or remove (is_removal=True) the coupled elliptic-cone Hessian block across all improved envs.
 
-    Bracketing a non-destructive factor+solve (whole-env fused or per-island tiled) with +1 then -1 lets the cone ride
+    Bracketing a non-destructive factor+solve (whole-env fused or per-island tiled) with add then remove lets the cone ride
     the incrementally maintained nt_H without a per-iteration full rebuild: the current cone block is present while
     the factor reads nt_H, then removed so the next iteration patches a cone-free Hessian. A no-op unless the elliptic
     cone is active.
@@ -656,7 +664,13 @@ def _func_wrap_cone_hessian(
         qd.loop_config(name="wrap_cone_hessian", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
         for i_b in range(_B):
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-                solver.func_add_cone_hessian_block(i_b, constraint_state, rigid_config, scale)
+                solver.func_add_cone_hessian_block(
+                    i_b,
+                    constraint_state,
+                    rigid_config,
+                    is_removal=is_removal,
+                    scale_by_jacobi=rigid_config.enable_jacobi_equilibration,
+                )
 
 
 @qd.func
@@ -668,7 +682,7 @@ def _func_newton_only_nt_hessian_and_cholesky(
     Matches origin/main behavior: H is rebuilt from scratch every iteration, then Cholesky overwrites nt_H with L
     in-place.  H patching is not used because the subsequent Cholesky would destroy H anyway.
     """
-    solver.func_hessian_direct_tiled(constraint_state, rigid_info)
+    solver.func_hessian_direct_tiled(constraint_state, rigid_info, rigid_config)
     # func_hessian_direct_tiled assembles M + J^T D J only; add the coupled elliptic-cone block as an additive
     # post-pass before the factor reads nt_H, matching the monolith tiled path (this path rebuilds every improved env).
     if qd.static(rigid_config.enable_elliptic_friction):
@@ -678,7 +692,9 @@ def _func_newton_only_nt_hessian_and_cholesky(
         )
         for i_b in range(_B_envs):
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-                solver.func_add_cone_hessian_block(i_b, constraint_state, rigid_config)
+                solver.func_add_cone_hessian_block(
+                    i_b, constraint_state, rigid_config, scale_by_jacobi=rigid_config.enable_jacobi_equilibration
+                )
     if qd.static(rigid_config.enable_tiled_cholesky_hessian):
         solver.func_cholesky_factor_direct_tiled(constraint_state, rigid_info, rigid_config)
     else:
@@ -710,14 +726,17 @@ def _func_update_gradient(
 
 @qd.func
 def _func_update_search_direction(
-    constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
+    dyn_state: array_class.DynState,
+    constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
 ):
     """Step 6: Check convergence and update search direction"""
     _B = constraint_state.grad.shape[1]
     qd.loop_config(name="update_search_direction", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            solver.func_terminate_or_update_descent_batch(i_b, constraint_state, rigid_info, rigid_config)
+            solver.func_terminate_or_update_descent_batch(i_b, dyn_state, constraint_state, rigid_info, rigid_config)
 
 
 @qd.func
@@ -768,15 +787,15 @@ def _kernel_solve_graph(
             # then a tiled factor + solve reading the maintained nt_H. Each changed constraint's J^T D J lands inside
             # its island's diagonal block (no constraint couples DOFs across islands), so the patch is island-correct.
             _func_build_changed_and_decide_hessian_mode(constraint_state, rigid_config)
-            _func_newton_only_nt_hessian(constraint_state, rigid_info)
-            _func_patch_hessian_delta(constraint_state, rigid_info)
+            _func_newton_only_nt_hessian(constraint_state, rigid_info, rigid_config)
+            _func_patch_hessian_delta(constraint_state, rigid_info, rigid_config)
             solver.func_update_gradient_no_solve(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
             if qd.static(rigid_config.enable_per_island_solve):
                 # Hibernation needs the per-island grid to skip asleep islands, so factor + solve each awake island in
                 # its own tile over the (env, island) grid. The per-island tile stages nt_H non-destructively, so the
                 # elliptic cone rides the same add/factor+solve/remove bracket as the whole-env fused path below and
                 # the incremental patch keeps maintaining the cone-free Hessian.
-                _func_wrap_cone_hessian(constraint_state, rigid_config, 1.0)
+                _func_wrap_cone_hessian(constraint_state, rigid_config, is_removal=False)
                 solver.func_island_tiled_factor_solve_all(
                     constraint_state,
                     dyn_info,
@@ -784,7 +803,7 @@ def _kernel_solve_graph(
                     rigid_config,
                     qd.simt.Tile32x32 if qd.static(rigid_config.cholesky_tile_size == 32) else qd.simt.Tile16x16,
                 )
-                _func_wrap_cone_hessian(constraint_state, rigid_config, -1.0)
+                _func_wrap_cone_hessian(constraint_state, rigid_config, is_removal=True)
             else:
                 # Islands OFF, or islands ON without hibernation: the whole-env Hessian is block-diagonal by island, so
                 # its Cholesky is itself block-diagonal - the whole-env fused factor+solve (L in shared memory) yields
@@ -793,9 +812,9 @@ def _kernel_solve_graph(
                 # grid only pays off when the whole-env Hessian does not fit shared (the cooperative branch below).
                 # For the elliptic cone, add its coupled block to the maintained nt_H, factor+solve, then remove it, so
                 # the incremental patch keeps working on the cone-free Hessian (no per-iteration rebuild).
-                _func_wrap_cone_hessian(constraint_state, rigid_config, 1.0)
+                _func_wrap_cone_hessian(constraint_state, rigid_config, is_removal=False)
                 solver.func_cholesky_and_solve_fused_tiled(constraint_state, rigid_info, rigid_config)
-                _func_wrap_cone_hessian(constraint_state, rigid_config, -1.0)
+                _func_wrap_cone_hessian(constraint_state, rigid_config, is_removal=True)
         elif qd.static(
             rigid_config.solver_type == gs.constraint_solver.Newton
             and rigid_config.enable_per_island_solve
@@ -829,7 +848,7 @@ def _kernel_solve_graph(
             _func_update_gradient(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
         else:
             _func_update_gradient(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
-        _func_update_search_direction(constraint_state, rigid_info, rigid_config)
+        _func_update_search_direction(dyn_state, constraint_state, rigid_info, rigid_config)
         _func_check_early_exit(graph_counter, constraint_state)
 
 

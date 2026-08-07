@@ -553,6 +553,19 @@ def func_rotate_frame(
     return new_pos, new_quat
 
 
+@qd.func
+def func_contact_order_key(pos: qd.types.vector(3)):
+    """Order a contact position along one generic direction, as a single scalar.
+
+    Comparing components in turn tests each for equality, and in a frame attached to the geometry the contacts of one
+    patch share components exactly - a box face puts two corners at the same local x - so the ordering follows the
+    rounding of a mathematically tied quantity. Projecting on a direction no face of a box or regular prism is parallel
+    to separates the points of a patch by a margin of their own spacing. The weights are successive powers of the
+    golden ratio, as far from any rational direction as a pair of weights gets.
+    """
+    return pos[0] + 1.618033988749895 * pos[1] + 2.618033988749895 * pos[2]
+
+
 @qd.kernel(fastcache=True)
 def func_clamp_prune_contacts(
     collider_state: array_class.ColliderState,
