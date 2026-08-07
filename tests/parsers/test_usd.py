@@ -137,7 +137,9 @@ def test_bake(usd_file, tmp_path):
 def test_massapi_invalid_defaults_mjcf_vs_usd(asset_tmp_path, scale):
     # USD Physics MassAPI defines attributes with sentinel default values - centerOfMass (-inf, -inf, -inf),
     # principalAxes (0, 0, 0, 0), diagonalInertia (0, 0, 0), mass (0) - that must be treated as unset and
-    # recomputed from geometry, matching an MJCF scene without inertial element.
+    # recomputed from geometry, matching an MJCF scene without inertial element. Leaving only 'centerOfMass' at
+    # its sentinel keeps the authored mass and inertia and places the center of mass at the link frame, matching an
+    # MJCF body whose inertial frame is the body origin.
     mjcf = ET.Element("mujoco", model="massapi_test")
 
     worldbody = ET.SubElement(mjcf, "worldbody")
@@ -148,6 +150,11 @@ def test_massapi_invalid_defaults_mjcf_vs_usd(asset_tmp_path, scale):
     box = ET.SubElement(worldbody, "body", name="/worldbody/test_box", pos="0. 0. 0.3")
     ET.SubElement(box, "geom", type="box", size="0.2 0.2 0.2", pos="0. 0. 0.")
     ET.SubElement(box, "joint", name="/worldbody/test_box_joint", type="free")
+
+    inertia_box = ET.SubElement(worldbody, "body", name="/worldbody/inertia_box", pos="0.6 0. 0.3")
+    ET.SubElement(inertia_box, "inertial", pos="0. 0. 0.", mass="64.", diaginertia="1.5 1.7 2.0")
+    ET.SubElement(inertia_box, "geom", type="box", size="0.2 0.2 0.2", pos="0. 0. 0.")
+    ET.SubElement(inertia_box, "joint", name="/worldbody/inertia_box_joint", type="free")
 
     xml_tree = ET.ElementTree(mjcf)
     xml_file = str(asset_tmp_path / "massapi_test.xml")
@@ -182,7 +189,23 @@ def test_massapi_invalid_defaults_mjcf_vs_usd(asset_tmp_path, scale):
     box_rigid = UsdPhysics.RigidBodyAPI.Apply(box.GetPrim())
     box_rigid.GetKinematicEnabledAttr().Set(False)
 
-    mass_api = UsdPhysics.MassAPI.Apply(box.GetPrim())
+    UsdPhysics.MassAPI.Apply(box.GetPrim())
+
+    inertia_box = UsdGeom.Cube.Define(stage, "/worldbody/inertia_box")
+    inertia_box.AddTranslateOp().Set(Gf.Vec3d(0.6, 0.0, 0.3))
+    inertia_box.GetSizeAttr().Set(0.4)  # 0.2 half-extent * 2
+
+    inertia_box_joint = UsdPhysics.Joint.Define(stage, "/worldbody/inertia_box_joint")
+    inertia_box_joint.CreateBody0Rel().SetTargets([root_prim.GetPath()])
+    inertia_box_joint.CreateBody1Rel().SetTargets([inertia_box.GetPrim().GetPath()])
+    inertia_box_joint.CreateLocalPos0Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
+    inertia_box_joint.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
+
+    UsdPhysics.RigidBodyAPI.Apply(inertia_box.GetPrim()).GetKinematicEnabledAttr().Set(False)
+
+    inertia_mass_api = UsdPhysics.MassAPI.Apply(inertia_box.GetPrim())
+    inertia_mass_api.CreateMassAttr(64.0)
+    inertia_mass_api.CreateDiagonalInertiaAttr(Gf.Vec3f(1.5, 1.7, 2.0))
 
     stage.Save()
 

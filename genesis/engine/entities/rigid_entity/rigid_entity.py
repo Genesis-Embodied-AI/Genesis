@@ -626,8 +626,10 @@ class KinematicEntity(Entity):
         )
 
     def _parse_scene(self, morph, surface):
-        # Keep track of whether parsed inertia can be considered valid
-        is_inertia_invalid = True
+        # Whether the parsed inverse weight has been invalidated, either because the inertia it derives from was
+        # replaced, or because it was never trustworthy in the first place. It is applied once, after every reason
+        # to invalidate has been collected.
+        is_inertia_invalid = False
 
         # Mujoco's unified MJCF+URDF parser is not good enough for now to be used for loading both MJCF and URDF files.
         # First, it would happen when loading visual meshes having supported format (i.e. Collada files '.dae').
@@ -656,7 +658,7 @@ class KinematicEntity(Entity):
                                 for key, value in l_info_gs.items():
                                     if value is None:
                                         l_info_mj[key] = None
-                                        is_inertia_invalid = False
+                                        is_inertia_invalid = True
                                 break
                 l_infos = l_infos_mj
 
@@ -674,7 +676,7 @@ class KinematicEntity(Entity):
                     for link_j_infos in links_j_infos:
                         for j_info in link_j_infos:
                             if j_info["type"] not in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED):
-                                is_inertia_invalid = False
+                                is_inertia_invalid = True
                                 break
 
                 # Take into account 'world' body if it was added automatically for our legacy URDF parser
@@ -829,7 +831,6 @@ class KinematicEntity(Entity):
             if parent_idx >= 0 and all(j_info["type"] == gs.JOINT_TYPE.FIXED for j_info in links_j_infos[i]):
                 has_links_subtree_mass[parent_idx] |= has_links_subtree_mass[i]
 
-        is_inertia_invalid = False
         for i, (l_info, link_g_infos, link_j_infos, has_link_subtree_mass) in enumerate(
             zip(l_infos, links_g_infos, links_j_infos, has_links_subtree_mass)
         ):

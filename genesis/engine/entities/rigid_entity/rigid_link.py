@@ -195,9 +195,10 @@ def finalize_inertial(
     """Resolve a link's local inertial from its parsed explicit values and a geometry-derived estimate (hint).
 
     Explicit values are used when given; otherwise the geometry estimate is used, and an explicit mass rescales a
-    geometry-derived inertia. The hint comes from the load-time inertial info ('compose_inertial_from_g_infos' over
-    the parsed geom infos, feeding both 'RigidLink._build' and the align anchor) - the single resolution path keeps
-    the rigid dynamics inertia and the align anchor in lockstep.
+    geometry-derived inertia. An omitted center of mass defaults to the link-frame origin when an explicit inertia
+    matrix is provided. The hint comes from the load-time inertial info ('compose_inertial_from_g_infos' over the
+    parsed geom infos, feeding both 'RigidLink._build' and the align anchor) - the single resolution path keeps the
+    rigid dynamics inertia and the align anchor in lockstep.
 
     With ``clamp_min_mass`` the resolved mass is floored at ``gs.EPS`` so a geometry-less moving link stays
     non-singular in the dynamics; the align stash passes ``False`` so a genuinely massless link keeps its ``0.0``
@@ -209,8 +210,11 @@ def finalize_inertial(
         hint_mass = mass
     if mass is None:
         mass = hint_mass
-    if com is None or inertia is None:
+    if inertia is None:
         com, inertia, quat = hint_com, hint_inertia, gu.identity_quat()
+    elif com is None:
+        # Falling back to the geometry estimate here would discard an otherwise complete authored inertia.
+        com = gu.zero_pos()
     if quat is None:
         quat = gu.identity_quat()
     return LinkInertial(
@@ -783,12 +787,17 @@ class RigidLink(KinematicLink):
 
         # Make sure that provided spatial inertia is consistent with the estimate from the geometries if not fixed
         if (self._inertial_mass or hint_mass) > MASS_EPS and hint_mass > gs.EPS:
-            if self._inertial_pos is not None:
+            # An omitted center of mass is resolved to the link frame origin whenever the inertia tensor is authored
+            # (see 'finalize_inertial'), so it must undergo the same consistency check as an authored one.
+            inertial_pos = self._inertial_pos
+            if inertial_pos is None and self._inertial_i is not None:
+                inertial_pos = gu.zero_pos()
+            if inertial_pos is not None:
                 tol = (aabb_max - aabb_min) * AABB_EPS + AABB_EPS
-                if not ((aabb_min - tol < self._inertial_pos) & (self._inertial_pos < aabb_max + tol)).all():
+                if not ((aabb_min - tol < inertial_pos) & (inertial_pos < aabb_max + tol)).all():
                     com_str: list[str] = []
                     aabb_str: list[str] = []
-                    for name, pos, axis_min, axis_max in zip(("x", "y", "z"), self._inertial_pos, aabb_min, aabb_max):
+                    for name, pos, axis_min, axis_max in zip(("x", "y", "z"), inertial_pos, aabb_min, aabb_max):
                         com_str.append(f"{name}={pos:0.3f}")
                         aabb_str.append(f"{name}=({axis_min:0.3f}, {axis_max:0.3f})")
                     gs.logger.warning(
@@ -821,7 +830,7 @@ class RigidLink(KinematicLink):
                         "from geometry [" + inertias_str[1] + "]."
                     )
 
-        if self._inertial_mass is None or self._inertial_pos is None or self._inertial_i is None:
+        if self._inertial_mass is None or self._inertial_i is None:
             if not self._is_fixed and self._vgeoms and not self._geoms:
                 gs.logger.info(
                     f"Mass is not specified and collision geoms can not be found for link '{self.name}'. "
@@ -830,10 +839,6 @@ class RigidLink(KinematicLink):
             if self._inertial_pos is not None and self._inertial_i is None:
                 gs.logger.warning(
                     f"Ignoring center of mass of link '{self.name}' because inertia matrix is not specified."
-                )
-            elif self._inertial_pos is None and self._inertial_i is not None:
-                gs.logger.warning(
-                    f"Ignoring inertia matrix of link '{self.name}' because center of mass is not specified."
                 )
             self._invweight = None
 
@@ -879,34 +884,18 @@ class RigidLink(KinematicLink):
                     )
                     continue
 
-                # For URDF/MJCF variants, use parsed inertial from the variant file
-                # (index v-1 because variant 0 is the primary)
+                # Resolve the inertial parsed from the variant file (index v-1 because variant 0 is the primary)
+                # against this variant's own geometry estimate. Going through the shared resolution path is what makes
+                # a variant behave like the same asset loaded on its own, whatever it leaves unspecified. A
+                # Primitive/Mesh variant has no parsed inertial, and 'recompute_inertia' discards it on purpose, so
+                # both fall back to the estimate alone.
+                v_mass, v_pos, v_quat, v_i = None, None, None, None
                 if self._variant_scene_inertial is not None:
                     morph_v, v_mass, v_pos, v_quat, v_i = self._variant_scene_inertial[v - 1]
-                    if (
-                        not (morph_v.recompute_inertia and not self._is_fixed)
-                        and v_mass is not None
-                        and v_pos is not None
-                        and v_i is not None
-                    ):
-                        self._variant_inertial.append(
-                            LinkInertial(
-                                v_mass,
-                                np.asarray(v_pos, dtype=gs.np_float),
-                                np.asarray(v_quat, dtype=gs.np_float) if v_quat is not None else gu.identity_quat(),
-                                np.asarray(v_i, dtype=gs.np_float),
-                            )
-                        )
-                        continue
-
-                # Compute from geometry (Primitive/Mesh variants, or recompute_inertia), using this variant's
-                # load-time inertial estimate.
-                mass, com, inertia = self.entity._links_inertial_info[self.idx - self.entity._link_start][v].hint
-                if mass <= 0.0:
-                    mass = gs.EPS
-                    com = np.zeros(3, dtype=gs.np_float)
-                    inertia = np.zeros((3, 3), dtype=gs.np_float)
-                self._variant_inertial.append(LinkInertial(mass, com, gu.identity_quat(), inertia))
+                    if morph_v.recompute_inertia and not self._is_fixed:
+                        v_mass, v_pos, v_quat, v_i = None, None, None, None
+                hint = self.entity._links_inertial_info[self.idx - self.entity._link_start][v].hint
+                self._variant_inertial.append(finalize_inertial(v_mass, v_pos, v_quat, v_i, *hint))
 
     def _add_geom(
         self,
