@@ -275,6 +275,38 @@ def test_drone_propellers_force_substep_consistency(show_viewer, tol):
 
 
 @pytest.mark.required
+def test_drone_differential_thrust_rolls_body(show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.5, 0.0, 1.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+        ),
+        show_viewer=show_viewer,
+    )
+    plane = scene.add_entity(gs.morphs.Plane())
+    drone = scene.add_entity(
+        morph=gs.morphs.Drone(
+            file="urdf/drones/cf2x.urdf",
+            pos=(0, 0, 0.5),
+        ),
+    )
+    scene.build()
+
+    # A differential RPM pattern with zero net yaw must roll the body: the propeller thrust acts at the propeller
+    # positions, offset from the drone's center of mass.
+    base_rpm = 14468.0
+    for _ in range(40):
+        drone.set_propellers_rpm([1.05 * base_rpm, 1.025 * base_rpm, base_rpm, 1.025 * base_rpm])
+        scene.step()
+
+    ang_vel = drone.get_dofs_velocity()
+    assert ang_vel[3].abs() > 1.0
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_drone_advanced(show_viewer):
     scene = gs.Scene(

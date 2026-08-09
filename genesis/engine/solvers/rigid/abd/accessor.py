@@ -1128,7 +1128,8 @@ def kernel_get_dofs_control_force(
 
 @qd.kernel(fastcache=True)
 def kernel_set_drone_rpm(
-    propellers_link_idx: qd.types.ndarray(),
+    base_link_idx: qd.i32,
+    propellers_pos: qd.types.ndarray(),
     propellers_rpm: qd.types.ndarray(),
     propellers_spin: qd.types.ndarray(),
     KF: qd.float32,
@@ -1142,14 +1143,14 @@ def kernel_set_drone_rpm(
 
     This method should only be called by drone entities.
     """
-    n_propellers = propellers_link_idx.shape[0]
+    n_propellers = propellers_pos.shape[0]
     _B = propellers_rpm.shape[0]
 
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b in range(_B):
+        force_total = qd.Vector.zero(gs.qd_float, 3)
+        torque_total = qd.Vector.zero(gs.qd_float, 3)
         for i_prop in range(n_propellers):
-            i_l = propellers_link_idx[i_prop]
-
             force = qd.Vector([0.0, 0.0, propellers_rpm[i_b, i_prop] ** 2 * KF], dt=gs.qd_float)
             torque = qd.Vector(
                 [0.0, 0.0, propellers_rpm[i_b, i_prop] ** 2 * KM * propellers_spin[i_prop]], dt=gs.qd_float
@@ -1157,8 +1158,22 @@ def kernel_set_drone_rpm(
             if invert:
                 torque = -torque
 
-            func_apply_link_external_force(i_l, i_b, force, dyn_state, 1, 1)
-            func_apply_link_external_torque(i_l, i_b, torque, dyn_state, 1, 1)
+            # The thrust acts at the propeller position, offset from the drone's center of mass.
+            pos = qd.Vector(
+                [propellers_pos[i_prop, 0], propellers_pos[i_prop, 1], propellers_pos[i_prop, 2]], dt=gs.qd_float
+            )
+            torque += pos.cross(force)
+            # The thrust and rotor torque follow the drone's attitude.
+            force = gu.qd_transform_by_quat(force, dyn_state.links.quat[base_link_idx, i_b])
+            torque = gu.qd_transform_by_quat(torque, dyn_state.links.quat[base_link_idx, i_b])
+            force_total += force
+            torque_total += torque
+
+        # The propellers are rigidly welded to the base link, so the whole wrench goes on the base link: external
+        # forces and torques applied to the massless propeller links do not carry the thrust moment into the
+        # composite body.
+        func_apply_link_external_force(base_link_idx, i_b, force_total, dyn_state, ref=1, local=0)
+        func_apply_link_external_torque(base_link_idx, i_b, torque_total, dyn_state, ref=1, local=0)
 
 
 @qd.kernel(fastcache=True)

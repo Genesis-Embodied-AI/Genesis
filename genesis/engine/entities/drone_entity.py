@@ -1,6 +1,7 @@
 import os
 import xml.etree.ElementTree as ET
 
+import numpy as np
 import torch
 
 import genesis as gs
@@ -27,6 +28,9 @@ class DroneEntity(RigidEntity):
         try:
             self._propellers_vgeom_idxs = torch.tensor(
                 [link.vgeoms[0].idx for link in propellers_link], dtype=gs.tc_int, device=gs.device
+            )
+            self._propellers_pos = torch.tensor(
+                np.array([link.vgeoms[0].init_pos for link in propellers_link]), dtype=gs.tc_float, device=gs.device
             )
             self._animate_propellers = True
         except Exception:
@@ -76,7 +80,8 @@ class DroneEntity(RigidEntity):
         self._propellers_revs = (self._propellers_revs + propellers_rpm.T) % (60 / self.solver.dt)
 
         self.solver.set_drone_rpm(
-            self._propellers_link_idx,
+            self.base_link.idx,
+            self._propellers_pos,
             propellers_rpm,
             self._propellers_spin,
             self.KF,

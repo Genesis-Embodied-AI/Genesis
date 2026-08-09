@@ -3308,9 +3308,17 @@ class RigidSolver(KinematicSolver):
             propellers_vgeom_idxs, propellers_revs, propellers_spin, self.dyn_state, self.rigid_info, self.rigid_config
         )
 
-    def set_drone_rpm(self, propellers_link_idx, propellers_rpm, propellers_spin, KF, KM, invert):
+    def set_drone_rpm(self, base_link_idx, propellers_pos, propellers_rpm, propellers_spin, KF, KM, invert):
         kernel_set_drone_rpm(
-            propellers_link_idx, propellers_rpm, propellers_spin, KF, KM, self.dyn_state, self.rigid_config, invert
+            base_link_idx,
+            propellers_pos,
+            propellers_rpm,
+            propellers_spin,
+            KF,
+            KM,
+            self.dyn_state,
+            self.rigid_config,
+            invert,
         )
 
     def update_verts_for_geoms(self, geoms_idx):
