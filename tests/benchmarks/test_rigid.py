@@ -363,8 +363,10 @@ def make_franka(
             np.random.permutation(n_envs)[:n_reset_envs], dtype=gs.tc_int, device=gs.device
         )
         reset_envs_mask = torch.isin(scene._envs_idx, reset_envs_idx)
+        negative_envs_idx = reset_envs_idx - n_envs if accessors else None
     else:
         reset_envs_mask = None
+        negative_envs_idx = None
 
     dofs_stiffness = franka.get_dofs_stiffness()
     dofs_damping = franka.get_dofs_damping()
@@ -384,6 +386,8 @@ def make_franka(
             franka.get_links_quat()
             franka.get_links_vel()
             franka.get_contacts()
+            if negative_envs_idx is not None:
+                franka.get_pos(envs_idx=negative_envs_idx)
 
             # TODO: Entire scene reset is still slow currently because 'partial=False' by default.
             scene.rigid_solver.set_state(0, state_rigid_0, envs_idx=reset_envs_mask, partial=True)
