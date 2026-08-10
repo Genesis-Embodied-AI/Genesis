@@ -1701,24 +1701,24 @@ class KinematicEntity(Entity):
         elif isinstance(idx_local, range):
             # Wrapping negative entries may break a range's constant step, so only those ranges are expanded
             if idx_local and (idx_local[0] < 0 or idx_local[-1] < 0):
-                idx_global = [
-                    i + idx_global_start + (idx_local_max if -idx_local_max <= i < 0 else 0) for i in idx_local
-                ]
+                idx_global = [i + idx_global_start + (idx_local_max if i < 0 else 0) for i in idx_local]
             else:
                 idx_global = range(
                     idx_local.start + idx_global_start, idx_local.stop + idx_global_start, idx_local.step
                 )
         elif isinstance(idx_local, (list, tuple)):
             try:
-                idx_global = [
-                    i + idx_global_start + (idx_local_max if -idx_local_max <= i < 0 else 0) for i in idx_local
-                ]
+                idx_global = [i + idx_global_start + (idx_local_max if i < 0 else 0) for i in idx_local]
             except TypeError:
                 gs.raise_exception("Expecting a sequence of integers for `idx_local`.")
         else:
-            if idx_local.dtype not in (torch.bool, np.bool_):
+            if isinstance(idx_local, torch.Tensor):
+                is_negative_wrap_required = idx_local.dtype != torch.bool and idx_local.dtype.is_signed
+            else:
+                is_negative_wrap_required = np.issubdtype(idx_local.dtype, np.signedinteger)
+            if is_negative_wrap_required:
                 # Negative values wrap within the entity-owned range before the global offset is applied
-                idx_local = idx_local + idx_local_max * ((idx_local >= -idx_local_max) & (idx_local < 0))
+                idx_local = idx_local + idx_local_max * (idx_local < 0)
             # Increment may be slow when dealing with heterogenuous data, so it must be avoided if possible
             if idx_global_start > 0:
                 idx_global = idx_local + idx_global_start

@@ -859,19 +859,19 @@ def sanitize_index(
     elif isinstance(index, slice):
         index = range(*index.indices(max_size))
     elif isinstance(index, (int, np.integer)):
-        index = [index + max_size if -max_size <= index < 0 else index]
+        index = [index]
     elif isinstance(index, torch.Tensor):
         if index.dtype == torch.bool:
             index, *_ = torch.where(index)
         else:
             is_tensor_wrap_required = True
     elif isinstance(index, np.ndarray):
-        index = index + max_size * ((-max_size <= index) & (index < 0))
+        index = index + max_size * (index < 0)
     elif isinstance(index, range):
         if index and (index[0] < 0 or index[-1] < 0):
-            index = [i + max_size if -max_size <= i < 0 else i for i in index]
+            index = [i + max_size if i < 0 else i for i in index]
     else:
-        index = [i + max_size if -max_size <= i < 0 else i for i in index]
+        index = [i + max_size if i < 0 else i for i in index]
 
     index = torch.as_tensor(index, dtype=gs.tc_int, device=gs.device)
 
@@ -888,8 +888,10 @@ def sanitize_index(
             f"Invalid shape: {index.shape}. Expecting 1D tensor of length {expected_size} for {dim}-th index{dim_info}."
         )
 
+    # Normalize numeric tensor indices after the shared dtype/device conversion because Quadrants kernels consume raw
+    # buffer offsets.
     if is_tensor_wrap_required:
-        index = torch.where((index >= -max_size) & (index < 0), index + max_size, index)
+        index = torch.where(index < 0, index + max_size, index)
 
     # FIXME: This check is too expensive
     # if not (0 <= dim_idx & dim_idx < size).all():

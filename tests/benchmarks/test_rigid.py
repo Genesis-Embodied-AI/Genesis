@@ -368,6 +368,8 @@ def make_franka(
         reset_envs_mask = None
         negative_envs_idx = None
 
+    negative_dofs_idx = range(-franka.n_dofs, 0) if accessors else None
+
     dofs_stiffness = franka.get_dofs_stiffness()
     dofs_damping = franka.get_dofs_damping()
 
@@ -380,14 +382,14 @@ def make_franka(
         if accessors:
             franka.get_ang()
             franka.get_vel()
-            franka.get_dofs_position()
+            franka.get_dofs_position(negative_dofs_idx)
             franka.get_dofs_velocity()
             franka.get_links_pos()
             franka.get_links_quat()
             franka.get_links_vel()
             franka.get_contacts()
             if negative_envs_idx is not None:
-                franka.get_pos(envs_idx=negative_envs_idx)
+                franka.get_links_acc(envs_idx=negative_envs_idx)
 
             # TODO: Entire scene reset is still slow currently because 'partial=False' by default.
             scene.rigid_solver.set_state(0, state_rigid_0, envs_idx=reset_envs_mask, partial=True)
