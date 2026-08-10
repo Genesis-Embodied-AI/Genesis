@@ -8,8 +8,6 @@ import pytest
 import trimesh
 from PIL import Image
 
-import coacd
-
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.gltf as gltf_utils
@@ -851,14 +849,16 @@ def test_convex_decompose_cache(monkeypatch, asset_tmp_path):
     # A single decomposition must serve every mesh describing the same shape, whatever its placement: rescaled copies,
     # and re-exports of the model whose coordinates differ only in their last significant digits.
     n_coacd_runs = 0
-    real_run_coacd = coacd.run_coacd
+    real_run_coacd = mu.run_coacd
 
     def counted_run_coacd(*args, **kwargs):
         nonlocal n_coacd_runs
         n_coacd_runs += 1
         return real_run_coacd(*args, **kwargs)
 
-    monkeypatch.setattr(coacd, "run_coacd", counted_run_coacd)
+    # Patch Genesis' CoACD entry (not coacd.run_coacd): on HIP/ROCm, run_coacd isolates into a subprocess
+    # so monkeypatching the upstream symbol in the parent process would never see the call.
+    monkeypatch.setattr(mu, "run_coacd", counted_run_coacd)
 
     # Monkeypatch the convex_decompose function to track the convex decomposition result
     seen_results = []
@@ -912,3 +912,67 @@ def test_convex_decompose_cache(monkeypatch, asset_tmp_path):
         for part, cached_part in zip(parts, cached_parts):
             assert_allclose(part.vertices, cached_part.vertices * (scale / SCALES[0]), rtol=1e-6)
             assert_equal(part.faces, cached_part.faces)
+
+
+@pytest.mark.required
+@pytest.mark.cache(False)
+@pytest.mark.parametrize("backend", [None])  # init ourselves: conftest GPU-index check needs amdsmi
+def test_coacd_survives_amdgpu_openmp_isolation(tmp_path, monkeypatch):
+    """CoACD must not SIGSEGV after HIP/ROCm torch has loaded system libgomp.
+
+    Root cause: CoACD vendors libgomp; ROCm torch also loads system libgomp. Dual OpenMP → crash
+    during ``run_coacd`` (SarahWeiii/CoACD#104). Genesis isolates CoACD in a subprocess on HIP.
+    """
+    import torch
+
+    if not getattr(torch.version, "hip", None):
+        pytest.skip("HIP/ROCm torch required for amdgpu CoACD isolation test")
+    try:
+        gs.utils.get_device(gs.amdgpu)
+    except gs.GenesisException:
+        pytest.skip("gs.amdgpu not available on this machine")
+
+    # ``backend=None`` skips autouse ``initialize_genesis`` before it honors ``@pytest.mark.cache(False)``.
+    # Point Genesis at a fresh cache so a warm ``.cvx`` from the default cache cannot skip CoACD.
+    monkeypatch.setenv("QD_OFFLINE_CACHE", "0")
+    monkeypatch.setenv("QD_OFFLINE_CACHE_FILE_PATH", str(tmp_path / ".cache" / "quadrants"))
+    monkeypatch.setenv("GS_CACHE_FILE_PATH", str(tmp_path / ".cache" / "genesis"))
+
+    n_isolated = 0
+    real_isolated = mu._run_coacd_subprocess
+
+    def counted_isolated(*args, **kwargs):
+        nonlocal n_isolated
+        n_isolated += 1
+        return real_isolated(*args, **kwargs)
+
+    monkeypatch.setattr(mu, "_run_coacd_subprocess", counted_isolated)
+
+    gs.init(backend=gs.amdgpu, precision="32", seed=0, logging_level="warning")
+    try:
+        assert mu._coacd_must_isolate()
+
+        # Non-convex duck forces CoACD when decompose_object_error_threshold=0.0 (hull volume error > 0).
+        scene = gs.Scene(show_viewer=False)
+        scene.add_entity(
+            morph=gs.morphs.Mesh(
+                file="meshes/duck.obj",
+                scale=0.1,
+                convexify=True,
+                decompose_object_error_threshold=0.0,
+                coacd_options=gs.options.CoacdOptions(
+                    threshold=0.1,
+                    max_convex_hull=8,
+                    preprocess_mode="auto",
+                    mcts_iterations=50,
+                    seed=0,
+                ),
+            ),
+        )
+        scene.build()
+        assert scene.sim.rigid_solver.dyn_info.geoms.is_convex.to_numpy().all()
+        # At least one geom should be marked as CoACD-decomposed.
+        assert any("decomposed" in geom.metadata for entity in scene.entities for geom in entity.geoms)
+        assert n_isolated >= 1, "expected isolated CoACD subprocess; cache may have skipped the crash path"
+    finally:
+        gs.destroy()

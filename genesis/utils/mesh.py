@@ -1,8 +1,12 @@
 import hashlib
+import json
 import marshal
 import math
 import os
 import pickle as pkl
+import subprocess
+import sys
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 
@@ -410,6 +414,112 @@ def surface_uvs_to_trimesh_visual(surface, uvs=None, n_verts=None):
     return visual
 
 
+def _mapped_openmp_runtimes() -> set[str]:
+    """Return absolute paths of OpenMP runtimes mapped into this process (Linux ``/proc``)."""
+    paths: set[str] = set()
+    try:
+        with open("/proc/self/maps", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                # libgomp (GCC), libomp (LLVM), libiomp5 (Intel)
+                if "libgomp" in line or "libomp.so" in line or "libiomp" in line or "libomp.dylib" in line:
+                    paths.add(line.rsplit(None, 1)[-1])
+    except OSError:
+        pass
+    return paths
+
+
+def _coacd_must_isolate() -> bool:
+    """True when in-process ``coacd.run_coacd`` is unsafe.
+
+    CoACD wheels vendor ``libgomp``. ROCm/HIP torch also loads the system ``libgomp`` into the same
+    process. Two OpenMP runtimes then SIGSEGV inside CoACD's parallel regions (SarahWeiii/CoACD#104).
+    Isolate in a fresh interpreter when HIP is present or more than one OpenMP runtime is already mapped.
+    """
+    try:
+        import torch
+
+        if getattr(torch.version, "hip", None):
+            return True
+    except ImportError:
+        pass
+    return len(_mapped_openmp_runtimes()) > 1
+
+
+def _coacd_options_to_kwargs(coacd_options) -> dict:
+    args = coacd_options
+    return dict(
+        threshold=args.threshold,
+        max_convex_hull=args.max_convex_hull,
+        preprocess_mode=args.preprocess_mode,
+        preprocess_resolution=args.preprocess_resolution,
+        resolution=args.resolution,
+        mcts_nodes=args.mcts_nodes,
+        mcts_iterations=args.mcts_iterations,
+        mcts_max_depth=args.mcts_max_depth,
+        pca=args.pca,
+        merge=args.merge,
+        decimate=args.decimate,
+        max_ch_vertex=args.max_ch_vertex,
+        extrude=args.extrude,
+        extrude_margin=args.extrude_margin,
+        apx_mode=args.apx_mode,
+        seed=args.seed,
+    )
+
+
+def _run_coacd_inprocess(vertices, faces, kwargs: dict):
+    return coacd.run_coacd(coacd.Mesh(vertices, faces), **kwargs)
+
+
+def _run_coacd_subprocess(vertices, faces, kwargs: dict):
+    """Run CoACD in a clean interpreter so only CoACD's OpenMP runtime is loaded."""
+    worker = Path(__file__).resolve().parent / "_coacd_worker.py"
+    with tempfile.TemporaryDirectory(prefix="gs_coacd_") as tmp:
+        tmp_path = Path(tmp)
+        in_path = tmp_path / "in.npz"
+        out_path = tmp_path / "out.npz"
+        kwargs_path = tmp_path / "kwargs.json"
+        np.savez_compressed(
+            in_path,
+            vertices=np.ascontiguousarray(vertices, dtype=np.float64),
+            faces=np.ascontiguousarray(faces, dtype=np.int32),
+        )
+        with open(kwargs_path, "w", encoding="utf-8") as f:
+            json.dump(kwargs, f)
+
+        # Prefer a minimal env: keep PATH/PYTHONPATH so site-packages resolve, but do not inherit a
+        # ROCm-polluted LD_LIBRARY_PATH that could pull a second OpenMP into the child.
+        env = os.environ.copy()
+        env.pop("LD_LIBRARY_PATH", None)
+        env.pop("ROCM_PATH", None)
+
+        proc = subprocess.run(
+            [sys.executable, str(worker), str(in_path), str(out_path), str(kwargs_path)],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip()
+            gs.raise_exception(
+                f"Isolated CoACD subprocess failed with exit code {proc.returncode}"
+                + (f":\n{detail}" if detail else ".")
+            )
+        data = np.load(out_path)
+        n_parts = int(data["n_parts"][0])
+        return [(data[f"v{i}"], data[f"f{i}"]) for i in range(n_parts)]
+
+
+def run_coacd(vertices, faces, coacd_options):
+    """Run CoACD, isolating into a subprocess when dual OpenMP runtimes would SIGSEGV."""
+    kwargs = _coacd_options_to_kwargs(coacd_options)
+    if _coacd_must_isolate():
+        gs.logger.debug("Running CoACD in an isolated subprocess (OpenMP runtime conflict avoidance).")
+        return _run_coacd_subprocess(vertices, faces, kwargs)
+    return _run_coacd_inprocess(vertices, faces, kwargs)
+
+
 def convex_decompose(mesh, coacd_options):
     # The decomposition of a scaled mesh is the decomposition of the mesh scaled, so the cache is keyed on vertices
     # normalized by the mesh scale and the hulls are rescaled on the way out: every scaled copy of an asset shares a
@@ -435,27 +545,7 @@ def convex_decompose(mesh, coacd_options):
 
     if not is_cached_loaded:
         with gs.logger.timer("Running convex decomposition."):
-            mesh = coacd.Mesh(mesh.vertices, mesh.faces)
-            args = coacd_options
-            result = coacd.run_coacd(
-                mesh,
-                threshold=args.threshold,
-                max_convex_hull=args.max_convex_hull,
-                preprocess_mode=args.preprocess_mode,
-                preprocess_resolution=args.preprocess_resolution,
-                resolution=args.resolution,
-                mcts_nodes=args.mcts_nodes,
-                mcts_iterations=args.mcts_iterations,
-                mcts_max_depth=args.mcts_max_depth,
-                pca=args.pca,
-                merge=args.merge,
-                decimate=args.decimate,
-                max_ch_vertex=args.max_ch_vertex,
-                extrude=args.extrude,
-                extrude_margin=args.extrude_margin,
-                apx_mode=args.apx_mode,
-                seed=args.seed,
-            )
+            result = run_coacd(mesh.vertices, mesh.faces, coacd_options)
             mesh_parts = []
             for vs, fs in result:
                 mesh_parts.append(trimesh.Trimesh(vs, fs))
