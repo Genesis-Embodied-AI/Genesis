@@ -20,6 +20,7 @@ env:
   HF_TOKEN: ${{ secrets.HF_TOKEN }}
   HF_HUB_DOWNLOAD_TIMEOUT: 60
   # Increment to switch new jobs to fresh caches before deleting the previous version.
+  # (Control run for test_align_mesh: this comment is the only diff from 8e70e94.)
   CACHE_VERSION: "1"
   GENESIS_IMAGE_VER: "1_25"
   TIMEOUT_MINUTES: 60
