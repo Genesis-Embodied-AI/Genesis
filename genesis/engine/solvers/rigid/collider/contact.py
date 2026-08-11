@@ -524,13 +524,13 @@ def func_contact_orthogonals(
             volume_gb = size_gb[0] * size_gb[1] * size_gb[2]
             i_g = i_ga if volume_ga < volume_gb else i_gb
 
-        # The basis is built in the reference geom's own frame - the frame its support lookup is indexed in, which a
-        # geom offset from the link makes distinct from the inertial one - and rotated back to world, so a scene and any rigidly
-        # rotated copy of it perturb along the same directions relative to the geometry, and the manifold they find is
-        # the same. Selecting an axis by comparing the world normal against world axes instead makes the choice depend
-        # on the orientation of the whole scene, and it ties outright for a geom with no preferred axis, where two
-        # equal principal moments leave the selection to rounding and the manifold jumps between two sets.
-        rot = gu.qd_quat_to_R(dyn_state.geoms.quat[i_g, i_b], EPS)
+        # The basis is built in the reference geom's local inertial frame, the physical anchor that does not depend on
+        # the link origin, maintained by forward kinematics as links.quat composed with the build-time local inertial
+        # quat, then rotated back to world. Building the orthogonals on the LOCAL normal keeps the construction's branch
+        # decisions fixed to the body, so a scene and any rigidly rotated copy of it perturb along the same directions
+        # relative to the geometry and find the same manifold.
+        i_l = dyn_info.geoms.link_idx[i_g]
+        rot = gu.qd_quat_to_R(dyn_state.links.i_quat[i_l, i_b], EPS)
         axis_0_local, axis_1_local = gu.qd_orthogonals(rot.transpose() @ normal)
         axis_0 = rot @ axis_0_local
         axis_1 = rot @ axis_1_local
