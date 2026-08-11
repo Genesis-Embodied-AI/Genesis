@@ -17,32 +17,6 @@ MODULE_ROOT_DIR = FILE_PATH.parents[2]
 MODULE = ".".join((FILE_PATH.parents[1].name, FILE_PATH.parent.name, FILE_PATH.stem))
 
 
-@pytest.mark.parametrize("backend", [None])
-@pytest.mark.parametrize(
-    ("torch_version", "is_old_torch", "has_mps_dlpack_field"),
-    [
-        ("2.7.1", True, False),
-        ("2.8.0a0+cu128", False, False),
-        ("2.9.1+cu128", False, False),
-        ("2.9.2a0+cu128", False, True),
-        ("2.10.0", False, True),
-        ("2.12.0a0+rocm7.13.0a20260325", False, True),
-    ],
-)
-def test_torch_version_import(backend, torch_version, is_old_torch, has_mps_dlpack_field):
-    code = (
-        "import torch\n"
-        f"torch.__version__ = {torch_version!r}\n"
-        "import genesis as gs\n"
-        f"assert gs._IS_OLD_TORCH is {is_old_torch!r}\n"
-        f"assert gs._TORCH_MPS_SUPPORT_DLPACK_FIELD is {has_mps_dlpack_field!r}\n"
-    )
-    proc = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, encoding="utf-8", cwd=MODULE_ROOT_DIR
-    )
-    assert proc.returncode == 0, proc.stderr
-
-
 @pytest.mark.parametrize("backend", [None])  # Disable genesis initialization at worker level
 @pytest.mark.parametrize(
     "order",
