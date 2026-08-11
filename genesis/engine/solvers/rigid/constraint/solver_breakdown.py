@@ -736,7 +736,7 @@ def _func_update_search_direction(
     qd.loop_config(name="update_search_direction", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            solver.func_terminate_or_update_descent_batch(i_b, dyn_state, constraint_state, rigid_info, rigid_config)
+            solver.func_terminate_or_update_descent_batch(i_b, constraint_state, rigid_info, rigid_config)
 
 
 @qd.func
