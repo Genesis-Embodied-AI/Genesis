@@ -1029,6 +1029,34 @@ class RigidSolver(KinematicSolver):
         # Compute meaninertia from mass matrix
         kernel_init_meaninertia(envs_idx, self.dyn_info, self.rigid_info, self.rigid_config)
 
+        # The solve's exit tests are quoted on scene aggregates, and every DOF of a link contributes a cost of the
+        # order of the link's mass, so a link whose mass is a tolerance-fraction of the scene's is invisible to
+        # them: the solve stops while that link still carries residual. The absolute floor is the working
+        # precision's resolution limit, calibrated on the isotropy sweep boundary in kilograms, following the
+        # tolerance linearly. A joint carries the composite inertia of its whole subtree, so each link weighs in
+        # with its subtree's mass; the scene total is read before the accumulation folds children into parents.
+        links_subtree_mass = np.atleast_2d(qd_to_numpy(self.dyn_info.links.inertial_mass, transpose=True, copy=True))
+        movable_links_idx = np.flatnonzero([link.n_dofs > 0 for link in self.links])
+        if movable_links_idx.size:
+            total_mass = links_subtree_mass[:, movable_links_idx].sum(axis=1)
+            for i_l in reversed(range(self._n_links)):
+                if self.links[i_l].parent_idx >= 0:
+                    links_subtree_mass[:, self.links[i_l].parent_idx] += links_subtree_mass[:, i_l]
+            movable_links_mass = links_subtree_mass[:, movable_links_idx]
+            mass_floor = np.maximum(self._options.tolerance * total_mass, 0.2 * self._options.tolerance)[:, None]
+            i_b_min, i_l_min = np.unravel_index((movable_links_mass / mass_floor).argmin(), movable_links_mass.shape)
+            mass_min = movable_links_mass[i_b_min, i_l_min]
+            if mass_min < mass_floor[i_b_min, 0]:
+                link = self.links[movable_links_idx[i_l_min]]
+                if gs.qd_float == qd.f32:
+                    remedy = "Use 64-bit simulation precision or tighten the solver tolerance."
+                else:
+                    remedy = "Tighten the solver tolerance."
+                gs.logger.warning(
+                    f"Link '{link.name}' has mass {mass_min:.1e}, too small for the constraint solver to be "
+                    f"numerically stable. {remedy} Note that increasing the solver iterations would not help."
+                )
+
     def _init_mass_mat(self):
         self.mass_mat = self.rigid_info.mass_mat
         self.mass_mat_L = self.rigid_info.mass_mat_L
