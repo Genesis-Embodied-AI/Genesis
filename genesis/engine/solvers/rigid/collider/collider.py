@@ -62,15 +62,15 @@ class Collider:
         self._mc_perturbation = 1e-3 if self._solver._enable_mujoco_compatibility else 3e-3
         self._mc_tolerance = 1e-3 if self._solver._enable_mujoco_compatibility else 1.5e-2
         # Overlap depth (as a fraction of the pair bounding-box diagonal) past which MPR is upgraded to GJK. It is
-        # portal-dependent: a DEGENERATED portal's depth is untrustworthy so it falls back sooner (base ratio), while a
-        # VALID portal recovers the exact depth (Thm 4.2) and stays on MPR to deeper penetrations (valid ratio). The
-        # valid ratio is capped below the point where trusting deep valid portals lets contacts pump energy.
+        # portal-dependent: only an EXACT portal corroborated by a warm cache recovers a depth trusted deeper (valid
+        # ratio); every other portal bounds the depth at best and falls back sooner (base ratio). The valid ratio is
+        # capped below the point where trusting deep exact portals lets contacts pump energy.
         self._mpr_to_gjk_overlap_ratio = 0.2
         self._mpr_to_gjk_overlap_ratio_valid = 0.6
         # Minimum ratio of the current penetration to the cached warm-start penetration for MPR to be treated as
-        # having resolved a deeper, non-minimal portal (then upgraded to GJK). At the gate the threshold is clamped
-        # into [tolerance, overlap_ratio * geom_pair_scale], so a cold pair (cached penetration reset to 0) reduces to
-        # the original "penetration > tolerance" gate and a genuinely deep contact always upgrades at the overlap cap.
+        # having resolved a deeper, non-minimal portal (then upgraded to GJK). The jump only moves the threshold
+        # inside [tolerance, overlap_ratio * geom_pair_scale]: a depth at or below the manifold tolerance never
+        # refines, and one past the overlap cap always does.
         self._mpr_to_gjk_penetration_ratio = 5.0
         self._box_MAXCONPAIR = 16
         self._diff_pos_tolerance = 1e-2
@@ -172,45 +172,39 @@ class Collider:
             self._large_contact_pair_mask,
         ) = self._compute_collision_pair_idx()
 
-        # Link-pair pruning can do useful work only when contacts from distinct geom-pairs can accumulate into the same
-        # (link_a, link_b) bucket. That happens when any link has more than one geom (compound/decomposed body), when
-        # any geom is nonconvex (vertex-based narrowphase emits many contacts per pair), or when terrain is present.
-        # Composes with contact islands: pruning writes a logical permutation into contact_sort_idx, and the island
-        # construction reads contacts through that permutation, so pruning collapses the contacts before islands
-        # partition the (smaller) solve.
-        if has_nonconvex_nonterrain or has_terrain:
-            has_prunable_contacts = True
-        else:
-            has_prunable_contacts = False
-            for link in self._solver.links:
-                variant_geom_ranges = link._variant_geom_ranges
-                if variant_geom_ranges is None:
-                    variant_geom_ranges = ((link.geom_start, link.geom_end),)
-                for geom_range in variant_geom_ranges:
-                    n_geoms = geom_range[1] - geom_range[0]
-                    if n_geoms < 2:
-                        continue
-                    if n_geoms >= 5:
-                        has_prunable_contacts = True
-                        continue
-                    for geom_idx in range(*geom_range):
-                        geom = self._solver.geoms[geom_idx]
-                        if self._solver._options.enable_multi_contact and geom.type not in (
-                            gs.GEOM_TYPE.SPHERE,
-                            gs.GEOM_TYPE.ELLIPSOID,
-                        ):
-                            has_prunable_contacts = True
+        # Link-pair pruning does useful work whenever a (link_a, link_b) bucket can hold a point interior to the hull of
+        # the others, which the hull prune drops. Nonconvex geoms and terrain reach that through a vertex-based
+        # narrowphase emitting many contacts per pair, and multi-contact detection reaches it from a single convex pair,
+        # whose perturbed points bound a patch that the unperturbed one may land inside of. One geom per link therefore
+        # suffices. A compound or decomposed link reaches it through geom count alone, each of its geoms landing at
+        # least one point in the bucket, so enough of them fill it past the pruned support polygon whatever the
+        # detection mode. Composes with contact islands: pruning writes a logical permutation into contact_sort_idx,
+        # and the island construction reads contacts through that permutation, so pruning collapses the contacts before
+        # islands partition the (smaller) solve.
+        has_prunable_contacts = has_nonconvex_nonterrain or has_terrain
+        if not has_prunable_contacts:
+            has_prunable_contacts = any(
+                geom_end - geom_start >= 5
+                for link in self._solver.links
+                for geom_start, geom_end in (link._variant_geom_ranges or ((link.geom_start, link.geom_end),))
+            )
+        if not has_prunable_contacts and self._solver._options.enable_multi_contact:
+            # Multi-contact is declined for a pair holding a sphere or an ellipsoid, which leaves it a single point, so
+            # what earns the pass is a pair where neither geom is one of those.
+            geoms_type = [geom.type for geom in self._solver.geoms]
+            has_prunable_contacts = any(
+                geoms_type[i_ga] not in (gs.GEOM_TYPE.SPHERE, gs.GEOM_TYPE.ELLIPSOID)
+                and geoms_type[i_gb] not in (gs.GEOM_TYPE.SPHERE, gs.GEOM_TYPE.ELLIPSOID)
+                for i_ga, i_gb in self._valid_collision_pairs
+            )
 
-        # Spatial sort by x-position (with a geom-pair tie-break) only runs on GPU for convex-convex scenes whose
-        # contacts could benefit from locality, and is also what makes the GPU contact order run-independent: the
-        # narrowphase reserves contact slots via atomic_add (a non-deterministic physical layout), and the sort writes
-        # a deterministic permutation into contact_sort_idx that every downstream consumer - including the island
-        # construction - reads through. Disabled only in autodiff mode: get_contacts applies the permutation but
-        # func_set_upstream_grad writes upstream gradients back by physical index, so a non-identity permutation would
-        # attach gradients to the wrong contacts.
-        spatial_sort_supported = (
-            has_non_box_plane_convex_convex and gs.backend != gs.cpu and not self._solver._requires_grad
-        )
+        # The sort writes a deterministic permutation into contact_sort_idx that every downstream consumer - including
+        # the island construction - reads through. It runs on every backend: the physical layout is racy on GPU
+        # (slots reserved via atomic_add), and a serial narrowphase enumerates pairs in broadphase sweep order along
+        # a fixed world axis, so a rigidly rotated copy of a scene would otherwise see a pair's contacts reordered.
+        # Disabled only in autodiff mode: func_set_upstream_grad writes upstream gradients back by physical index, so
+        # a non-identity permutation would attach them to the wrong contacts.
+        spatial_sort_supported = has_non_box_plane_convex_convex and not self._solver._requires_grad
 
         # Initialize the static config, which stores every data that are compile-time constants.
         # Note that updating any of them will trigger recompilation.
@@ -961,10 +955,15 @@ class Collider:
         )
         if ran_fused_dedup_coop:
             func_clamp_prune_contacts_coop(
-                self._collider_state, self._solver.rigid_info, self._collider_info, self._solver._errno
+                self._solver.dyn_state,
+                self._collider_state,
+                self._solver.rigid_info,
+                self._collider_info,
+                self._solver._errno,
             )
         else:
             func_clamp_prune_contacts(
+                self._solver.dyn_state,
                 self._collider_state,
                 self._solver.rigid_info,
                 self._collider_info,
@@ -1132,6 +1131,7 @@ class Collider:
             self._solver.dyn_info,
             self._collider_info,
             self._solver.rigid_config,
+            self._solver._errno,
         )
 
 

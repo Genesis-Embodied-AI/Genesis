@@ -143,6 +143,28 @@
 - **Do not gate per-step asserts** with `float(...)` / `.item()` casts on tensor reductions. Design the scenario (e.g. a warmup loop that spins joints up) so the assertion holds unconditionally, then assert on the full tensor with `.all()`.
 - **Exact analytical dynamics checks:** force `gs.integrator.Euler` so the finite-differenced `qacc` equals the solver's, and account for both rigid-body rotational inertia and the implicit-damping first-order correction (`effective_inertia = I + damping*dt`, as in `test_position_control`) rather than loosening tolerances or distorting geometry.
 
+## Running Tests From a Git Worktree
+
+The package is installed in editable mode pointing at the PRIMARY checkout, so a worktree's `genesis/` is NOT what
+gets imported by default. This silently tests the wrong engine: the worktree's `tests/` run against the primary
+checkout's `genesis/`, so engine edits appear to have no effect and every result is void.
+
+- **Always pass `PYTHONPATH=$PWD` when invoking pytest from a worktree**, e.g.
+  `cd <worktree> && PYTHONPATH=$PWD pytest -n 8 tests/rigid`. Same for the cluster: `PYTHONPATH=$WORKTREE pytest ...`.
+- **Verify it once per session, do not assume.** `PYTHONPATH=$PWD pytest -n 0 -s -k <any test>` with a
+  `print(genesis.__file__)`, or simply check that the path printed starts with the worktree.
+- Plain `python script.py` from a worktree DOES pick up the worktree (cwd precedes the editable path), so a script and
+  a pytest run in the same directory can exercise DIFFERENT engines. Never compare their results.
+- Symptoms that mean this is happening: an engine edit changes nothing; a kernel `print()` added to the worktree emits
+  nothing; an A/B over engine variants returns bit-identical numbers for every arm. Treat all three as this trap
+  first, before any physics explanation.
+- **Give the worktree its own compile cache when running in parallel**, e.g.
+  `QD_OFFLINE_CACHE_FILE_PATH=<scratch>/quadrants GS_CACHE_FILE_PATH=<scratch>/genesis`. A worktree engine differs
+  from whatever populated the shared `~/.cache`, so every kernel is new and the xdist workers race to write the same
+  cache, which corrupts entries: hundreds of `QuadrantsNameError` on names that are plainly in scope, spread over
+  tests that pass one at a time, and getting WORSE on a second run as the bad entries persist. Redirect the cache
+  rather than deleting the shared one.
+
 ## Testing on Cluster
 
 - SSH: `ssh genesis-coreweave`

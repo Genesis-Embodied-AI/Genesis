@@ -212,8 +212,16 @@ def test_urdf_parsing(show_viewer, tol):
 
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
-@pytest.mark.parametrize("model_name", ["undefined_inertia"])
-def test_urdf_parsing_undefined_inertia(xml_path, show_viewer):
+def test_urdf_parsing_inertia_defaults(
+    undefined_inertia, implicit_inertial_origin, implicit_inertial_origin_chain, show_viewer, tol, caplog
+):
+    GEOM_POS = (0.0, 0.0, 0.09)
+    INERTIA = (
+        (0.11, 0.01, 0.02),
+        (0.01, 0.22, 0.03),
+        (0.02, 0.03, 0.30),
+    )
+
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.5, 0.5, 0.5),
@@ -223,18 +231,73 @@ def test_urdf_parsing_undefined_inertia(xml_path, show_viewer):
     )
     scene.add_entity(gs.morphs.Plane())
 
-    entity = scene.add_entity(
+    # Anchoring a root link on its center of mass erases the inertial frame under test, so it is disabled for the
+    # single-link entities. The chain keeps it enabled, comparing the composite inertia that anchoring preserves.
+    entity_without_inertia = scene.add_entity(
         morph=gs.morphs.URDF(
-            file=xml_path,
+            file=undefined_inertia,
+            pos=(-0.3, 0.0, 0.1),
+            align=False,
+        ),
+    )
+    entity_with_implicit_origin = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=implicit_inertial_origin,
             pos=(0.0, 0.0, 0.1),
-        )
+            align=False,
+        ),
+    )
+    entity_chain_unmerged = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=implicit_inertial_origin_chain,
+            pos=(0.8, 0.0, 0.5),
+            merge_fixed_links=False,
+        ),
+    )
+    entity_chain_merged = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=implicit_inertial_origin_chain,
+            pos=(1.6, 0.0, 0.5),
+        ),
     )
 
-    scene.build()
+    assert entity_with_implicit_origin.base_link.inertial_pos is None
 
-    for i in range(30):
+    with caplog.at_level("WARNING"):
+        scene.build()
+
+    # An omitted inertial origin places the center of mass at the link frame, whereas a link without any inertial
+    # element derives it from the geometry.
+    assert_allclose(entity_without_inertia.base_link.inertial_pos, GEOM_POS, tol=tol)
+    assert_allclose(entity_with_implicit_origin.base_link.inertial_pos, 0.0, tol=gs.EPS)
+    assert_allclose(entity_with_implicit_origin.base_link.inertial_mass, 2.5, tol=gs.EPS)
+    # The tensor is stored in its principal frame, whose parsed quaternion is markedly less accurate than the tensor
+    # itself, so compare the rotation-invariant principal moments rather than the tensor rotated back.
+    assert_allclose(
+        np.linalg.eigvalsh(entity_with_implicit_origin.base_link.inertial_i),
+        np.linalg.eigvalsh(INERTIA),
+        tol=tol,
+    )
+
+    # Resolving the center of mass to the link frame can place it outside the geometry, which stays worth reporting.
+    # Only the link whose geometry is offset qualifies; a geometry-derived center of mass never does.
+    dubious_com_records = [record for record in caplog.records if "dubious center of mass" in record.getMessage()]
+    assert len(dubious_com_records) == 1
+
+    # Folding a fixed-jointed subtree into its parent must not change the composite rigid-body inertia, which the
+    # merging path normalizes the omitted origin for on its own. The two composites are accumulated by independent
+    # code paths, so their agreement is bounded by that cross-path floor rather than by the storage precision.
+    assert_allclose(entity_chain_unmerged.get_mass(), entity_chain_merged.get_mass(), rtol=5e-7)
+    assert_allclose(
+        np.linalg.eigvalsh(entity_chain_unmerged.base_link.inertial_i),
+        np.linalg.eigvalsh(entity_chain_merged.base_link.inertial_i),
+        rtol=5e-7,
+    )
+
+    for _ in range(30):
         scene.step()
-    assert_allclose(entity.get_pos(), (0, 0, 0.03), tol=1e-3)
+    assert_allclose(entity_without_inertia.get_pos(), (-0.3, 0.0, -0.03), tol=1e-3)
+    assert_allclose(entity_with_implicit_origin.get_pos(), (0.0, 0.0, -0.03), tol=1e-3)
 
 
 @pytest.mark.slow  # ~200s
@@ -422,19 +485,19 @@ def test_urdf_joint_dynamics(joint_damping, joint_friction, xml_path):
 def test_default_armature_freeflyer(xml_path):
     DEFAULT_ARMATURE = 1000.0
 
-    if xml_path.endswith(".urdf"):
-        morph = gs.morphs.URDF(
-            file=xml_path,
-            default_armature=DEFAULT_ARMATURE,
-        )
-    else:
-        morph = gs.morphs.MJCF(
-            file=xml_path,
-            default_armature=DEFAULT_ARMATURE,
-        )
+    morph_class = gs.morphs.URDF if xml_path.endswith(".urdf") else gs.morphs.MJCF
+    morph = morph_class(
+        file=xml_path,
+        default_armature=DEFAULT_ARMATURE,
+    )
+    morph_without_armature = morph_class(
+        file=xml_path,
+        pos=(1.0, 0.0, 0.0),
+    )
 
     scene = gs.Scene()
     robot = scene.add_entity(morph)
+    robot_without_armature = scene.add_entity(morph_without_armature)
     scene.build()
 
     armature = robot.get_dofs_armature()
@@ -443,6 +506,11 @@ def test_default_armature_freeflyer(xml_path):
     if xml_path.endswith(".xml"):
         assert_allclose(armature[7], 42.0, tol=gs.EPS)
         assert_allclose(armature[8], 0.0002, tol=gs.EPS)
+
+    # Rotor inertia adds to the effective inertia of the joint it is applied to, so it must lower the inverse weight
+    # the solver derives from it. An inverse weight parsed before the armature was applied leaves the rotor inertia
+    # out of every constraint it scales.
+    assert robot.get_dofs_invweight()[6] < robot_without_armature.get_dofs_invweight()[6]
 
 
 @pytest.mark.slow  # ~200s
@@ -878,7 +946,7 @@ def test_align_mesh(show_viewer, tol):
     assert_allclose(mango.get_dofs_velocity(dofs_idx_local=(3, 4, 5)), 0, tol=0.05)
     assert_allclose(mango.get_dofs_velocity(), 0, tol=0.05)
     min_z = mango.get_AABB()[:, 0, 2]
-    assert ((-0.005 < min_z) & (min_z < 0.0)).all()
+    assert ((-1e-3 < min_z) & (min_z < 0.0)).all()
 
 
 @pytest.mark.slow  # ~200s

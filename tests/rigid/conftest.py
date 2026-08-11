@@ -353,18 +353,49 @@ def double_pendulum():
     return _build_multi_pendulum(n=2, joint_damping=0.0, joint_friction=0.0)
 
 
+def _add_sphere_link(urdf, link_name, geom_pos, mass=None, inertia=None):
+    """Append a link carrying a single sphere geometry offset by 'geom_pos' from the link frame, optionally authoring
+    an inertial element whose origin is left omitted."""
+    link = ET.SubElement(urdf, "link", name=link_name)
+    if mass is not None:
+        inertial = ET.SubElement(link, "inertial")
+        ET.SubElement(inertial, "mass", value=str(mass))
+        ixx, ixy, ixz, iyy, iyz, izz = (str(value) for value in inertia)
+        ET.SubElement(inertial, "inertia", ixx=ixx, ixy=ixy, ixz=ixz, iyy=iyy, iyz=iyz, izz=izz)
+    for tag in ("visual", "collision"):
+        geom_prop = ET.SubElement(link, tag)
+        ET.SubElement(geom_prop, "origin", xyz=geom_pos, rpy="0.0 0.0 0.0")
+        ET.SubElement(ET.SubElement(geom_prop, "geometry"), "sphere", radius="0.06")
+
+
 @pytest.fixture(scope="session")
 def undefined_inertia():
     """Generate a URDF with a single link that has no inertial element."""
     urdf = ET.Element("robot", name="undefined_inertia")
-    link = ET.SubElement(urdf, "link", name="base_link")
-    visual = ET.SubElement(link, "visual")
-    geometry = ET.SubElement(visual, "geometry")
-    ET.SubElement(geometry, "sphere", radius="0.03")
-    collision = ET.SubElement(link, "collision")
-    geometry = ET.SubElement(collision, "geometry")
-    ET.SubElement(geometry, "sphere", radius="0.03")
-    return urdf
+    _add_sphere_link(urdf, "base_link", "0.0 0.0 0.09")
+    return ET.tostring(urdf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
+def implicit_inertial_origin():
+    """Generate a URDF with an authored inertia whose origin is omitted. Its geometry is offset far enough from the
+    link frame that the resolved center of mass falls outside the geometry bounding box."""
+    urdf = ET.Element("robot", name="implicit_inertial_origin")
+    _add_sphere_link(urdf, "base_link", "0.0 0.0 0.09", mass=2.5, inertia=(0.11, 0.01, 0.02, 0.22, 0.03, 0.30))
+    return ET.tostring(urdf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
+def implicit_inertial_origin_chain():
+    """Generate a URDF with two fixed-jointed links, each authoring an inertia whose origin is omitted."""
+    urdf = ET.Element("robot", name="implicit_inertial_origin_chain")
+    _add_sphere_link(urdf, "base_link", "0.0 0.0 0.0", mass=2.5, inertia=(0.11, 0.01, 0.02, 0.22, 0.03, 0.30))
+    _add_sphere_link(urdf, "tip_link", "0.0 0.0 0.0", mass=1.5, inertia=(0.05, 0.0, 0.01, 0.07, 0.0, 0.09))
+    joint = ET.SubElement(urdf, "joint", name="weld", type="fixed")
+    ET.SubElement(joint, "parent", link="base_link")
+    ET.SubElement(joint, "child", link="tip_link")
+    ET.SubElement(joint, "origin", xyz="0.0 0.0 0.3", rpy="0.0 0.0 0.0")
+    return ET.tostring(urdf, encoding="unicode")
 
 
 @pytest.fixture(scope="session")

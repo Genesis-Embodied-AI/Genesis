@@ -542,7 +542,10 @@ def qd_transform_inertia_by_trans_quat(i_inertial, i_mass, trans, quat, eps):
 
 @qd.func
 def qd_normalize(v, eps):
-    return v / (v.norm(eps))
+    # The guard floors the norm, not the radicand: under the square root it would compare against a squared length and
+    # bias every vector shorter than its own square root. Flooring the norm leaves any vector longer than 'eps' exactly
+    # unit and still keeps a vanishing one finite.
+    return v / qd.max(v.norm(), eps)
 
 
 @qd.func

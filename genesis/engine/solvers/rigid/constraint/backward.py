@@ -144,10 +144,14 @@ def kernel_solve_adjoint_u(
                 # directly and never touches nt_H.
                 func_solve_adjoint_u_cg_batch(i_b, constraint_state, dyn_info, rigid_info, rigid_config)
             else:
-                # Reuse the forward's Cholesky decomposition A = L * L^T to solve A u = g.
+                # Reuse the forward's Cholesky decomposition A = L * L^T to solve A u = g. The stored L factors the
+                # scaled Hessian, so the right-hand side is pre-scaled and u unscaled at the end (see nt_jacobi in
+                # array_class.py); the intermediate z equals the unscaled L^-1 g exactly.
                 # z = L^{-1} g  (forward substitution); saved to bw_r
                 for i_d in range(n_dofs):
                     z = constraint_state.dL_dqacc[i_d, i_b]
+                    if qd.static(rigid_config.enable_jacobi_equilibration):
+                        z = z * constraint_state.nt_jacobi[i_d, i_b]
                     for j_d in range(i_d):
                         z -= constraint_state.nt_H[i_b, i_d, j_d] * constraint_state.bw_r[j_d, i_b]
                     z /= constraint_state.nt_H[i_b, i_d, i_d]
@@ -161,6 +165,11 @@ def kernel_solve_adjoint_u(
                         u -= constraint_state.nt_H[i_b, j_d, i_d] * constraint_state.bw_u[j_d, i_b]
                     u /= constraint_state.nt_H[i_b, i_d, i_d]
                     constraint_state.bw_u[i_d, i_b] = u
+                if qd.static(rigid_config.enable_jacobi_equilibration):
+                    for i_d in range(n_dofs):
+                        constraint_state.bw_u[i_d, i_b] = (
+                            constraint_state.bw_u[i_d, i_b] * constraint_state.nt_jacobi[i_d, i_b]
+                        )
     else:
         # CG solver for A * u = g (parallelized over the batch dimension).
         for i_b in range(_B):

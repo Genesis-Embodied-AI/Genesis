@@ -75,13 +75,47 @@ def test_physics_parity(show_viewer, tol):
     # After the drop each environment matches the homogeneous reference of its variant in pose, velocity and mass.
     ref_pos = torch.cat([ref_obj.get_pos(envs_idx=[i_env]) for i_env, ref_obj in enumerate(ref_objs)])
     ref_vel = torch.cat([ref_obj.get_vel(envs_idx=[i_env]) for i_env, ref_obj in enumerate(ref_objs)])
-    assert_allclose(ref_pos - het_obj.get_pos(), REFERENCE_OFFSETS, tol=tol)
-    assert_allclose(het_obj.get_vel(), ref_vel, tol=tol)
+    # Both are held loosely, and the rate more so than the pose: sharing one batch with the other variants puts the
+    # heterogeneous entity through a different arithmetic than its own reference.
+    assert_allclose(ref_pos - het_obj.get_pos(), REFERENCE_OFFSETS, tol=1e-5)
+    assert_allclose(het_obj.get_vel(), ref_vel, tol=2e-4)
     assert_allclose(het_obj.get_mass(), [ref_obj.get_mass() for ref_obj in ref_objs], tol=tol)
 
     # The variants are genuinely distinct: their masses are not all equal.
     with pytest.raises(AssertionError):
         assert_allclose(het_obj.get_mass(), het_obj.get_mass()[0], tol=tol)
+
+
+@pytest.mark.required
+def test_variant_inertia_matches_standalone(undefined_inertia, implicit_inertial_origin, tol):
+    # A variant must resolve whatever its asset leaves unspecified exactly as the same asset loaded on its own. The
+    # second URDF omits its inertial origin, which resolves to the link frame and keeps the authored mass and inertia
+    # tensor, while the first has no inertial element at all and falls back to its geometry. These cannot be folded
+    # into 'test_physics_parity': its variants come from MJCF, whose root joint carries a format-determined name that
+    # no URDF variant can match.
+    scene = gs.Scene(show_viewer=False)
+    files = (undefined_inertia, implicit_inertial_origin)
+    references = [
+        scene.add_entity(
+            gs.morphs.URDF(
+                file=file,
+                pos=(0.0, 0.5 * i_file, 0.1),
+            ),
+        )
+        for i_file, file in enumerate(files)
+    ]
+    het_obj = scene.add_entity(
+        morph=tuple(
+            gs.morphs.URDF(
+                file=file,
+                pos=(0.5, 0.5 * i_file, 0.1),
+            )
+            for i_file, file in enumerate(files)
+        ),
+    )
+    scene.build(n_envs=len(files))
+
+    assert_allclose(het_obj.get_mass(), [reference.get_mass() for reference in references], tol=tol)
 
 
 @pytest.mark.required
@@ -259,7 +293,14 @@ def test_pick_heterogenous_objects(show_viewer):
 
 
 @pytest.mark.required
-def test_invalid_material_raises():
+def test_invalid_variant_specification_raises():
+    # Restricting variants to a single family is what keeps the inertial parsed per variant aligned with the variant
+    # index: only URDF and MJCF variants record one, so admitting a basic object among them would shift every
+    # subsequent lookup onto the wrong variant.
+    MJCF_SPHERE = (
+        '<mujoco><worldbody><body><joint type="free"/><geom type="sphere" size="0.1"/></body></worldbody></mujoco>'
+    )
+
     scene = gs.Scene(
         show_viewer=False,
     )
@@ -270,10 +311,22 @@ def test_invalid_material_raises():
     )
 
     # PBD material should raise an exception
-    with pytest.raises(gs.GenesisException):
+    with pytest.raises(gs.GenesisException, match="only supported for Rigid and Kinematic"):
         scene.add_entity(
             morph=morphs_heterogeneous,
             material=gs.materials.PBD.Cloth(),
+        )
+
+    # A morph family that cannot be a variant at all
+    with pytest.raises(gs.GenesisException, match="only support Primitive, Mesh, URDF and MJCF"):
+        scene.add_entity(
+            morph=(gs.morphs.Box(size=(1.0, 1.0, 1.0)), gs.morphs.Terrain()),
+        )
+
+    # A basic object and an articulated robot in the same entity
+    with pytest.raises(gs.GenesisException, match="must be consistent"):
+        scene.add_entity(
+            morph=(gs.morphs.Box(size=(1.0, 1.0, 1.0)), gs.morphs.MJCF(file=MJCF_SPHERE)),
         )
 
 

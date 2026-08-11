@@ -741,6 +741,13 @@ class SimpleSensor(Sensor[OptionsT, SharedSensorContextT, SharedSensorMetadataT,
                 f"Sensor jitter must not exceed the simulation step dt={self._dt}; got "
                 f"jitter={tuple(jitter_np.ravel())}."
             )
+        # Same bound as `SensorOptions.model_post_init`, enforced here because only a sensor declaring a delay at build
+        # time gets the ring slot a jittered read reaches (see `cls_delay_depth` in sensor_manager.py).
+        if np.any(jitter_np > self._options.delay):
+            gs.raise_exception(
+                f"Sensor jitter must not exceed the read delay={self._options.delay}; got "
+                f"jitter={tuple(jitter_np.ravel())}."
+            )
         self._set_metadata_field(jitter_np / self._dt, self._shared_metadata.jitter_ts, self._idx, 1, envs_idx)
         # Recompute the slow-path flag from the freshly-written class metadata. One GPU->CPU sync at setter call time;
         # setters are not hot path. The check covers partial envs_idx writes and other sensors.
@@ -758,10 +765,9 @@ class SimpleSensor(Sensor[OptionsT, SharedSensorContextT, SharedSensorMetadataT,
 
         batch_size = self._manager._sim._B
 
-        # Jitter must not exceed the simulation step so a single jittered read can only shift by at most one extra ring
-        # slot. The per-class return-space ring is sized at build to accommodate `max_delay + 1` slots; a larger jitter
-        # would wrap modulo the ring depth and silently return wrong-frame data. An EPS slack lets `jitter == dt` pass
-        # cleanly despite float quantization.
+        # Jitter must not exceed the step, so a read shifts by at most one extra ring slot - the margin the return-space
+        # ring is sized for (see `cls_delay_depth` in sensor_manager.py). An EPS slack lets `jitter == dt` pass cleanly
+        # despite float quantization.
         jitter_np = np.asarray(self._options.jitter, dtype=gs.np_float)
         if np.any(jitter_np >= self._dt + gs.EPS):
             gs.raise_exception(

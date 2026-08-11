@@ -328,28 +328,21 @@ def func_add_contact(
     else:
         i_c = collider_state.n_contacts[i_b]
     if i_c < collider_info.max_candidate_contacts[None]:
-        friction_a = dyn_info.geoms.friction[i_ga] * dyn_state.geoms.friction_ratio[i_ga, i_b]
-        friction_b = dyn_info.geoms.friction[i_gb] * dyn_state.geoms.friction_ratio[i_gb, i_b]
-        friction_torsional_a = dyn_info.geoms.friction_torsional[i_ga] * dyn_state.geoms.friction_ratio[i_ga, i_b]
-        friction_torsional_b = dyn_info.geoms.friction_torsional[i_gb] * dyn_state.geoms.friction_ratio[i_gb, i_b]
-        friction_rolling_a = dyn_info.geoms.friction_rolling[i_ga] * dyn_state.geoms.friction_ratio[i_ga, i_b]
-        friction_rolling_b = dyn_info.geoms.friction_rolling[i_gb] * dyn_state.geoms.friction_ratio[i_gb, i_b]
-
-        # b to a
-        collider_state.contact_data.geom_a[i_c, i_b] = i_ga
-        collider_state.contact_data.geom_b[i_c, i_b] = i_gb
-        collider_state.contact_data.normal[i_c, i_b] = normal
-        collider_state.contact_data.pos[i_c, i_b] = contact_pos
-        collider_state.contact_data.penetration[i_c, i_b] = penetration
-        collider_state.contact_data.friction[i_c, i_b] = qd.max(qd.max(friction_a, friction_b), 1e-2)
-        collider_state.contact_data.friction_torsional[i_c, i_b] = qd.max(friction_torsional_a, friction_torsional_b)
-        collider_state.contact_data.friction_rolling[i_c, i_b] = qd.max(friction_rolling_a, friction_rolling_b)
-        collider_state.contact_data.sol_params[i_c, i_b] = 0.5 * (
-            dyn_info.geoms.sol_params[i_ga] + dyn_info.geoms.sol_params[i_gb]
+        func_set_contact(
+            i_ga,
+            i_gb,
+            i_b,
+            i_c,
+            i_pair,
+            normal,
+            contact_pos,
+            penetration,
+            dyn_state,
+            collider_state,
+            dyn_info,
+            collider_info,
+            errno,
         )
-        collider_state.contact_data.link_a[i_c, i_b] = dyn_info.geoms.link_idx[i_ga]
-        collider_state.contact_data.link_b[i_c, i_b] = dyn_info.geoms.link_idx[i_gb]
-        collider_state.contact_data.pair_idx[i_c, i_b] = i_pair
 
         if not qd.static(use_atomic):
             collider_state.n_contacts[i_b] = i_c + 1
@@ -371,6 +364,7 @@ def func_set_contact(
     collider_state: array_class.ColliderState,
     dyn_info: array_class.DynInfo,
     collider_info: array_class.ColliderInfo,
+    errno: qd.Tensor,
 ):
     """
     Set the contact data for the contact [i_c]. This is used for the backward pass, which parallelizes over the entire
@@ -382,6 +376,15 @@ def func_set_contact(
     friction_torsional_b = dyn_info.geoms.friction_torsional[i_gb] * dyn_state.geoms.friction_ratio[i_gb, i_b]
     friction_rolling_a = dyn_info.geoms.friction_rolling[i_ga] * dyn_state.geoms.friction_ratio[i_ga, i_b]
     friction_rolling_b = dyn_info.geoms.friction_rolling[i_gb] * dyn_state.geoms.friction_ratio[i_gb, i_b]
+
+    # Every contact the solver sees is written here, so a non-finite position, normal or penetration is flagged here
+    # rather than several stages later as a force gone wrong. Flagged rather than dropped: a missing contact lets
+    # bodies pass through each other just as silently. The magnitude test catches 'inf' and 'nan' at once, where the
+    # bit-pattern intrinsics ('qd.math.isnan' / 'qd.math.isinf') are assumed away under fast math for the infinities
+    # and have no reverse-mode adjoint - this write is shared with the differentiated narrowphase.
+    residual = contact_pos[0] + contact_pos[1] + contact_pos[2] + normal[0] + normal[1] + normal[2] + penetration
+    if not (qd.abs(residual) < qd.math.inf):
+        errno[i_b] = errno[i_b] | array_class.ErrorCode.INVALID_CONTACT_NAN
 
     # b to a
     collider_state.contact_data.geom_a[i_c, i_b] = i_ga
@@ -521,13 +524,13 @@ def func_contact_orthogonals(
             volume_gb = size_gb[0] * size_gb[1] * size_gb[2]
             i_g = i_ga if volume_ga < volume_gb else i_gb
 
-        # The basis is built in the reference geom's own frame - the frame its support lookup is indexed in, which a
-        # geom offset from the link makes distinct from the inertial one - and rotated back to world, so a scene and any rigidly
-        # rotated copy of it perturb along the same directions relative to the geometry, and the manifold they find is
-        # the same. Selecting an axis by comparing the world normal against world axes instead makes the choice depend
-        # on the orientation of the whole scene, and it ties outright for a geom with no preferred axis, where two
-        # equal principal moments leave the selection to rounding and the manifold jumps between two sets.
-        rot = gu.qd_quat_to_R(dyn_state.geoms.quat[i_g, i_b], EPS)
+        # The basis is built in the reference geom's local inertial frame, the physical anchor that does not depend on
+        # the link origin, maintained by forward kinematics as links.quat composed with the build-time local inertial
+        # quat, then rotated back to world. Building the orthogonals on the LOCAL normal keeps the construction's branch
+        # decisions fixed to the body, so a scene and any rigidly rotated copy of it perturb along the same directions
+        # relative to the geometry and find the same manifold.
+        i_l = dyn_info.geoms.link_idx[i_g]
+        rot = gu.qd_quat_to_R(dyn_state.links.i_quat[i_l, i_b], EPS)
         axis_0_local, axis_1_local = gu.qd_orthogonals(rot.transpose() @ normal)
         axis_0 = rot @ axis_0_local
         axis_1 = rot @ axis_1_local
@@ -553,8 +556,22 @@ def func_rotate_frame(
     return new_pos, new_quat
 
 
+@qd.func
+def func_contact_order_key(pos: qd.types.vector(3)):
+    """Order a contact position along one generic direction, as a single scalar.
+
+    Comparing components in turn tests each for equality, and in a frame attached to the geometry the contacts of one
+    patch share components exactly - a box face puts two corners at the same local x - so the ordering follows the
+    rounding of a mathematically tied quantity. Projecting on a direction no face of a box or regular prism is parallel
+    to separates the points of a patch by a margin of their own spacing. The weights are successive powers of the
+    golden ratio, as far from any rational direction as a pair of weights gets.
+    """
+    return pos[0] + 1.618033988749895 * pos[1] + 2.618033988749895 * pos[2]
+
+
 @qd.kernel(fastcache=True)
 def func_clamp_prune_contacts(
+    dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
@@ -668,7 +685,7 @@ def func_clamp_prune_contacts(
                         i_lb = collider_state.contact_data.link_b[i_pc, i_b]
                         if qd.min(i_la, i_lb) != i_l_min0 or qd.max(i_la, i_lb) != i_l_max0:
                             break
-                        i_cb_end += 1
+                        i_cb_end = i_cb_end + 1
                     n_cb = i_cb_end - i_cb_start
 
                     if n_cb >= 3:
@@ -680,43 +697,40 @@ def func_clamp_prune_contacts(
                         # survivor set reproducible.
                         for i_cb in range(i_cb_start + 1, i_cb_end):
                             i_p = collider_state.contact_sort_idx[i_cb, i_b]
-                            pos_p = collider_state.contact_data.pos[i_p, i_b]
-                            normal_p = collider_state.contact_data.normal[i_p, i_b]
                             geom_a_p = collider_state.contact_data.geom_a[i_p, i_b]
                             geom_b_p = collider_state.contact_data.geom_b[i_p, i_b]
                             pen_p = collider_state.contact_data.penetration[i_p, i_b]
+                            key_p = func_contact_order_key(
+                                gu.qd_inv_transform_by_quat(
+                                    collider_state.contact_data.pos[i_p, i_b] - dyn_state.geoms.pos[geom_b_p, i_b],
+                                    dyn_state.geoms.quat[geom_b_p, i_b],
+                                )
+                            )
                             j_cb = i_cb - 1
                             while j_cb >= i_cb_start:
                                 j_p = collider_state.contact_sort_idx[j_cb, i_b]
-                                pos_q = collider_state.contact_data.pos[j_p, i_b]
-                                # Total order over the contact's intrinsic data: position, then geom pair, then normal,
-                                # then penetration. Position alone leaves coincident contacts from different geoms (e.g.
-                                # adjacent ring wedges touching the pole at one shared point) tied, so they keep the
-                                # non-deterministic atomic-slot order and the downstream (u, v) hull dedup picks a
+                                # Total order over the contact's intrinsic data: geom pair, then the frame-local order
+                                # key, then penetration. Position alone leaves coincident contacts from different geoms
+                                # (e.g. adjacent ring wedges touching the pole at one shared point) tied, so they keep
+                                # the non-deterministic atomic-slot order and the downstream (u, v) hull dedup picks a
                                 # different survivor run-to-run.
+                                geom_a_q = collider_state.contact_data.geom_a[j_p, i_b]
+                                geom_b_q = collider_state.contact_data.geom_b[j_p, i_b]
+                                key_q = func_contact_order_key(
+                                    gu.qd_inv_transform_by_quat(
+                                        collider_state.contact_data.pos[j_p, i_b] - dyn_state.geoms.pos[geom_b_q, i_b],
+                                        dyn_state.geoms.quat[geom_b_q, i_b],
+                                    )
+                                )
                                 precedes = False
-                                if pos_q[0] != pos_p[0]:
-                                    precedes = pos_q[0] < pos_p[0]
-                                elif pos_q[1] != pos_p[1]:
-                                    precedes = pos_q[1] < pos_p[1]
-                                elif pos_q[2] != pos_p[2]:
-                                    precedes = pos_q[2] < pos_p[2]
+                                if geom_a_q != geom_a_p:
+                                    precedes = geom_a_q < geom_a_p
+                                elif geom_b_q != geom_b_p:
+                                    precedes = geom_b_q < geom_b_p
+                                elif key_q != key_p:
+                                    precedes = key_q < key_p
                                 else:
-                                    geom_a_q = collider_state.contact_data.geom_a[j_p, i_b]
-                                    geom_b_q = collider_state.contact_data.geom_b[j_p, i_b]
-                                    normal_q = collider_state.contact_data.normal[j_p, i_b]
-                                    if geom_a_q != geom_a_p:
-                                        precedes = geom_a_q < geom_a_p
-                                    elif geom_b_q != geom_b_p:
-                                        precedes = geom_b_q < geom_b_p
-                                    elif normal_q[0] != normal_p[0]:
-                                        precedes = normal_q[0] < normal_p[0]
-                                    elif normal_q[1] != normal_p[1]:
-                                        precedes = normal_q[1] < normal_p[1]
-                                    elif normal_q[2] != normal_p[2]:
-                                        precedes = normal_q[2] < normal_p[2]
-                                    else:
-                                        precedes = collider_state.contact_data.penetration[j_p, i_b] <= pen_p
+                                    precedes = collider_state.contact_data.penetration[j_p, i_b] <= pen_p
                                 if precedes:
                                     break
                                 collider_state.contact_sort_idx[j_cb + 1, i_b] = j_p
@@ -897,7 +911,7 @@ def func_clamp_prune_contacts(
                                 collider_state.contact_hull_stack[i_cb_start + n_hull, i_b] = i_p
                                 i_hs = i_ht
                                 i_ht = i_p
-                                n_hull += 1
+                                n_hull = n_hull + 1
 
                             n_hull_lower = n_hull
                             for i_step in range(n_cb - 1):
@@ -928,7 +942,7 @@ def func_clamp_prune_contacts(
                                     collider_state.contact_hull_stack[i_cb_start + n_hull, i_b] = i_p
                                     i_hs = i_ht
                                     i_ht = i_p
-                                    n_hull += 1
+                                    n_hull = n_hull + 1
 
                             # Overwrite contact_keep[b_start..b_end) (previously the (u, v) permutation scratch)
                             # with the final drop/keep flags: drop everything, then mark hull vertices keep.
@@ -970,7 +984,7 @@ def func_clamp_prune_contacts(
                     if collider_state.contact_keep[i_cr, i_b] != 0:
                         if i_cw != i_cr:
                             collider_state.contact_sort_idx[i_cw, i_b] = collider_state.contact_sort_idx[i_cr, i_b]
-                        i_cw += 1
+                        i_cw = i_cw + 1
                 collider_state.n_contacts[i_b] = i_cw
 
         # The contact constraint buffers are sized to 4 * max_contacts, so any surviving contact beyond that budget
@@ -983,6 +997,7 @@ def func_clamp_prune_contacts(
 
 @qd.kernel(fastcache=True)
 def func_clamp_prune_contacts_coop(
+    dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
@@ -1098,7 +1113,7 @@ def func_clamp_prune_contacts_coop(
                     i_lb = collider_state.contact_data.link_b[i_pc, i_b]
                     if qd.min(i_la, i_lb) != i_l_min0 or qd.max(i_la, i_lb) != i_l_max0:
                         break
-                    i_cb_end += 1
+                    i_cb_end = i_cb_end + 1
                 n_cb = i_cb_end - i_cb_start
 
                 if n_cb >= 3:
@@ -1111,43 +1126,40 @@ def func_clamp_prune_contacts_coop(
                     if tid == 0:
                         for i_cb in range(i_cb_start + 1, i_cb_end):
                             i_p = collider_state.contact_sort_idx[i_cb, i_b]
-                            pos_p = collider_state.contact_data.pos[i_p, i_b]
-                            normal_p = collider_state.contact_data.normal[i_p, i_b]
                             geom_a_p = collider_state.contact_data.geom_a[i_p, i_b]
                             geom_b_p = collider_state.contact_data.geom_b[i_p, i_b]
                             pen_p = collider_state.contact_data.penetration[i_p, i_b]
+                            key_p = func_contact_order_key(
+                                gu.qd_inv_transform_by_quat(
+                                    collider_state.contact_data.pos[i_p, i_b] - dyn_state.geoms.pos[geom_b_p, i_b],
+                                    dyn_state.geoms.quat[geom_b_p, i_b],
+                                )
+                            )
                             j_cb = i_cb - 1
                             while j_cb >= i_cb_start:
                                 j_p = collider_state.contact_sort_idx[j_cb, i_b]
-                                pos_q = collider_state.contact_data.pos[j_p, i_b]
-                                # Total order over the contact's intrinsic data: position, then geom pair, then normal,
-                                # then penetration. Position alone leaves coincident contacts from different geoms (e.g.
-                                # adjacent ring wedges touching the pole at one shared point) tied, so they keep the
-                                # non-deterministic atomic-slot order and the downstream (u, v) hull dedup picks a
+                                # Total order over the contact's intrinsic data: geom pair, then the frame-local order
+                                # key, then penetration. Position alone leaves coincident contacts from different geoms
+                                # (e.g. adjacent ring wedges touching the pole at one shared point) tied, so they keep
+                                # the non-deterministic atomic-slot order and the downstream (u, v) hull dedup picks a
                                 # different survivor run-to-run.
+                                geom_a_q = collider_state.contact_data.geom_a[j_p, i_b]
+                                geom_b_q = collider_state.contact_data.geom_b[j_p, i_b]
+                                key_q = func_contact_order_key(
+                                    gu.qd_inv_transform_by_quat(
+                                        collider_state.contact_data.pos[j_p, i_b] - dyn_state.geoms.pos[geom_b_q, i_b],
+                                        dyn_state.geoms.quat[geom_b_q, i_b],
+                                    )
+                                )
                                 precedes = False
-                                if pos_q[0] != pos_p[0]:
-                                    precedes = pos_q[0] < pos_p[0]
-                                elif pos_q[1] != pos_p[1]:
-                                    precedes = pos_q[1] < pos_p[1]
-                                elif pos_q[2] != pos_p[2]:
-                                    precedes = pos_q[2] < pos_p[2]
+                                if geom_a_q != geom_a_p:
+                                    precedes = geom_a_q < geom_a_p
+                                elif geom_b_q != geom_b_p:
+                                    precedes = geom_b_q < geom_b_p
+                                elif key_q != key_p:
+                                    precedes = key_q < key_p
                                 else:
-                                    geom_a_q = collider_state.contact_data.geom_a[j_p, i_b]
-                                    geom_b_q = collider_state.contact_data.geom_b[j_p, i_b]
-                                    normal_q = collider_state.contact_data.normal[j_p, i_b]
-                                    if geom_a_q != geom_a_p:
-                                        precedes = geom_a_q < geom_a_p
-                                    elif geom_b_q != geom_b_p:
-                                        precedes = geom_b_q < geom_b_p
-                                    elif normal_q[0] != normal_p[0]:
-                                        precedes = normal_q[0] < normal_p[0]
-                                    elif normal_q[1] != normal_p[1]:
-                                        precedes = normal_q[1] < normal_p[1]
-                                    elif normal_q[2] != normal_p[2]:
-                                        precedes = normal_q[2] < normal_p[2]
-                                    else:
-                                        precedes = collider_state.contact_data.penetration[j_p, i_b] <= pen_p
+                                    precedes = collider_state.contact_data.penetration[j_p, i_b] <= pen_p
                                 if precedes:
                                     break
                                 collider_state.contact_sort_idx[j_cb + 1, i_b] = j_p
@@ -1338,7 +1350,7 @@ def func_clamp_prune_contacts_coop(
                             collider_state.contact_hull_stack[i_cb_start + n_hull, i_b] = i_p
                             i_hs = i_ht
                             i_ht = i_p
-                            n_hull += 1
+                            n_hull = n_hull + 1
 
                         n_hull_lower = n_hull
                         for i_step in range(n_cb - 1):
@@ -1363,7 +1375,7 @@ def func_clamp_prune_contacts_coop(
                                 collider_state.contact_hull_stack[i_cb_start + n_hull, i_b] = i_p
                                 i_hs = i_ht
                                 i_ht = i_p
-                                n_hull += 1
+                                n_hull = n_hull + 1
 
                         for i_h in range(n_hull):
                             i_hv = collider_state.contact_hull_stack[i_cb_start + i_h, i_b]
@@ -1390,14 +1402,17 @@ def func_clamp_prune_contacts_coop(
                 i_cb_start = i_cb_end
 
         if tid == 0:
-            # Phase 3 (compact): squeeze dropped orig-space slots out of contact_sort_idx in orig order and update
-            # n_contacts. Kept slots map logical-position to physical-position (orig-space). Deterministic ordering of
-            # the kept contacts is applied later in add_inequality_constraints, not here.
+            # Phase 3 (compact): squeeze dropped slots out of contact_sort_idx and update n_contacts. The survivors
+            # keep the order phase 1 and the per-bucket sort leave them in, which is what holds a scene and a rotated
+            # copy of it to the same reported contacts. contact_keep is indexed physically, so the read indirects
+            # through the permutation while the write compacts it in place, valid while the write index trails the
+            # read one.
             i_cw = 0
             for i_c in range(n_con):
-                if collider_state.contact_keep[i_c, i_b] != 0:
-                    collider_state.contact_sort_idx[i_cw, i_b] = i_c
-                    i_cw += 1
+                i_pc = collider_state.contact_sort_idx[i_c, i_b]
+                if collider_state.contact_keep[i_pc, i_b] != 0:
+                    collider_state.contact_sort_idx[i_cw, i_b] = i_pc
+                    i_cw = i_cw + 1
             collider_state.n_contacts[i_b] = i_cw
 
             # The contact constraint buffers are sized to 4 * max_contacts, so any surviving contact beyond that

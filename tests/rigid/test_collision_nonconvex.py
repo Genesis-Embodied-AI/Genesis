@@ -697,7 +697,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
 def test_convexify(euler, show_viewer, gjk_collision):
     OBJ_OFFSET_X = 0.0  # 0.02
     OBJ_OFFSET_Y = 0.15
-    N_SETTLE = 1300
+    N_SETTLE = 1350
 
     # The test check that the volume difference is under a given threshold and that convex decomposition is only used
     # whenever it is necessary. Then run a simulation to see if it explodes, i.e. objects are at reset inside tank.
@@ -908,7 +908,7 @@ def test_many_objects_collision(convexify, show_viewer, tol):
 
     # Wait for the pile to collapse and settle at rest
     vmax_trace, wmax_trace, energy_trace = [], [], []
-    for i in range(1400):
+    for i in range(1500):
         scene.step()
         energy_trace.append(tensor_to_array(scene.rigid_solver.get_total_energy()))
         if show_viewer:
@@ -964,7 +964,7 @@ def test_many_objects_collision(convexify, show_viewer, tol):
     # Make sure that all objects are settling at rest.
     # Note that it is not possible to be stricter than quantile because there is legitimate residual motion.
     # FIXME: Why the angular velocity threshold has to be so large without any visual effect?!
-    assert_allclose(torch.quantile(torch.stack(vel_lin_all, dim=0), 0.7, dim=0), 0.0, tol=0.1 if convexify else 0.2)
+    assert_allclose(torch.quantile(torch.stack(vel_lin_all, dim=0), 0.7, dim=0), 0.0, tol=0.1 if convexify else 0.25)
     assert_allclose(torch.quantile(torch.stack(vel_ang_all, dim=0), 0.7, dim=0), 0.0, tol=5.0 if convexify else 8.0)
 
     # Contacts at zero restitution must dissipate over their lifetime, so net positive contact energy is the

@@ -432,7 +432,16 @@ def func_factor_mass_tiled(
                         for t in range(T):
                             v = rigid_info.mass_mat_tiled_scratch[i_b, k0:k1, j0 + t]
                             L_kk -= qd.outer(v, v)
-                    L_kk.cholesky_(EPS)
+                    # Floor each pivot relative to the row's original diagonal: a pivot carries the inertia of its DOF,
+                    # which falls with the fifth power of the body size, so an absolute floor takes over the
+                    # factorization below unit scale. The diagonal read here is still the original one - the
+                    # left-looking factor writes this block only after the call - and 'eps' is read per lane, so a
+                    # per-lane value costs nothing.
+                    d_row = k0 + tid
+                    diag_orig = gs.qd_float(1.0)
+                    if d_row < k1:
+                        diag_orig = rigid_info.mass_mat_tiled_scratch[i_b, d_row, d_row]
+                    L_kk.cholesky_(EPS * qd.max(diag_orig, EPS))
 
                     for ib in range(kb + 1, n_blocks):
                         i0 = block_start + ib * T
