@@ -522,3 +522,27 @@ def test_set_gravity_accepts_field_and_tensor():
     finally:
         gs.destroy()
         os.environ.pop("GS_ENABLE_NDARRAY", None)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize(
+    "boxes_size",
+    [
+        # A light body under a heavy scene aggregate, below the floor quoted on the solver tolerance.
+        [1.0, 0.001],
+        # A uniformly tiny scene, below the absolute floor the working precision resolves at all.
+        pytest.param([0.0002], marks=pytest.mark.precision("32")),
+    ],
+)
+def test_warn_solver_numerical_stability(boxes_size, caplog):
+    scene = gs.Scene(show_viewer=False)
+    for i, size in enumerate(boxes_size):
+        scene.add_entity(
+            gs.morphs.Box(
+                pos=(float(i), 0.0, 0.5 * size),
+                size=(size, size, size),
+            ),
+        )
+    with caplog.at_level("WARNING"):
+        scene.build()
+    assert any("too small for the constraint solver" in record.message for record in caplog.records)
