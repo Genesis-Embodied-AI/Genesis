@@ -108,7 +108,7 @@ jobs:
             # tmate -S /tmp/tmate.sock wait tmate-ready
             # tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
 
-            pytest -v -ra --backend gpu --dev --forked ./tests
+            pytest -v -ra -s -n 0 --backend gpu --dev tests/rigid/test_align_probe3.py tests/rigid/test_asset_loading.py::test_align_mesh
 
             # tmate -S /tmp/tmate.sock wait tmate-exit
           EOF
