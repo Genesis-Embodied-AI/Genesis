@@ -1423,6 +1423,7 @@ def func_contact_mpr_terrain(
                                         ga_quat_tf,
                                         gb_pos_terrain_frame,
                                         gb_quat_terrain_frame,
+                                        geoms_init_AABB,
                                         collider_state,
                                         mpr_state,
                                         dyn_info,
