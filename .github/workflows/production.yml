@@ -20,9 +20,9 @@ env:
   HF_TOKEN: ${{ secrets.HF_TOKEN }}
   HF_HUB_DOWNLOAD_TIMEOUT: 60
   # Increment to switch new jobs to fresh caches before deleting the previous version.
-  CACHE_VERSION: "1"
+  CACHE_VERSION: "2"
   GENESIS_IMAGE_VER: "1_25"
-  TIMEOUT_MINUTES: 60
+  TIMEOUT_MINUTES: 120
   FORCE_COLOR: 1
   PY_COLORS: 1
   MADRONA_DISABLE_CUDA_HEAP_SIZE: "1"
