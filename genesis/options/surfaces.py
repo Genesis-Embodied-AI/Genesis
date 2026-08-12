@@ -145,7 +145,7 @@ class Surface(Options):
         return False
 
     def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
-        return _make_rgba(self.texture, None, batch)
+        return _make_rgba(_resolve_albedo(self.texture, self.emission), None, batch)
 
     def update_texture(
         self,
@@ -212,6 +212,33 @@ class Surface(Options):
 # surfaces (no image array, e.g. per-geom randomized collision colors) cannot accumulate unbounded. Dropped on genesis
 # teardown like the other caches.
 _RGBA_CACHE = SizeCappedCache(max_bytes=512 * 1024 * 1024, max_entries=8192)
+
+
+def _resolve_albedo(base_texture: Texture | None, emissive_texture: Texture | None) -> Texture | None:
+    # Packed RGBA feeds renderers that read it as base color, so prefer the base-color texture. Fall back to emissive
+    # only when the base is absent or fully black, which keeps zero-base-factor assets (visible imagery authored into
+    # emissive) renderable without letting an emissive map override an ordinary authored base color. Batched textures
+    # decide the fallback per entry: a mixed batch resolves each environment on its own base color rather than on
+    # whether any environment is black.
+    is_base_batched = isinstance(base_texture, BatchTexture)
+    is_emissive_batched = isinstance(emissive_texture, BatchTexture)
+    if is_base_batched or is_emissive_batched:
+        base_batch = base_texture.textures if is_base_batched else [base_texture]
+        emissive_batch = emissive_texture.textures if is_emissive_batched else [emissive_texture]
+        # Least common multiple keeps every base/emissive pairing, matching how _make_rgba combines batch dimensions.
+        count = math.lcm(len(base_batch), len(emissive_batch))
+        resolved = [
+            _resolve_albedo(base_batch[i % len(base_batch)], emissive_batch[i % len(emissive_batch)])
+            for i in range(count)
+        ]
+        # Return the original batch object when no entry fell back, so its identity stays stable and _make_rgba's
+        # per-instance cache keeps hitting for shared batched textures instead of rebuilding a wrapper each call.
+        if is_base_batched and len(resolved) == len(base_batch) and all(r is b for r, b in zip(resolved, base_batch)):
+            return base_texture
+        return BatchTexture(textures=resolved)
+    if base_texture is not None and not base_texture.is_black:
+        return base_texture
+    return emissive_texture if emissive_texture is not None else base_texture
 
 
 def _make_rgba(color_texture: Texture | None, opacity_texture: Texture | None, batch: bool) -> "BatchTexture | Texture":
@@ -374,10 +401,6 @@ class Glass(Surface):
             )
         )
 
-    def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
-        color = self.emissive_texture if self.emissive_texture is not None else self.specular_texture
-        return _make_rgba(color, None, batch)
-
     def update_texture(
         self,
         *,
@@ -453,8 +476,7 @@ class Metal(Surface):
         )
 
     def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
-        color = self.emissive_texture if self.emissive_texture is not None else self.diffuse_texture
-        return _make_rgba(color, self.opacity_texture, batch)
+        return _make_rgba(_resolve_albedo(self.texture, self.emission), self.opacity_texture, batch)
 
     @model_validator(mode="after")
     def _post_init(self) -> Self:
@@ -544,8 +566,7 @@ class Plastic(Surface):
         )
 
     def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
-        color = self.emissive_texture if self.emissive_texture is not None else self.diffuse_texture
-        return _make_rgba(color, self.opacity_texture, batch)
+        return _make_rgba(_resolve_albedo(self.texture, self.emission), self.opacity_texture, batch)
 
     @model_validator(mode="after")
     def _post_init(self) -> Self:
@@ -641,8 +662,7 @@ class BSDF(Surface):
         )
 
     def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
-        color = self.emissive_texture if self.emissive_texture is not None else self.diffuse_texture
-        return _make_rgba(color, self.opacity_texture, batch)
+        return _make_rgba(_resolve_albedo(self.texture, self.emission), self.opacity_texture, batch)
 
     @model_validator(mode="after")
     def _post_init(self) -> Self:
@@ -708,9 +728,6 @@ class Emission(Surface):
     @property
     def requires_uv(self) -> bool:
         return self.emissive_texture is not None and self.emissive_texture.requires_uv
-
-    def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
-        return _make_rgba(self.emissive_texture, None, batch)
 
     @model_validator(mode="after")
     def _post_init(self) -> Self:

@@ -1,5 +1,144 @@
 # Genesis Release Note
 
+## 1.3.2
+
+This minor release improves compliance of rigid body simulation wrt the orientation- and scale-based physics invariants, while improving numerical robustness to ill-conditioning for the mass matrix. Besides, the simulation is now fully deterministic on a given machine for both CPU and GPU.
+
+### New Features
+
+* Add method for querying terrain height. (@jeetrex17) (#3128)
+
+### Bug Fixes
+
+* Fix delete weld constraint when not last added dynamic equality. (@jimwang418) (#3123)
+* Fix viewer picking and raycast sensors missing hits. (@duburcqa) (#3147)
+* Fix sensor read delay crash and jitter returning undelayed data. (@Milotrince) (#3188)
+* Preserve authored inertia matrix when center of mass is unspecified. (@eason4kim-rocket) (#3184)
+* Keep rigid body simulation consistent across scene orientations and scales. (@duburcqa) (#3152, #3156, #3194, #3196)
+
+### Miscellaneous
+
+* Cleanup examples for consistency. (@Milotrince) (#3104)
+* Report a clear error when EGL is unavailable for offscreen rendering. (@himanshu748) (#3145)
+* Speed up simulation with IMU sensors. (@duburcqa) (#3149)
+* Share mesh cache between re-exports of the same asset. (@duburcqa) (#3151)
+* Simplify per-step update of temperature sensor. (@duburcqa) (#3153)
+* Speedup scene build by skipping the hollow-geom SDF probe for convex geoms. (@YilingQiao) (#3180)
+* Make GPU-based rigid body simulation deterministic. (@hughperkins) (#3187)
+
+## 1.3.1
+
+This small release fixes support of the Nyx rendering plugin. Besides, contact normal forces no longer depend on the friction coefficient nor the sliding speed, thanks to the new rigid solver option 'contact_resolution' that bounds friction against the normal force actually developed by the contact.
+
+### Breaking
+
+* [FEATURE] Support decoupling contact normal forces from friction coef and sliding speed. (@duburcqa) (#3126, #3139)
+
+### New Features
+
+* Support raycasting against visual meshes in viewer plugins. (@Milotrince) (#3132)
+
+### Miscellaneous
+
+* Fix support of FEM entities in Nyx plugin. (@duburcqa) (#3131)
+* Add CI for Nyx renderer plugin. (@duburcqa) (#3130, #3133, #3135, #3136, #3137, #3138)
+
+## 1.3.0
+
+This release extends differentiable rigid body simulation, which is no longer considered experimental. Moreover, torsional and rolling friction have been added, as part of a broader ongoing effort to bridge the sim2real gap.
+
+### Breaking
+
+* [BUG FIX] Record camera videos of any length at a chosen framerate. (@duburcqa) (#3107, #3120)
+
+### New Features
+
+* Add torsional and rolling friction to the rigid solver. (@duburcqa) (#3069)
+* Add explicit mounting transform in RigidEntity.attach. (@Kashu7100) (#3041)
+* Add link filtering to contact sensors. (@jsw7460) (#2772)
+* Add torque visualization for tactile sensor examples. (@Milotrince) (#3085)
+* Extend differentiable rigid body simulation. (@SonSang, @duburcqa) (#2842, #3087, #3089)
+
+### Bug Fixes
+
+* Fix missing buoyancy on rigid bodies submerged in SPH fluid. (@yeezhouyi) (#2857)
+* Fix rendering assets pairing base color with emissive map. (@duburcqa) (#3088)
+* Fix camera sensor not being refreshed after scene reset. (@thanyu-hub) (#3100)
+* Fix transparency not deterministic in Rasterizer. (@duburcqa) (#3108)
+* Fix per-environment queries of link inertial properties and energies. (@duburcqa) (#3114)
+* Fix wrong mechanical energy and speed up computations. (@duburcqa) (#3121)
+* Fix handling of negative index for rigid accessor filter 'envs_idx'. (@jeetrex17) (#3117)
+
+### Miscellaneous
+
+* Clarify IPC vertex constraint error (@coyaSONG) (#3056)
+* Decouple visual from physics geometry for FEM entities. (@ACMLCZH) (#2904)
+* Safer kernel caching. (@hughperkins) (#3071)
+* Speed up raycast sensors by splitting the rigid collision BVH into static and dynamic subsets. (@duburcqa) (#3078)
+* Add full support of AMD GPU to unit test and benchmark infra. (@v01dXYZ) (#2680)
+* Reduce memory footprint of ray casting-based sensors via cross-env memory sharing. (@Kashu7100) (#2914)
+* Move to gs-madrona 0.0.10. (@duburcqa) (#3093, #3097)
+* Fix reverse-mode autodiff on Apple Metal. (@duburcqa) (#3119)
+
+## 1.2.3
+
+This small release introduces elliptic friction cone with high-impedance option to accurately model static function. In addition, the convergence of the constraint solver under fp32 accuracy has been improved.
+
+### New Features
+
+* Add high-fidelity static friction model via elliptic friction cone with high-impedance option. (@duburcqa) (#3028, #3035, #3042)
+* Add support of heterogeneous entities in batch renderer. (@Kashu7100) (#2960)
+* Add distances-only mode to raycasting-based sensors. (@Kashu7100) (#2908)
+* Add option to ignore MJCF ground plane. (@coyaSONG) (#3050)
+
+### Bug Fixes
+
+* Fix default morph offset_quat clashing with offset_euler. (@duburcqa) (#3048)
+* Fix IPC coupler auto-detecting wrong coup_type for Plane entities. (@liminchen) (#2877)
+* Fix mass matrix for attached entities. (@duburcqa) (#3055)
+* Fix fastcache support. (@hughperkins) (#3034, #3061)
+* FiX USD parsing of geometry properties. (@Milotrince) (#3017)
+* Fix USD parsing of textures packed in .usdz archives. (@connorsoohoo) (#3064)
+* Fix MJCF parsing of 2D textures. (@thanyu-hub) (#3036)
+* Fix MJCF parsing of included files with mesh defaults. (@Fstarnb) (#3068)
+* Fix MJCF parsing of joint armatures. (@duburcqa) (#3072)
+* Honour system scroll direction in viewer plugins. (@coyaSONG) (#3030)
+* Release the offscreen EGL context before destroying it during teardown. (@duburcqa) (#3076)
+
+### Miscellaneous
+
+* Speed up non-convex collision detection with vert spatial grid and coarse SDF lower bound. (@duburcqa) (#3026)
+* Speed up non-batched CPU-based simulation (up to 30%). (@hughperkins) (#3033)
+* Speed up forward kinematics by removing unnecessary atomics. (@gayathiri-venkataraman) (#3066)
+* Improve constraint solver float32 convergence and equality constraint stability. (@duburcqa) (#3073)
+* Preserve the energy of freely tumbling bodies under implicit integration. (@duburcqa) (#3074)
+* Stop requiring 64bit precision in tactile sensors. (@Milotrince, @duburcqa) (#3057, #3058)
+* Pack rigid solver data on a per-component basis. (@duburcqa) (#3060)
+* Fix broken Apple Metal CI. (@hughperkins) (#3054)
+* Add contribution guidelines. (@duburcqa) (#3032, #3049)
+
+## 1.2.2
+
+This release introduces a rich family of realistic yet high-throughput tactile sensors that are suitable for training dexterous policy via RL. Besides, non-convex collision detection is now more robust than ever, with comparable performance to convex decomposition in terms of speed and stability. Notably, spurious deep contacts and thin-shell tunneling has been fixed. Finally, enabling 'noslip' post-processing step should now incur less than 20% slowdown for all backends.
+
+### New Features
+
+* Add noise options for tactile sensors: hysteresis, dead taxels, probe gain (@Milotrince) (#2813)
+
+### Bug Fixes
+
+* Fix contact-pruning bucket merging. (@duburcqa) (#3010)
+* Fix performance regression on some backends when sparse option is not specified. (@duburcqa) (#3010)
+* Fix data accessors for very large batch sizes (>16k). (@duburcqa) (#3010)
+* Fix go2_backflip RL training example. (@kshitijgoel007) (#2986)
+
+### Miscellaneous
+
+* Speed up per-island noslip solver. (@duburcqa) (#3009)
+* Speed up contact-island constraint solve for large batches. (@Milotrince) (#3021)
+* Speed up tactile sensors. (@Milotrince) (#2922)
+* More robust nonconvex collision detection. (@duburcqa) (#3014, #3020)
+
 ## 1.2.1
 
 This release dramatically improves scaling to large scenes on CPU by better leveraging sparsity and incremental Hessian update. Scenes with 100 entities / 1000 geometries now run in real-time at 120FPS.

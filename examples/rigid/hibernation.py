@@ -27,9 +27,9 @@ RECORDING_FPS = 30
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-s", "--scene", choices=("ducks", "dominos"), default="ducks", help="Which showcase to run.")
-    parser.add_argument("-v", "--vis", action="store_true", help="Show the interactive viewer.")
-    parser.add_argument("-r", "--record", action="store_true", help="Record the scene and step-rate plot to video.")
+    parser.add_argument("--scene", choices=("ducks", "dominos"), default="ducks", help="Which showcase to run")
+    parser.add_argument("-v", "--vis", action="store_true", help="Show the interactive viewer")
+    parser.add_argument("-r", "--record", action="store_true", help="Record the scene and step-rate plot to video")
     args = parser.parse_args()
 
     # Hibernation runs on field storage (performance_mode) and shows its benefit on CPU, where skipping sleeping
@@ -116,7 +116,7 @@ def main():
             labels={"step_rate": ["steps/s"], "awake_bodies": ["awake bodies"]},
             hz=RECORDING_FPS,
             history_length=10000,
-            save_to_filename=f"hibernation_{args.scene}_fps.mp4" if args.record else None,
+            save_to_filename=f"out/hibernation_{args.scene}_fps.mp4" if args.record else None,
         ),
     )
 
@@ -125,16 +125,16 @@ def main():
     n_bodies = sum(1 for link in scene.rigid_solver.links if link.n_dofs > 0)
     n_awake[0] = n_bodies
 
-    # camera.start_recording stores each rendered frame and encodes them all at stop_recording, so rendering never
-    # enters the timed region and the reported step rate stays the physics-only rate.
+    # Recording renders from within 'scene.step', so the reported step rate includes the cost of capturing a frame
+    # every 1 / RECORDING_FPS of simulated time. Compare rates between scenes recorded the same way, or drop
+    # '--record' to read the physics-only rate.
     if args.record:
-        camera.start_recording()
+        camera.start_recording(save_to_filename=f"out/hibernation_{args.scene}.mp4", fps=RECORDING_FPS)
     sim_clock = 0.0
     # Long enough to show the full settle (ducks) or the whole travelling cascade and its re-sleep (dominos).
     sim_seconds = 7.0 if args.scene == "ducks" else 9.0
     n_steps = int(sim_seconds / dt) if "PYTEST_VERSION" not in os.environ else 5
-    render_every = max(1, round((1.0 / dt) / RECORDING_FPS))
-    for i_step in range(n_steps):
+    for _ in range(n_steps):
         tic = time.perf_counter()
         scene.step()
         sim_clock += time.perf_counter() - tic
@@ -142,11 +142,9 @@ def main():
         if measured is not None:
             step_rate[0] = measured
         # Read the awake count outside the timed region so it does not enter the reported step rate.
-        n_awake[0] = n_bodies - int(qd_to_numpy(scene.rigid_solver.links_state.is_hibernated, transpose=True).sum())
-        if args.record and i_step % render_every == 0:
-            camera.render()
+        n_awake[0] = n_bodies - int(qd_to_numpy(scene.rigid_solver.dyn_state.links.is_hibernated, transpose=True).sum())
     if args.record:
-        camera.stop_recording(save_to_filename=f"hibernation_{args.scene}.mp4", fps=30)
+        camera.stop_recording()
 
     gs.logger.info(
         f"{n_bodies - n_awake[0]}/{n_bodies} bodies hibernated; final step rate {step_rate[0]:,.0f} steps/s."

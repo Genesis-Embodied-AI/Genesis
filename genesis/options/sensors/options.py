@@ -111,11 +111,12 @@ class SensorOptions(Options, Generic[SensorT]):
         """
         assert scene.sim is not None
         if self.delay > 0:
-            delay_hz = self.delay / scene.sim.dt
-            if not np.isclose(delay_hz, round(delay_hz), atol=gs.EPS):
+            delay_ratio = self.delay / scene.sim.dt
+            delay_ts = round(delay_ratio)
+            if not np.isclose(delay_ratio, delay_ts, atol=gs.EPS):
                 gs.logger.warning(
                     f"{type(self).__name__}: Read delay should be a multiple of the simulation time step. Got "
-                    f"{self.delay} and {scene.sim.dt}. Actual read delay will be {1 / round(delay_hz)}."
+                    f"{self.delay} and {scene.sim.dt}. Actual read delay will be {delay_ts * scene.sim.dt}."
                 )
 
 
@@ -188,6 +189,33 @@ class RigidEntitySensorOptionsMixin(RigidSensorOptionsMixin[SensorT]):
             gs.raise_exception(f"{type(self).__name__} requires entity_idx >= 0, got {self.entity_idx}.")
 
 
+class ContactFilterOptionsMixin(RigidSensorOptionsMixin[SensorT]):
+    """
+    Shared options for the contact sensors whose reading can be scoped to ignore contacts with chosen counterpart
+    links -- Contact, ContactForce, and the contact-driven tactile probes (ContactProbe, ContactDepthProbe,
+    KinematicTaxel).
+
+    Parameters
+    ----------
+    filter_link_idx : array-like[int], optional
+        Global rigid link indices (solver link space). Contacts with the sensor link whose other participant is one
+        of these links are ignored: the sensor behaves as if those counterparts were not touching. Use it to scope a
+        reading to a chosen set of contacts (e.g. force on a foot from the ground, excluding self-contact). Default
+        is empty, so every contact with the sensor link counts.
+    """
+
+    filter_link_idx: OptionalIArrayType = Field(default_factory=tuple)
+
+    def validate_scene(self, scene: "Scene"):
+        super().validate_scene(scene)
+        if self.filter_link_idx:
+            n_links = scene.sim.rigid_solver.n_links
+            if np.any(np.array(self.filter_link_idx) < 0) or np.any(np.array(self.filter_link_idx) >= n_links):
+                gs.raise_exception(
+                    f"{type(self).__name__}: filter_link_idx must be in [0, {n_links}). Got {self.filter_link_idx}."
+                )
+
+
 class SimpleSensorOptions(SensorOptions[SensorT]):
     """
     Options carrying SimpleSensor's imperfection parameters.
@@ -227,6 +255,8 @@ class ProbeSensorOptionsMixin(SensorOptions[SensorT]):
     probe_radius : float | array-like[float] or shape ``(M, N)`` grid
         Probe sensing radius in meters. A scalar is shared by every probe; an array (or grid) must match the
         layout of ``probe_local_pos``.
+    probe_radius_noise : float
+        Additive radius noise in meters used by kernels whose measured branch depends on effective probe radius.
     debug_probe_color : array-like[float, float, float]
         RGB color for debug probe spheres (no alpha; the center sphere is drawn opaque and the outer sphere uses
         ``debug_probe_sphere_opacity``).
@@ -238,6 +268,7 @@ class ProbeSensorOptionsMixin(SensorOptions[SensorT]):
 
     probe_local_pos: Vec3FArrayType | Vec3FGridType = ((0.0, 0.0, 0.0),)
     probe_radius: PositiveFloat | PositiveFArrayType | PositiveFGridType = 0.01
+    probe_radius_noise: NonNegativeFloat = 0.0
     debug_probe_color: UnitIntervalVec3Type = (0.2, 0.4, 1.0)
     debug_probe_center_radius: PositiveFloat = 0.0008
     debug_probe_sphere_opacity: UnitInterval = 0.3
@@ -317,15 +348,12 @@ class JointTorque(RigidEntitySensorOptionsMixin["JointTorqueSensor"], SimpleSens
             )
 
 
-class Contact(RigidSensorOptionsMixin["ContactSensor"], SimpleSensorOptions["ContactSensor"]):
+class Contact(ContactFilterOptionsMixin["ContactSensor"], SimpleSensorOptions["ContactSensor"]):
     """
     Sensor that returns bool based on whether associated RigidLink is in contact.
 
     Parameters
     ----------
-    filter_link_idx : array-like[int], optional
-        Global rigid link indices (solver link space). Contacts with the sensor link where the other
-        participant is one of these links are ignored. Default is empty (no filtering).
     threshold : float, optional
         The bool-conversion threshold applied at read time to the underlying float contact magnitude
         (kernel produces float). A bin reads ``True`` iff its magnitude exceeds this value. Default
@@ -336,22 +364,12 @@ class Contact(RigidSensorOptionsMixin["ContactSensor"], SimpleSensorOptions["Con
         The rgba color of the debug sphere. Defaults to (1.0, 0.0, 1.0, 0.5).
     """
 
-    filter_link_idx: OptionalIArrayType = Field(default_factory=tuple)
     threshold: NonNegativeFloat = 0.0
     debug_sphere_radius: PositiveFloat = 0.05
     debug_color: UnitIntervalVec4Type = (1.0, 0.0, 1.0, 0.5)
 
-    def validate_scene(self, scene: "Scene"):
-        super().validate_scene(scene)
-        if self.filter_link_idx:
-            n_links = scene.sim.rigid_solver.n_links
-            if np.any(np.array(self.filter_link_idx) < 0) or np.any(np.array(self.filter_link_idx) >= n_links):
-                gs.raise_exception(
-                    f"Contact sensor filter_link_idx should be in range [0, {n_links}). Got {self.filter_link_idx}"
-                )
 
-
-class ContactForce(RigidSensorOptionsMixin["ContactForceSensor"], SimpleSensorOptions["ContactForceSensor"]):
+class ContactForce(ContactFilterOptionsMixin["ContactForceSensor"], SimpleSensorOptions["ContactForceSensor"]):
     """
     Sensor that returns the total contact force being applied to the associated RigidLink in its local frame.
 
@@ -605,6 +623,10 @@ class Raycaster(KinematicSensorOptionsMixin["RaycasterSensor"], SimpleSensorOpti
         The value to return for no hit. Defaults to max_range if not specified.
     return_world_frame : bool, optional
         Whether to return points in the world frame. Defaults to False (local frame).
+    return_points : bool, optional
+        Whether to return the per-ray hit points. Defaults to True. When False, ``read().points`` is None and only
+        the hit distances are measured, cutting the sensor's memory footprint and per-step cost to about a quarter.
+        Pick False for distance-only sensing (e.g. depth images); keep True when the point cloud is needed.
     debug_sphere_radius: float, optional
         The radius of each debug sphere drawn in the scene. Defaults to 0.02.
     debug_ray_start_color: array-like[float, float, float, float], optional
@@ -618,6 +640,7 @@ class Raycaster(KinematicSensorOptionsMixin["RaycasterSensor"], SimpleSensorOpti
     max_range: PositiveFloat = 20.0
     no_hit_value: float | None = None
     return_world_frame: StrictBool = False
+    return_points: StrictBool = True
 
     debug_sphere_radius: PositiveFloat = 0.02
     debug_ray_start_color: Vec4FType = (0.5, 0.5, 1.0, 1.0)

@@ -7,13 +7,11 @@ import genesis as gs
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
-    ########################## init ##########################
-    gs.init(backend=gs.gpu)
+    gs.init(backend=gs.cpu)
 
-    ########################## create a scene ##########################
     viewer_options = gs.options.ViewerOptions(
         camera_pos=(0, -3.5, 2.5),
         camera_lookat=(0.0, 0.0, 0.5),
@@ -35,14 +33,12 @@ def main():
         show_viewer=args.vis,
     )
 
-    ########################## entities ##########################
     plane = scene.add_entity(
         gs.morphs.Plane(),
     )
     franka = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
-    ########################## build ##########################
     scene.build(n_envs=2)  # test with 2 different environments
 
     joints_name = (
@@ -73,7 +69,6 @@ def main():
     )
     links_idx = [franka.get_link(name).idx_local for name in links_name]
 
-    # Optional: set control gains
     franka.set_dofs_kp(
         np.array(
             [

@@ -8,38 +8,35 @@ import genesis.utils.array_class as array_class
 
 @qd.func
 def func_capsule_capsule_contact(
-    i_ga,
-    i_gb,
-    ga_pos,
-    ga_quat,
-    gb_pos,
-    gb_quat,
-    geoms_info: array_class.GeomsInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
+    i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, dyn_info: array_class.DynInfo, rigid_info: array_class.RigidInfo
 ):
     """
-    Analytical capsule-capsule collision detection from the two capsule poses (ga_pos/ga_quat, gb_pos/gb_quat) and
-    radii. The poses are passed in rather than read from the geom state so the multi-contact loop can perturb them.
+    Analytical capsule-capsule collision detection.
 
     A capsule is defined as a line segment plus a radius (swept sphere).
     Collision between two capsules reduces to:
       1. Find closest points on the two line segments (analytical)
       2. Check if distance < sum of radii
       3. Compute contact point and normal
+
+    Parameters
+    ----------
+    ga_pos, ga_quat : Position and orientation of capsule A (may be perturbed for multi-contact).
+    gb_pos, gb_quat : Position and orientation of capsule B (may be perturbed for multi-contact).
     """
-    EPS = rigid_global_info.EPS[None]
+    EPS = rigid_info.EPS[None]
 
     # Get capsule A parameters
     pos_a = ga_pos
     quat_a = ga_quat
-    radius_a = geoms_info.data[i_ga][0]
-    halflength_a = 0.5 * geoms_info.data[i_ga][1]
+    radius_a = dyn_info.geoms.data[i_ga][0]
+    halflength_a = 0.5 * dyn_info.geoms.data[i_ga][1]
 
     # Get capsule B parameters
     pos_b = gb_pos
     quat_b = gb_quat
-    radius_b = geoms_info.data[i_gb][0]
-    halflength_b = 0.5 * geoms_info.data[i_gb][1]
+    radius_b = dyn_info.geoms.data[i_gb][0]
+    halflength_b = 0.5 * dyn_info.geoms.data[i_gb][1]
 
     # Capsules are aligned along local Z-axis by convention
     local_z_unit = qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float)
@@ -95,90 +92,31 @@ def func_capsule_capsule_contact(
 
 
 @qd.func
-def func_sphere_sphere_contact(
-    i_ga,
-    i_gb,
-    ga_pos,
-    ga_quat,
-    gb_pos,
-    gb_quat,
-    geoms_info: array_class.GeomsInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
-):
-    """
-    Analytical sphere-sphere collision detection from the two sphere centers ga_pos and gb_pos and their radii
-    (the orientations are unused since a sphere is rotation-invariant).
-
-    A sphere-sphere collision is a closed form:
-      1. Distance between the two centers
-      2. Check if distance < sum of radii
-      3. Compute contact point and normal
-
-    This avoids routing the pair through the iterative MPR/GJK+EPA path. It is also exactly
-    differentiable (no EPA, which fails to converge on the smoothly-curved sphere-sphere
-    Minkowski boundary).
-    """
-    EPS = rigid_global_info.EPS[None]
-
-    radius_a = geoms_info.data[i_ga][0]
-    radius_b = geoms_info.data[i_gb][0]
-
-    # Vector from sphere B center to sphere A center (normal points into geom A, i.e. B to A).
-    diff = ga_pos - gb_pos
-    dist_sq = diff.dot(diff)
-    combined_radius = radius_a + radius_b
-    combined_radius_sq = combined_radius * combined_radius
-
-    is_col = False
-    normal_unit = qd.Vector([1.0, 0.0, 0.0], dt=gs.qd_float)
-    contact_pos = qd.Vector.zero(gs.qd_float, 3)
-    penetration = gs.qd_float(0.0)
-    if dist_sq < combined_radius_sq:
-        is_col = True
-        dist = qd.sqrt(dist_sq)
-
-        # Compute contact normal (from B to A)
-        if dist > EPS:
-            normal_unit = diff / dist
-        # else: centers are coincident, keep the arbitrary default direction
-
-        penetration = combined_radius - dist
-        # Contact position at midpoint between the two surfaces
-        contact_pos = ga_pos - (radius_a - 0.5 * penetration) * normal_unit
-
-    return is_col, normal_unit, contact_pos, penetration
-
-
-@qd.func
 def func_sphere_capsule_contact(
-    i_ga,
-    i_gb,
-    ga_pos,
-    ga_quat,
-    gb_pos,
-    gb_quat,
-    geoms_info: array_class.GeomsInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
+    i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, dyn_info: array_class.DynInfo, rigid_info: array_class.RigidInfo
 ):
     """
-    Analytical sphere-capsule collision detection from the sphere center ga_pos, the capsule pose (gb_pos, gb_quat),
-    and their radii (the sphere orientation is unused). The poses are passed in rather than read from the geom state
-    so the multi-contact loop can perturb them.
+    Analytical sphere-capsule collision detection.
 
     A sphere-capsule collision reduces to:
       1. Find closest point on the capsule's line segment to sphere center
       2. Check if distance < sum of radii
       3. Compute contact point and normal
+
+    Parameters
+    ----------
+    ga_pos, ga_quat : Position and orientation of geom A (may be perturbed for multi-contact).
+    gb_pos, gb_quat : Position and orientation of geom B (may be perturbed for multi-contact).
     """
-    EPS = rigid_global_info.EPS[None]
+    EPS = rigid_info.EPS[None]
 
     # Caller guarantees sphere is i_ga and capsule is i_gb (geoms are sorted by ascending type).
     sphere_center = ga_pos
     capsule_center = gb_pos
     capsule_quat = gb_quat
-    sphere_radius = geoms_info.data[i_ga][0]
-    capsule_radius = geoms_info.data[i_gb][0]
-    capsule_halflength = 0.5 * geoms_info.data[i_gb][1]
+    sphere_radius = dyn_info.geoms.data[i_ga][0]
+    capsule_radius = dyn_info.geoms.data[i_gb][0]
+    capsule_halflength = 0.5 * dyn_info.geoms.data[i_gb][1]
 
     # Capsule is aligned along local Z-axis
     local_z_unit = qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float)

@@ -9,7 +9,6 @@ import mujoco
 
 import numpy as np
 import trimesh
-import z3
 from trimesh.visual.texture import TextureVisuals
 from PIL import Image
 
@@ -18,6 +17,7 @@ from genesis.ext import urdfpy
 
 from . import geom as gu
 from . import urdf as uu
+from .collision import solve_contype_conaffinity
 from .misc import get_assets_dir, redirect_libc_stderr
 
 
@@ -61,7 +61,14 @@ def get_model_name(file_path):
     return None
 
 
-def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=False, links_to_keep=()):
+def build_model(
+    xml,
+    discard_visual,
+    default_armature=None,
+    merge_fixed_links=False,
+    exclude_ground_plane=False,
+    links_to_keep=(),
+):
     if isinstance(xml, (str, Path, urdfpy.URDF)):
         if isinstance(xml, urdfpy.URDF):
             is_urdf_file = True
@@ -97,12 +104,25 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
             for elem in tuple(xml_root.findall("include")):
                 include_path = parent_path / elem.attrib["file"]
                 include_root = ET.parse(Path(asset_path) / include_path).getroot()
-                for include_elem in include_root.findall(".//mesh"):
+                # Mesh file paths in the included file are relative to that file's directory, whereas meshdir
+                # points at the top-level model, so rewrite them to stay valid once inlined. Only <asset> meshes
+                # reference a file; a <mesh> under <default> is a default class setting attributes (e.g.
+                # maxhullvert) and a vertex mesh under <asset> is procedural, both carrying no file to rewrite.
+                for include_elem in include_root.findall(".//asset/mesh[@file]"):
                     include_elem.attrib["file"] = str(include_path.parent / include_elem.attrib["file"])
                 for child in include_root:
                     mjcf.append(child)
                 mjcf.remove(elem)
                 root_parent_stack.append((include_root, include_path))
+
+        # Drop ground planes authored directly under the worldbody so a model that embeds its own floor can be
+        # loaded into a scene that already provides a ground. Removing the source geoms before compilation leaves
+        # planes authored under child bodies untouched, even when the compiler fuses them into the worldbody.
+        if not is_urdf_file and exclude_ground_plane:
+            for worldbody in mjcf.findall("worldbody"):
+                for geom in tuple(worldbody.findall("geom")):
+                    if geom.attrib.get("type") == "plane":
+                        worldbody.remove(geom)
 
         # Make sure compiler options are defined
         compiler = mjcf.find("compiler")
@@ -131,12 +151,40 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
                 # default value...
                 group.attrib.setdefault(param_name, str(MIN_TIMECONST))
         if default_armature is not None:
-            worldbody = mjcf.find("worldbody")
-            if worldbody is not None:
-                for joint_elem in worldbody.findall(".//joint"):
-                    if joint_elem.attrib.get("type") == "free":
-                        continue
-                    joint_elem.attrib.setdefault("armature", str(default_armature))
+            # The default rotor armature only fills in joints whose armature is authored neither on the element nor
+            # anywhere in their default class chain, so the values authored in the model file are always preserved.
+            # First scan the nested default classes: a class authors armature if itself or any ancestor class sets it.
+            has_armature_by_class = {}
+            default_stack = [(elem, False) for elem in mjcf.findall("default")]
+            while default_stack:
+                default_elem, has_armature = default_stack.pop()
+                joint_elem = default_elem.find("joint")
+                has_armature |= joint_elem is not None and "armature" in joint_elem.attrib
+                has_armature_by_class[default_elem.attrib.get("class", "main")] = has_armature
+                default_stack.extend((child, has_armature) for child in default_elem.findall("default"))
+            # Then walk the kinematic tree while tracking the childclass in effect to resolve each joint's class.
+            # Bodies may be nested under grouping meta-elements (frame, replicate) at any depth, and composite
+            # elements hold joint configuration subelements that take armature like regular joints.
+            for worldbody in mjcf.findall("worldbody"):
+                body_stack = [
+                    (elem, "main")
+                    for tag in ("body", "frame", "replicate", "composite")
+                    for elem in worldbody.findall(tag)
+                ]
+                while body_stack:
+                    body_elem, childclass = body_stack.pop()
+                    childclass = body_elem.attrib.get("childclass", childclass)
+                    for joint_elem in body_elem.findall("joint"):
+                        if joint_elem.attrib.get("type") == "free":
+                            continue
+                        joint_class = joint_elem.attrib.get("class", childclass)
+                        if not has_armature_by_class.get(joint_class, False):
+                            joint_elem.attrib.setdefault("armature", str(default_armature))
+                    body_stack.extend(
+                        (elem, childclass)
+                        for tag in ("body", "frame", "replicate", "composite")
+                        for elem in body_elem.findall(tag)
+                    )
 
         # Must pre-process URDF to overwrite default Mujoco compile flags
         if is_urdf_file:
@@ -201,7 +249,7 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
     return mj
 
 
-def parse_xml(morph, surface):
+def parse_xml(morph, surface, rigid_options=None):
     # Always merge fixed links unless explicitly asked not to do so
     merge_fixed_links, links_to_keep = False, ()
     if isinstance(morph, (gs.morphs.URDF, gs.morphs.Drone)):
@@ -209,7 +257,15 @@ def parse_xml(morph, surface):
         links_to_keep = morph.links_to_keep
 
     # Build model from XML (either URDF or MJCF)
-    mj = build_model(morph.file, not morph.visualization, morph.default_armature, merge_fixed_links, links_to_keep)
+    exclude_ground_plane = isinstance(morph, gs.morphs.MJCF) and morph.exclude_ground_plane
+    mj = build_model(
+        morph.file,
+        not morph.visualization,
+        morph.default_armature,
+        merge_fixed_links,
+        exclude_ground_plane,
+        links_to_keep,
+    )
 
     # We have another more informative warning later so we suppress this one
     # gs.logger.warning(f"(MJCF) Approximating tendon by joint actuator for `{j_info['name']}`")
@@ -227,6 +283,27 @@ def parse_xml(morph, surface):
 
     # Parsing all equality constraints
     eqs_info = parse_equalities(mj, morph.scale)
+
+    # Friction features the model declares but the rigid options leave disabled parse to inert values; warn so their
+    # absence in the simulation is no surprise. rigid_options is None on the secondary URDF parse, whose compiled
+    # model only carries MuJoCo defaults.
+    if rigid_options is not None:
+        if mj.opt.cone == mujoco.mjtCone.mjCONE_ELLIPTIC and rigid_options.friction_cone != gs.friction_cone.elliptic:
+            gs.logger.warning(
+                "(MJCF) The model declares the elliptic friction cone; set 'friction_cone' to "
+                "'gs.friction_cone.elliptic' to honor it."
+            )
+        geoms_max_condim = mj.geom_condim.max() if mj.ngeom else 3
+        if geoms_max_condim >= 4 and not rigid_options.enable_torsional_friction:
+            gs.logger.warning(
+                "(MJCF) The model declares torsional friction (geom condim >= 4); enable "
+                "'enable_torsional_friction' to honor the parsed coefficients."
+            )
+        if geoms_max_condim >= 6 and not rigid_options.enable_rolling_friction:
+            gs.logger.warning(
+                "(MJCF) The model declares rolling friction (geom condim >= 6); enable "
+                "'enable_rolling_friction' to honor the parsed coefficients."
+            )
 
     return l_infos, links_j_infos, links_g_infos, eqs_info
 
@@ -452,6 +529,8 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
     metadata["name"] = mj.names[name_start : mj.names.find(b"\x00", name_start)].decode("utf-8")
 
     mj_mat_id = int(mj_geom.matid[0])
+    is_2d_texture = False
+    has_explicit_texcoords = False
     if mj_mat_id >= 0:
         mj_mat = mj.mat(mj_mat_id)
         tex_id_RGB = mj_mat.texid[mujoco.mjtTextureRole.mjTEXROLE_RGB]
@@ -459,6 +538,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         tex_id = tex_id_RGB if tex_id_RGB >= 0 else tex_id_RGBA
         if tex_id >= 0:
             mj_tex = mj.tex(tex_id)
+            is_2d_texture = mj_tex.type[0] == mujoco.mjtTexture.mjTEXTURE_2D
             H, W, C = mj_tex.height[0], mj_tex.width[0], mj_tex.nchannel[0]
             mj_mat_img = mj.tex_data[mj_tex.adr[0] : (mj_tex.adr[0] + H * W * C)].reshape(H, W, C)
             mj_mat_img = Image.fromarray(mj_mat_img)
@@ -573,8 +653,9 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         index_faces = [faces.ravel(), norm_faces.ravel()]
         if tex_vert_start != -1:  # -1 means no texcoord
             tex_faces = mj.mesh_facetexcoord[face_start:face_end]
+            # This slice is a view of MuJoCo-owned data; transformations create new arrays
             uv = mj.mesh_texcoord[tex_vert_start:tex_vert_end]
-            uv[:, 1] = 1 - uv[:, 1]
+            has_explicit_texcoords = True
             index_faces.append(tex_faces.ravel())
         else:
             uv = None
@@ -586,6 +667,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         normals = normals[uniq[:, 1]]
         if uv is not None:
             uv = uv[uniq[:, 2]]
+            uv[:, 1] = 1.0 - uv[:, 1]
         faces = inv.reshape(-1, 3).astype(np.int64)
 
         mesh_params = dict(vertices=vertices, faces=faces, vertex_normals=normals)
@@ -598,8 +680,41 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         gs.logger.warning(f"Unsupported MJCF geom type '{mj_geom.type}'.")
         return None
 
-    if uv is not None and mj_mat is not None:
-        uv *= mj_mat.texrepeat
+    if mj_mat is not None:
+        if is_2d_texture and not has_explicit_texcoords:
+            render_size = geom_size[:2].copy()
+            if mj_geom.type[0] in (
+                mujoco.mjtGeom.mjGEOM_SPHERE,
+                mujoco.mjtGeom.mjGEOM_CAPSULE,
+                mujoco.mjtGeom.mjGEOM_CYLINDER,
+            ):
+                render_size[1] = render_size[0]
+            is_size_finite = render_size > 0
+
+            object_xy = mesh_params["vertices"][:, :2].copy()
+            if mj_geom.type[0] != mujoco.mjtGeom.mjGEOM_MESH:
+                # Normalize finite primitive axes; true meshes and infinite plane axes remain spatial
+                np.divide(object_xy, render_size, out=object_xy, where=is_size_finite)
+
+            repeat = mj_mat.texrepeat.copy()
+            if mj_geom.dataid[0] >= 0:
+                # MuJoCo divides by geom size for every retained mesh dataid, including mesh-fitted primitives
+                np.divide(repeat, render_size, out=repeat, where=is_size_finite)
+            if mj_mat.texuniform[0]:
+                # Spatial repetition includes the scale applied by the Genesis morph
+                repeat *= np.where(is_size_finite, render_size, 1.0) * scale
+
+            # MuJoCo's object-linear two-dimensional texture mapping
+            #   s =  0.5 * repeat_x * x - 0.5
+            #   t = -0.5 * repeat_y * y - 0.5
+            uv = np.empty_like(object_xy)
+            uv[:, 0] = 0.5 * repeat[0] * object_xy[:, 0] - 0.5
+            uv[:, 1] = -0.5 * repeat[1] * object_xy[:, 1] - 0.5
+
+            # Trimesh measures the vertical texture coordinate from the top edge
+            uv[:, 1] = 1.0 - uv[:, 1]
+        elif uv is not None and not is_2d_texture:
+            uv = uv * mj_mat.texrepeat
     tmesh = trimesh.Trimesh(
         **mesh_params,
         visual=TextureVisuals(uv=uv, material=tmesh_mat),
@@ -618,6 +733,11 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         "group": mj_geom.group[0],
         "data": geom_data,
         "friction": mj_geom.friction[0],
+        # MuJoCo only applies torsional friction from condim 4 and rolling friction from condim 6 onward, and the
+        # friction vector carries its defaults on every geom regardless, so the coefficients of a lower-condim geom
+        # must parse as inert or the geom would resist spin or rolling that MuJoCo leaves free.
+        "friction_torsional": mj_geom.friction[1] if mj_geom.condim[0] >= 4 else 0.0,
+        "friction_rolling": mj_geom.friction[2] if mj_geom.condim[0] >= 6 else 0.0,
         "sol_params": np.concatenate((mj_geom.solref, mj_geom.solimp)),
     }
     if is_col:
@@ -688,38 +808,17 @@ def parse_geoms(mj, scale, surface, xml_path):
                     invalid_set.add(frozenset((geom_1, geom_2)))
 
         # Compute updated contype and conaffinity from the complete list of invalid collision pairs
-        is_success = False
-        N = len(cg_infos)
-        for K in range(1, 32):
-            s = z3.Solver()
-            contype_bits = [[z3.Bool(f"contype_{i}_{b}") for b in range(K)] for i in range(N)]
-            conaffinity_bits = [[z3.Bool(f"conaffinity_{i}_{b}") for b in range(K)] for i in range(N)]
-            for i in range(N):
-                for j in range(i + 1, N):
-                    cond1 = z3.Or([z3.And(contype_bits[i][b], conaffinity_bits[j][b]) for b in range(K)])
-                    cond2 = z3.Or([z3.And(contype_bits[j][b], conaffinity_bits[i][b]) for b in range(K)])
-                    pair = frozenset((i, j))
-                    if pair in invalid_set:
-                        s.add(z3.Not(cond1), z3.Not(cond2))
-                    else:
-                        s.add(z3.Or(cond1, cond2))
-            if s.check() == z3.sat:
-                is_success = True
-                model = s.model()
-                for g_info, contype_bits_i, conaffinity_bits_i in zip(cg_infos, contype_bits, conaffinity_bits):
-                    g_info["contype"], g_info["conaffinity"] = (
-                        sum((1 << b) if z3.is_true(model[e]) else 0 for b, e in enumerate(bits))
-                        for bits in (contype_bits_i, conaffinity_bits_i)
-                    )
-                break
-
-        if not is_success:
+        masks = solve_contype_conaffinity(len(cg_infos), invalid_set)
+        if masks is None:
             gs.logger.warning(
                 "Compatible collision geometries cannot be described using bitmasks 'contype' and 'conaffinity'. "
                 "Using default values..."
             )
             for g_info in cg_infos:
                 g_info["contype"], g_info["conaffinity"] = 1, 1
+        else:
+            for g_info, (contype, conaffinity) in zip(cg_infos, masks):
+                g_info["contype"], g_info["conaffinity"] = contype, conaffinity
 
     # Inform the user that collision geometries are not displayed by default
     if is_any_col and surface.vis_mode != "collision":

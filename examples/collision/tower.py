@@ -6,8 +6,14 @@ import genesis as gs
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--object", type=str, default="cylinder", choices=("sphere", "cylinder", "duck"))
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument(
+        "--object",
+        type=str,
+        default="cylinder",
+        choices=("sphere", "cylinder", "duck"),
+        help="Shape stacked into the tower",
+    )
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
     object_type = args.object
     horizon = 20 if "PYTEST_VERSION" in os.environ else 10000

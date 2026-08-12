@@ -49,6 +49,7 @@ def _add_tactile_sensor(
     probe_normal: tuple[float, float, float] | np.ndarray,
     track_link_idx: tuple[int, ...],
     contact_depth_query: str | None,
+    noise: bool,
 ) -> "Sensor":
     common = dict(
         entity_idx=entity.idx,
@@ -57,21 +58,44 @@ def _add_tactile_sensor(
         probe_radius=PROBE_RADIUS,
         contact_depth_query=contact_depth_query,
     )
+    if noise:
+        common.update(
+            hysteresis_strength=0.5,
+            hysteresis_tau=0.1,  # seconds
+            probe_radius_noise=0.001,  # meters
+            probe_gain=1.5,
+        )
     if sensor_type == "elastomer":
         return scene.add_sensor(
             gs.sensors.ElastomerTaxel(
                 probe_local_pos=probe_local_pos,
                 probe_local_normal=probe_normal,
                 track_link_idx=track_link_idx,
-                n_sample_points=2000,
-                dilate_scale=1.0,
-                shear_scale=2.0,
-                normal_exponent=1.0,
+                n_sample_points=1000,
+                lambda_d=5000.0,
+                lambda_s=4000.0,
+                dilate_scale=0.1,
+                shear_scale=1.0,
+                normal_exponent=1.5,
+                compressibility=0.8,
+                debug_point_cloud_radius=0.001,
                 **common,
             )
         )
 
+    grid_local_pos = probe_local_pos  # (ny, nx, 3) for the plane grid; flattened below for the non-grid sensors
+    is_grid = probe_local_pos.ndim == 3
     probe_local_pos = probe_local_pos.reshape(-1, 3)
+    # Spatial crosstalk needs a regular grid layout, so enable it under --noise only for the grid-capable taxel
+    # sensors (and only the plane grid, not the dome). The 3x3 kernel sums to 1, so it conserves total force.
+    grid_crosstalk_kwargs = (
+        dict(
+            probe_local_pos=grid_local_pos,
+            crosstalk_kernel=[[0.03, 0.07, 0.03], [0.07, 0.60, 0.07], [0.03, 0.07, 0.03]],
+        )
+        if noise and is_grid
+        else dict(probe_local_pos=probe_local_pos)
+    )
     if sensor_type == "depth":
         return scene.add_sensor(
             gs.sensors.ContactDepthProbe(
@@ -80,9 +104,9 @@ def _add_tactile_sensor(
             )
         )
     if sensor_type == "contact":
-        # Schmitt-trigger thresholds (contact depth in meters): a taxel latches on above contact_threshold and
-        # only releases once the depth drops back below the lower release_threshold.
         return scene.add_sensor(
+            # Schmitt-trigger thresholds (contact depth in meters): a taxel latches on above contact_threshold and
+            # only releases once the depth drops back below the lower release_threshold.
             gs.sensors.ContactProbe(
                 probe_local_pos=probe_local_pos,
                 contact_threshold=0.004,
@@ -96,9 +120,9 @@ def _add_tactile_sensor(
                 normal_stiffness=500.0,
                 normal_damping=1.0,
                 shear_scalar=4.0,
-                twist_scalar=4.0,
+                twist_scalar=1.0,
                 normal_exponent=1.5,
-                probe_local_pos=probe_local_pos,
+                **grid_crosstalk_kwargs,
                 **common,
             )
         )
@@ -113,90 +137,105 @@ def _add_tactile_sensor(
                 shear_coupling=10.0,
                 probe_local_normal=probe_normal,
                 debug_point_cloud_radius=0.0005,
+                debug_probe_sphere_opacity=0.0,
                 debug_probe_color=(0.2, 0.6, 1.0),
                 debug_contact_color=(1.0, 0.2, 0.2),
-                probe_local_pos=probe_local_pos,
+                **grid_crosstalk_kwargs,
                 **common,
             )
         )
     raise ValueError(sensor_type)
 
 
+def _force_torque_field(sensor: "Sensor", n_envs: int) -> tuple[np.ndarray, np.ndarray]:
+    reading = sensor.read()
+    force = tensor_to_array(reading.force).reshape(n_envs, -1, 3)
+    torque = tensor_to_array(reading.torque).reshape(n_envs, -1, 3)
+    return force, torque
+
+
 def _plot_tactile_sensor(
     scene: gs.Scene,
     sensor_type: str,
-    sensors: "tuple[Sensor, ...]",
+    sensor: "Sensor",
     n_envs: int = 1,
     plot_normal: tuple[float, float, float] = (0.0, 0.0, -1.0),
 ) -> None:
+    """Set up a single live plot window: one vector-field subplot per environment for the per-taxel sensors, or one
+    line plot with a line per environment for the scalar (depth / contact-count) sensors."""
     if not IS_MATPLOTLIB_AVAILABLE:
         print("Matplotlib not available; skipping plot setup.")
         return
 
-    if sensor_type == "elastomer":
-        for env_idx in range(n_envs):
-            for sensor in sensors:
-                scene.start_recording(
-                    lambda s=sensor, i=env_idx: s.read()[i],
-                    gs.recorders.MPLVectorFieldPlot(
-                        title=f"({OBJ_PER_ENV_LABELS[env_idx]}) ElastomerTaxel marker displacements",
-                        positions=sensor.probe_local_pos.reshape(-1, 3),
-                        normal=plot_normal,
-                        scale_factor=0.1,
-                        max_magnitude=0.1,
-                    ),
-                )
-    elif sensor_type == "kinematic":
-        for env_idx in range(n_envs):
-            for sensor in sensors:
-                scene.start_recording(
-                    lambda s=sensor, i=env_idx: s.read().force[i].reshape(-1, 3),
-                    gs.recorders.MPLVectorFieldPlot(
-                        title=f"({OBJ_PER_ENV_LABELS[env_idx]}) KinematicTaxel force",
-                        positions=sensor.probe_local_pos.reshape(-1, 3),
-                        normal=plot_normal,
-                        scale_factor=0.01,
-                        max_magnitude=1.0,
-                    ),
-                )
-    elif sensor_type == "proximity":
-        for env_idx in range(n_envs):
-            for sensor in sensors:
-                scene.start_recording(
-                    lambda s=sensor, i=env_idx: s.read().force[i].reshape(-1, 3),
-                    gs.recorders.MPLVectorFieldPlot(
-                        title=f"({OBJ_PER_ENV_LABELS[env_idx]}) ProximityTaxel force",
-                        positions=sensor.probe_local_pos.reshape(-1, 3),
-                        normal=plot_normal,
-                        scale_factor=0.1,
-                        max_magnitude=1.0,
-                    ),
-                )
-    elif sensor_type == "depth":
-        for env_idx in range(n_envs):
-            scene.start_recording(
-                lambda i=env_idx: tuple(sensor.read()[i].max() for sensor in sensors),
-                gs.recorders.MPLLinePlot(
-                    title=f"ContactDepthProbe max depth ({OBJ_PER_ENV_LABELS[env_idx]})",
-                    x_label="step",
-                    y_label="depth",
-                    history_length=200,
-                ),
-            )
-    elif sensor_type == "contact":
-        for env_idx in range(n_envs):
-            scene.start_recording(
-                lambda i=env_idx: tuple(sensor.read()[i].sum() for sensor in sensors),
-                gs.recorders.MPLLinePlot(
-                    title=f"ContactProbe taxels in contact ({OBJ_PER_ENV_LABELS[env_idx]})",
-                    x_label="step",
-                    y_label="# taxels",
-                    history_length=200,
-                ),
-            )
+    env_titles = OBJ_PER_ENV_LABELS[:n_envs]
+
+    # read_field returns (n_envs, N, 3) for the force/displacement field. The two taxel sensors that also estimate a
+    # torque return a (force, torque) pair, which overlays a curved twist arrow (twist_scale_factor set).
+    vector_field_setup = {
+        "elastomer": (
+            "ElastomerTaxel marker displacements",
+            1.0,
+            0.01,
+            None,
+            1.0,
+            lambda: tensor_to_array(sensor.read()).reshape(n_envs, -1, 3),
+        ),
+        "kinematic": (
+            "KinematicTaxel force + twist",
+            0.01,
+            1.0,
+            0.002,
+            2.0,
+            lambda: _force_torque_field(sensor, n_envs),
+        ),
+        "proximity": (
+            "ProximityTaxel force + twist",
+            0.5,
+            2.0,
+            0.001,
+            1.0,
+            lambda: _force_torque_field(sensor, n_envs),
+        ),
+    }
+    if sensor_type in vector_field_setup:
+        title, scale_factor, max_magnitude, twist_scale_factor, twist_max_magnitude, read_field = vector_field_setup[
+            sensor_type
+        ]
+        scene.start_recording(
+            read_field,
+            gs.recorders.MPLVectorFieldPlot(
+                title=title,
+                positions=sensor.probe_local_pos.reshape(-1, 3),
+                normal=plot_normal,
+                scale_factor=scale_factor,
+                max_magnitude=max_magnitude,
+                twist_scale_factor=twist_scale_factor,
+                twist_max_magnitude=twist_max_magnitude,
+                subplot_titles=env_titles,
+            ),
+        )
+        return
+
+    # Scalar sensors: one line per env in a single plot. data_func returns one value per env.
+    title, y_label, reduce_fn = {
+        "depth": ("ContactDepthProbe max depth", "depth", lambda r: float(r.max())),
+        "contact": ("ContactProbe taxels in contact", "# taxels", lambda r: float(r.sum())),
+    }[sensor_type]
+    scene.start_recording(
+        lambda: tuple(reduce_fn(sensor.read()[i]) for i in range(n_envs)),
+        gs.recorders.MPLLinePlot(
+            title=title,
+            x_label="step",
+            y_label=y_label,
+            history_length=200,
+            labels=env_titles,
+        ),
+    )
 
 
-def _print_sensor_reading(sensor_type: str, sensor: "Sensor", t: float) -> None:
+def _print_sensor_reading(
+    sensor_type: str, sensor: "Sensor", t: float, plot_normal: tuple[float, float, float]
+) -> None:
     data = sensor.read()
     if sensor_type == "elastomer":
         magnitude = torch.linalg.norm(data, dim=-1)
@@ -210,36 +249,40 @@ def _print_sensor_reading(sensor_type: str, sensor: "Sensor", t: float) -> None:
         n_contact = int(data.sum())
         if n_contact > 0:
             print(f"t={t:.2f}s  taxels in contact={n_contact}")
-    elif sensor_type == "kinematic":
-        magnitude = torch.linalg.norm(data.force, axis=-1).max()
-        if magnitude > gs.EPS:
-            print(f"t={t:.2f}s  max|F|={magnitude:.4f}")
-    elif sensor_type == "proximity":
-        magnitude = torch.linalg.norm(data.force, dim=-1)
-        if magnitude.max() > gs.EPS:
-            print(f"t={t:.2f}s  mean|F|={magnitude.mean():.5f}  max|F|={magnitude.max():.5f}")
+    elif sensor_type in ("kinematic", "proximity"):
+        # |twist| is the plotted torque about the view normal (the twist_scalar spin term); print it to calibrate.
+        force_mag = torch.linalg.norm(data.force, dim=-1).max()
+        twist_mag = (data.torque @ data.torque.new_tensor(plot_normal)).abs().max()
+        if force_mag > gs.EPS:
+            print(f"t={t:.2f}s  max|F|={force_mag:.4f}  max|twist|={twist_mag:.5f}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Interactive tactile sandbox with selectable sensor type")
-    parser.add_argument("--vis", "-v", action="store_true", default=False, help="Show visualization GUI")
-    parser.add_argument("--gpu", action="store_true", help="Run on GPU instead of CPU")
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
+    parser.add_argument("-g", "--gpu", action="store_true", help="Run on GPU instead of CPU")
     parser.add_argument(
-        "--set-pos", action="store_true", help="Set object position directly instead of using control force."
+        "--set-pos", action="store_true", help="Set object position directly instead of using control force"
     )
-    parser.add_argument("--seconds", "-t", type=float, default=3.0, help="Seconds to simulate (headless mode)")
+    parser.add_argument("-t", "--seconds", type=float, default=3.0, help="Seconds to simulate (headless mode)")
     parser.add_argument("--dome", action="store_true", help="Change the sensor object to a dome instead of a box")
     parser.add_argument(
         "--sensor",
         choices=("elastomer", "depth", "contact", "kinematic", "proximity"),
         default="elastomer",
-        help="Type of tactile sensor to use.",
+        help="Tactile sensor implementation",
     )
     parser.add_argument(
         "--contact-depth-query",
         choices=("sdf", "raycast"),
         default=None,
-        help="Contact-depth backend for the tactile sensor (default: sensor's own default, currently sdf).",
+        help="Contact-depth backend, falling back to the sensor's own default when unset",
+    )
+    parser.add_argument(
+        "--noise",
+        action="store_true",
+        help="Enable sensor imperfections (viscoelastic hysteresis, probe_radius_noise, probe_gain, and spatial "
+        "crosstalk on grid taxel sensors)",
     )
     args = parser.parse_args()
 
@@ -255,7 +298,7 @@ def main() -> None:
             substeps=4,
         ),
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(-0.7, 0.2, 1.0),
+            camera_pos=(0.5, -0.2, 0.5),
             camera_lookat=(0.0, 0.0, SENSOR_OBJ_Z),
         ),
         profiling_options=gs.options.ProfilingOptions(
@@ -346,9 +389,10 @@ def main() -> None:
         probe_normal,
         track_link_idx=(obj.base_link_idx,),
         contact_depth_query=args.contact_depth_query,
+        noise=args.noise,
     )
     if args.vis and "PYTEST_VERSION" not in os.environ:
-        _plot_tactile_sensor(scene, args.sensor, (sensor,), n_envs=4, plot_normal=probe_normal_axis)
+        _plot_tactile_sensor(scene, args.sensor, sensor, n_envs=4, plot_normal=probe_normal_axis)
     scene.build(n_envs=4, env_spacing=(SENSOR_OBJ_SIZE * 1.2, SENSOR_OBJ_SIZE * 1.2))
 
     obj_init_pos = tensor_to_array(obj.get_pos())
@@ -386,9 +430,6 @@ def main() -> None:
             nonlocal obj_target_pos
             delta = (-1 if is_negative else 1) * KEY_DPOS
             obj_target_pos[..., index] += delta
-            # obj_target_pos[..., 2] = np.maximum(
-            #     obj_target_pos[..., 2], obj_init_pos[..., 2] - OBJECT_INITIAL_CLEARANCE - OBJECT_MAX_PENETRATION
-            # )
 
         def rotate(axis_idx: int, is_negative: bool):
             nonlocal obj_target_euler, obj_target_quat
@@ -397,10 +438,10 @@ def main() -> None:
             obj_target_quat = gu.euler_to_quat(obj_target_euler)
 
         scene.viewer.register_keybinds(
-            Keybind("move_forward", Key.UP, KeyAction.HOLD, callback=translate, args=(0, False)),
-            Keybind("move_backward", Key.DOWN, KeyAction.HOLD, callback=translate, args=(0, True)),
-            Keybind("move_right", Key.RIGHT, KeyAction.HOLD, callback=translate, args=(1, True)),
-            Keybind("move_left", Key.LEFT, KeyAction.HOLD, callback=translate, args=(1, False)),
+            Keybind("move_forward", Key.UP, KeyAction.HOLD, callback=translate, args=(0, True)),
+            Keybind("move_backward", Key.DOWN, KeyAction.HOLD, callback=translate, args=(0, False)),
+            Keybind("move_right", Key.RIGHT, KeyAction.HOLD, callback=translate, args=(1, False)),
+            Keybind("move_left", Key.LEFT, KeyAction.HOLD, callback=translate, args=(1, True)),
             Keybind("move_down", Key.J, KeyAction.HOLD, callback=translate, args=(2, True)),
             Keybind("move_up", Key.K, KeyAction.HOLD, callback=translate, args=(2, False)),
             Keybind("rotate_cw", Key.M, KeyAction.HOLD, callback=rotate, args=(2, True)),
@@ -414,7 +455,7 @@ def main() -> None:
     print("\n=== Tactile Sensor Sandbox ===")
     n_taxels = probe_local_pos.reshape(-1, 3).shape[0]
     layout = f"dome ({GRID_SIZE} latitude rings)" if args.dome else f"plane grid {probe_local_pos.shape[:-1]}"
-    print(f"sensor={args.sensor}; taxels={n_taxels}; {layout}")
+    print(f"sensor={args.sensor}; taxels={n_taxels}; {layout}; noise={'on' if args.noise else 'off'}")
     if args.vis and IS_MATPLOTLIB_AVAILABLE:
         print("Matplotlib live plot enabled when supported.")
     if args.vis:
@@ -440,7 +481,7 @@ def main() -> None:
                 else:
                     obj.control_dofs_position(gu.quat_to_xyz(obj_target_quat), dofs_idx_local=slice(3, 6))
                     obj.control_dofs_position(obj_target_pos, dofs_idx_local=slice(0, 3))
-            _print_sensor_reading(args.sensor, sensor, t)
+            _print_sensor_reading(args.sensor, sensor, t, probe_normal_axis)
 
             scene.step()
 

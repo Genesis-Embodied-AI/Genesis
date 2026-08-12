@@ -43,12 +43,10 @@ class GraspEnv:
         self.reward_scales = reward_cfg
         self.action_scales = torch.tensor(env_cfg["action_scales"], device=self.device)
 
-        # camera config
         self.image_width = env_cfg["image_resolution"][0]
         self.image_height = env_cfg["image_resolution"][1]
         self.rgb_image_shape = (3, self.image_height, self.image_width)
 
-        # == setup scene ==
         self.scene = gs.Scene(
             sim_options=gs.options.SimOptions(dt=self.ctrl_dt, substeps=2),
             rigid_options=gs.options.RigidOptions(
@@ -71,13 +69,10 @@ class GraspEnv:
             show_viewer=show_viewer,
         )
 
-        # == add ground ==
         self.scene.add_entity(
             gs.morphs.Plane(),
-            # gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True),
         )
 
-        # == add robot ==
         self.robot = Manipulator(
             num_envs=self.num_envs,
             scene=self.scene,
@@ -85,7 +80,6 @@ class GraspEnv:
             device=gs.device,
         )
 
-        # == add object ==
         self.object = self.scene.add_entity(
             gs.morphs.Box(
                 size=env_cfg["box_size"],
@@ -99,7 +93,7 @@ class GraspEnv:
             ),
         )
 
-        # == visualization camera (debug only, uses scene camera API) ==
+        # Debug-only visualization camera, on the scene camera API.
         if self.env_cfg.get("visualize_camera", False):
             self.vis_cam = self.scene.add_camera(
                 res=(1280, 960),
@@ -110,7 +104,7 @@ class GraspEnv:
                 debug=True,
             )
 
-        # == stereo camera sensors (lazy rendering — zero cost until read()) ==
+        # Stereo camera sensors render lazily: they cost nothing until read().
         if _ENABLE_MADRONA and gs.backend == gs.cuda:
             CameraOptions = BatchRendererCameraOptions
             cam_kwargs = dict(use_rasterizer=True)
@@ -137,7 +131,6 @@ class GraspEnv:
             )
         )
 
-        # == camera data readers ==
         def _read_scene_cam(cam):
             rgb = cam.render(rgb=True)[0]
             if rgb.ndim == 4:
@@ -158,8 +151,7 @@ class GraspEnv:
                 rec_options=gs.recorders.MPLImagePlot(title="Right Camera"),
             )
 
-        # == set up video recording (must be before build) ==
-
+        # Video recording must be set up before the scene is built.
         record_video = env_cfg.get("record_video", {})
         for cam_name, filename in record_video.items():
             cam = getattr(self, cam_name)
@@ -169,7 +161,6 @@ class GraspEnv:
                 rec_options=gs.recorders.VideoFile(filename=filename),
             )
 
-        # build
         self.scene.build(n_envs=env_cfg["num_envs"], env_spacing=(1.0, 1.0))
         # set pd gains (must be called after scene.build)
         self.robot.set_pd_gains()
@@ -182,7 +173,6 @@ class GraspEnv:
             self.episode_sums[name] = torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_float)
 
         self.keypoints_offset = self.get_keypoint_offsets(batch_size=self.num_envs, device=self.device, unit_length=0.5)
-        # == init buffers ==
         self._init_buffers()
         self.reset()
 
@@ -200,7 +190,6 @@ class GraspEnv:
         envs_idx : torch.Tensor or None
             Boolean mask of shape (num_envs,) for selective reset, or None for full reset.
         """
-        # Reset robot
         self.robot.reset(envs_idx)
 
         # Generate random object state for all envs
@@ -223,7 +212,7 @@ class GraspEnv:
         goal_yaw = transform_quat_by_quat(q_yaw, q_downward)
         goal_pose = torch.cat([random_pos, goal_yaw], dim=-1)
 
-        # Reset object — set_pos/set_quat with skip_forward, then FK runs once for everything
+        # Reset object - set_pos/set_quat with skip_forward, then FK runs once for everything
         if envs_idx is None:
             self.goal_pose.copy_(goal_pose)
             self.object.set_pos(random_pos, skip_forward=True)
@@ -321,7 +310,7 @@ class GraspEnv:
         # Concatenate left and right rgb images along channel dimension: [B, 6, H, W]
         return torch.cat([rgb_left, rgb_right], dim=1)
 
-    # ------------ begin reward functions----------------
+    # Reward functions.
     def _reward_keypoints(self) -> torch.Tensor:
         keypoints_offset = self.keypoints_offset
         # there is a offset between the finger tip and the finger base frame
@@ -338,8 +327,6 @@ class GraspEnv:
         object_pos_keypoints = self._to_world_frame(self.object.get_pos(), self.object.get_quat(), keypoints_offset)
         dist = torch.norm(finger_pos_keypoints - object_pos_keypoints, p=2, dim=-1).sum(-1)
         return torch.exp(-dist)
-
-    # ------------ end reward functions----------------
 
     @staticmethod
     def _to_world_frame(
@@ -398,16 +385,13 @@ class GraspEnv:
             self.scene.step()
 
 
-## ------------ robot ----------------
 class Manipulator:
     def __init__(self, num_envs: int, scene: gs.Scene, args: dict, device: str = "cpu"):
-        # == set members ==
         self._device = device
         self._scene = scene
         self._num_envs = num_envs
         self._args = args
 
-        # == Genesis configurations ==
         material: gs.materials.Rigid = gs.materials.Rigid()
         morph: gs.morphs.MJCF = gs.morphs.MJCF(
             file="xml/franka_emika_panda/panda.xml",
@@ -421,7 +405,6 @@ class Manipulator:
 
         self._ik_method: Literal["gs_ik", "dls_ik"] = args["ik_method"]
 
-        # == some buffer initialization ==
         self._init()
 
     def set_pd_gains(self):
@@ -481,7 +464,6 @@ class Manipulator:
             q_pos = self._dls_ik(action)
         else:
             raise ValueError(f"Invalid control mode: {self._ik_method}")
-        # set gripper to open
         if open_gripper:
             q_pos[:, self._fingers_dof] = self._gripper_open_dof
         else:

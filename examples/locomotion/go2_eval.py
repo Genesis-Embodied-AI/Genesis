@@ -19,8 +19,10 @@ from go2_env import Go2Env
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-e", "--exp_name", type=str, default="go2-walking")
-    parser.add_argument("--ckpt", type=int, default=100)
+    parser.add_argument(
+        "-e", "--exp-name", type=str, default="go2-walking", help="Experiment name; also the log directory under logs/"
+    )
+    parser.add_argument("--ckpt", type=int, default=100, help="Checkpoint iteration to load")
     args = parser.parse_args()
 
     gs.init(backend=gs.cpu)

@@ -6,13 +6,10 @@ import genesis as gs
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
-    ########################## init ##########################
-    gs.init(precision="32", logging_level="info")
-
-    ########################## create a scene ##########################
+    gs.init(backend=gs.cpu, precision="32", logging_level="info")
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(

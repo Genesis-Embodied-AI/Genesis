@@ -1,5 +1,4 @@
 import argparse
-import sys
 import genesis as gs
 import os
 from huggingface_hub import snapshot_download
@@ -7,13 +6,18 @@ from huggingface_hub import snapshot_download
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-c", "--cpu", action="store_true", default=(sys.platform == "darwin"))
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument(
+        "-g",
+        "--gpu",
+        action="store_true",
+        help="Run on GPU instead of CPU",
+    )
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
     n_steps = 200 if "PYTEST_VERSION" not in os.environ else 2
 
-    gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="64")
+    gs.init(backend=gs.gpu if args.gpu else gs.cpu, precision="64")
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(

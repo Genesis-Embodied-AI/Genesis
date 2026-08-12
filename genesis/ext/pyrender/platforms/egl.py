@@ -12,6 +12,8 @@ from .base import Platform
 EGL_PLATFORM_DEVICE_EXT = 0x313F
 EGL_DRM_DEVICE_FILE_EXT = 0x3233
 
+_EGL_LOAD_ERROR = "EGL is required to create an offscreen OpenGL context, and it is unavailable on this system."
+
 
 def _ensure_egl_loaded():
     plugin = OpenGL.platform.PlatformPlugin.by_name("egl")
@@ -22,6 +24,16 @@ def _ensure_egl_loaded():
     plugin.loaded = True
     # create instance of this platform implementation
     plugin = plugin_class()
+
+    # Probing the library here names EGL as the missing piece. A failed dlopen appears either as an ImportError or
+    # as a None library, the shape `install` below tolerates, and either one otherwise reaches the user from deep
+    # inside PyOpenGL, where the message mentions neither EGL nor Genesis.
+    try:
+        egl_library = plugin.EGL
+    except ImportError as e:
+        gs.raise_exception_from(_EGL_LOAD_ERROR, e)
+    if egl_library is None:
+        gs.raise_exception(_EGL_LOAD_ERROR)
 
     plugin.install(vars(OpenGL.platform))
 
@@ -281,12 +293,16 @@ class EGLPlatform(Platform):
         from OpenGL.EGL import eglDestroyContext, eglGetCurrentContext
 
         if self._egl_display is not None:
-            # The EGL current context is per-thread and shared across renderers. Only release it if it is ours;
-            # otherwise another renderer (possibly mid-render) is current and tearing down this context must not
-            # strand it with no current context.
-            if self._egl_context is not None and eglGetCurrentContext() == self._egl_context:
-                self.make_uncurrent()
             if self._egl_context is not None:
+                # The EGL current context is per-thread and shared across renderers. Only release it if it is
+                # ours; otherwise another renderer (possibly mid-render) is current and tearing down this context
+                # must not strand it with no current context. eglGetCurrentContext returns a fresh pointer object
+                # each call that never compares equal to the stored handle by identity, so compare the underlying
+                # addresses instead of the pointer objects.
+                current_addr = ctypes.cast(eglGetCurrentContext(), ctypes.c_void_p).value
+                own_addr = ctypes.cast(self._egl_context, ctypes.c_void_p).value
+                if current_addr == own_addr:
+                    self.make_uncurrent()
                 eglDestroyContext(self._egl_display, self._egl_context)
                 self._egl_context = None
             # NOTE: intentionally not calling eglTerminate here. The NVIDIA EGL

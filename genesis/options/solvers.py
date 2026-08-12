@@ -420,7 +420,8 @@ class RigidOptions(Options):
         Maximum number of collision pairs. Defaults to 100.
     max_contacts : int, optional
         Maximum number of simultaneous contact points per environment that the constraint solver can handle, which
-        determines the size of the contact constraint buffers (4 constraints per contact point). Defaults to None.
+        determines the size of the contact constraint buffers (3 to 10 constraint rows per contact point depending on
+        'friction_cone', 'enable_torsional_friction', and 'enable_rolling_friction'). Defaults to None.
 
         This limit applies to the final contact points after pruning, not to the candidate contact points that
         collision detection can emit (see 'max_collision_pairs'). Exceeding it at runtime halts the simulation with
@@ -442,7 +443,8 @@ class RigidOptions(Options):
         Constraint solver type. Current supported constraint solvers are 'gs.constraint_solver.CG' (conjugate gradient)
         and 'gs.constraint_solver.Newton' (Newton's method). Defaults to 'Newton'.
     iterations : int, optional
-        Number of iterations for the constraint solver. Defaults to 50.
+        Maximum number of iterations for the constraint solver; the solve exits early once its convergence tolerance
+        is met, so this bound only binds on hard steps. Defaults to 50.
     tolerance : float, optional
         Tolerance for the constraint solver. If None, resolved based on the floating-point precision selected via
         `gs.init(precision=...)`: 1e-5 for single precision ("32") and 1e-8 for double precision ("64"). Defaults
@@ -458,6 +460,39 @@ class RigidOptions(Options):
         This option should only be enabled if necessary because it is experimental and will slow down the simulation.
     noslip_tolerance : float, optional
         Tolerance for the noslip solver. Defaults to 1e-6.
+    friction_cone : gs.friction_cone, optional
+        Contact friction cone model, trading numerical robustness for physical accuracy. 'gs.friction_cone.pyramidal'
+        (default) is robust and easy to solve; 'gs.friction_cone.elliptic' is the exact isotropic cone, harder to solve
+        but paired with a high 'impratio' it holds resting stacks without slow tangential creep. See 'gs.friction_cone'
+        for the description of each model. Unsupported with the noslip solver or differentiable simulation.
+    contact_resolution : gs.contact_resolution, optional
+        How a contact's normal force and friction force are resolved against each other.
+        'gs.contact_resolution.signorini' bounds friction against the normal force the contact has developed, so sliding
+        never inflates it and a body launched horizontally decelerates at mu * g instead of lifting off, at the cost of
+        extra solver iterations. 'gs.contact_resolution.convex' poses the contact as a single convex program, which
+        converges more predictably on stiff scenes but lets fast sliding buy normal force. See 'gs.contact_resolution'
+        for the description of each model. Defaults to None, resolving to 'signorini' with the elliptic cone and the
+        Newton solver, and 'convex' otherwise - the pyramidal cone's rows do not separate, and the conjugate gradient
+        solver does not reach the fixed point. Always 'convex' when 'enable_mujoco_compatibility' is set.
+    enable_torsional_friction : bool, optional
+        Whether contacts also resist relative spin about their normal, with strength set per geometry by the material
+        option 'friction_torsional' (see 'gs.materials.Rigid'). Enable it when spin resistance matters - a grasped
+        object twisting in a gripper, a top spinning in place - motions a point contact transmits no torque against,
+        so they persist indefinitely otherwise. The extra spin resistance slows down the constraint solve on every
+        contact, including those where spin is irrelevant. Defaults to False.
+    enable_rolling_friction : bool, optional
+        Whether contacts also resist rolling, with strength set per geometry by the material option 'friction_rolling'
+        (see 'gs.materials.Rigid'). Enable it when rolling resistance matters - a ball or wheel coasting to rest, a
+        cylinder settling on a slope - motions a point contact otherwise never slows down. The extra rolling
+        resistance slows down the constraint solve on every contact, more so than torsional friction (two extra axes),
+        and requires 'enable_torsional_friction'. Defaults to False.
+    impratio : float, optional
+        Ratio of tangential (friction) to normal constraint impedance at contacts. Raising it above 1 stiffens
+        friction so resting stacks and piles hold their pose under sustained shear, at the cost of a slower solve that
+        turns numerically unstable once pushed too far - a stiffness-versus-stability tradeoff, so use the smallest
+        value that holds the contacts. It matters mainly with the elliptic cone, which stiffens friction alone while
+        leaving the normal contact response at its own impedance. Defaults to None, resolving to 100 with the elliptic
+        cone (1 when 'enable_mujoco_compatibility' is set) and 1 otherwise.
     sparse_solve : bool, optional
         Whether to exploit sparsity (skyline-envelope Cholesky) in the constraint solver.
 
@@ -527,6 +562,11 @@ class RigidOptions(Options):
     ls_tolerance: PositiveFloat = 1e-2
     noslip_iterations: NonNegativeInt = 0
     noslip_tolerance: PositiveFloat = 1e-6
+    friction_cone: gs.friction_cone = gs.friction_cone.pyramidal
+    contact_resolution: gs.contact_resolution | None = None
+    enable_torsional_friction: StrictBool = False
+    enable_rolling_friction: StrictBool = False
+    impratio: PositiveFloat | None = None
     contact_pruning_tolerance: PositiveFloat | None = 0.02
     sparse_solve: StrictBool | None = None
     constraint_timeconst: PositiveFloat = 0.01
@@ -564,6 +604,10 @@ class RigidOptions(Options):
                 )
             # User did not explicitly request pruning, silently disable to guarantee mujoco compatibility
             self.contact_pruning_tolerance = None
+        if self.friction_cone == gs.friction_cone.elliptic and self.noslip_iterations > 0:
+            gs.raise_exception("The elliptic friction cone is not supported with the noslip solver.")
+        if self.enable_rolling_friction and not self.enable_torsional_friction:
+            gs.raise_exception("'enable_rolling_friction' requires 'enable_torsional_friction'.")
 
 
 class MPMOptions(Options):

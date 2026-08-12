@@ -15,7 +15,7 @@ import genesis as gs
 
 def main():
     parser = argparse.ArgumentParser(description="Entity Naming Tutorial")
-    parser.add_argument("--vis", action="store_true", help="Show viewer")
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
     gs.init(backend=gs.cpu)

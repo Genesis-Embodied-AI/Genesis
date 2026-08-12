@@ -2,9 +2,6 @@
 Furthest point sampling (FPS) on triangle mesh surfaces.
 """
 
-import os
-import pickle as pkl
-
 import numpy as np
 import trimesh
 
@@ -14,11 +11,8 @@ from . import mesh as msu
 from .misc import get_fps_pc_cache_dir
 
 
-def get_fps_pc_path(verts, faces, n_points: int, n_candidates: int, return_normals: bool, seed: int):
-    """Cache path for FPS samples; hashing matches ``sample_mesh_point_cloud`` (dtypes + n_candidates rules)."""
-    disc_verts = msu.discretize_array_for_hashing(verts)
-    hashkey = msu.get_hashkey(disc_verts, faces, n_points, n_candidates, return_normals, seed)
-    return os.path.join(get_fps_pc_cache_dir(), f"{hashkey}.fps_pc")
+def get_fps_pc_cache(verts, faces, n_points: int, n_candidates: int, return_normals: bool, seed: int):
+    return msu.MeshCache(get_fps_pc_cache_dir(), "fps_pc", verts, faces, n_points, n_candidates, return_normals, seed)
 
 
 def _furthest_point_sample_impl(
@@ -132,21 +126,16 @@ def sample_mesh_point_cloud(
     if seed is None:
         seed = int(np.random.SeedSequence().entropy)
 
-    cache_path = get_fps_pc_path(verts, faces, n_points, n_candidates, return_normals, seed)
+    cache = get_fps_pc_cache(verts, faces, n_points, n_candidates, return_normals, seed)
 
-    if use_cache and os.path.exists(cache_path):
-        gs.logger.debug("FPS point cloud cache file found.")
-        try:
-            with open(cache_path, "rb") as f:
-                data = pkl.load(f)
-            if return_normals and isinstance(data, tuple) and len(data) == 2:
+    if use_cache:
+        data = cache.load()
+        if data is not None:
+            gs.logger.debug("FPS point cloud cache file found.")
+            if return_normals:
                 pts, nrm = data
                 return pts.astype(gs.np_float, copy=False), nrm.astype(gs.np_float, copy=False)
-            if not return_normals and not isinstance(data, tuple):
-                return data.astype(gs.np_float, copy=False)
-            gs.logger.info("Ignoring FPS point cloud cache (payload shape mismatches return_normals).")
-        except (EOFError, ModuleNotFoundError, pkl.UnpicklingError, TypeError, MemoryError, ValueError):
-            gs.logger.info("Ignoring corrupted FPS point cloud cache.")
+            return data.astype(gs.np_float, copy=False)
 
     tmesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
     candidates, face_idx = trimesh.sample.sample_surface(tmesh, n_candidates, seed=seed)
@@ -162,8 +151,6 @@ def sample_mesh_point_cloud(
         output = _furthest_point_sample_impl(candidates, n_points, fps_rng, return_indices=False)
 
     if use_cache:
-        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-        with open(cache_path, "wb") as f:
-            pkl.dump(output, f)
+        cache.save(output)
 
     return output

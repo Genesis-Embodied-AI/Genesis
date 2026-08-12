@@ -37,7 +37,6 @@ class HoverEnv:
         self.obs_scales = obs_cfg["obs_scales"]
         self.reward_scales = copy.deepcopy(reward_cfg["reward_scales"])
 
-        # create scene
         self.scene = gs.Scene(
             sim_options=gs.options.SimOptions(dt=self.dt, substeps=2),
             viewer_options=gs.options.ViewerOptions(
@@ -55,10 +54,8 @@ class HoverEnv:
             show_viewer=show_viewer,
         )
 
-        # add plane
         self.scene.add_entity(gs.morphs.Plane())
 
-        # add target
         if self.env_cfg["visualize_target"]:
             self.target = self.scene.add_entity(
                 morph=gs.morphs.Mesh(
@@ -76,7 +73,6 @@ class HoverEnv:
         else:
             self.target = None
 
-        # add camera
         if self.env_cfg["visualize_camera"]:
             self.cam = self.scene.add_camera(
                 res=(640, 480),
@@ -92,7 +88,6 @@ class HoverEnv:
         self.inv_base_init_quat = inv_quat(self.base_init_quat)
         self.drone = self.scene.add_entity(gs.morphs.Drone(file="urdf/drones/cf2x.urdf"))
 
-        # build scene
         self.scene.build(n_envs=num_envs)
 
         # prepare reward functions and multiply reward scales by dt
@@ -245,7 +240,7 @@ class HoverEnv:
         self._update_observation()
         return self.get_observations()
 
-    # ------------ reward functions----------------
+    # Reward functions.
     def _reward_target(self):
         target_rew = torch.sum(torch.square(self.last_rel_pos), dim=1) - torch.sum(torch.square(self.rel_pos), dim=1)
         return target_rew

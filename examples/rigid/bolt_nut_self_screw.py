@@ -19,9 +19,9 @@ import genesis as gs
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
-    parser.add_argument("-g", "--gpu", action="store_true", default=False)
-    parser.add_argument("--torque", type=float, default=-4.0, help="driving torque about z [N*m]")
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
+    parser.add_argument("-g", "--gpu", action="store_true", help="Run on GPU instead of CPU")
+    parser.add_argument("--torque", type=float, default=-4.0, help="Driving torque about z [N*m]")
     args = parser.parse_args()
 
     # At this magnitude the steel nut spins faster than the thread contact can resolve and the solve diverges (NaN)

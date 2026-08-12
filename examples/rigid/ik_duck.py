@@ -7,14 +7,12 @@ import genesis as gs
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
-    ########################## init ##########################
-    gs.init(precision="32", logging_level="info")
+    gs.init(backend=gs.cpu, precision="32", logging_level="info")
     np.set_printoptions(precision=7, suppress=True)
 
-    ########################## create a scene ##########################
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.0, -2, 1.5),
@@ -28,8 +26,6 @@ def main():
         ),
         show_viewer=args.vis,
     )
-
-    ########################## entities ##########################
 
     robot = scene.add_entity(
         morph=gs.morphs.Mesh(
@@ -49,7 +45,6 @@ def main():
         surface=gs.surfaces.Default(color=(1, 0.5, 0.5, 1)),
     )
 
-    ########################## build ##########################
     scene.build()
 
     target_quat = np.array([0, 1, 0, 0])  # pointing downwards
@@ -65,8 +60,6 @@ def main():
             link=ee_link,
             pos=target_pos,
             quat=target_quat,
-            # return_error=True,
-            # rot_mask=[False, False, True], # for demo purpose: only care about direction of z-axis
         )
 
         # Note that this IK example is only for visualizing the solved q, so here we do not call scene.step(), but only update the state and the visualizer

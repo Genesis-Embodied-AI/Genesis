@@ -263,6 +263,14 @@ class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, None, SharedSensor
         # `uses_ring_pipeline = False`, so the manager passes both timeline rings as ``None`` here.
         pass
 
+    @classmethod
+    def reset(cls, shared_metadata: SharedSensorMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
+        super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
+        # Reset can restore a different state at the last rendered timestep, so force the next read to rerender.
+        # FIXME: the frame cache keys on a single timestep for the whole batch, so a partial-env reset invalidates
+        # every environment. Extend the caching mechanism to be env-aware so envs_idx only refreshes the reset envs.
+        shared_metadata.last_render_timestep = -1
+
     def _draw_debug(self, context: "RasterizerContext"):
         """No debug drawing for cameras."""
         pass

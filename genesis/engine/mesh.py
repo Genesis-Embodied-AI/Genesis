@@ -1,5 +1,4 @@
 import os
-import pickle as pkl
 from itertools import chain
 from typing import Any, NamedTuple
 
@@ -183,19 +182,12 @@ class Mesh(RBC):
         """
         Remesh for tetrahedralization.
         """
-        rm_file_path = mu.get_remesh_path(self.verts, self.faces, edge_len_abs, edge_len_ratio, fix)
+        cache = mu.get_remesh_cache(self.verts, self.faces, edge_len_abs, edge_len_ratio, fix)
 
-        is_cached_loaded = False
-        if os.path.exists(rm_file_path):
+        remeshed = cache.load()
+        if remeshed is not None:
             gs.logger.debug("Remeshed file (`.rm`) found in cache.")
-            try:
-                with open(rm_file_path, "rb") as file:
-                    verts, faces = pkl.load(file)
-                is_cached_loaded = True
-            except (EOFError, ModuleNotFoundError, pkl.UnpicklingError, TypeError, MemoryError):
-                gs.logger.info("Ignoring corrupted cache.")
-
-        if not is_cached_loaded:
+        else:
             # Importing pymeshlab is very slow and not used very often. Let's delay import.
             with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
                 import pymeshlab
@@ -208,14 +200,13 @@ class Mesh(RBC):
             else:
                 ms.meshing_isotropic_explicit_remeshing(targetlen=pymeshlab.PercentageValue(edge_len_ratio * 100))
             m = ms.current_mesh()
-            verts, faces = m.vertex_matrix(), m.face_matrix()
+            remeshed = (m.vertex_matrix(), m.face_matrix())
             # Maybe we need to fix the mesh in some extreme cases with open3d
             # if fix:
             #     verts, faces = pymeshfix.clean_from_arrays(verts, faces)
-            os.makedirs(os.path.dirname(rm_file_path), exist_ok=True)
-            with open(rm_file_path, "wb") as file:
-                pkl.dump((verts, faces), file)
+            cache.save(remeshed)
 
+        verts, faces = remeshed
         self._mesh = trimesh.Trimesh(vertices=verts, faces=faces)
         self._invalidate_geometry_cache()
         self.clear_visuals()
@@ -512,11 +503,12 @@ class Mesh(RBC):
         )
 
     @classmethod
-    def from_morph_surface(cls, morph, surface=None) -> "list[gs.Mesh] | gs.Mesh":
+    def from_morph_surface(cls, morph, surface=None) -> "list[gs.Mesh]":
         """
-        Create a genesis.Mesh from morph and surface options.
+        Create genesis.Mesh objects from morph and surface options.
 
-        If the morph is a Mesh morph (morphs.Mesh), it could contain multiple sub-meshes, so we return a list.
+        A list is always returned: a Mesh morph (morphs.Mesh) may contain multiple sub-meshes, while primitive
+        morphs yield a single mesh.
         """
         if isinstance(morph, gs.options.morphs.Mesh):
             if morph.is_format(gs.options.morphs.MESH_FORMATS):
@@ -545,7 +537,7 @@ class Mesh(RBC):
         else:
             gs.raise_exception(f"Morph {morph} not supported by this method.")
 
-        return cls.from_trimesh(tmesh, surface=surface)
+        return [cls.from_trimesh(tmesh, surface=surface)]
 
     def set_color(self, color):
         """
@@ -595,8 +587,15 @@ class Mesh(RBC):
         if "convexified" in self.metadata:
             return self.metadata["convexified"]
         if self._is_convex is None:
-            self._is_convex = bool(self._mesh.is_convex)
+            self._is_convex = self._mesh.is_convex
         return self._is_convex
+
+    @property
+    def is_watertight(self) -> bool:
+        """
+        Whether the mesh is a closed manifold surface.
+        """
+        return self._mesh.is_watertight
 
     @property
     def metadata(self):

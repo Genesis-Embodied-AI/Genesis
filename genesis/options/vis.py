@@ -32,12 +32,15 @@ class ViewerOptions(Options):
         Whether to run the viewer in a background thread. This option is not supported on MacOS. True by default if
         available.
     refresh_rate : int
-        The rate (in frames per second) at which the viewer repaints on screen, and the framerate the recorded
-        video is encoded at. Independent of the physics timestep.
+        The rate (in frames per second) at which the viewer repaints on screen, and the framerate the video recorded
+        from the viewer window is encoded at. Independent of the physics timestep, and of the framerate passed to
+        `camera.start_recording`.
     realtime_factor : float | None
-        When the viewer is shown, the simulation is paced to this multiple of wall-clock real time (1.0 is real
-        time, 2.0 is twice as fast), falling behind gracefully when it cannot keep up. Set to None to run as fast
-        as possible. Has no effect without a viewer. Defaults to 1.0.
+        Multiple of wall-clock real time that one second of playback stands for (1.0 is real time, 2.0 is twice as
+        fast). When the viewer is shown, the simulation is paced to it, falling behind gracefully when it cannot keep
+        up. It also sets the speed of the videos recorded by `camera.start_recording`, viewer or not. Set to None to
+        run as fast as possible, which recordings treat as real time since there is no pace to follow. Defaults
+        to 1.0.
     camera_pos : tuple of float, shape (3,)
         The position of the viewer's camera.
     camera_lookat : tuple of float, shape (3,)

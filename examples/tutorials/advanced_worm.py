@@ -4,10 +4,8 @@ import torch
 import genesis as gs
 
 
-########################## init ##########################
-gs.init(precision="32", logging_level="info")
+gs.init(backend=gs.cpu, precision="32", logging_level="info")
 
-########################## create a scene ##########################
 scene = gs.Scene(
     sim_options=gs.options.SimOptions(
         substeps=10,
@@ -29,7 +27,6 @@ scene = gs.Scene(
     ),
 )
 
-########################## entities ##########################
 scene.add_entity(
     morph=gs.morphs.Plane(),
     material=gs.materials.Rigid(
@@ -58,11 +55,9 @@ worm = scene.add_entity(
     ),
 )
 
-########################## build ##########################
 scene.build(n_envs=3)
 
 
-########################## set muscle ##########################
 if isinstance(worm.material, gs.materials.MPM.Muscle):
     pos = worm.get_state().pos[0]
     n_units = worm.n_particles
@@ -92,7 +87,6 @@ worm.set_muscle(
 )
 
 
-########################## run ##########################
 horizon = 1000 if "PYTEST_VERSION" not in os.environ else 5
 scene.reset()
 for i in range(horizon):

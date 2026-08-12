@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "genesis-world"
-version = "1.2.1"
+version = "1.3.2"
 description = "A universal and generative physics engine"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "psutil",
-    "quadrants==1.0.2",
+    "quadrants==1.2.0",
     "pydantic>=2.11.0",
     "numpy>=1.26.4",
     "frozendict",
@@ -24,6 +24,8 @@ dependencies = [
     "py-cpuinfo",
     "mujoco>=3.2.5",
     "moviepy>=2.0.0",
+    # Streams video frames to file, for 'camera.start_recording' and the 'VideoFile' recorder
+    "av",
     # Used by `pyrender` to manage onscreen graphical windows
     # * 2.1.8 breaks headless windowing, which is used in unit tests of the interactive viewer.
     # * 2.0.15 <= 2.1.8 breaks old-style option overwrite for string literal.
@@ -67,7 +69,7 @@ dependencies = [
     # Used for loading raytracing special texture images used by LuisaRender
     "OpenEXR",
     # Native batch renderer specifically designed for Genesis
-    "gs-madrona==0.0.7.post2; platform_system=='Linux' and (platform_machine=='x86_64' or platform_machine=='AMD64')",
+    "gs-madrona==0.0.10; platform_system=='Linux' and (platform_machine=='x86_64' or platform_machine=='AMD64')",
     # Used for mesh simplification
     "fast_simplification>=0.1.12",
     # Surface reconstruction library for particle data from SPH simulations
@@ -85,6 +87,9 @@ dev = [
     # Note that 'pytest-rerunfailures' is incompatible with 'pytest-forked'
     # - 16.0 is causing pytest-xdist to crash in case of failure or skipped tests
     # "pytest-rerunfailures!=16.0",
+    # GPU queries for the test infrastructure (tests/gpu_info.py); non-macOS so the CUDA device check runs on
+    # Linux and Windows. AMD's 'amdsmi' ships with ROCm, not PyPI, so the AMD backend is import-gated instead.
+    "nvidia-ml-py; platform_system != 'Darwin'",
     "setproctitle", # allows renaming the test processes on the cluster
     "syrupy",
     "huggingface_hub[hf_xet]",
@@ -93,12 +98,12 @@ dev = [
     # * Mujoco 3.3.6 made contact islands an opt-out option instead of opt-in,
     #   which requires setting the disableflags 'mjDSBL_ISLAND'.
     # * Mujoco 3.5.0 fixed computation of link invweight when degenerated.
-    "mujoco>=3.5.0,<3.7.0",
+    # * Mujoco 3.10.0 aligned the primal solvers with Genesis (Hager-Zhang CG update, shifted linesearch costs);
+    #   the step-by-step solver consistency tests only hold when both engines run the same algorithm.
+    "mujoco>=3.10.0,<3.11.0",
     # Used internally by 'MPLPlotter'
     # * 3.7.0: introduces Button blitting and 'outside' keyword legend location
     "matplotlib>=3.7.0",
-    # Used internally by 'VideoFileWriter'
-    "av",
     # Used for ground truth validation in unit tests
     "scipy",
     # Used for code formatting during commits
@@ -174,6 +179,9 @@ ignore = [
     "F403", # undefined-local-with-import-star
     "E712", # true-false-comparison
 ]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
 
 [tool.pytest.ini_options]
 addopts = [

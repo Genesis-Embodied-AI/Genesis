@@ -203,17 +203,23 @@ def parse_glb_material(glb, material_index, surface):
             opacity_texture.apply_cutoff(alpha_cutoff)
 
     if "KHR_materials_unlit" in material.extensions:
-        # No unlit material implemented in renderers. Use emissive texture.
+        # No unlit material implemented in renderers, so surface the base color through emissive and give the base a
+        # black factor. get_rgba then falls back to that emissive as the albedo, instead of the white base that
+        # update_texture installs for an absent color, which would otherwise hide the unlit imagery.
         if color_texture is not None:
             emissive_texture = color_texture
-            color_texture = None
+            color_texture = mu.create_texture(None, (0.0, 0.0, 0.0), "srgb")
         material.extensions.pop("KHR_materials_unlit")
     else:
         # parse emissive
         emissive_image = None
         if material.emissiveTexture is not None:
             texture = glb.textures[material.emissiveTexture.index]
-            if material.emissiveTexture.texCoord is not None:
+            # The single baked UV set follows whichever texture actually samples it. The base color owns it only
+            # when it is an atlas that requires UVs and is not black; otherwise (absent, black, or a flat factor) the
+            # emissive atlas owns it, so its texCoord is not silently replaced by the base's unused one.
+            base_owns_uvs = color_texture is not None and not color_texture.is_black and color_texture.requires_uv
+            if material.emissiveTexture.texCoord is not None and not base_owns_uvs:
                 uvs_used = material.emissiveTexture.texCoord
             emissive_image = get_glb_image(glb, texture.source, "RGB")
 

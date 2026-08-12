@@ -132,31 +132,32 @@ def compose_inertial_properties(geoms_inertial_info: Sequence[GeomInertialInfo])
     return InertialProperties(global_mass, global_com, global_inertia)
 
 
-def compute_inertial_from_geoms(geoms: Sequence[RigidGeom | RigidVisGeom], rho: float) -> InertialProperties:
+def compose_inertial_from_g_infos(g_infos: Sequence[dict], rho: float) -> InertialProperties:
     """
-    Compose inertial properties (mass, center of mass, inertia tensor) from multiple rigid geometries.
+    Compose inertial properties (mass, center of mass, inertia tensor) from parsed geom infos.
 
     Handles all primitive collision geometry types analytically (SPHERE, ELLIPSOID, CYLINDER, CAPSULE, BOX) and defers
-    to the mesh's cached unit-density mass properties for MESH type.
+    to the mesh's cached unit-density mass properties for MESH type. Visual-only infos are treated as their visual
+    mesh.
 
     Parameters
     ----------
-    geoms : list[RigidGeom] or list[RigidVisGeom]
-        List of geometry objects to compute inertial from.
+    g_infos : list[dict]
+        Parsed geom infos to compute inertial from.
     rho : float
-        Material density (kg/m^3).
+        Material density (kg/m^3), used for every geom info without its own authored density.
     """
-    geoms_inertial_info = []
-    for geom in geoms:
-        if isinstance(geom, RigidVisGeom):
-            g_info = {"type": gs.GEOM_TYPE.MESH, "mesh": geom.vmesh}
-        elif geom.type == gs.GEOM_TYPE.MESH:
-            g_info = {"type": gs.GEOM_TYPE.MESH, "mesh": geom.mesh}
-        else:
-            g_info = {"type": geom.type, "data": geom.data}
-        geoms_inertial_info.append(
-            GeomInertialInfo(get_local_inertial_from_geom_info(g_info, rho), geom._init_pos, geom._init_quat)
+    geoms_inertial_info = tuple(
+        GeomInertialInfo(
+            get_local_inertial_from_geom_info(
+                {"type": gs.GEOM_TYPE.MESH, "mesh": g_info["vmesh"]} if "vmesh" in g_info else g_info,
+                rho if g_info.get("density") is None else g_info["density"],
+            ),
+            np.asarray(g_info.get("pos", gu.zero_pos()), dtype=gs.np_float),
+            np.asarray(g_info.get("quat", gu.identity_quat()), dtype=gs.np_float),
         )
+        for g_info in g_infos
+    )
     return compose_inertial_properties(geoms_inertial_info)
 
 
@@ -172,14 +173,31 @@ class LinkInertial(NamedTuple):
     inertia: Matrix3x3Type
 
 
+class LinkInertialInfo(NamedTuple):
+    """A link's (or variant's) load-time inertial data.
+
+    Computed while the parsed geom infos (and their authored per-geom densities) are still available, and consumed
+    by the post-load passes. 'props' feeds the align anchor. 'is_mass_explicit' feeds the all-or-none source check
+    in '_align_free_roots': True when the mass is explicit in the asset (an explicit mass, or an authored density on
+    every geom), False for a pure geometry estimate (the true mass is a uniform material-density rescale of it), and
+    None when the link mixes geoms with and without an authored density (neither explicit nor uniformly rescalable).
+    'hint' is the material-density-resolved geometry estimate consumed by 'RigidLink._build' (None for kinematic
+    entities, which have no dynamics)."""
+
+    props: LinkInertial
+    is_mass_explicit: bool | None
+    hint: InertialProperties | None
+
+
 def finalize_inertial(
     explicit_mass, explicit_com, explicit_quat, explicit_inertia, hint_mass, hint_com, hint_inertia, clamp_min_mass=True
 ) -> LinkInertial:
     """Resolve a link's local inertial from its parsed explicit values and a geometry-derived estimate (hint).
 
     Explicit values are used when given; otherwise the geometry estimate is used, and an explicit mass rescales a
-    geometry-derived inertia. The hint can come from geom objects (`compute_inertial_from_geoms`, used by
-    `RigidLink._build`) or from parsed geometry-info (the load-time align stash) - the single resolution path keeps the
+    geometry-derived inertia. An omitted center of mass defaults to the link-frame origin when an explicit inertia
+    matrix is provided. The hint comes from the load-time inertial info ('compose_inertial_from_g_infos' over the
+    parsed geom infos, feeding both 'RigidLink._build' and the align anchor) - the single resolution path keeps the
     rigid dynamics inertia and the align anchor in lockstep.
 
     With ``clamp_min_mass`` the resolved mass is floored at ``gs.EPS`` so a geometry-less moving link stays
@@ -192,8 +210,11 @@ def finalize_inertial(
         hint_mass = mass
     if mass is None:
         mass = hint_mass
-    if com is None or inertia is None:
+    if inertia is None:
         com, inertia, quat = hint_com, hint_inertia, gu.identity_quat()
+    elif com is None:
+        # Falling back to the geometry estimate here would discard an otherwise complete authored inertia.
+        com = gu.zero_pos()
     if quat is None:
         quat = gu.identity_quat()
     return LinkInertial(
@@ -740,39 +761,17 @@ class RigidLink(KinematicLink):
             geom._build()
 
         # Estimate the spatial inertia of the link. It will be used as a guess if not specified in morph, or as baseline
-        # to proof-check the provided values.
+        # to proof-check the provided values. The estimate was resolved at load from the parsed geom infos (primary
+        # variant), the only time their authored per-geom densities are available.
         hint_mass = 0.0
         hint_com = np.zeros(3, dtype=gs.np_float)
         hint_inertia = np.zeros((3, 3), dtype=gs.np_float)
         aabb_min = np.full((3,), float("inf"), dtype=gs.np_float)
         aabb_max = np.full((3,), float("-inf"), dtype=gs.np_float)
         if not self._is_fixed:
-            # Determine which geom list to use: geoms first, then vgeoms, then fallback
-            if self._geoms:
-                is_visual = False
-                geom_list = self._geoms
-            else:
-                is_visual = True
-                geom_list = self._vgeoms
-
-            # Get material density
-            rho = self.entity.material.rho
-            if rho is None:
-                if self._solver._enable_mujoco_compatibility:
-                    rho = RHO_MUJOCO
-                else:
-                    rho = RHO_ROBOT if self._is_robot else RHO_OBJECT
-
-            # For heterogeneous links, only use the first variant's geoms for the hint.
-            if self._variant_geom_ranges is not None:
-                start, end = self._variant_geom_ranges[0]
-                if not is_visual:
-                    geom_list = [g for g in geom_list if start <= g.idx < end]
-                else:
-                    vs, ve = self._variant_vgeom_ranges[0]
-                    geom_list = [vg for vg in geom_list if vs <= vg.idx < ve]
-
-            hint_mass, hint_com, hint_inertia = compute_inertial_from_geoms(geom_list, rho)
+            hint_mass, hint_com, hint_inertia = self.entity._links_inertial_info[self.idx - self.entity._link_start][
+                0
+            ].hint
 
             # Compute the bounding box of the links using both visual and collision geometries to be conservative
             for geoms, is_visual in zip((self._geoms, self._vgeoms), (False, True)):
@@ -788,12 +787,17 @@ class RigidLink(KinematicLink):
 
         # Make sure that provided spatial inertia is consistent with the estimate from the geometries if not fixed
         if (self._inertial_mass or hint_mass) > MASS_EPS and hint_mass > gs.EPS:
-            if self._inertial_pos is not None:
+            # An omitted center of mass is resolved to the link frame origin whenever the inertia tensor is authored
+            # (see 'finalize_inertial'), so it must undergo the same consistency check as an authored one.
+            inertial_pos = self._inertial_pos
+            if inertial_pos is None and self._inertial_i is not None:
+                inertial_pos = gu.zero_pos()
+            if inertial_pos is not None:
                 tol = (aabb_max - aabb_min) * AABB_EPS + AABB_EPS
-                if not ((aabb_min - tol < self._inertial_pos) & (self._inertial_pos < aabb_max + tol)).all():
+                if not ((aabb_min - tol < inertial_pos) & (inertial_pos < aabb_max + tol)).all():
                     com_str: list[str] = []
                     aabb_str: list[str] = []
-                    for name, pos, axis_min, axis_max in zip(("x", "y", "z"), self._inertial_pos, aabb_min, aabb_max):
+                    for name, pos, axis_min, axis_max in zip(("x", "y", "z"), inertial_pos, aabb_min, aabb_max):
                         com_str.append(f"{name}={pos:0.3f}")
                         aabb_str.append(f"{name}=({axis_min:0.3f}, {axis_max:0.3f})")
                     gs.logger.warning(
@@ -805,7 +809,7 @@ class RigidLink(KinematicLink):
                 if not (hint_mass / INERTIA_RATIO_MAX <= self._inertial_mass <= INERTIA_RATIO_MAX * hint_mass):
                     gs.logger.warning(
                         f"Link '{self._name}' has dubious mass {self._inertial_mass:0.3f} compared to the estimate "
-                        f"from geometry {hint_mass:0.3f} given material density {rho:0.0f}."
+                        f"from geometry {hint_mass:0.3f}."
                     )
                 hint_inertia *= self._inertial_mass / hint_mass
                 hint_mass = self._inertial_mass
@@ -823,10 +827,10 @@ class RigidLink(KinematicLink):
                         inertias_str.append(inertia_str)
                     gs.logger.warning(
                         f"Link '{self._name}' has dubious inertia [" + inertias_str[0] + "] compared to the estimate "
-                        "from geometry [" + inertias_str[1] + f"] given material density {rho:0.3f}."
+                        "from geometry [" + inertias_str[1] + "]."
                     )
 
-        if self._inertial_mass is None or self._inertial_pos is None or self._inertial_i is None:
+        if self._inertial_mass is None or self._inertial_i is None:
             if not self._is_fixed and self._vgeoms and not self._geoms:
                 gs.logger.info(
                     f"Mass is not specified and collision geoms can not be found for link '{self.name}'. "
@@ -836,14 +840,10 @@ class RigidLink(KinematicLink):
                 gs.logger.warning(
                     f"Ignoring center of mass of link '{self.name}' because inertia matrix is not specified."
                 )
-            elif self._inertial_pos is None and self._inertial_i is not None:
-                gs.logger.warning(
-                    f"Ignoring inertia matrix of link '{self.name}' because center of mass is not specified."
-                )
             self._invweight = None
 
         # Resolve the final inertial from the explicit values and the geometry estimate, sharing finalize_inertial with
-        # the load-time align stash so the dynamics inertia and the align anchor stay in lockstep.
+        # the load-time inertial info so the dynamics inertia and the align anchor stay in lockstep.
         inertial = finalize_inertial(
             self._inertial_mass,
             self._inertial_pos,
@@ -866,12 +866,6 @@ class RigidLink(KinematicLink):
 
         # Compute per-variant inertial for heterogeneous links
         if self._variant_geom_ranges is not None:
-            rho = self.entity.material.rho
-            if rho is None:
-                if self._solver._enable_mujoco_compatibility:
-                    rho = RHO_MUJOCO
-                else:
-                    rho = RHO_ROBOT if self._is_robot else RHO_OBJECT
             self._variant_inertial = []
             for v in range(len(self._variant_geom_ranges)):
                 if v == 0:
@@ -890,41 +884,18 @@ class RigidLink(KinematicLink):
                     )
                     continue
 
-                # For URDF/MJCF variants, use parsed inertial from the variant file
-                # (index v-1 because variant 0 is the primary)
+                # Resolve the inertial parsed from the variant file (index v-1 because variant 0 is the primary)
+                # against this variant's own geometry estimate. Going through the shared resolution path is what makes
+                # a variant behave like the same asset loaded on its own, whatever it leaves unspecified. A
+                # Primitive/Mesh variant has no parsed inertial, and 'recompute_inertia' discards it on purpose, so
+                # both fall back to the estimate alone.
+                v_mass, v_pos, v_quat, v_i = None, None, None, None
                 if self._variant_scene_inertial is not None:
                     morph_v, v_mass, v_pos, v_quat, v_i = self._variant_scene_inertial[v - 1]
-                    if (
-                        not (morph_v.recompute_inertia and not self._is_fixed)
-                        and v_mass is not None
-                        and v_pos is not None
-                        and v_i is not None
-                    ):
-                        self._variant_inertial.append(
-                            LinkInertial(
-                                v_mass,
-                                np.asarray(v_pos, dtype=gs.np_float),
-                                np.asarray(v_quat, dtype=gs.np_float) if v_quat is not None else gu.identity_quat(),
-                                np.asarray(v_i, dtype=gs.np_float),
-                            )
-                        )
-                        continue
-
-                # Compute from geometry (Primitive/Mesh variants, or recompute_inertia)
-                gs_v, ge_v = self._variant_geom_ranges[v]
-                vs_v, ve_v = self._variant_vgeom_ranges[v]
-                variant_geoms = [g for g in self._geoms if gs_v <= g.idx < ge_v]
-                if variant_geoms:
-                    mass, com, inertia = compute_inertial_from_geoms(variant_geoms, rho)
-                else:
-                    variant_vgeoms = [vg for vg in self._vgeoms if vs_v <= vg.idx < ve_v]
-                    if variant_vgeoms:
-                        mass, com, inertia = compute_inertial_from_geoms(variant_vgeoms, rho)
-                    else:
-                        mass = gs.EPS
-                        com = np.zeros(3, dtype=gs.np_float)
-                        inertia = np.zeros((3, 3), dtype=gs.np_float)
-                self._variant_inertial.append(LinkInertial(mass, com, gu.identity_quat(), inertia))
+                    if morph_v.recompute_inertia and not self._is_fixed:
+                        v_mass, v_pos, v_quat, v_i = None, None, None, None
+                hint = self.entity._links_inertial_info[self.idx - self.entity._link_start][v].hint
+                self._variant_inertial.append(finalize_inertial(v_mass, v_pos, v_quat, v_i, *hint))
 
     def _add_geom(
         self,
@@ -933,6 +904,8 @@ class RigidLink(KinematicLink):
         init_quat,
         type,
         friction,
+        friction_torsional,
+        friction_rolling,
         sol_params,
         center_init=None,
         needs_coup=False,
@@ -953,6 +926,8 @@ class RigidLink(KinematicLink):
             init_quat=init_quat,
             type=type,
             friction=friction,
+            friction_torsional=friction_torsional,
+            friction_rolling=friction_rolling,
             sol_params=sol_params,
             center_init=center_init,
             needs_coup=needs_coup,
@@ -979,9 +954,9 @@ class RigidLink(KinematicLink):
 
         verts_idx = slice(self._verts_state_start, self._verts_state_start + self.n_verts)
         if self.is_fixed and not self._entity._batch_fixed_verts:
-            tensor = qd_to_torch(self._solver.fixed_verts_state.pos, verts_idx, copy=True)
+            tensor = qd_to_torch(self._solver.dyn_state.fixed_verts.pos, verts_idx, copy=True)
         else:
-            tensor = qd_to_torch(self._solver.free_verts_state.pos, None, verts_idx, transpose=True, copy=True)
+            tensor = qd_to_torch(self._solver.dyn_state.free_verts.pos, None, verts_idx, transpose=True, copy=True)
             if self._solver.n_envs == 0:
                 tensor = tensor[0]
         return tensor
@@ -1052,6 +1027,20 @@ class RigidLink(KinematicLink):
         """
         for geom in self._geoms:
             geom.set_friction(friction)
+
+    def set_friction_torsional(self, friction_torsional):
+        """
+        Set the torsional friction of all the link's geoms (see 'gs.materials.Rigid').
+        """
+        for geom in self._geoms:
+            geom.set_friction_torsional(friction_torsional)
+
+    def set_friction_rolling(self, friction_rolling):
+        """
+        Set the rolling friction of all the link's geoms (see 'gs.materials.Rigid').
+        """
+        for geom in self._geoms:
+            geom.set_friction_rolling(friction_rolling)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

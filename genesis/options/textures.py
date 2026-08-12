@@ -204,12 +204,13 @@ class ImageTexture(Texture):
     def is_black(self) -> bool:
         assert gs.EPS is not None
         assert self.image_color is not None
-        if all(c < gs.EPS for c in self.image_color):
-            return True
         assert self.image_array is not None
-        if np.max(self.image_array) == 0:
-            return True
-        return False
+        # Black when every channel's effective value (texel x factor) is zero. Testing the factor and the array
+        # independently would miss a per-channel factor that masks the only nonzero channels (e.g. a green texture
+        # scaled by a red-only factor).
+        channels = self.image_array.shape[-1] if self.image_array.ndim == 3 else 1
+        channel_peaks = self.image_array.reshape(-1, channels).max(axis=0)
+        return all(factor < gs.EPS or peak == 0 for factor, peak in zip(self.image_color, channel_peaks))
 
     @computed_field
     @cached_property

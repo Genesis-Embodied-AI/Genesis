@@ -13,12 +13,7 @@ from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_
 from genesis.utils.raycast_qd import closest_point_on_triangle
 
 from .base_sensor import RigidSensorMetadataMixin, RigidSensorMixin, SimpleSensor, SimpleSensorMetadata
-from .probe import (
-    ProbeSensorMetadataMixin,
-    ProbeSensorMixin,
-    func_noised_probe_radius,
-    get_measured_bufs,
-)
+from .probe import ProbeSensorMetadataMixin, ProbeSensorMixin, func_noised_probe_radius, get_measured_bufs
 from .tactile_shared import (
     BVH_LEAF_SIZE,
     BVH_STACK_SIZE,
@@ -174,20 +169,20 @@ class TriangleMeshBVH(BVHMetadata):
 
 @qd.kernel
 def _kernel_surface_distance_probe_bvh(
-    probe_positions_local: qd.types.ndarray(),
-    probe_radii: qd.types.ndarray(),
-    probe_radii_noise: qd.types.ndarray(),
     probe_sensor_idx: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     sensor_cache_start: qd.types.ndarray(),
     sensor_probe_start: qd.types.ndarray(),
+    probe_positions_local: qd.types.ndarray(),
+    probe_radii: qd.types.ndarray(),
+    probe_radii_noise: qd.types.ndarray(),
     bvh: ChunkedBVHData,
     bvh_tri_verts: qd.types.ndarray(),
-    links_state: array_class.LinksState,
     positions_gt: qd.types.ndarray(),
     positions_measured: qd.types.ndarray(),
     output_gt: qd.types.ndarray(),
     output_measured: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
 ):
     """
     BVH-accelerated surface-distance query.
@@ -204,10 +199,10 @@ def _kernel_surface_distance_probe_bvh(
     for i_p, i_b in qd.ndrange(total_n_probes, n_batches):
         i_s = probe_sensor_idx[i_p]
         sensor_link_idx = links_idx[i_s]
-        link_pos = links_state.pos[sensor_link_idx, i_b]
-        link_quat = links_state.quat[sensor_link_idx, i_b]
+        link_pos = dyn_state.links.pos[sensor_link_idx, i_b]
+        link_quat = dyn_state.links.quat[sensor_link_idx, i_b]
 
-        probe_local = func_vec3_at(probe_positions_local, i_p)
+        probe_local = func_vec3_at(i_p, probe_positions_local)
         probe_world = link_pos + gu.qd_transform_by_quat(probe_local, link_quat)
 
         max_r_gt = probe_radii[i_p]
@@ -227,8 +222,8 @@ def _kernel_surface_distance_probe_bvh(
         for c_off in range(n_chunks):
             i_c = chunk_start + c_off
             track_link_idx = bvh.chunk_link_idx[i_c]
-            track_pos = links_state.pos[track_link_idx, i_b]
-            track_quat = links_state.quat[track_link_idx, i_b]
+            track_pos = dyn_state.links.pos[track_link_idx, i_b]
+            track_quat = dyn_state.links.quat[track_link_idx, i_b]
             # BVH lives in the tracked link's local frame; bring the probe over.
             probe_link = gu.qd_inv_transform_by_trans_quat(probe_world, track_pos, track_quat)
 
@@ -239,8 +234,8 @@ def _kernel_surface_distance_probe_bvh(
             while stack_idx > 0:
                 stack_idx -= 1
                 n = stack[stack_idx]
-                bmin = func_vec3_at(bvh.node_min, n)
-                bmax = func_vec3_at(bvh.node_max, n)
+                bmin = func_vec3_at(n, bvh.node_min)
+                bmax = func_vec3_at(n, bvh.node_max)
                 # Cull when min distance from probe to AABB exceeds the conservative current best.
                 cull_radius_sq = qd.max(best_dist_sq_gt, best_dist_sq_m)
                 if not func_sphere_intersects_aabb(probe_link, cull_radius_sq, bmin, bmax):
@@ -332,12 +327,7 @@ class SurfaceDistanceProbeSensor(
     """Surface distance probe: distance and nearest point from probe positions to tracked mesh surfaces."""
 
     def __init__(
-        self,
-        options: SurfaceDistanceProbeOptions,
-        idx: int,
-        shared_context,
-        shared_metadata,
-        manager: "SensorManager",
+        self, options: SurfaceDistanceProbeOptions, idx: int, shared_context, shared_metadata, manager: "SensorManager"
     ):
         super().__init__(options, idx, shared_context, shared_metadata, manager)
         self._nearest_points_slice: slice | None = None
@@ -408,20 +398,20 @@ class SurfaceDistanceProbeSensor(
         )
         bvh = shared_metadata.bvh
         _kernel_surface_distance_probe_bvh(
-            shared_metadata.probe_positions,
-            shared_metadata.probe_radii,
-            shared_metadata.probe_radii_noise,
             shared_metadata.probe_sensor_idx,
             shared_metadata.links_idx,
             shared_metadata.sensor_cache_start,
             shared_metadata.sensor_probe_start,
+            shared_metadata.probe_positions,
+            shared_metadata.probe_radii,
+            shared_metadata.probe_radii_noise,
             bvh.kernel_bvh,
             bvh.tri_verts,
-            solver.links_state,
             shared_metadata.nearest_positions,
             shared_metadata.nearest_positions_measured,
             current_ground_truth_data_T,
             measured_cols_b,
+            solver.dyn_state,
         )
         if ground_truth_data_timeline is not None:
             ground_truth_data_timeline.at(0, copy=False).copy_(current_ground_truth_data_T.T)
@@ -446,9 +436,7 @@ class SurfaceDistanceProbeSensor(
         self._debug_objects.extend(self._draw_probe_spheres(context, probe_world, rgb))
         self._debug_objects.append(
             context.draw_debug_spheres(
-                poss=points,
-                radius=float(self._options.debug_probe_center_radius),
-                color=line_color,
+                poss=points, radius=float(self._options.debug_probe_center_radius), color=line_color
             )
         )
         for i in range(len(probe_world)):

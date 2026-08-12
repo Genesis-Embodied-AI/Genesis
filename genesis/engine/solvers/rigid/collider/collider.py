@@ -25,44 +25,22 @@ from . import mpr
 from . import gjk
 from . import support_field
 
-# Import and re-export from submodules for backward compatibility
-from .broadphase import (
-    func_find_intersect_midpoint,
-    func_check_collision_valid,
-    func_collision_clear,
-    func_broad_phase,
-    _func_broad_phase_sap,
-    _func_broad_phase_all_vs_all,
-)
-
+from .broadphase import func_broad_phase
 from .contact import (
-    collider_kernel_reset,
-    kernel_collider_clear,
-    kernel_masked_collider_clear,
     collider_kernel_get_contacts,
-    func_add_contact,
-    func_set_contact,
-    func_add_diff_contact_input,
-    func_compute_geom_pair_scale,
-    func_contact_orthogonals,
-    func_rotate_frame,
-    func_set_upstream_grad,
+    collider_kernel_reset,
     func_clamp_prune_contacts,
     func_clamp_prune_contacts_coop,
+    func_set_upstream_grad,
+    kernel_collider_clear,
+    kernel_masked_collider_clear,
 )
 from . import narrowphase
 from .narrowphase import (
     CCD_ALGORITHM_CODE,
-    func_contact_sphere_sdf,
-    func_contact_convex_convex_sdf,
-    func_contact_mpr_terrain,
-    func_add_prism_vert,
-    func_plane_box_contact,
-    func_convex_convex_contact,
-    func_box_box_contact,
-    func_narrow_phase_diff_convex_vs_convex,
-    func_narrow_phase_convex_specializations,
     func_narrow_phase_any_vs_terrain,
+    func_narrow_phase_convex_specializations,
+    func_narrow_phase_diff_convex_vs_convex,
     func_narrow_phase_nonconvex_vs_nonterrain,
 )
 
@@ -84,15 +62,15 @@ class Collider:
         self._mc_perturbation = 1e-3 if self._solver._enable_mujoco_compatibility else 3e-3
         self._mc_tolerance = 1e-3 if self._solver._enable_mujoco_compatibility else 1.5e-2
         # Overlap depth (as a fraction of the pair bounding-box diagonal) past which MPR is upgraded to GJK. It is
-        # portal-dependent: a DEGENERATED portal's depth is untrustworthy so it falls back sooner (base ratio), while a
-        # VALID portal recovers the exact depth (Thm 4.2) and stays on MPR to deeper penetrations (valid ratio). The
-        # valid ratio is capped below the point where trusting deep valid portals lets contacts pump energy.
+        # portal-dependent: only an EXACT portal corroborated by a warm cache recovers a depth trusted deeper (valid
+        # ratio); every other portal bounds the depth at best and falls back sooner (base ratio). The valid ratio is
+        # capped below the point where trusting deep exact portals lets contacts pump energy.
         self._mpr_to_gjk_overlap_ratio = 0.2
         self._mpr_to_gjk_overlap_ratio_valid = 0.6
         # Minimum ratio of the current penetration to the cached warm-start penetration for MPR to be treated as
-        # having resolved a deeper, non-minimal portal (then upgraded to GJK). At the gate the threshold is clamped
-        # into [tolerance, overlap_ratio * geom_pair_scale], so a cold pair (cached penetration reset to 0) reduces to
-        # the original "penetration > tolerance" gate and a genuinely deep contact always upgrades at the overlap cap.
+        # having resolved a deeper, non-minimal portal (then upgraded to GJK). The jump only moves the threshold
+        # inside [tolerance, overlap_ratio * geom_pair_scale]: a depth at or below the manifold tolerance never
+        # refines, and one past the overlap cap always does.
         self._mpr_to_gjk_penetration_ratio = 5.0
         self._box_MAXCONPAIR = 16
         self._diff_pos_tolerance = 1e-2
@@ -107,8 +85,9 @@ class Collider:
             and gs.backend != gs.cpu
             and not self._solver._requires_grad
         )
-        self._init_collision_fields()
-
+        # The narrowphase sub-components are built AND activated before the collision fields, whose collider info
+        # embeds their description structs: activation may reallocate them at their final size, so it has to run
+        # before the embedding (see ColliderInfo).
         self._sdf = SDF(rigid_solver)
         self._mpr = mpr.MPR(rigid_solver)
         self._gjk = gjk.GJK(rigid_solver)
@@ -120,6 +99,8 @@ class Collider:
             self._gjk.activate()
         if self._collider_static_config.has_terrain or self._collider_static_config.has_non_box_plane_convex_convex:
             self._support_field.activate()
+
+        self._init_collision_fields()
 
         if self._use_split_narrowphase:
             self._init_multicontact_gjk_state()
@@ -167,7 +148,7 @@ class Collider:
             else:
                 ccd_algorithm = CCD_ALGORITHM_CODE.MPR
 
-        n_contacts_per_convex_pair = 20 if self._solver._static_rigid_sim_config.requires_grad else 5
+        n_contacts_per_convex_pair = 20 if self._solver.rigid_config.requires_grad else 5
 
         # Nonconvex vertex-vs-SDF pairs and box-box pairs (via their specialized detector) emit many contacts per pair -
         # a full annular ring or face patch - unlike the handful a generic convex pair emits. They share a larger cap,
@@ -191,45 +172,39 @@ class Collider:
             self._large_contact_pair_mask,
         ) = self._compute_collision_pair_idx()
 
-        # Link-pair pruning can do useful work only when contacts from distinct geom-pairs can accumulate into the same
-        # (link_a, link_b) bucket. That happens when any link has more than one geom (compound/decomposed body), when
-        # any geom is nonconvex (vertex-based narrowphase emits many contacts per pair), or when terrain is present.
-        # Composes with contact islands: pruning writes a logical permutation into contact_sort_idx, and the island
-        # construction reads contacts through that permutation, so pruning collapses the contacts before islands
-        # partition the (smaller) solve.
-        if has_nonconvex_nonterrain or has_terrain:
-            has_prunable_contacts = True
-        else:
-            has_prunable_contacts = False
-            for link in self._solver.links:
-                variant_geom_ranges = link._variant_geom_ranges
-                if variant_geom_ranges is None:
-                    variant_geom_ranges = ((link.geom_start, link.geom_end),)
-                for geom_range in variant_geom_ranges:
-                    n_geoms = geom_range[1] - geom_range[0]
-                    if n_geoms < 2:
-                        continue
-                    if n_geoms >= 5:
-                        has_prunable_contacts = True
-                        continue
-                    for geom_idx in range(*geom_range):
-                        geom = self._solver.geoms[geom_idx]
-                        if self._solver._options.enable_multi_contact and geom.type not in (
-                            gs.GEOM_TYPE.SPHERE,
-                            gs.GEOM_TYPE.ELLIPSOID,
-                        ):
-                            has_prunable_contacts = True
+        # Link-pair pruning does useful work whenever a (link_a, link_b) bucket can hold a point interior to the hull of
+        # the others, which the hull prune drops. Nonconvex geoms and terrain reach that through a vertex-based
+        # narrowphase emitting many contacts per pair, and multi-contact detection reaches it from a single convex pair,
+        # whose perturbed points bound a patch that the unperturbed one may land inside of. One geom per link therefore
+        # suffices. A compound or decomposed link reaches it through geom count alone, each of its geoms landing at
+        # least one point in the bucket, so enough of them fill it past the pruned support polygon whatever the
+        # detection mode. Composes with contact islands: pruning writes a logical permutation into contact_sort_idx,
+        # and the island construction reads contacts through that permutation, so pruning collapses the contacts before
+        # islands partition the (smaller) solve.
+        has_prunable_contacts = has_nonconvex_nonterrain or has_terrain
+        if not has_prunable_contacts:
+            has_prunable_contacts = any(
+                geom_end - geom_start >= 5
+                for link in self._solver.links
+                for geom_start, geom_end in (link._variant_geom_ranges or ((link.geom_start, link.geom_end),))
+            )
+        if not has_prunable_contacts and self._solver._options.enable_multi_contact:
+            # Multi-contact is declined for a pair holding a sphere or an ellipsoid, which leaves it a single point, so
+            # what earns the pass is a pair where neither geom is one of those.
+            geoms_type = [geom.type for geom in self._solver.geoms]
+            has_prunable_contacts = any(
+                geoms_type[i_ga] not in (gs.GEOM_TYPE.SPHERE, gs.GEOM_TYPE.ELLIPSOID)
+                and geoms_type[i_gb] not in (gs.GEOM_TYPE.SPHERE, gs.GEOM_TYPE.ELLIPSOID)
+                for i_ga, i_gb in self._valid_collision_pairs
+            )
 
-        # Spatial sort by x-position (with a geom-pair tie-break) only runs on GPU for convex-convex scenes whose
-        # contacts could benefit from locality, and is also what makes the GPU contact order run-independent: the
-        # narrowphase reserves contact slots via atomic_add (a non-deterministic physical layout), and the sort writes
-        # a deterministic permutation into contact_sort_idx that every downstream consumer - including the island
-        # construction - reads through. Disabled only in autodiff mode: get_contacts applies the permutation but
-        # func_set_upstream_grad writes upstream gradients back by physical index, so a non-identity permutation would
-        # attach gradients to the wrong contacts.
-        spatial_sort_supported = (
-            has_non_box_plane_convex_convex and gs.backend != gs.cpu and not self._solver._requires_grad
-        )
+        # The sort writes a deterministic permutation into contact_sort_idx that every downstream consumer - including
+        # the island construction - reads through. It runs on every backend: the physical layout is racy on GPU
+        # (slots reserved via atomic_add), and a serial narrowphase enumerates pairs in broadphase sweep order along
+        # a fixed world axis, so a rigidly rotated copy of a scene would otherwise see a pair's contacts reordered.
+        # Disabled only in autodiff mode: func_set_upstream_grad writes upstream gradients back by physical index, so
+        # a non-identity permutation would attach them to the wrong contacts.
+        spatial_sort_supported = has_non_box_plane_convex_convex and not self._solver._requires_grad
 
         # Initialize the static config, which stores every data that are compile-time constants.
         # Note that updating any of them will trigger recompilation.
@@ -258,6 +233,10 @@ class Collider:
             n_vert_neighbors,
             n_valid_pairs,
             self._collider_static_config,
+            self._mpr._mpr_info,
+            self._gjk._gjk_info,
+            self._support_field._support_field_info,
+            self._sdf._sdf_info,
             mc_perturbation=self._mc_perturbation,
             mc_tolerance=self._mc_tolerance,
             mpr_to_gjk_overlap_ratio=self._mpr_to_gjk_overlap_ratio,
@@ -271,6 +250,7 @@ class Collider:
         self._init_collision_pair_idx(self._collision_pair_idx)
         self._init_valid_pairs()
         self._init_verts_connectivity(vert_neighbors, vert_neighbor_start, vert_n_neighbors)
+        self._init_verts_spatial_grid()
         self._init_max_contacts(self._n_possible_pairs, self._large_contact_pair_mask)
         self._init_terrain_state()
 
@@ -278,7 +258,7 @@ class Collider:
         n_possible_pairs_ = max(self._n_possible_pairs, 1)
         self._collider_state = array_class.get_collider_state(
             self._solver,
-            self._solver._static_rigid_sim_config,
+            self._solver.rigid_config,
             n_possible_pairs_,
             self._solver._options.multiplier_collision_broad_phase,
             self._collider_info,
@@ -328,10 +308,10 @@ class Collider:
         back to GJK for its own contact."""
         self._multicontact_gjk_state = array_class.get_gjk_state(
             self._multicontact_n_total_threads,
-            self._solver._static_rigid_sim_config,
+            self._solver.rigid_config,
             self._gjk._gjk_info,
             True,
-            self._solver._static_rigid_sim_config.requires_grad,
+            self._solver.rigid_config.requires_grad,
         )
 
     def _compute_collision_pair_idx(self):
@@ -542,18 +522,12 @@ class Collider:
             # Minkowski difference. A sphere or ellipsoid has no flat facet, so a pair of them yields an everywhere
             # smoothly curved Minkowski boundary on which EPA never converges, and no contact is ever generated -
             # the bodies silently tunnel. Faceted partners (box, mesh) and the analytical plane branch are unaffected.
-            #
-            # Sphere-sphere is exempt: it is handled by the closed-form analytic path (func_sphere_sphere_contact
-            # forward, func_differentiable_sphere_contact backward), which is exactly differentiable and never routes
-            # through diff_gjk's EPA. Ellipsoid-involving smooth pairs still fall through to diff_gjk and remain
-            # unsupported.
             if self._solver._requires_grad:
                 is_smooth_a = (valid_type_a == gs.GEOM_TYPE.SPHERE) | (valid_type_a == gs.GEOM_TYPE.ELLIPSOID)
                 is_smooth_b = (valid_type_b == gs.GEOM_TYPE.SPHERE) | (valid_type_b == gs.GEOM_TYPE.ELLIPSOID)
-                is_sphere_sphere = (valid_type_a == gs.GEOM_TYPE.SPHERE) & (valid_type_b == gs.GEOM_TYPE.SPHERE)
-                if np.any(both_convex & ~specialized & is_smooth_a & is_smooth_b & ~is_sphere_sphere):
+                if np.any(both_convex & ~specialized & is_smooth_a & is_smooth_b):
                     gs.raise_exception(
-                        "Differentiable contact detection is not supported for sphere-ellipsoid or "
+                        "Differentiable contact detection is not supported for sphere-sphere, sphere-ellipsoid or "
                         "ellipsoid-ellipsoid collision pairs (requires_grad=True). Approximate them with a faceted "
                         "geometry (e.g. a convex mesh) or disable requires_grad."
                     )
@@ -621,6 +595,54 @@ class Collider:
 
         return vert_neighbors, vert_neighbor_start, vert_n_neighbors
 
+    def _init_verts_spatial_grid(self):
+        """
+        Sort each geom's collision verts into a fixed 8x8x8 grid over its local AABB, as a permutation of vert
+        indices ordered by grid cell (z fastest) plus per-cell vert ranges.
+
+        The nonconvex narrowphase visits only the cells overlapping the other geom's pulled-back AABB, skipping far
+        verts wholesale. Binning uses the same single-precision cell mapping as the kernel side; that mapping is
+        monotone, so a vert inside a (padded) query box always lands inside the visited cell range.
+        """
+        if self._solver.n_verts == 0:
+            return
+        n_geoms = len(self._solver.geoms)
+        verts_idx = []
+        verts_pos = []
+        cells_vert_start = []
+        geoms_origin = np.zeros((n_geoms, 3), dtype=gs.np_float)
+        geoms_inv_cell_size = np.zeros((n_geoms, 3), dtype=gs.np_float)
+        offset_vert = 0
+        for i_g, geom in enumerate(self._solver.geoms):
+            verts = geom.init_verts.astype(gs.np_float)
+            if len(verts) == 0:
+                verts_idx.append(np.zeros(0, dtype=gs.np_int))
+                verts_pos.append(np.zeros((0, 3), dtype=gs.np_float))
+                cells_vert_start.append(np.full(8**3 + 1, offset_vert, dtype=gs.np_int))
+                continue
+            origin = verts.min(axis=0)
+            extent = verts.max(axis=0) - origin
+            inv_cell_size = np.where(extent > 0.0, 8 / np.maximum(extent, gs.EPS), 0.0).astype(gs.np_float)
+            verts_cell = np.clip(np.floor((verts - origin) * inv_cell_size), 0, 7).astype(gs.np_int)
+            verts_cell_flat = (verts_cell[:, 0] * 8 + verts_cell[:, 1]) * 8 + verts_cell[:, 2]
+            order = np.argsort(verts_cell_flat, kind="stable")
+            verts_idx.append(order + geom.vert_start)
+            # The positions themselves are duplicated in spatial order: the scan streams them sequentially, where
+            # gathering through the permutation would defeat the prefetcher on the hot path.
+            verts_pos.append(verts[order])
+            counts = np.bincount(verts_cell_flat, minlength=8**3)
+            cells_vert_start.append(np.concatenate(([0], counts.cumsum())) + offset_vert)
+            geoms_origin[i_g] = origin
+            geoms_inv_cell_size[i_g] = inv_cell_size
+            offset_vert = offset_vert + len(verts)
+
+        verts_spatial_grid = self._collider_info.verts_spatial_grid
+        verts_spatial_grid.verts_idx.from_numpy(np.concatenate(verts_idx, dtype=gs.np_int))
+        verts_spatial_grid.verts_pos.from_numpy(np.concatenate(verts_pos, dtype=gs.np_float))
+        verts_spatial_grid.cells_vert_start.from_numpy(np.concatenate(cells_vert_start, dtype=gs.np_int))
+        verts_spatial_grid.geoms_origin.from_numpy(geoms_origin)
+        verts_spatial_grid.geoms_inv_cell_size.from_numpy(geoms_inv_cell_size)
+
     def _init_collision_pair_idx(self, collision_pair_idx):
         if self._n_possible_pairs == 0:
             self._collider_info.collision_pair_idx.fill(-1)
@@ -687,23 +709,30 @@ class Collider:
     def _init_terrain_state(self):
         if self._collider_static_config.has_terrain:
             solver = self._solver
-            links_idx = solver.geoms_info.link_idx.to_numpy()[solver.geoms_info.type.to_numpy() == gs.GEOM_TYPE.TERRAIN]
-            entity_idx = solver.links_info.entity_idx.to_numpy()[links_idx[0]]
+            links_idx = solver.dyn_info.geoms.link_idx.to_numpy()[
+                solver.dyn_info.geoms.type.to_numpy() == gs.GEOM_TYPE.TERRAIN
+            ]
+            entity_idx = solver.dyn_info.links.entity_idx.to_numpy()[links_idx[0]]
             if isinstance(entity_idx, np.ndarray):
                 entity_idx = entity_idx[0]
             entity = solver._entities[entity_idx]
 
-            scale = entity.terrain_scale.astype(gs.np_float)
             rc = np.array(entity.terrain_hf.shape, dtype=gs.np_int)
-            hf = entity.terrain_hf.astype(gs.np_float) * scale[1]
             xyz_maxmin = np.array(
-                [rc[0] * scale[0], rc[1] * scale[0], hf.max(), 0, 0, hf.min() - 1.0],
+                [
+                    rc[0] * entity.terrain_scale[0],
+                    rc[1] * entity.terrain_scale[0],
+                    entity.terrain_hf.max(),
+                    0,
+                    0,
+                    entity.terrain_hf.min() - 1.0,
+                ],
                 dtype=gs.np_float,
             )
 
-            self._collider_info.terrain_hf.from_numpy(hf)
+            self._collider_info.terrain_hf.from_numpy(entity.terrain_hf)
             self._collider_info.terrain_rc.from_numpy(rc)
-            self._collider_info.terrain_scale.from_numpy(scale)
+            self._collider_info.terrain_scale.from_numpy(entity.terrain_scale)
             self._collider_info.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
 
     def activate_sdf(self) -> None:
@@ -742,7 +771,7 @@ class Collider:
             return
 
         envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
-        collider_kernel_reset(envs_idx, self._solver._static_rigid_sim_config, self._collider_state, cache_only)
+        collider_kernel_reset(envs_idx, self._collider_state, self._solver.rigid_config, cache_only)
 
     def clear(self, envs_idx=None):
         self.reset(envs_idx, cache_only=False)
@@ -803,44 +832,29 @@ class Collider:
             fn = kernel_masked_collider_clear
         else:
             fn = kernel_collider_clear
-        fn(
-            envs_idx,
-            self._solver.links_state,
-            self._solver.links_info,
-            self._solver._static_rigid_sim_config,
-            self._collider_state,
-        )
+        fn(envs_idx, self._solver.dyn_state, self._collider_state, self._solver.dyn_info, self._solver.rigid_config)
 
     def _call_multicontact(self):
         narrowphase._func_narrowphase_multicontact(
-            self._solver.links_state,
-            self._solver.links_info,
-            self._solver.geoms_state,
-            self._solver.geoms_info,
             self._solver.geoms_init_AABB,
-            self._solver.verts_info,
-            self._solver.faces_info,
-            self._solver._rigid_global_info,
-            self._solver._static_rigid_sim_config,
+            self._solver.dyn_state,
             self._collider_state,
-            self._collider_info,
-            self._collider_static_config,
             self._multicontact_mpr_state,
-            self._mpr._mpr_info,
             self._multicontact_gjk_state,
-            self._gjk._gjk_info,
+            self._solver.dyn_info,
+            self._solver.rigid_info,
+            self._collider_info,
+            self._solver.rigid_config,
+            self._collider_static_config,
             self._gjk._gjk_static_config,
-            self._support_field._support_field_info,
-            self._solver._errno,
             self._multicontact_n_total_threads,
             self._multicontact_max_items_per_thread,
+            self._solver._errno,
         )
 
     def detection(self) -> None:
         rigid_solver.kernel_update_geom_aabbs(
-            self._solver.geoms_state,
-            self._solver.geoms_init_AABB,
-            self._solver._static_rigid_sim_config,
+            self._solver.geoms_init_AABB, self._solver.dyn_state, self._solver.rigid_config
         )
 
         if self._n_possible_pairs == 0:
@@ -848,110 +862,84 @@ class Collider:
 
         self._contact_data_cache.clear()
         func_broad_phase(
-            self._solver.links_state,
-            self._solver.links_info,
-            self._solver.geoms_state,
-            self._solver.geoms_info,
-            self._solver._rigid_global_info,
-            self._solver._static_rigid_sim_config,
+            self._solver.dyn_state,
+            self._solver.dyn_info,
+            self._solver.rigid_info,
+            self._solver.rigid_config,
             self._solver.constraint_solver.constraint_state,
             self._collider_state,
-            self._solver.equalities_info,
             self._collider_info,
             self._solver._errno,
         )
         if self._use_split_narrowphase:
-            narrowphase._func_reset_narrowphase_work_queues(
-                self._collider_state,
-            )
+            narrowphase._func_reset_narrowphase_work_queues(self._collider_state)
             narrowphase._func_narrowphase_contact0(
-                self._solver.geoms_state,
-                self._solver.geoms_info,
                 self._solver.geoms_init_AABB,
-                self._solver.verts_info,
-                self._solver._rigid_global_info,
-                self._solver._static_rigid_sim_config,
+                self._solver.dyn_state,
                 self._collider_state,
-                self._collider_info,
-                self._collider_static_config,
                 self._contact0_mpr_state,
-                self._mpr._mpr_info,
                 self._contact0_gjk_state,
-                self._gjk._gjk_info,
-                self._support_field._support_field_info,
-                self._solver._errno,
+                self._solver.dyn_info,
+                self._solver.rigid_info,
+                self._collider_info,
+                self._solver.rigid_config,
+                self._collider_static_config,
                 self._solver._B,
                 self._contact0_n_chunks,
+                self._solver._errno,
             )
             self._call_multicontact()
         elif self._collider_static_config.has_non_box_plane_convex_convex:
             narrowphase.func_narrow_phase_convex_vs_convex(
-                self._solver.links_state,
-                self._solver.links_info,
-                self._solver.geoms_state,
-                self._solver.geoms_info,
                 self._solver.geoms_init_AABB,
-                self._solver.verts_info,
-                self._solver.faces_info,
-                self._solver._rigid_global_info,
-                self._solver._static_rigid_sim_config,
+                self._solver.dyn_state,
                 self._collider_state,
-                self._collider_info,
-                self._collider_static_config,
                 self._mpr._mpr_state,
-                self._mpr._mpr_info,
                 self._gjk._gjk_state,
-                self._gjk._gjk_info,
-                self._gjk._gjk_static_config,
-                self._sdf._sdf_info,
-                self._support_field._support_field_info,
                 self._gjk._gjk_state.diff_contact_input,
+                self._solver.dyn_info,
+                self._solver.rigid_info,
+                self._collider_info,
+                self._solver.rigid_config,
+                self._collider_static_config,
+                self._gjk._gjk_static_config,
                 self._solver._errno,
             )
         if self._collider_static_config.has_convex_specialization:
             func_narrow_phase_convex_specializations(
-                self._solver.geoms_state,
-                self._solver.geoms_info,
                 self._solver.geoms_init_AABB,
-                self._solver.verts_info,
-                self._solver._rigid_global_info,
-                self._solver._static_rigid_sim_config,
+                self._solver.dyn_state,
                 self._collider_state,
+                self._solver.dyn_info,
+                self._solver.rigid_info,
                 self._collider_info,
+                self._solver.rigid_config,
                 self._collider_static_config,
                 self._solver._errno,
             )
         if self._collider_static_config.has_terrain:
             func_narrow_phase_any_vs_terrain(
-                self._solver.links_state,
-                self._solver.links_info,
-                self._solver.geoms_state,
-                self._solver.geoms_info,
                 self._solver.geoms_init_AABB,
-                self._solver._rigid_global_info,
-                self._solver._static_rigid_sim_config,
+                self._solver.dyn_state,
                 self._collider_state,
-                self._collider_info,
-                self._collider_static_config,
                 self._mpr._mpr_state,
-                self._mpr._mpr_info,
-                self._support_field._support_field_info,
+                self._solver.dyn_info,
+                self._solver.rigid_info,
+                self._collider_info,
+                self._solver.rigid_config,
+                self._collider_static_config,
                 self._solver._errno,
             )
         if self._collider_static_config.has_nonconvex_nonterrain:
             func_narrow_phase_nonconvex_vs_nonterrain(
-                self._solver.links_state,
-                self._solver.links_info,
-                self._solver.geoms_state,
-                self._solver.geoms_info,
                 self._solver.geoms_init_AABB,
-                self._solver.verts_info,
-                self._solver._rigid_global_info,
-                self._solver._static_rigid_sim_config,
+                self._solver.dyn_state,
                 self._collider_state,
+                self._solver.dyn_info,
+                self._solver.rigid_info,
                 self._collider_info,
+                self._solver.rigid_config,
                 self._collider_static_config,
-                self._sdf._sdf_info,
                 self._solver._errno,
             )
 
@@ -960,26 +948,35 @@ class Collider:
         # SMs (the serial fused kernel wins above that threshold).
         ran_fused_dedup_coop = (
             gs.backend != gs.cpu
-            and not self._solver._static_rigid_sim_config.requires_grad
+            and not self._solver.rigid_config.requires_grad
             and self._collider_static_config.has_prunable_contacts
             and (self._solver._options.contact_pruning_tolerance or 0.0) > 0.0
             and self._solver._B * 2 <= self._gpu_cores
         )
         if ran_fused_dedup_coop:
             func_clamp_prune_contacts_coop(
+                self._solver.dyn_state,
                 self._collider_state,
+                self._solver.rigid_info,
                 self._collider_info,
-                self._solver._rigid_global_info,
                 self._solver._errno,
             )
         else:
             func_clamp_prune_contacts(
+                self._solver.dyn_state,
                 self._collider_state,
+                self._solver.rigid_info,
                 self._collider_info,
-                self._solver._rigid_global_info,
-                self._solver._static_rigid_sim_config,
+                self._solver.rigid_config,
                 self._collider_static_config,
                 self._solver._errno,
+            )
+
+        # Plane-convex contacts come from analytic paths that leave diff_contact_input unfilled; populate it here so
+        # the differentiable narrow-phase reverse can reconstruct them (see kernel_fill_diff_contact_input_plane).
+        if self._solver.rigid_config.requires_grad:
+            narrowphase.kernel_fill_diff_contact_input_plane(
+                self._solver.dyn_state, self._collider_state, self._solver.dyn_info, self._solver.rigid_config
             )
 
     def get_contacts(self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False):
@@ -1072,9 +1069,7 @@ class Collider:
 
         # Copy contact data
         if n_contacts_max > 0:
-            collider_kernel_get_contacts(
-                as_tensor, iout, fout, self._solver._static_rigid_sim_config, self._collider_state
-            )
+            collider_kernel_get_contacts(iout, fout, self._collider_state, self._solver.rigid_config, as_tensor)
 
         # Build structured view (no copy)
         if as_tensor:
@@ -1126,17 +1121,17 @@ class Collider:
 
     def backward(self, dL_dposition, dL_dnormal, dL_dpenetration):
         func_set_upstream_grad(dL_dposition, dL_dnormal, dL_dpenetration, self._collider_state)
+        self.backward_narrowphase()
 
-        # Compute gradient
+    def backward_narrowphase(self):
         func_narrow_phase_diff_convex_vs_convex.grad(
-            self._solver.geoms_state,
-            self._solver.geoms_info,
-            self._solver._static_rigid_sim_config,
+            self._solver.dyn_state,
             self._collider_state,
-            self._collider_info,
-            self._gjk._gjk_info,
-            self._solver._rigid_global_info,
             self._collider_state.diff_contact_input,
+            self._solver.dyn_info,
+            self._collider_info,
+            self._solver.rigid_config,
+            self._solver._errno,
         )
 
 

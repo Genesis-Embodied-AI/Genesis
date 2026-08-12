@@ -476,12 +476,13 @@ void main()
     color.xyz *= ao;
 #endif
 
-    // Apply emissive map
+    // Apply emissive map. 'emissive' already folds in the factor, so add it directly rather than scaling by the
+    // factor a second time.
     vec3 emissive = material.emissive_factor;
 #ifdef HAS_EMISSIVE_TEX
     emissive *= srgb_to_linear(texture(material.emissive_texture, uv_0)).rgb;
 #endif
-    color.xyz += emissive * material.emissive_factor;
+    color.xyz += emissive;
 
     vec3 floor_color = floor_flag != 0 ? texture(floor_tex, gl_FragCoord.xy/screen_size).rgb : vec3(0.0);
 

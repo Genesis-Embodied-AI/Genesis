@@ -39,8 +39,14 @@ class JointAnimator:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-n", "--num_steps", type=int, default=5000 if "PYTEST_VERSION" not in os.environ else 1)
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument(
+        "-s",
+        "--steps",
+        type=int,
+        default=5000 if "PYTEST_VERSION" not in os.environ else 1,
+        help="Number of simulation steps",
+    )
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
     gs.init(backend=gs.cpu)
@@ -72,15 +78,13 @@ def main():
             pos=(0, 0, 0.9),
             euler=(0, 0, 180),
         ),
-        # vis_mode="collision",
-        # visualize_contact=True,
     )
 
     scene.build()
 
     joint_animator = JointAnimator(scene)
 
-    for _ in range(args.num_steps):
+    for _ in range(args.steps):
         joint_animator.animate(scene)
         scene.step()
 

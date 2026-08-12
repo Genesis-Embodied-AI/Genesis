@@ -20,20 +20,17 @@ FREQ = 2.0
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=True)
-    parser.add_argument("-nv", "--no-vis", action="store_false", dest="vis")
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
-    gs.init()
+    gs.init(backend=gs.cpu)
 
     scene = gs.Scene(
         show_viewer=args.vis,
     )
 
-    # ── Ground plane ─────────────────────────────────────────────────
     scene.add_entity(gs.morphs.Plane())
 
-    # ── Physics Go2 (normal rigid entity) ────────────────────────────
     robot = scene.add_entity(
         gs.morphs.URDF(
             file="urdf/go2/urdf/go2.urdf",
@@ -41,7 +38,7 @@ def main():
         ),
     )
 
-    # ── Ghost Go2 (kinematic entity — visualization only) ─────────────
+    # The ghost is a kinematic entity: it visualizes the commanded pose without taking part in the dynamics.
     ghost = scene.add_entity(
         gs.morphs.URDF(
             file="urdf/go2/urdf/go2.urdf",
@@ -56,7 +53,6 @@ def main():
 
     scene.build()
 
-    # ── Joint names and default standing pose (12 DOFs) ──────────────
     joint_names = [
         "FR_hip_joint",
         "FR_thigh_joint",

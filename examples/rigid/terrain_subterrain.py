@@ -7,14 +7,11 @@ import genesis as gs
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
-    parser.add_argument("-c", "--cpu", action="store_true", default=False)
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
+    parser.add_argument("-g", "--gpu", action="store_true", help="Run on GPU instead of CPU")
     args = parser.parse_args()
 
-    ########################## init ##########################
-    gs.init(backend=gs.cpu if args.cpu else gs.gpu)
-
-    ########################## create a scene ##########################
+    gs.init(backend=gs.gpu if args.gpu else gs.cpu)
 
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
@@ -31,7 +28,6 @@ def main():
 
     horizontal_scale = 0.25
     vertical_scale = 0.005
-    ########################## entities ##########################
     terrain = scene.add_entity(
         morph=gs.morphs.Terrain(
             n_subterrains=(2, 2),
@@ -50,7 +46,6 @@ def main():
             radius=0.1,
         ),
     )
-    ########################## build ##########################
     scene.build(n_envs=100)
 
     ball.set_pos(torch.cartesian_prod(*(torch.arange(1, 11),) * 2, torch.tensor((1,))))

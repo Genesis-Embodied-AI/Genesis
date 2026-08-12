@@ -8,26 +8,34 @@ import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.engine.entities.rigid_entity import KinematicEntity
 from genesis.engine.states.solvers import KinematicSolverState
-from genesis.options.solvers import RigidOptions, KinematicOptions
+from genesis.options.solvers import KinematicOptions, RigidOptions
 from genesis.utils.misc import (
+    assign_indexed_tensor,
+    broadcast_tensor,
+    indices_to_mask,
     qd_to_torch,
     qd_zero_grad,
     sanitize_indexed_tensor,
-    indices_to_mask,
-    broadcast_tensor,
-    assign_indexed_tensor,
 )
 
-from .base_solver import Solver, StateChange, mutates
-from .rigid.abd.misc import (
-    kernel_init_dof_fields,
-    kernel_init_link_fields,
-    kernel_init_joint_fields,
-    kernel_init_vvert_fields,
-    kernel_init_vgeom_fields,
-    kernel_init_entity_fields,
-    kernel_update_heterogeneous_links_vgeom,
-    kernel_update_vgeoms_render_T,
+from .base_solver import MutatedLinks, Solver, StateChange, mutates
+from .rigid.abd.accessor import (
+    kernel_get_kinematic_state,
+    kernel_get_links_vel,
+    kernel_get_state_grad,
+    kernel_get_terrain_height,
+    kernel_set_dofs_force_grad,
+    kernel_set_dofs_position,
+    kernel_set_dofs_velocity,
+    kernel_set_dofs_velocity_grad,
+    kernel_set_dofs_zero_velocity,
+    kernel_set_kinematic_state,
+    kernel_set_links_pos,
+    kernel_set_links_pos_grad,
+    kernel_set_links_quat,
+    kernel_set_links_quat_grad,
+    kernel_set_qpos,
+    kernel_set_vverts,
 )
 from .rigid.abd.forward_kinematics import (
     kernel_forward_kinematics,
@@ -37,27 +45,23 @@ from .rigid.abd.forward_kinematics import (
     kernel_update_vgeoms,
     kernel_update_vverts_for_vgeoms,
 )
-from .rigid.abd.accessor import (
-    kernel_get_kinematic_state,
-    kernel_get_state_grad,
-    kernel_set_kinematic_state,
-    kernel_set_links_pos_grad,
-    kernel_set_links_quat_grad,
-    kernel_set_dofs_position,
-    kernel_set_dofs_velocity,
-    kernel_set_dofs_velocity_grad,
-    kernel_set_dofs_zero_velocity,
-    kernel_set_links_pos,
-    kernel_set_links_quat,
-    kernel_set_qpos,
-    kernel_set_vverts,
-    kernel_get_links_vel,
+from .rigid.abd.misc import (
+    kernel_init_dof_fields,
+    kernel_init_entity_fields,
+    kernel_init_joint_fields,
+    kernel_init_link_fields,
+    kernel_init_vgeom_fields,
+    kernel_init_vvert_fields,
+    kernel_update_heterogeneous_links_vgeom,
+    kernel_update_vgeoms_render_T,
 )
 
 if TYPE_CHECKING:
-    from genesis.engine.entities import KinematicEntity
     from genesis.engine.scene import Scene
     from genesis.engine.simulator import Simulator
+
+
+TERRAIN_HEIGHT_QUERY_TILT_TOLERANCE = 1e-3
 
 
 def _balanced_variant_mapping(n_variants, B):
@@ -166,6 +170,8 @@ class KinematicSolver(Solver):
         self._is_forward_pos_updated: bool = False
         self._is_forward_vel_updated: bool = False
 
+        self._vfaces_raycast_mask: torch.Tensor | None = None
+
     # ------------------------------------------------------------------------------------
     # ----------------------------------- add_entity -------------------------------------
     # ------------------------------------------------------------------------------------
@@ -214,6 +220,10 @@ class KinematicSolver(Solver):
 
         for entity in self._entities:
             entity._build()
+
+        # Resolve the link-reach structures of @mutates notifications; see Solver.__init__.
+        self._articulated_links_idx = np.array([link.idx for link in self.links if not link.is_fixed])
+        self._links_parent_idx = np.array([link.parent_idx for link in self.links])
 
         self._n_qs = self.n_qs
         self._n_dofs = self.n_dofs
@@ -319,6 +329,7 @@ class KinematicSolver(Solver):
         self._init_vgeom_fields()
         self._init_link_fields()
         self._init_entity_fields()
+        self._init_vfaces_raycast_mask()
 
         self._init_envs_offset()
         self._init_vverts_state()
@@ -339,7 +350,7 @@ class KinematicSolver(Solver):
 
     def _build_static_config(self):
         # Static config with all physics disabled
-        self._static_rigid_sim_config = array_class.RigidSimStaticConfig(
+        self.rigid_config = array_class.RigidSimStaticConfig(
             backend=gs.backend,
             para_level=self.sim._para_level,
             requires_grad=False,
@@ -348,6 +359,8 @@ class KinematicSolver(Solver):
             batch_dofs_info=False,
             batch_joints_info=False,
             enable_mujoco_compatibility=False,
+            enable_elliptic_friction=False,
+            enable_signorini_contact=False,
             enable_multi_contact=False,
             enable_collision=False,
             enable_joint_limit=False,
@@ -360,8 +373,10 @@ class KinematicSolver(Solver):
 
     def _create_data_manager(self):
         self.data_manager = array_class.DataManager(self, kinematic_only=True)
-        self._rigid_global_info = self.data_manager.rigid_global_info
+        self.rigid_info = self.data_manager.rigid_info
         self._rigid_adjoint_cache = self.data_manager.rigid_adjoint_cache
+        self.dyn_info = self.data_manager.dyn_info
+        self.dyn_state = self.data_manager.dyn_state
 
     # ------------------------------------------------------------------------------------
     # --------------------------------- hook methods -------------------------------------
@@ -380,72 +395,63 @@ class KinematicSolver(Solver):
     # ------------------------------------------------------------------------------------
 
     def _init_dof_fields(self):
-        self.dofs_info = self.data_manager.dofs_info
-        self.dofs_state = self.data_manager.dofs_state
-
         joints = self.joints
         has_dofs = sum(joint.n_dofs for joint in joints) > 0
         if has_dofs:
             kernel_init_dof_fields(
-                entity_idx=np.concatenate(
+                np.concatenate(
                     [(joint.link._entity_idx_in_solver,) * joint.n_dofs for joint in joints if joint.n_dofs],
                     dtype=gs.np_int,
                 ),
-                dofs_motion_ang=np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float),
-                dofs_motion_vel=np.concatenate([joint.dofs_motion_vel for joint in joints], dtype=gs.np_float),
-                dofs_limit=np.concatenate([joint.dofs_limit for joint in joints], dtype=gs.np_float),
-                dofs_invweight=np.concatenate([joint.dofs_invweight for joint in joints], dtype=gs.np_float),
-                dofs_stiffness=np.concatenate([joint.dofs_stiffness for joint in joints], dtype=gs.np_float),
-                dofs_damping=np.concatenate([joint.dofs_damping for joint in joints], dtype=gs.np_float),
-                dofs_frictionloss=np.concatenate([joint.dofs_frictionloss for joint in joints], dtype=gs.np_float),
-                dofs_armature=np.concatenate([joint.dofs_armature for joint in joints], dtype=gs.np_float),
-                dofs_act_gain=np.concatenate([joint.dofs_act_gain for joint in joints], dtype=gs.np_float),
-                dofs_act_bias=np.concatenate([joint.dofs_act_bias for joint in joints], dtype=gs.np_float),
-                dofs_force_range=np.concatenate([joint.dofs_force_range for joint in joints], dtype=gs.np_float),
-                dofs_info=self.dofs_info,
-                dofs_state=self.dofs_state,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
+                np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float),
+                np.concatenate([joint.dofs_motion_vel for joint in joints], dtype=gs.np_float),
+                np.concatenate([joint.dofs_limit for joint in joints], dtype=gs.np_float),
+                np.concatenate([joint.dofs_invweight for joint in joints], dtype=gs.np_float),
+                np.concatenate([joint.dofs_stiffness for joint in joints], dtype=gs.np_float),
+                np.concatenate([joint.dofs_damping for joint in joints], dtype=gs.np_float),
+                np.concatenate([joint.dofs_frictionloss for joint in joints], dtype=gs.np_float),
+                np.concatenate([joint.dofs_armature for joint in joints], dtype=gs.np_float),
+                np.concatenate([joint.dofs_act_gain for joint in joints], dtype=gs.np_float),
+                np.concatenate([joint.dofs_act_bias for joint in joints], dtype=gs.np_float),
+                np.concatenate([joint.dofs_force_range for joint in joints], dtype=gs.np_float),
+                self.dyn_state,
+                self.dyn_info,
+                self.rigid_info,
+                self.rigid_config,
             )
 
-        self.dofs_state.force.fill(0)
+        self.dyn_state.dofs.force.fill(0)
 
     def _init_link_fields(self):
-        self.links_info = self.data_manager.links_info
-        self.links_state = self.data_manager.links_state
-
         if self.links:
             links = self.links
             kernel_init_link_fields(
-                links_parent_idx=np.array([link.parent_idx for link in links], dtype=gs.np_int),
-                links_root_idx=np.array([link.root_idx for link in links], dtype=gs.np_int),
-                links_q_start=np.array([link.q_start for link in links], dtype=gs.np_int),
-                links_dof_start=np.array([link.dof_start for link in links], dtype=gs.np_int),
-                links_joint_start=np.array([link.joint_start for link in links], dtype=gs.np_int),
-                links_q_end=np.array([link.q_end for link in links], dtype=gs.np_int),
-                links_dof_end=np.array([link.dof_end for link in links], dtype=gs.np_int),
-                links_joint_end=np.array([link.joint_end for link in links], dtype=gs.np_int),
-                links_invweight=np.array([link.invweight for link in links], dtype=gs.np_float),
-                links_is_fixed=np.array([link.is_fixed for link in links], dtype=gs.np_bool),
-                links_pos=np.array([link.pos for link in links], dtype=gs.np_float),
-                links_quat=np.array([link.quat for link in links], dtype=gs.np_float),
-                links_inertial_pos=np.array([link.inertial_pos for link in links], dtype=gs.np_float),
-                links_inertial_quat=np.array([link.inertial_quat for link in links], dtype=gs.np_float),
-                links_inertial_i=np.array([link.inertial_i for link in links], dtype=gs.np_float),
-                links_inertial_mass=np.array([link.inertial_mass for link in links], dtype=gs.np_float),
-                links_entity_idx=np.array([link._entity_idx_in_solver for link in links], dtype=gs.np_int),
-                links_geom_start=np.array([link.geom_start for link in links], dtype=gs.np_int),
-                links_geom_end=np.array([link.geom_end for link in links], dtype=gs.np_int),
-                links_vgeom_start=np.array([link.vgeom_start for link in links], dtype=gs.np_int),
-                links_vgeom_end=np.array([link.vgeom_end for link in links], dtype=gs.np_int),
-                links_info=self.links_info,
-                links_state=self.links_state,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
+                np.array([link.parent_idx for link in links], dtype=gs.np_int),
+                np.array([link.root_idx for link in links], dtype=gs.np_int),
+                np.array([link.q_start for link in links], dtype=gs.np_int),
+                np.array([link.dof_start for link in links], dtype=gs.np_int),
+                np.array([link.joint_start for link in links], dtype=gs.np_int),
+                np.array([link.q_end for link in links], dtype=gs.np_int),
+                np.array([link.dof_end for link in links], dtype=gs.np_int),
+                np.array([link.joint_end for link in links], dtype=gs.np_int),
+                np.array([link._entity_idx_in_solver for link in links], dtype=gs.np_int),
+                np.array([link.geom_start for link in links], dtype=gs.np_int),
+                np.array([link.geom_end for link in links], dtype=gs.np_int),
+                np.array([link.vgeom_start for link in links], dtype=gs.np_int),
+                np.array([link.vgeom_end for link in links], dtype=gs.np_int),
+                np.array([link.invweight for link in links], dtype=gs.np_float),
+                np.array([link.is_fixed for link in links], dtype=gs.np_bool),
+                np.array([link.pos for link in links], dtype=gs.np_float),
+                np.array([link.quat for link in links], dtype=gs.np_float),
+                np.array([link.inertial_pos for link in links], dtype=gs.np_float),
+                np.array([link.inertial_quat for link in links], dtype=gs.np_float),
+                np.array([link.inertial_i for link in links], dtype=gs.np_float),
+                np.array([link.inertial_mass for link in links], dtype=gs.np_float),
+                self.dyn_state,
+                self.dyn_info,
+                self.rigid_info,
+                self.rigid_config,
             )
-
-        self.joints_info = self.data_manager.joints_info
-        self.joints_state = self.data_manager.joints_state
 
         if self.joints:
             joints = self.joints
@@ -453,20 +459,20 @@ class KinematicSolver(Solver):
             joints_sol_params = self._sanitize_joint_sol_params(joints_sol_params)
 
             kernel_init_joint_fields(
-                joints_type=np.array([joint.type for joint in joints], dtype=gs.np_int),
-                joints_sol_params=joints_sol_params,
-                joints_q_start=np.array([joint.q_start for joint in joints], dtype=gs.np_int),
-                joints_dof_start=np.array([joint.dof_start for joint in joints], dtype=gs.np_int),
-                joints_q_end=np.array([joint.q_end for joint in joints], dtype=gs.np_int),
-                joints_dof_end=np.array([joint.dof_end for joint in joints], dtype=gs.np_int),
-                joints_pos=np.array([joint.pos for joint in joints], dtype=gs.np_float),
-                joints_info=self.joints_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
+                np.array([joint.q_start for joint in joints], dtype=gs.np_int),
+                np.array([joint.dof_start for joint in joints], dtype=gs.np_int),
+                np.array([joint.q_end for joint in joints], dtype=gs.np_int),
+                np.array([joint.dof_end for joint in joints], dtype=gs.np_int),
+                np.array([joint.type for joint in joints], dtype=gs.np_int),
+                joints_sol_params,
+                np.array([joint.pos for joint in joints], dtype=gs.np_float),
+                self.dyn_info,
+                self.rigid_config,
             )
 
         # Set initial qpos
-        self.qpos = self._rigid_global_info.qpos
-        self.qpos0 = self._rigid_global_info.qpos0
+        self.qpos = self.rigid_info.qpos
+        self.qpos0 = self.rigid_info.qpos0
         if self.n_qs > 0:
             init_qpos = np.tile(np.expand_dims(self.init_qpos, -1), (1, self._B))
 
@@ -490,7 +496,7 @@ class KinematicSolver(Solver):
                 gs.logger.warning("Neutral robot position (qpos0) exceeds joint limits.")
             self.qpos.from_numpy(init_qpos)
 
-        self.links_T = self._rigid_global_info.links_T
+        self.links_T = self.rigid_info.links_T
 
         # Dispatch heterogeneous variant vgeom ranges per-environment
         self._dispatch_heterogeneous_vgeoms()
@@ -507,7 +513,7 @@ class KinematicSolver(Solver):
             vgeom_starts = np.array([link._variant_vgeom_ranges[v][0] for v in variant_idx], dtype=gs.np_int)
             vgeom_ends = np.array([link._variant_vgeom_ranges[v][1] for v in variant_idx], dtype=gs.np_int)
 
-            kernel_update_heterogeneous_links_vgeom(link.idx, vgeom_starts, vgeom_ends, self.links_info)
+            kernel_update_heterogeneous_links_vgeom(link.idx, vgeom_starts, vgeom_ends, self.dyn_info)
 
             for vgeom in link.vgeoms:
                 active_envs_mask = (vgeom_starts <= vgeom.idx) & (vgeom.idx < vgeom_ends)
@@ -515,9 +521,6 @@ class KinematicSolver(Solver):
                 (vgeom.active_envs_idx,) = np.where(active_envs_mask)
 
     def _init_vvert_fields(self):
-        self.vverts_info = self.data_manager.vverts_info
-        self.vverts_state = self.data_manager.vverts_state
-        self.vfaces_info = self.data_manager.vfaces_info
         if self.n_vverts == 0:
             return
 
@@ -535,61 +538,61 @@ class KinematicSolver(Solver):
                 local = np.arange(vgeom.n_vverts, dtype=gs.np_int)
                 vverts_state_idx[vgeom._vvert_start + local] = vgeom._vvert_start + entity_custom_offset + local
         kernel_init_vvert_fields(
-            vverts=vverts,
-            vfaces=vfaces,
-            vnormals=vnormals,
-            vverts_vgeom_idx=vverts_vgeom_idx,
-            vverts_state_idx=vverts_state_idx,
-            vverts_info=self.vverts_info,
-            vfaces_info=self.vfaces_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
+            vverts_vgeom_idx, vverts_state_idx, vverts, vfaces, vnormals, self.dyn_info, self.rigid_config
         )
 
     def _init_vgeom_fields(self):
-        self.vgeoms_info = self.data_manager.vgeoms_info
-        self.vgeoms_state = self.data_manager.vgeoms_state
         self._vgeoms_render_T = np.empty((self.n_vgeoms_, self._B, 4, 4), dtype=np.float32)
 
         if self.n_vgeoms > 0:
             vgeoms = self.vgeoms
             kernel_init_vgeom_fields(
-                vgeoms_pos=np.array([vgeom.init_pos for vgeom in vgeoms], dtype=gs.np_float),
-                vgeoms_quat=np.array([vgeom.init_quat for vgeom in vgeoms], dtype=gs.np_float),
-                vgeoms_link_idx=np.array([vgeom.link.idx for vgeom in vgeoms], dtype=gs.np_int),
-                vgeoms_vvert_start=np.array([vgeom.vvert_start for vgeom in vgeoms], dtype=gs.np_int),
-                vgeoms_vface_start=np.array([vgeom.vface_start for vgeom in vgeoms], dtype=gs.np_int),
-                vgeoms_vvert_end=np.array([vgeom.vvert_end for vgeom in vgeoms], dtype=gs.np_int),
-                vgeoms_vface_end=np.array([vgeom.vface_end for vgeom in vgeoms], dtype=gs.np_int),
-                vgeoms_color=np.array([vgeom._color for vgeom in vgeoms], dtype=gs.np_float),
-                vgeoms_info=self.vgeoms_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
+                np.array([vgeom.link.idx for vgeom in vgeoms], dtype=gs.np_int),
+                np.array([vgeom.vvert_start for vgeom in vgeoms], dtype=gs.np_int),
+                np.array([vgeom.vface_start for vgeom in vgeoms], dtype=gs.np_int),
+                np.array([vgeom.vvert_end for vgeom in vgeoms], dtype=gs.np_int),
+                np.array([vgeom.vface_end for vgeom in vgeoms], dtype=gs.np_int),
+                np.array([vgeom.init_pos for vgeom in vgeoms], dtype=gs.np_float),
+                np.array([vgeom.init_quat for vgeom in vgeoms], dtype=gs.np_float),
+                np.array([vgeom._color for vgeom in vgeoms], dtype=gs.np_float),
+                self.dyn_info,
+                self.rigid_config,
             )
 
-    def _init_entity_fields(self):
-        self.entities_info = self.data_manager.entities_info
-        self.entities_state = self.data_manager.entities_state
+    def _init_vfaces_raycast_mask(self):
+        """Fit the static per-vface visual-raycasting opt-in mask; see the vfaces_raycast_mask property.
 
+        Sized over the padded vgeom count so the gather also covers a solver holding no vgeom at all, whose vface
+        fields still carry one padding slot: nothing opts in there, so every entry stays 0.
+        """
+        vgeom_enabled = torch.zeros(self.n_vgeoms_, dtype=gs.tc_bool, device=gs.device)
+        for entity in self.entities:
+            if not entity.material.use_visual_raycasting:
+                continue
+            for vgeom in entity.vgeoms:
+                vgeom_enabled[vgeom.idx] = 1
+        self._vfaces_raycast_mask = vgeom_enabled[qd_to_torch(self.dyn_info.vfaces.vgeom_idx)]
+
+    def _init_entity_fields(self):
         if self._entities:
             entities = self._entities
             kernel_init_entity_fields(
-                entities_dof_start=np.array([entity.dof_start for entity in entities], dtype=gs.np_int),
-                entities_dof_end=np.array([entity.dof_end for entity in entities], dtype=gs.np_int),
-                entities_link_start=np.array([entity.link_start for entity in entities], dtype=gs.np_int),
-                entities_link_end=np.array([entity.link_end for entity in entities], dtype=gs.np_int),
-                entities_geom_start=np.array([0 for entity in entities], dtype=gs.np_int),
-                entities_geom_end=np.array([0 for entity in entities], dtype=gs.np_int),
-                entities_gravity_compensation=np.array([0.0 for entity in entities], dtype=gs.np_float),
-                entities_is_local_collision_mask=np.array([False for entity in entities], dtype=gs.np_bool),
-                entities_info=self.entities_info,
-                entities_state=self.entities_state,
-                links_info=self.links_info,
-                dofs_info=self.dofs_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
+                np.array([entity.dof_start for entity in entities], dtype=gs.np_int),
+                np.array([entity.dof_end for entity in entities], dtype=gs.np_int),
+                np.array([entity.link_start for entity in entities], dtype=gs.np_int),
+                np.array([entity.link_end for entity in entities], dtype=gs.np_int),
+                np.array([0 for entity in entities], dtype=gs.np_int),
+                np.array([0 for entity in entities], dtype=gs.np_int),
+                np.array([0.0 for entity in entities], dtype=gs.np_float),
+                np.array([False for entity in entities], dtype=gs.np_bool),
+                self.dyn_state,
+                self.dyn_info,
+                self.rigid_info,
+                self.rigid_config,
             )
 
     def _init_envs_offset(self):
-        self.envs_offset = self._rigid_global_info.envs_offset
+        self.envs_offset = self.rigid_info.envs_offset
         self.envs_offset.from_numpy(self._scene.envs_offset)
 
     # ------------------------------------------------------------------------------------
@@ -605,16 +608,7 @@ class KinematicSolver(Solver):
     def substep_post_coupling(self, f):
         if not self._is_forward_pos_updated or not self._is_forward_vel_updated:
             kernel_forward_kinematics(
-                self.scene._envs_idx,
-                links_state=self.links_state,
-                links_info=self.links_info,
-                joints_state=self.joints_state,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
-                dofs_info=self.dofs_info,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
+                self.scene._envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
             )
             self._is_forward_pos_updated = True
             self._is_forward_vel_updated = True
@@ -639,14 +633,13 @@ class KinematicSolver(Solver):
                 links_quat_grad = state.links_quat.grad
 
             kernel_get_state_grad(
-                qpos_grad=qpos_grad,
-                vel_grad=dofs_vel_grad,
-                links_pos_grad=links_pos_grad,
-                links_quat_grad=links_quat_grad,
-                links_state=self.links_state,
-                dofs_state=self.dofs_state,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
+                qpos_grad,
+                dofs_vel_grad,
+                links_pos_grad,
+                links_quat_grad,
+                self.dyn_state,
+                self.rigid_info,
+                self.rigid_config,
             )
 
     def collect_output_grads(self):
@@ -668,10 +661,13 @@ class KinematicSolver(Solver):
         # rebuilding the scene per `loss.backward()`, which breaks training loops that call `scene.reset()` between
         # backward passes.
         if self._requires_grad:
-            qd_zero_grad(self.links_state)
-            qd_zero_grad(self.dofs_state)
-            qd_zero_grad(self.joints_state)
-            qd_zero_grad(self._rigid_global_info)
+            qd_zero_grad(self.dyn_state.links)
+            qd_zero_grad(self.dyn_state.dofs)
+            qd_zero_grad(self.dyn_state.joints)
+            qd_zero_grad(self.rigid_info)
+            # One flush for the zeroing batch; see qd_zero_grad in misc.py.
+            if gs.use_zerocopy and gs.backend == gs.metal:
+                torch.mps.synchronize()
         for entity in self._entities:
             entity.reset_grad()
         self._queried_states.clear()
@@ -682,12 +678,7 @@ class KinematicSolver(Solver):
 
     def update_vgeoms_render_T(self):
         kernel_update_vgeoms_render_T(
-            self._vgeoms_render_T,
-            vgeoms_info=self.vgeoms_info,
-            vgeoms_state=self.vgeoms_state,
-            links_state=self.links_state,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
+            self._vgeoms_render_T, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
         )
 
     # ------------------------------------------------------------------------------------
@@ -703,15 +694,14 @@ class KinematicSolver(Solver):
             state = KinematicSolverState(self._scene, s_global)
 
             kernel_get_kinematic_state(
-                qpos=state.qpos,
-                vel=state.dofs_vel,
-                links_pos=state.links_pos,
-                links_quat=state.links_quat,
-                i_pos_shift=state.i_pos_shift,
-                links_state=self.links_state,
-                dofs_state=self.dofs_state,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
+                state.i_pos_shift,
+                state.qpos,
+                state.dofs_vel,
+                state.links_pos,
+                state.links_quat,
+                self.dyn_state,
+                self.rigid_info,
+                self.rigid_config,
             )
             self._queried_states.append(state)
         else:
@@ -726,30 +716,18 @@ class KinematicSolver(Solver):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
 
         kernel_set_kinematic_state(
-            envs_idx=envs_idx,
-            qpos=state.qpos,
-            dofs_vel=state.dofs_vel,
-            links_pos=state.links_pos,
-            links_quat=state.links_quat,
-            i_pos_shift=state.i_pos_shift,
-            links_state=self.links_state,
-            dofs_state=self.dofs_state,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
+            envs_idx,
+            state.i_pos_shift,
+            state.qpos,
+            state.dofs_vel,
+            state.links_pos,
+            state.links_quat,
+            self.dyn_state,
+            self.rigid_info,
+            self.rigid_config,
         )
         if not partial:
-            kernel_forward_kinematics(
-                envs_idx,
-                links_state=self.links_state,
-                links_info=self.links_info,
-                joints_state=self.joints_state,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
-                dofs_info=self.dofs_info,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-            )
+            kernel_forward_kinematics(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
             self._is_forward_pos_updated = True
             self._is_forward_vel_updated = True
         else:
@@ -822,7 +800,7 @@ class KinematicSolver(Solver):
 
         return tensor_, inputs_idx_, envs_idx_
 
-    @mutates(StateChange.GEOMETRY)
+    @mutates(StateChange.GEOMETRY, links="links_idx")
     def set_base_links_pos(self, pos, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False):
         if links_idx is None:
             links_idx = self._base_links_idx
@@ -838,35 +816,18 @@ class KinematicSolver(Solver):
         if relative:
             # Compose the body-frame offset onto the user position while keeping the current orientation, then set the
             # resulting world position.
-            cur_quat = qd_to_torch(self.links_state.quat, envs_idx, links_idx, transpose=True, copy=True)
+            cur_quat = qd_to_torch(self.dyn_state.links.quat, envs_idx, links_idx, transpose=True, copy=True)
             offset_pos = _select_links_offset(self._links_offset_pos, links_idx, envs_idx)
             offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
             pos = pos + _offset_world_shift(offset_pos, offset_quat, cur_quat)
             relative = False
 
         kernel_set_links_pos(
-            pos,
-            links_idx,
-            envs_idx,
-            links_info=self.links_info,
-            links_state=self.links_state,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
+            links_idx, envs_idx, pos, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
         )
 
         if not skip_forward:
-            kernel_forward_kinematics(
-                envs_idx,
-                links_state=self.links_state,
-                links_info=self.links_info,
-                joints_state=self.joints_state,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
-                dofs_info=self.dofs_info,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-            )
+            kernel_forward_kinematics(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
             self._is_forward_pos_updated = True
             self._is_forward_vel_updated = True
         else:
@@ -892,16 +853,10 @@ class KinematicSolver(Solver):
         if self.n_envs == 0:
             pos_grad_ = pos_grad_.unsqueeze(0)
         kernel_set_links_pos_grad(
-            pos_grad_,
-            links_idx,
-            envs_idx,
-            links_info=self.links_info,
-            links_state=self.links_state,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
+            links_idx, envs_idx, pos_grad_, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
         )
 
-    @mutates(StateChange.GEOMETRY)
+    @mutates(StateChange.GEOMETRY, links="links_idx")
     def set_base_links_quat(self, quat, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False):
         if links_idx is None:
             links_idx = self._base_links_idx
@@ -921,47 +876,24 @@ class KinematicSolver(Solver):
             if not relative_pos_passthrough:
                 # The offset position rotates with the orientation, so keep the user-frame position fixed by rewriting
                 # the world position from the current user position and the new user orientation.
-                cur_pos = qd_to_torch(self.links_state.pos, envs_idx, links_idx, transpose=True, copy=True)
-                cur_quat = qd_to_torch(self.links_state.quat, envs_idx, links_idx, transpose=True, copy=True)
+                cur_pos = qd_to_torch(self.dyn_state.links.pos, envs_idx, links_idx, transpose=True, copy=True)
+                cur_quat = qd_to_torch(self.dyn_state.links.quat, envs_idx, links_idx, transpose=True, copy=True)
                 offset_pos = _select_links_offset(self._links_offset_pos, links_idx, envs_idx)
                 user_pos = cur_pos - _offset_world_shift(offset_pos, offset_quat, cur_quat)
                 world_pos = user_pos + gu.transform_by_quat(offset_pos, quat)
                 kernel_set_links_pos(
-                    world_pos,
-                    links_idx,
-                    envs_idx,
-                    links_info=self.links_info,
-                    links_state=self.links_state,
-                    rigid_global_info=self._rigid_global_info,
-                    static_rigid_sim_config=self._static_rigid_sim_config,
+                    links_idx, envs_idx, world_pos, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
                 )
             # Compose the offset onto the user orientation, then set the resulting world orientation.
             quat = gu.transform_quat_by_quat(offset_quat, quat)
             relative = False
 
         kernel_set_links_quat(
-            quat,
-            links_idx,
-            envs_idx,
-            links_info=self.links_info,
-            links_state=self.links_state,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
+            links_idx, envs_idx, quat, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
         )
 
         if not skip_forward:
-            kernel_forward_kinematics(
-                envs_idx,
-                links_state=self.links_state,
-                links_info=self.links_info,
-                joints_state=self.joints_state,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
-                dofs_info=self.dofs_info,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-            )
+            kernel_forward_kinematics(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
             self._is_forward_pos_updated = True
             self._is_forward_vel_updated = True
         else:
@@ -989,19 +921,13 @@ class KinematicSolver(Solver):
         if self.n_envs == 0:
             quat_grad_ = quat_grad_.unsqueeze(0)
         kernel_set_links_quat_grad(
-            quat_grad_,
-            links_idx,
-            envs_idx,
-            links_info=self.links_info,
-            links_state=self.links_state,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
+            links_idx, envs_idx, quat_grad_, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
         )
 
-    @mutates(StateChange.GEOMETRY)
+    @mutates(StateChange.GEOMETRY, links=MutatedLinks.ARTICULATED)
     def set_qpos(self, qpos, qs_idx=None, envs_idx=None, *, skip_forward=False):
         if gs.use_zerocopy:
-            data = qd_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
+            data = qd_to_torch(self.rigid_info.qpos, transpose=True, copy=False)
             qs_mask = indices_to_mask(qs_idx)
             if (
                 (not qs_mask or isinstance(qs_mask[0], slice))
@@ -1028,7 +954,7 @@ class KinematicSolver(Solver):
             )
             if self.n_envs == 0:
                 qpos = qpos[None]
-            kernel_set_qpos(qpos, qs_idx, envs_idx, self._rigid_global_info, self._static_rigid_sim_config)
+            kernel_set_qpos(qs_idx, envs_idx, qpos, self.rigid_info, self.rigid_config)
 
         if not skip_forward:
             if not isinstance(envs_idx, torch.Tensor):
@@ -1037,28 +963,17 @@ class KinematicSolver(Solver):
                 fn = kernel_masked_forward_kinematics
             else:
                 fn = kernel_forward_kinematics
-            fn(
-                envs_idx,
-                links_state=self.links_state,
-                links_info=self.links_info,
-                joints_state=self.joints_state,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
-                dofs_info=self.dofs_info,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-            )
+            fn(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
             self._is_forward_pos_updated = True
             self._is_forward_vel_updated = True
         else:
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
 
-    @mutates(StateChange.DYNAMICS)
+    @mutates(StateChange.DYNAMICS, links=MutatedLinks.ARTICULATED)
     def set_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None, *, skip_forward=False):
         if gs.use_zerocopy:
-            vel = qd_to_torch(self.dofs_state.vel, transpose=True, copy=False)
+            vel = qd_to_torch(self.dyn_state.dofs.vel, transpose=True, copy=False)
             dofs_mask = indices_to_mask(dofs_idx)
             if (
                 (not dofs_mask or isinstance(dofs_mask[0], slice))
@@ -1098,28 +1013,18 @@ class KinematicSolver(Solver):
                 velocity, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
             )
             if velocity is None:
-                kernel_set_dofs_zero_velocity(dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config)
+                kernel_set_dofs_zero_velocity(dofs_idx, envs_idx, self.dyn_state, self.rigid_config)
             else:
                 if self.n_envs == 0:
                     velocity = velocity[None]
-                kernel_set_dofs_velocity(velocity, dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config)
+                kernel_set_dofs_velocity(dofs_idx, envs_idx, velocity, self.dyn_state, self.rigid_config)
 
         if not skip_forward:
             if envs_idx.dtype == torch.bool:
                 fn = kernel_masked_forward_velocity
             else:
                 fn = kernel_forward_velocity
-            fn(
-                envs_idx,
-                links_state=self.links_state,
-                links_info=self.links_info,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-                is_backward=False,
-            )
+            fn(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, is_backward=False)
             self._is_forward_vel_updated = True
         else:
             self._is_forward_vel_updated = False
@@ -1130,11 +1035,17 @@ class KinematicSolver(Solver):
         )
         if self.n_envs == 0:
             velocity_grad_ = velocity_grad_.unsqueeze(0)
-        kernel_set_dofs_velocity_grad(
-            velocity_grad_, dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config
-        )
+        kernel_set_dofs_velocity_grad(dofs_idx, envs_idx, velocity_grad_, self.dyn_state, self.rigid_config)
 
-    @mutates(StateChange.GEOMETRY)
+    def set_dofs_force_grad(self, dofs_idx, envs_idx, force_grad):
+        force_grad_, dofs_idx, envs_idx = self._sanitize_io_variables(
+            force_grad, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
+        )
+        if self.n_envs == 0:
+            force_grad_ = force_grad_.unsqueeze(0)
+        kernel_set_dofs_force_grad(dofs_idx, envs_idx, force_grad_, self.dyn_state, self.rigid_config)
+
+    @mutates(StateChange.GEOMETRY, links=MutatedLinks.ARTICULATED)
     def set_dofs_position(self, position, dofs_idx=None, envs_idx=None):
         position, dofs_idx, envs_idx = self._sanitize_io_variables(
             position, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
@@ -1142,63 +1053,83 @@ class KinematicSolver(Solver):
         if self.n_envs == 0:
             position = position[None]
         kernel_set_dofs_position(
-            position,
-            dofs_idx,
-            envs_idx,
-            self.dofs_state,
-            self.links_info,
-            self.joints_info,
-            self.entities_info,
-            self._rigid_global_info,
-            self._static_rigid_sim_config,
+            dofs_idx, envs_idx, position, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
         )
 
-        kernel_forward_kinematics(
-            envs_idx,
-            links_state=self.links_state,
-            links_info=self.links_info,
-            joints_state=self.joints_state,
-            joints_info=self.joints_info,
-            dofs_state=self.dofs_state,
-            dofs_info=self.dofs_info,
-            entities_info=self.entities_info,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-        )
+        kernel_forward_kinematics(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
         self._is_forward_pos_updated = True
         self._is_forward_vel_updated = True
+
+    def get_terrain_height(self, positions, link_idx, envs_idx=None):
+        terrain = self._links[link_idx].entity
+
+        positions = torch.as_tensor(positions, dtype=gs.tc_float, device=gs.device)
+        if positions.ndim == 0 or positions.ndim > 3 or positions.shape[-1] != 2:
+            gs.raise_exception("`positions` must have shape (2,), (n_points, 2), or (n_envs, n_points, 2).")
+
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        n_envs = len(envs_idx)
+        is_single_position = positions.ndim == 1
+        n_points = 1 if is_single_position else positions.shape[-2]
+        if n_points == 0:
+            gs.raise_exception("`positions` must contain at least one position.")
+
+        is_per_env = positions.ndim == 3 and positions.shape[0] != 1
+        positions = broadcast_tensor(
+            positions, gs.tc_float, (n_envs if is_per_env else 1, n_points, 2), ("envs_idx", "positions", "")
+        )
+
+        heights = torch.empty((n_envs, n_points), dtype=gs.tc_float, device=gs.device)
+        kernel_get_terrain_height(
+            envs_idx,
+            link_idx,
+            terrain._morph.horizontal_scale,
+            positions.contiguous(),
+            terrain._terrain_height_field,
+            heights,
+            self.dyn_state,
+            self.rigid_config,
+            tilt_tolerance=TERRAIN_HEIGHT_QUERY_TILT_TOLERANCE,
+            is_per_env=is_per_env,
+        )
+
+        if self.n_envs == 0:
+            heights = heights[0]
+        if is_single_position:
+            heights = heights[..., 0]
+        return heights
 
     def get_links_pos(self, links_idx=None, envs_idx=None, *, relative=False):
         if not gs.use_zerocopy:
             _, links_idx, envs_idx = self._sanitize_io_variables(
                 None, links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
             )
-        tensor = qd_to_torch(self.links_state.pos, envs_idx, links_idx, transpose=True, copy=True)
+        tensor = qd_to_torch(self.dyn_state.links.pos, envs_idx, links_idx, transpose=True, copy=True)
         if relative and self._links_offset_pos is not None:
-            quat = qd_to_torch(self.links_state.quat, envs_idx, links_idx, transpose=True, copy=True)
+            quat = qd_to_torch(self.dyn_state.links.quat, envs_idx, links_idx, transpose=True, copy=True)
             offset_pos = _select_links_offset(self._links_offset_pos, links_idx, envs_idx)
             offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
             tensor -= _offset_world_shift(offset_pos, offset_quat, quat)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_quat(self, links_idx=None, envs_idx=None, *, relative=False):
-        tensor = qd_to_torch(self.links_state.quat, envs_idx, links_idx, transpose=True, copy=True)
+        tensor = qd_to_torch(self.dyn_state.links.quat, envs_idx, links_idx, transpose=True, copy=True)
         if relative and self._links_offset_quat is not None:
             offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
             tensor = gu.transform_quat_by_quat(gu.inv_quat(offset_quat), tensor)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_vgeoms_pos(self, vgeoms_idx=None, envs_idx=None, *, relative=False):
-        tensor = qd_to_torch(self.vgeoms_state.pos, envs_idx, vgeoms_idx, transpose=True, copy=True)
+        tensor = qd_to_torch(self.dyn_state.vgeoms.pos, envs_idx, vgeoms_idx, transpose=True, copy=True)
         if relative and self._vgeoms_offset_pos is not None:
-            quat = qd_to_torch(self.vgeoms_state.quat, envs_idx, vgeoms_idx, transpose=True, copy=True)
+            quat = qd_to_torch(self.dyn_state.vgeoms.quat, envs_idx, vgeoms_idx, transpose=True, copy=True)
             offset_pos = self._vgeoms_offset_pos if vgeoms_idx is None else self._vgeoms_offset_pos[vgeoms_idx]
             offset_quat = self._vgeoms_offset_quat if vgeoms_idx is None else self._vgeoms_offset_quat[vgeoms_idx]
             tensor -= _offset_world_shift(offset_pos, offset_quat, quat)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_vgeoms_quat(self, vgeoms_idx=None, envs_idx=None, *, relative=False):
-        tensor = qd_to_torch(self.vgeoms_state.quat, envs_idx, vgeoms_idx, transpose=True, copy=True)
+        tensor = qd_to_torch(self.dyn_state.vgeoms.quat, envs_idx, vgeoms_idx, transpose=True, copy=True)
         if relative and self._vgeoms_offset_quat is not None:
             offset_quat = self._vgeoms_offset_quat if vgeoms_idx is None else self._vgeoms_offset_quat[vgeoms_idx]
             tensor = gu.transform_quat_by_quat(gu.inv_quat(offset_quat), tensor)
@@ -1207,10 +1138,10 @@ class KinematicSolver(Solver):
     def get_links_vel(self, links_idx=None, envs_idx=None):
         if gs.use_zerocopy:
             mask = (0, *indices_to_mask(links_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, links_idx)
-            cd_vel = qd_to_torch(self.links_state.cd_vel, transpose=True)
-            cd_ang = qd_to_torch(self.links_state.cd_ang, transpose=True)
-            pos = qd_to_torch(self.links_state.pos, transpose=True)
-            root_COM = qd_to_torch(self.links_state.root_COM, transpose=True)
+            cd_vel = qd_to_torch(self.dyn_state.links.cd_vel, transpose=True)
+            cd_ang = qd_to_torch(self.dyn_state.links.cd_ang, transpose=True)
+            pos = qd_to_torch(self.dyn_state.links.pos, transpose=True)
+            root_COM = qd_to_torch(self.dyn_state.links.root_COM, transpose=True)
             return cd_vel[mask] + cd_ang[mask].cross(pos[mask] - root_COM[mask], dim=-1)
 
         _tensor, links_idx, envs_idx = self._sanitize_io_variables(
@@ -1218,11 +1149,11 @@ class KinematicSolver(Solver):
         )
         assert _tensor is not None
         tensor = _tensor[None] if self.n_envs == 0 else _tensor
-        kernel_get_links_vel(tensor, links_idx, envs_idx, 2, self.links_state, self._static_rigid_sim_config)
+        kernel_get_links_vel(links_idx, envs_idx, tensor, self.dyn_state, self.rigid_config, ref=2)
         return _tensor
 
     def get_links_ang(self, links_idx=None, envs_idx=None):
-        tensor = qd_to_torch(self.links_state.cd_ang, envs_idx, links_idx, transpose=True, copy=True)
+        tensor = qd_to_torch(self.dyn_state.links.cd_ang, envs_idx, links_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def _build_dof_to_q_map(self, dofs_idx_t):
@@ -1241,40 +1172,31 @@ class KinematicSolver(Solver):
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_dofs_velocity(self, dofs_idx=None, envs_idx=None):
-        tensor = qd_to_torch(self.dofs_state.vel, envs_idx, dofs_idx, transpose=True, copy=True)
+        tensor = qd_to_torch(self.dyn_state.dofs.vel, envs_idx, dofs_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_dofs_position(self, dofs_idx=None, envs_idx=None):
         """Read current DOF positions."""
-        tensor = qd_to_torch(self.dofs_state.pos, envs_idx, dofs_idx, transpose=True, copy=True)
+        tensor = qd_to_torch(self.dyn_state.dofs.pos, envs_idx, dofs_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_dofs_limit(self, dofs_idx=None, envs_idx=None):
         if not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
-        tensor = qd_to_torch(self.dofs_info.limit, envs_idx, dofs_idx, transpose=True, copy=True)
+        tensor = qd_to_torch(self.dyn_info.dofs.limit, envs_idx, dofs_idx, transpose=True, copy=True)
         if self.n_envs == 0 and self._options.batch_dofs_info:
             tensor = tensor[0]
         return tensor[..., 0], tensor[..., 1]
 
     def update_vgeoms(self):
-        kernel_update_vgeoms(self.vgeoms_info, self.vgeoms_state, self.links_state, self._static_rigid_sim_config)
+        kernel_update_vgeoms(self.dyn_state, self.dyn_info, self.rigid_config)
 
     def update_forward_pos(self):
         """Run forward kinematics if links_state is not already up to date for the current pose."""
         if self._is_forward_pos_updated:
             return
         kernel_forward_kinematics(
-            self.scene._envs_idx,
-            links_state=self.links_state,
-            links_info=self.links_info,
-            joints_state=self.joints_state,
-            joints_info=self.joints_info,
-            dofs_state=self.dofs_state,
-            dofs_info=self.dofs_info,
-            entities_info=self.entities_info,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
+            self.scene._envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
         )
         self._is_forward_pos_updated = True
 
@@ -1286,14 +1208,7 @@ class KinematicSolver(Solver):
         """
         if self.n_custom_vverts == 0:
             return
-        kernel_update_vverts_for_vgeoms(
-            vgeoms_idx,
-            self.vgeoms_info,
-            self.vgeoms_state,
-            self.vverts_info,
-            self.vverts_state,
-            self._static_rigid_sim_config,
-        )
+        kernel_update_vverts_for_vgeoms(vgeoms_idx, self.dyn_state, self.dyn_info, self.rigid_config)
 
     @mutates(StateChange.GEOMETRY)
     def set_vverts(self, custom_vvert_start, custom_vvert_end, vgeoms_idx, vverts, envs_idx=None):
@@ -1308,7 +1223,7 @@ class KinematicSolver(Solver):
             return
 
         if gs.use_zerocopy:
-            data = qd_to_torch(self.vverts_state.pos, transpose=True, copy=False)
+            data = qd_to_torch(self.dyn_state.vverts.pos, transpose=True, copy=False)
             if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
                 pos_slice = data[:, custom_vvert_start:custom_vvert_end]
                 if vverts.ndim == 3 and len(vverts) != len(pos_slice):
@@ -1325,7 +1240,7 @@ class KinematicSolver(Solver):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         target_shape = (envs_idx.shape[0], custom_vvert_end - custom_vvert_start, 3)
         vverts = broadcast_tensor(vverts, gs.tc_float, target_shape, ("envs", "vverts", "xyz")).contiguous()
-        kernel_set_vverts(vverts, custom_vvert_start, envs_idx, self.vverts_state, self._static_rigid_sim_config)
+        kernel_set_vverts(custom_vvert_start, envs_idx, vverts, self.dyn_state, self.rigid_config)
 
     def get_vverts(self, custom_vvert_start, custom_vvert_end, envs_idx=None):
         """Return a copy of the vverts_state.pos slice for the given custom-vvert range.
@@ -1333,7 +1248,7 @@ class KinematicSolver(Solver):
         Shape: (len(envs_idx), custom_vvert_end - custom_vvert_start, 3). envs_idx=None returns every env.
         """
         tensor = qd_to_torch(
-            self.vverts_state.pos, envs_idx, slice(custom_vvert_start, custom_vvert_end), transpose=True, copy=True
+            self.dyn_state.vverts.pos, envs_idx, slice(custom_vvert_start, custom_vvert_end), transpose=True, copy=True
         )
         return tensor[0] if self.n_envs == 0 else tensor
 
@@ -1364,6 +1279,17 @@ class KinematicSolver(Solver):
         if self.is_built:
             return self._vgeoms
         return gs.List(vgeom for entity in self._entities for vgeom in entity.vgeoms)
+
+    @property
+    def vfaces_raycast_mask(self) -> torch.Tensor:
+        """Per-vface mask, shape (n_vfaces,), selecting the vfaces opted into visual raycasting.
+
+        A vface is opted in iff its owning vgeom belongs to an entity whose material has use_visual_raycasting=True.
+        Both the entity materials and the vface-to-vgeom mapping are fixed once the scene is built, so the mask is
+        fitted at build time and shared by every visual raycast BVH (raycaster sensors, viewer plugins) to gate which
+        vfaces contribute.
+        """
+        return self._vfaces_raycast_mask
 
     @property
     def n_links(self):

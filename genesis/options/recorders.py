@@ -1,5 +1,6 @@
 from typing import Annotated, Any
 
+import av
 from pydantic import BeforeValidator, Field, StrictBool
 
 import genesis as gs
@@ -15,14 +16,6 @@ from genesis.typing import (
 )
 
 from .options import Options
-
-IS_PYAV_AVAILABLE = False
-try:
-    import av
-
-    IS_PYAV_AVAILABLE = True
-except ImportError:
-    pass
 
 
 class RecorderOptions(Options):
@@ -100,8 +93,6 @@ class VideoFile(BaseFileWriterOptions):
     codec_options: dict[str, str] = Field(default_factory=dict)
 
     def model_post_init(self, context: Any) -> None:
-        if not IS_PYAV_AVAILABLE:
-            gs.raise_exception("PyAV is not installed. Please install it with `pip install av`.")
         if self.codec and self.codec not in av.codecs_available:
             gs.raise_exception(f"[{type(self).__name__}] Codec '{self.codec}' not supported.")
 
@@ -313,6 +304,19 @@ class MPLVectorFieldPlot(BasePlotterOptions):
         The scale factor to apply to the vectors. Defaults to 0.1.
     max_magnitude: float, optional
         Maximum magnitude for the colorbar (colors are fixed to [0, max_magnitude]). Defaults to 1.0.
+    subplot_titles: StrArrayType | None, optional
+        If provided, the figure holds one subplot per title (K subplots in a near-square grid), all sharing
+        ``positions``; the data_func then returns shape ``(K, N, 3)`` -- one vector field per subplot. ``None``
+        (default) is a single plot whose data_func returns ``(N, 3)``.
+    twist_scale_factor: float | None, optional
+        When set, overlays a curved rotation arrow at each position showing the twist about the view ``normal``
+        (the ``twist_vectors . normal`` component), with arc radius scaled by this factor -- useful for reading a
+        rotational quantity (e.g. per-taxel torque) alongside the straight vectors. The data_func then returns a
+        pair ``(vectors, twist_vectors)`` instead of a single array, each shaped as above. The cost is a busier plot
+        and a second colorbar. ``None`` (default) draws only the straight vectors.
+    twist_max_magnitude: float, optional
+        Range for the diverging twist colorbar (colors fixed to [-twist_max_magnitude, +twist_max_magnitude], centered
+        at zero). Only used when ``twist_scale_factor`` is set. Defaults to 1.0.
     save_to_filename: str | None
         If provided, the animation will be saved to a file with the given filename.
     show_window: bool | None
@@ -323,3 +327,6 @@ class MPLVectorFieldPlot(BasePlotterOptions):
     normal: Vec3FType = (0.0, 0.0, 1.0)
     scale_factor: PositiveFloat = 1.0
     max_magnitude: PositiveFloat = 1.0
+    subplot_titles: StrArrayType | None = None
+    twist_scale_factor: PositiveFloat | None = None
+    twist_max_magnitude: PositiveFloat = 1.0

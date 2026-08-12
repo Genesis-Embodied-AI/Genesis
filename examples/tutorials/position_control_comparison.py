@@ -4,6 +4,7 @@
 # making it underperform compared to 'control_dofs_position_velocity'.
 import argparse
 import math
+import os
 
 import matplotlib.pyplot as plt
 
@@ -12,14 +13,12 @@ import genesis as gs
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
-    parser.add_argument("-c", "--cpu", action="store_true", default=False)
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
+    parser.add_argument("-g", "--gpu", action="store_true", help="Run on GPU instead of CPU")
     args = parser.parse_args()
 
-    ########################## init ##########################
-    gs.init(backend=gs.cpu if args.cpu else gs.gpu)
+    gs.init(backend=gs.gpu if args.gpu else gs.cpu)
 
-    ########################## create a scene ##########################
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0, -3.5, 2.5),
@@ -29,11 +28,10 @@ def main():
         sim_options=gs.options.SimOptions(
             dt=0.005,
         ),
-        show_viewer=False,
+        show_viewer=args.vis,
         show_FPS=True,
     )
 
-    ########################## entities ##########################
     plane = scene.add_entity(
         gs.morphs.Plane(),
     )
@@ -42,7 +40,6 @@ def main():
             file="xml/franka_emika_panda/panda.xml",
         ),
     )
-    ########################## build ##########################
     scene.build()
 
     joints_name = (
@@ -58,18 +55,14 @@ def main():
     )
     motors_dof_idx = [franka.get_joint(name).dofs_idx_local[0] for name in joints_name]
 
-    ############ Optional: set control gains ############
-    # set positional gains
     franka.set_dofs_kp(
         kp=[4500, 4500, 3500, 3500, 2000, 2000, 2000, 100, 100],
         dofs_idx_local=motors_dof_idx,
     )
-    # set velocity gains
     franka.set_dofs_kv(
         kv=[450, 450, 350, 350, 200, 200, 200, 10, 10],
         dofs_idx_local=motors_dof_idx,
     )
-    # set force range for safety
     franka.set_dofs_force_range(
         lower=[-87, -87, -87, -87, -12, -12, -12, -100, -100],
         upper=[87, 87, 87, 87, 12, 12, 12, 100, 100],
@@ -121,7 +114,9 @@ def main():
     plt.title("Comparison of joint position tracking with two different controllers")
     plt.grid()
     plt.legend()
-    plt.show()
+    # Showing the figure blocks until the window is closed, so skip it when nobody is there to close it.
+    if "PYTEST_VERSION" not in os.environ:
+        plt.show()
 
 
 if __name__ == "__main__":

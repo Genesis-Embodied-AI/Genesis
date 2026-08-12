@@ -495,6 +495,16 @@ class Scene(RBC):
                 # watertightening (already-watertight inputs); watertighten does its own feature-preserving QEM.
                 if morph_variant.decimate is None:
                     morph_variant.decimate = morph_variant.convexify
+                # Genesis fills in a default rotor armature for joints whose armature is not specified in the model
+                # file, while MuJoCo's own default may differ. Under MuJoCo compatibility, the default is dropped
+                # unless set manually, deferring to MuJoCo. USD keeps the Genesis default since MuJoCo is not
+                # involved in its parsing.
+                if (
+                    isinstance(morph_variant, (gs.morphs.MJCF, gs.morphs.URDF, gs.morphs.Drone))
+                    and "default_armature" not in morph_variant.model_fields_set
+                    and self._sim.rigid_solver._enable_mujoco_compatibility
+                ):
+                    morph_variant.default_armature = None
 
         entity = self._sim._add_entity(morph, material, surface, visualize_contact, name)
 
@@ -582,8 +592,11 @@ class Scene(RBC):
 
         if not isinstance(morph, (gs.morphs.Primitive, gs.morphs.Mesh)):
             gs.raise_exception("Light morph only supports `gs.morphs.Primitive` or `gs.morphs.Mesh`.")
-        mesh = gs.Mesh.from_morph_surface(morph, gs.surfaces.Plastic(smooth=False))
-        self._visualizer.add_mesh_light(mesh, color, intensity, morph.pos, morph.quat, revert_dir, double_sided, cutoff)
+        meshes = gs.Mesh.from_morph_surface(morph, gs.surfaces.Plastic(smooth=False))
+        for mesh in meshes:
+            self._visualizer.add_mesh_light(
+                mesh, color, intensity, morph.pos, morph.quat, revert_dir, double_sided, cutoff
+            )
 
     @gs.assert_unbuilt
     def add_light(
@@ -982,13 +995,16 @@ class Scene(RBC):
         self._reset(state, envs_idx=envs_idx)
         self._recorder_manager.reset(envs_idx)
 
-    def _reset(self, state: SimState | None = None, *, envs_idx=None):
+    def _reset(self, state: SimState | None = None, *, envs_idx=None, keep_init: bool = False):
         if self._is_built:
             if state is None:
                 state = self._init_state
             else:
                 assert isinstance(state, SimState), "state must be a SimState object"
-                self._init_state = state
+                # keep_init=True restores the state while leaving the registered init untouched, so a later bare
+                # reset() still rewinds to the true initial state.
+                if not keep_init:
+                    self._init_state = state
             self._sim.reset(state, envs_idx)
         else:
             self._init_state = self._get_state()
@@ -1008,6 +1024,41 @@ class Scene(RBC):
 
     def _reset_grad(self):
         self._backward_ready = True
+
+    @gs.assert_built
+    def backward(self, loss: torch.Tensor, *args, **kwargs):
+        """
+        Differentiates `loss` through the recorded rollout and restores the pre-backward physics state.
+
+        Unrolling the gradient tape rewinds the physics state to step 0, so this method snapshots the current state
+        first, runs the backward pass, and restores the snapshot afterwards. The scene then sits at the same physics
+        state as before the call, with gradients populated and forward / backward re-armed, ready to continue the
+        rollout or to be reset. The registered initial state (`reset()` with no argument) is preserved.
+
+        Parameters
+        ----------
+        loss : torch.Tensor
+            Scalar loss to differentiate. Extra positional and keyword arguments (e.g. `gradient`, `retain_graph`)
+            are forwarded to `torch.autograd.backward`.
+
+        Returns
+        -------
+        snapshot : SimState
+            The physics state the scene was restored to.
+        """
+        # Snapshot the current state before the gradient-tape unroll rewinds physics to step 0.
+        snapshot = self.get_state()
+        # The sim unroll (self._backward) re-enters the torch graph from each step's queried states, so the graph
+        # must survive the initial autograd pass.
+        if kwargs.setdefault("retain_graph", True) is not True:
+            gs.raise_exception("'retain_graph' must be left unset: scene.backward requires the graph to survive.")
+        # The functional torch.autograd.backward fills torch and queried-state grads while leaving the sim unroll to
+        # the explicit self._backward call below, keeping gs.Tensor.backward's automatic scene._backward out of it.
+        torch.autograd.backward(loss, *args, **kwargs)
+        self._backward()
+        # keep_init semantics: see _reset
+        self._reset(snapshot, keep_init=True)
+        return snapshot
 
     def _get_state(self):
         return self._sim.get_state()
@@ -1056,6 +1107,8 @@ class Scene(RBC):
             if self.profiling_options.show_FPS:
                 self.FPS_tracker.step()
             self._recorder_manager.step(self._sim.cur_step_global)
+            for camera in self._visualizer.cameras:
+                camera.update_recording()
 
     def stop_recording(self):
         self._recorder_manager.stop()
@@ -1553,6 +1606,11 @@ class Scene(RBC):
         if isinstance(envs_idx, (slice, range)):
             return self._envs_idx[envs_idx]
         if isinstance(envs_idx, (int, np.integer)):
+            n_envs = self.n_envs
+            if not -n_envs <= envs_idx < n_envs:
+                gs.raise_exception(f"`envs_idx` out of range: {envs_idx} not in [{-n_envs}, {n_envs}).")
+            if envs_idx < 0:
+                envs_idx = envs_idx + n_envs
             return self._envs_idx[envs_idx : envs_idx + 1]
 
         return sanitize_index(envs_idx, -1, self.n_envs, 0, "envs_idx")

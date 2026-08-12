@@ -51,7 +51,9 @@ def load_bc_policy(env, bc_cfg, log_dir):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-e", "--exp_name", type=str, default="grasp")
+    parser.add_argument(
+        "-e", "--exp-name", type=str, default="grasp", help="Experiment name; also the log directory under logs/"
+    )
     parser.add_argument(
         "--stage",
         type=str,
@@ -59,22 +61,20 @@ def main():
         choices=["rl", "bc"],
         help="Model type: 'rl' for reinforcement learning, 'bc' for behavior cloning",
     )
+    parser.add_argument("-r", "--record", action="store_true", help="Record stereo images as video during evaluation")
     parser.add_argument(
-        "--record",
-        action="store_true",
-        help="Record stereo images as video during evaluation",
-    )
-    parser.add_argument(
-        "--video_path",
+        "--video-path",
         type=str,
         default=None,
-        help="Path to save the video file (default: auto-generated)",
+        help="Video filename for the main camera, written under the run's output directory",
     )
     args = parser.parse_args()
 
-    gs.init()
+    gs.init(backend=gs.cpu)
 
-    log_dir = Path("logs") / f"{args.exp_name + '_' + args.stage}"
+    run_name = f"{args.exp_name}_{args.stage}"
+    log_dir = Path("logs") / run_name
+    video_dir = Path("out") / run_name
 
     with open(log_dir / "cfgs.pkl", "rb") as f:
         env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(f)
@@ -85,9 +85,9 @@ def main():
 
     if args.record:
         env_cfg["record_video"] = {
-            "vis_cam": str(log_dir / (args.video_path or "video.mp4")),
-            "left_cam": str(log_dir / "left_cam.mp4"),
-            "right_cam": str(log_dir / "right_cam.mp4"),
+            "vis_cam": str(video_dir / (args.video_path or "video.mp4")),
+            "left_cam": str(video_dir / "left_cam.mp4"),
+            "right_cam": str(video_dir / "right_cam.mp4"),
         }
 
     env = GraspEnv(

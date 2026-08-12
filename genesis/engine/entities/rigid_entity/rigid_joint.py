@@ -120,7 +120,7 @@ class RigidJoint(RBC):
         the anchor point is the "output" of the joint transmission, on which the child body is welded.
         """
         tensor = torch.empty((self._solver._B, 3), dtype=gs.tc_float, device=gs.device)
-        _kernel_get_anchor_pos(self._idx, tensor, self._solver.joints_state)
+        _kernel_get_anchor_pos(self._idx, tensor, self._solver.dyn_state)
         if self._solver.n_envs == 0:
             tensor = tensor[0]
         return tensor
@@ -133,7 +133,7 @@ class RigidJoint(RBC):
         See `RigidJoint.get_anchor_pos` documentation for details about the notion on anchor point.
         """
         tensor = torch.empty((self._solver._B, 3), dtype=gs.tc_float, device=gs.device)
-        _kernel_get_anchor_axis(self._idx, tensor, self._solver.joints_state)
+        _kernel_get_anchor_axis(self._idx, tensor, self._solver.dyn_state)
         if self._solver.n_envs == 0:
             tensor = tensor[0]
         return tensor
@@ -519,18 +519,18 @@ class RigidJoint(RBC):
 
 
 @qd.kernel
-def _kernel_get_anchor_pos(joint_idx: qd.i32, tensor: qd.types.ndarray(), joints_state: array_class.JointsState):
-    _B = joints_state.xanchor.shape[1]
+def _kernel_get_anchor_pos(joint_idx: qd.i32, tensor: qd.types.ndarray(), dyn_state: array_class.DynState):
+    _B = dyn_state.joints.xanchor.shape[1]
     for i_b in range(_B):
-        xpos = joints_state.xanchor[joint_idx, i_b]
+        xpos = dyn_state.joints.xanchor[joint_idx, i_b]
         for i in qd.static(range(3)):
             tensor[i_b, i] = xpos[i]
 
 
 @qd.kernel
-def _kernel_get_anchor_axis(joint_idx: qd.i32, tensor: qd.types.ndarray(), joints_state: array_class.JointsState):
-    _B = joints_state.xaxis.shape[1]
+def _kernel_get_anchor_axis(joint_idx: qd.i32, tensor: qd.types.ndarray(), dyn_state: array_class.DynState):
+    _B = dyn_state.joints.xaxis.shape[1]
     for i_b in range(_B):
-        xaxis = joints_state.xaxis[joint_idx, i_b]
+        xaxis = dyn_state.joints.xaxis[joint_idx, i_b]
         for i in qd.static(range(3)):
             tensor[i_b, i] = xaxis[i]

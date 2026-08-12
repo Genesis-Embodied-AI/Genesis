@@ -167,10 +167,8 @@ class BehaviorCloning:
         obs_dict = self._env.get_observations()
         with torch.inference_mode():
             for _ in range(self._num_steps_per_env):
-                # Get stereo rgb images
                 rgb_obs = self._env.get_stereo_rgb_images(normalize=True)
 
-                # Get teacher action
                 teacher_action = self._teacher(obs_dict).detach()
 
                 # Get end-effector position
@@ -381,12 +379,10 @@ class Policy(nn.Module):
 
     def forward(self, rgb_obs: torch.Tensor, state_obs: torch.Tensor | None = None) -> torch.Tensor:
         """Forward pass with shared stereo encoder for rgb images."""
-        # Get features
         left_features, right_features = self.get_features(rgb_obs)
 
         # Concatenate features (much more efficient than concatenating raw images)
         combined_features = torch.cat([left_features, right_features], dim=-1)
-        # Feature fusion
         fused_features = self.feature_fusion(combined_features)
 
         # Add state information if available

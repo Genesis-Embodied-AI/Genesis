@@ -4,10 +4,8 @@ import numpy as np
 
 import genesis as gs
 
-########################## init ##########################
-gs.init(backend=gs.gpu)
+gs.init(backend=gs.cpu)
 
-########################## create a scene ##########################
 scene = gs.Scene(
     viewer_options=gs.options.ViewerOptions(
         camera_pos=(0, -3.5, 2.5),
@@ -20,7 +18,6 @@ scene = gs.Scene(
     show_viewer=True,
 )
 
-########################## entities ##########################
 plane = scene.add_entity(
     gs.morphs.Plane(),
 )
@@ -29,7 +26,6 @@ franka = scene.add_entity(
         file="xml/franka_emika_panda/panda.xml",
     ),
 )
-########################## build ##########################
 scene.build()
 
 joints_name = (
@@ -45,18 +41,14 @@ joints_name = (
 )
 motors_dof_idx = [franka.get_joint(name).dofs_idx_local[0] for name in joints_name]
 
-############ Optional: set control gains ############
-# set positional gains
 franka.set_dofs_kp(
     kp=np.array([4500, 4500, 3500, 3500, 2000, 2000, 2000, 100, 100]),
     dofs_idx_local=motors_dof_idx,
 )
-# set velocity gains
 franka.set_dofs_kv(
     kv=np.array([450, 450, 350, 350, 200, 200, 200, 10, 10]),
     dofs_idx_local=motors_dof_idx,
 )
-# set force range for safety
 franka.set_dofs_force_range(
     lower=np.array([-87, -87, -87, -87, -12, -12, -12, -100, -100]),
     upper=np.array([87, 87, 87, 87, 12, 12, 12, 100, 100]),

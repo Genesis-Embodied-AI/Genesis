@@ -9,7 +9,7 @@ import os
 import random
 import sys
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import field
 from importlib import import_module
 from itertools import combinations
@@ -24,6 +24,7 @@ import torch
 
 
 import genesis as gs
+from genesis.typing import is_sequence
 
 
 LOGGER = logging.getLogger(__name__)
@@ -296,6 +297,10 @@ def get_wt_cache_dir():
     return os.path.join(get_cache_dir(), "wt")
 
 
+def get_wth_cache_dir():
+    return os.path.join(get_cache_dir(), "wth")
+
+
 def get_exr_cache_dir():
     return os.path.join(get_cache_dir(), "exr")
 
@@ -408,8 +413,48 @@ def tensor_to_array(x: torch.Tensor, dtype: type[np.generic] | None = None) -> n
     return np.asarray(tensor_to_cpu(x), dtype=dtype)
 
 
+def data_to_array(data):
+    """Recursively move any GPU tensor nested in ``data`` to a CPU numpy array, preserving container structure."""
+    if isinstance(data, torch.Tensor):
+        return tensor_to_array(data)
+    if isinstance(data, np.ndarray):
+        return data
+    if isinstance(data, Mapping):
+        return {k: data_to_array(v) for k, v in data.items()}
+    if is_sequence(data):
+        return type(data)(data_to_array(v) for v in data)
+    return data
+
+
 def is_approx_multiple(a, b, tol=1e-7):
     return abs(a % b) < tol or abs(b - (a % b)) < tol
+
+
+def gaussian_crosstalk_kernel(n_rows: int, n_cols: int, sigma: float, spacing: float | tuple[float, float] = 1.0):
+    """
+    Build an L1-normalized 2D Gaussian convolution kernel for spatial tactile crosstalk.
+
+    The kernel is a discrete isotropic Gaussian ``exp(-(d / sigma)**2 / 2)`` sampled on an ``n_rows x n_cols`` grid
+    centered on the self taxel, then normalized to sum 1 (so a uniform field passes through unchanged). Pass the
+    result as a sensor's ``crosstalk_kernel`` to spread each taxel's signal onto its neighbors.
+
+    ``n_rows`` and ``n_cols`` must be odd so the kernel has a center tap (the self weight). ``spacing`` is the taxel
+    pitch in the same units as ``sigma`` (a scalar, or ``(row_spacing, col_spacing)`` for an anisotropic grid);
+    default ``1.0`` measures ``sigma`` in taxel cells.
+    """
+    if n_rows % 2 == 0 or n_cols % 2 == 0:
+        raise_exception(
+            f"gaussian_crosstalk_kernel requires odd n_rows, n_cols (center tap); got ({n_rows}, {n_cols})."
+        )
+    if sigma <= 0.0:
+        raise_exception(f"gaussian_crosstalk_kernel requires sigma > 0; got {sigma}.")
+    s_row, s_col = (spacing, spacing) if isinstance(spacing, numbers.Number) else spacing
+    rows = (np.arange(n_rows, dtype=float) - n_rows // 2) * s_row
+    cols = (np.arange(n_cols, dtype=float) - n_cols // 2) * s_col
+    g_row = np.exp(-(rows**2) / (2.0 * sigma * sigma))
+    g_col = np.exp(-(cols**2) / (2.0 * sigma * sigma))
+    kernel = np.outer(g_row, g_col)
+    return kernel / kernel.sum()
 
 
 def concat_with_tensor(
@@ -432,7 +477,9 @@ def concat_with_tensor(
         and all(e_1 == e_2 for i, (e_1, e_2) in enumerate(zip(tensor.shape, value.shape)) if e_1 > 0 and i != dim)
     )
     if tensor.numel() == 0:
-        return value
+        # 'expand' leaves a zero stride on the broadcast dimensions, so materialize to get a real table supporting
+        # in-place writes on a subset of the rows and usable as a kernel argument
+        return value.contiguous()
     return torch.cat([tensor, value], dim=dim)
 
 
@@ -630,21 +677,6 @@ def _apply_masks(out, value, row_mask, col_mask, keepdim, copy, *, to_torch):
     return out[mask]
 
 
-def _field_in_tree_offset_overflows_i32(value: qd.Field) -> bool:
-    """Whether the field sits past 2**31 bytes in its SNode tree.
-
-    FIXME: Quadrants' 'field_to_dlpack' truncates the in-tree byte offset to signed i32, so the zero-copy view of such
-    a field would silently alias the tree base (fixed upstream in Genesis-Embodied-AI/quadrants#768). Remove this guard
-    once the pinned quadrants release includes the fix.
-    """
-    snode = value.snode.ptr
-    offset = 0
-    while snode is not None:
-        offset += snode.offset_bytes_in_parent_cell
-        snode = snode.parent
-    return offset >= 2**31
-
-
 def qd_to_torch(
     value: qd.Tensor | qd.Field | qd.Ndarray,
     row_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
@@ -685,10 +717,8 @@ def qd_to_torch(
             is_copy = False
         except AttributeError:
             try:
-                if isinstance(value, qd.Field) and _field_in_tree_offset_overflows_i32(value):
-                    raise ValueError("Zero-copy view unavailable for fields past 2**31 bytes in their SNode tree.")
                 tc = value.to_torch(copy=False)
-            except (ValueError, RuntimeError):
+            except (ValueError, RuntimeError, TypeError):
                 if copy is False:
                     raise
                 tensor = _maybe_transpose(value.to_torch(), value, transpose)
@@ -755,8 +785,6 @@ def qd_to_numpy(
             is_copy = False
         except AttributeError:
             try:
-                if isinstance(value, qd.Field) and _field_in_tree_offset_overflows_i32(value):
-                    raise ValueError("Zero-copy view unavailable for fields past 2**31 bytes in their SNode tree.")
                 tc = value.to_torch(copy=False)
             except (RuntimeError, TypeError, ValueError):
                 if copy is False:
@@ -781,8 +809,10 @@ def qd_zero_grad(value) -> None:
 
     Reverse-mode accumulation in Genesis writes through `qd.atomic_add`, so adjoint buffers must start at zero between
     consecutive `loss.backward()` calls. Solvers call this from `reset_grad` to clear all owned adjoint storage without
-    enumerating fields by name. Zeroing goes through `qd_to_torch(grad, copy=False).zero_()`, a contiguous in-place
-    memset on the underlying device memory - no Quadrants kernel launch.
+    enumerating fields by name. Zeroing goes through an in-place `zero_()` on the zero-copy torch view of each grad
+    buffer, a contiguous memset on the underlying device memory. The writes are left unsynchronized so a caller can
+    batch many calls under a single flush: on Metal, call `torch.mps.synchronize()` after the batch and before the
+    next quadrants kernel reads the buffers (see set_base_links_quat).
     """
     if value is None:
         return
@@ -792,10 +822,12 @@ def qd_zero_grad(value) -> None:
             grad = value.grad
             if gs.use_zerocopy:
                 try:
-                    qd_to_torch(grad, copy=False).zero_()
+                    grad_view = qd_to_torch(grad, copy=False)
+                    grad_view.zero_()
                 except ValueError:
-                    # No zero-copy view for this buffer (e.g. a field past 2**31 bytes in its SNode tree); fill it in
-                    # place through quadrants instead.
+                    # No zero-copy view for this buffer (e.g. an interleaved AOS struct member, or a field whose
+                    # in-tree byte offset the installed torch cannot carry through DLPack); fill it in place through
+                    # quadrants instead.
                     grad.fill(0.0)
             else:
                 grad.fill(0.0)
