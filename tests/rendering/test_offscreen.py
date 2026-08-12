@@ -773,6 +773,23 @@ def test_renders_heterogeneous_entities(n_envs, show_viewer, png_snapshot, rende
     for frame in frames:
         assert rgb_array_to_png_bytes(frame) == png_snapshot
 
+    if IS_BATCHRENDER:
+        # The batch renderers bake per-variant visibility at build time, so a runtime switch must be rejected outright
+        # rather than render the outgoing variant.
+        with pytest.raises(gs.GenesisException):
+            heterogeneous.set_entity_variant(1)
+    else:
+        # Switching every environment onto the duck variant must reveal it wherever the sphere was showing, including
+        # an environment whose build-time variant was the sphere in every rendered environment. Visual state refreshes
+        # once per simulation step, so the switch reaches the renderer on the next one.
+        yellow_before = int(duck_yellow(rgb).sum())
+        heterogeneous.set_entity_variant(1)
+        scene.step()
+        yellow_after = int(duck_yellow(tensor_to_array(camera.render(rgb=True)[0])).sum())
+        assert yellow_after > max(yellow_before, 3), (
+            f"switched-to variant must render; {yellow_before} -> {yellow_after}"
+        )
+
 
 @pytest.mark.parametrize(
     "renderer_type",

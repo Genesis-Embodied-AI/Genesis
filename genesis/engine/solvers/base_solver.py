@@ -26,12 +26,16 @@ class StateChange(enum.Enum):
 
     Solver-agnostic: it names what kind of state changed, never an index space (links, dofs, particles, ...), which
     differs from one solver to the next. GEOMETRY is the kinematic configuration that places or deforms the world
-    surface (link poses, qpos, vertices); DYNAMICS is the velocity state. Model parameters (mass, inertia, friction,
-    gains, limits) are not scene state and are never broadcast.
+    surface (link poses, qpos, vertices); DYNAMICS is the velocity state; TOPOLOGY is which surface each environment
+    carries, i.e. its active geom set, which a heterogeneous entity changes by switching variant. A mutation that
+    swaps the geom set also moves the surface, so it broadcasts GEOMETRY alongside TOPOLOGY: a consumer that only
+    tracks where the surface is needs no TOPOLOGY subscription. Model parameters (mass, inertia, friction, gains,
+    limits) are not scene state and are never broadcast.
     """
 
     GEOMETRY = enum.auto()
     DYNAMICS = enum.auto()
+    TOPOLOGY = enum.auto()
 
 
 class MutatedLinks(enum.Enum):

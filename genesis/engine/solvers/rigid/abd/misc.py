@@ -347,22 +347,26 @@ def kernel_init_link_fields(
 @qd.kernel(fastcache=True)
 def kernel_update_heterogeneous_links_vgeom(
     i_l: qd.i32,
+    envs_idx: qd.types.ndarray(),
     links_vgeom_start: qd.types.ndarray(),
     links_vgeom_end: qd.types.ndarray(),
     # Quadrants variables
     dyn_info: array_class.DynInfo,
 ):
-    """Update per-environment links vgeom for heterogeneous entities."""
-    _B = links_vgeom_start.shape[0]
+    """Bind link i_l's per-environment vgeom range to a heterogeneous variant, for the envs in envs_idx.
 
-    for i_b in range(_B):
-        dyn_info.links.vgeom_start[i_l, i_b] = links_vgeom_start[i_b]
-        dyn_info.links.vgeom_end[i_l, i_b] = links_vgeom_end[i_b]
+    The per-env arrays are aligned with envs_idx (position i_b_ selects env envs_idx[i_b_]), so the same kernel
+    serves both build-time dispatch (envs_idx = all envs) and runtime rebind (envs_idx = a subset)."""
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
+        dyn_info.links.vgeom_start[i_l, i_b] = links_vgeom_start[i_b_]
+        dyn_info.links.vgeom_end[i_l, i_b] = links_vgeom_end[i_b_]
 
 
 @qd.kernel(fastcache=True)
 def kernel_update_heterogeneous_link_info(
     i_l: qd.i32,
+    envs_idx: qd.types.ndarray(),
     links_geom_start: qd.types.ndarray(),
     links_geom_end: qd.types.ndarray(),
     links_vgeom_start: qd.types.ndarray(),
@@ -374,24 +378,26 @@ def kernel_update_heterogeneous_link_info(
     # Quadrants variables
     dyn_info: array_class.DynInfo,
 ):
-    """Update per-environment link info for heterogeneous entities."""
-    _B = links_geom_start.shape[0]
+    """Bind link i_l's per-environment geom/vgeom ranges and inertial to a variant, for the envs in envs_idx.
 
-    for i_b in range(_B):
-        dyn_info.links.geom_start[i_l, i_b] = links_geom_start[i_b]
-        dyn_info.links.geom_end[i_l, i_b] = links_geom_end[i_b]
-        dyn_info.links.vgeom_start[i_l, i_b] = links_vgeom_start[i_b]
-        dyn_info.links.vgeom_end[i_l, i_b] = links_vgeom_end[i_b]
-        dyn_info.links.inertial_mass[i_l, i_b] = links_inertial_mass[i_b]
+    The per-env arrays are aligned with envs_idx (position i_b_ selects env envs_idx[i_b_]), so the same kernel
+    serves both build-time dispatch (envs_idx = all envs) and runtime rebind (envs_idx = a subset)."""
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
+        dyn_info.links.geom_start[i_l, i_b] = links_geom_start[i_b_]
+        dyn_info.links.geom_end[i_l, i_b] = links_geom_end[i_b_]
+        dyn_info.links.vgeom_start[i_l, i_b] = links_vgeom_start[i_b_]
+        dyn_info.links.vgeom_end[i_l, i_b] = links_vgeom_end[i_b_]
+        dyn_info.links.inertial_mass[i_l, i_b] = links_inertial_mass[i_b_]
 
         for j in qd.static(range(3)):
-            dyn_info.links.inertial_pos[i_l, i_b][j] = links_inertial_pos[i_b, j]
+            dyn_info.links.inertial_pos[i_l, i_b][j] = links_inertial_pos[i_b_, j]
 
         for j in qd.static(range(4)):
-            dyn_info.links.inertial_quat[i_l, i_b][j] = links_inertial_quat[i_b, j]
+            dyn_info.links.inertial_quat[i_l, i_b][j] = links_inertial_quat[i_b_, j]
 
         for j1, j2 in qd.static(qd.ndrange(3, 3)):
-            dyn_info.links.inertial_i[i_l, i_b][j1, j2] = links_inertial_i[i_b, j1, j2]
+            dyn_info.links.inertial_i[i_l, i_b][j1, j2] = links_inertial_i[i_b_, j1, j2]
 
 
 @qd.kernel(fastcache=True)
