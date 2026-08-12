@@ -348,10 +348,6 @@ class FEMSolver(Solver):
         self._n_vverts = self.n_vverts
         self._n_vfaces = self.n_vfaces
 
-        # Every qd.field() below permanently consumes one of the process's SNode trees:
-        # Quadrants holds them in a fixed-size table and only qd.reset() gives one back, so
-        # allocating for a solver with nothing to simulate caps how many scenes a process can
-        # build. Nothing here is read unless this solver is active.
         if self.n_elements_max > 0:
             self.tet_wrong_order = qd.field(dtype=gs.qd_bool, shape=(), needs_grad=False)
 
