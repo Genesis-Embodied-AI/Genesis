@@ -271,6 +271,9 @@ def create_modified_narrowphase_file(tmp_path: Path):
     # Disable sphere-capsule analytical path in all kernels
     lines = find_and_disable_all_conditions(lines, "capsule_contact.func_sphere_capsule_contact")
 
+    # Disable sphere-sphere analytical path in all kernels
+    lines = find_and_disable_all_conditions(lines, "capsule_contact.func_sphere_sphere_contact")
+
     # Disable sphere-box analytical path in all kernels
     lines = find_and_disable_all_conditions(lines, "func_sphere_box_contact")
 
@@ -911,49 +914,91 @@ def test_sphere_box_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer: bo
             ) from e
 
 
+@pytest.mark.slow("gpu")  # ~80s, dominated by recompiling the patched narrowphase kernels
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_sphere_sphere_gjk(tmp_path: Path, show_viewer: bool) -> None:
-    # Smooth geometries like spheres produce extremely small polytope faces near EPA convergence, which
-    # amplifies the relative reprojection error and can cause false contact rejections.
+def test_sphere_sphere_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer: bool) -> None:
+    # Compare the analytical sphere-sphere narrowphase against GJK by monkey-patching the collider, like
+    # test_sphere_capsule_vs_gjk. The GJK arm also covers EPA robustness on smooth geometries, whose extremely small
+    # polytope faces near convergence amplify the relative reprojection error and can cause false contact rejections.
     test_cases = [
         # (pos_b, should_collide, description, exp_pen, exp_normal)
-        # Original bug report: diagonal offset, dist ≈ 0.1166, pen ≈ 0.0634
+        # Diagonal offset: dist ≈ 0.1166, pen ≈ 0.0634
         ((0.08, 0.06, 0.06), True, "diagonal_3d", 0.0634, (0.08, 0.06, 0.06)),
         # Axis-aligned overlap: dist = 0.15, pen = 0.03
         ((0.15, 0, 0), True, "axis_aligned", 0.03, (1, 0, 0)),
         # Near-touching: dist = 0.17, pen = 0.01
         ((0.17, 0, 0), True, "near_touching", 0.01, (1, 0, 0)),
-        # No collision: dist = 0.25
-        ((0.25, 0, 0), False, "separated", None, None),
+        # No collision: diagonal near-miss, dist ≈ 0.212 > 0.18, with per-axis offsets below the radii sum so the
+        # bounding boxes still overlap and the pair reaches the narrowphase.
+        ((0.15, 0.15, 0), False, "separated", None, None),
         # Concentric spheres: fully degenerate, just check collision is detected
         ((0, 0, 0), True, "concentric", None, None),
     ]
 
-    scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
-            use_gjk_collision=True,
-        ),
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(0.0, 1.0, 0.0),
-            camera_lookat=(0.0, 0.0, 0.0),
-        ),
+    def build_scene(scene: gs.Scene, tmp_path: Path, entities: list) -> None:
+        entities.append(scene_add_sphere(tmp_path, scene, radius=0.10))
+        entities.append(scene_add_sphere(tmp_path, scene, radius=0.08))
+        scene.build()
+
+    scene_creator = AnalyticalVsGJKSceneCreator(
+        monkeypatch=monkeypatch,
+        build_scene=build_scene,
+        tmp_path=tmp_path,
         show_viewer=show_viewer,
     )
-    entity_a = scene_add_sphere(tmp_path, scene, radius=0.10)
-    entity_b = scene_add_sphere(tmp_path, scene, radius=0.08)
-    scene.build()
-    assert scene.rigid_solver.collider is not None
+    scene_analytical, scene_gjk = scene_creator.setup_scenes()
+    assert scene_analytical.rigid_solver.collider is not None
+    assert scene_gjk.rigid_solver.collider is not None
 
+    # Phase 1: Run all analytical scenarios (original, unpatched kernel)
+    analytical_results = {}
     for pos_b, should_collide, description, exp_pen, exp_normal in test_cases:
-        entity_a.set_pos(0.0)
-        entity_b.set_pos(pos_b)
+        scene_creator.update_pos_quat_analytical(entity_idx=0, pos=(0, 0, 0), euler=[0, 0, 0])
+        scene_creator.update_pos_quat_analytical(entity_idx=1, pos=pos_b, euler=[0, 0, 0])
+        scene_creator.step_analytical()
 
-        scene.step()
+        contacts = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
+        assert len(contacts["geom_a"]) == should_collide, f"Analytical collision mismatch: {description}"
+        _check_expected_values(
+            contacts, description, exp_pen, exp_normal, "analytical", ANALYTICAL_PEN_TOL, ANALYTICAL_NORMAL_TOL
+        )
+        analytical_results[description] = copy.deepcopy(contacts)
 
-        contacts = scene.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
-        assert len(contacts["geom_a"]) == should_collide
-        _check_expected_values(contacts, description, exp_pen, exp_normal, "GJK", GJK_PEN_TOL, GJK_NORMAL_TOL)
+    # Phase 2: Apply monkey-patch (replace @qd.kernel with version from tmp file)
+    scene_creator.apply_gjk_patch()
+
+    # Phase 3: Run all GJK scenarios (patched kernel, fresh cache)
+    for pos_b, should_collide, description, exp_pen, exp_normal in test_cases:
+        scene_creator.update_pos_quat_gjk(entity_idx=0, pos=(0, 0, 0), euler=[0, 0, 0])
+        scene_creator.update_pos_quat_gjk(entity_idx=1, pos=pos_b, euler=[0, 0, 0])
+        scene_creator.step_gjk(should_collide)
+
+        contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
+        contacts_analytical = analytical_results[description]
+        assert len(contacts_gjk["geom_a"]) == should_collide, f"GJK collision mismatch: {description}"
+        _check_expected_values(contacts_gjk, description, exp_pen, exp_normal, "GJK", GJK_PEN_TOL, GJK_NORMAL_TOL)
+
+        if should_collide:
+            assert_allclose(
+                contacts_analytical["penetration"][0],
+                contacts_gjk["penetration"][0],
+                atol=POS_TOL,
+                rtol=0.1,
+                err_msg=f"Penetration mismatch: {description}",
+            )
+            normal_agreement = abs(
+                np.dot(np.array(contacts_analytical["normal"][0]), np.array(contacts_gjk["normal"][0]))
+            )
+            # The concentric case has a fully degenerate normal on both arms.
+            if description != "concentric":
+                assert normal_agreement > 0.95, f"Normal mismatch: {description}"
+                assert_allclose(
+                    contacts_analytical["position"][0],
+                    contacts_gjk["position"][0],
+                    tol=POS_TOL,
+                    err_msg=f"Position mismatch: {description}",
+                )
 
 
 @pytest.mark.required
