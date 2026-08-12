@@ -34,7 +34,7 @@ from .utils import redirect_libc_stderr, set_random_seed, get_device
 _IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
 # FIXME: qd.Field does not support zero-copy on Metal for 'torch<=2.9.1'.
 # See: https://github.com/pytorch/pytorch/pull/168193
-_TORCH_MPS_SUPPORT_DLPACK_FIELD = tuple(map(int, torch.__version__.replace("+", ".").split(".")[:3])) > (2, 9, 1)
+_TORCH_MPS_SUPPORT_DLPACK_FIELD = torch.torch_version.TorchVersion(torch.__version__.split("+", 1)[0]) > (2, 9, 1)
 if _IS_OLD_TORCH:
     warn("'torch<2.8.0' is not supported. Please upgrade pytorch manually: https://pytorch.org/get-started/locally/")
 
