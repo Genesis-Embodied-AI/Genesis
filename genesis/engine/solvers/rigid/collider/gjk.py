@@ -263,9 +263,6 @@ def func_gjk_contact(
             do_epa = (not shrink_sphere) and collided and (nsimplex > 0)
 
             if do_epa:
-                # Assume touching
-                gjk_state.distance[i_b] = 0
-
                 # Initialize polytope
                 gjk_state.polytope.nverts[i_b] = 0
                 gjk_state.polytope.nfaces[i_b] = 0
@@ -315,6 +312,10 @@ def func_gjk_contact(
                         rigid_config,
                         collider_static_config,
                     )
+
+                # Assume touching. Zeroed only after the initialization above, whose 2-simplex path rejects a
+                # separated near-miss by reading the distance GJK reported (see func_epa_init_polytope_3d).
+                gjk_state.distance[i_b] = 0
 
                 # Run EPA from the polytope
                 if polytope_flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:
