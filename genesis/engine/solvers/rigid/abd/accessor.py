@@ -9,12 +9,23 @@ These functions are used by the RigidSolver class to interface with the Quadrant
 data structures for rigid body dynamics simulation.
 """
 
+from enum import IntEnum
+
 import quadrants as qd
 
 import genesis as gs
-import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
+import genesis.utils.geom as gu
+
 from .misc import func_apply_link_external_force, func_apply_link_external_torque, func_wakeup_island
+
+
+class ConstraintType(IntEnum):
+    """Which sol_params table a solver-parameter setter targets."""
+
+    GEOM = 0
+    JOINT = 1
+    EQUALITY = 2
 
 
 @qd.kernel(fastcache=True)
@@ -584,12 +595,12 @@ def kernel_set_sol_params(
     rigid_config: qd.template(),
     constraint_type: qd.template(),
 ):
-    if qd.static(constraint_type == 0):  # geometries
+    if qd.static(constraint_type == ConstraintType.GEOM):
         qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
         for i_g_ in range(inputs_idx.shape[0]):
             for j in qd.static(range(7)):
                 dyn_info.geoms.sol_params[inputs_idx[i_g_]][j] = sol_params[i_g_, j]
-    if qd.static(constraint_type == 1):  # joints
+    if qd.static(constraint_type == ConstraintType.JOINT):
         qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
         if qd.static(rigid_config.batch_joints_info):
             for i_j_, i_b_ in qd.ndrange(inputs_idx.shape[0], envs_idx.shape[0]):
@@ -599,7 +610,7 @@ def kernel_set_sol_params(
             for i_j_ in range(inputs_idx.shape[0]):
                 for j in qd.static(range(7)):
                     dyn_info.joints.sol_params[inputs_idx[i_j_]][j] = sol_params[i_j_, j]
-    if qd.static(constraint_type == 2):  # equalities
+    if qd.static(constraint_type == ConstraintType.EQUALITY):
         qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
         for i_eq_, i_b_ in qd.ndrange(inputs_idx.shape[0], envs_idx.shape[0]):
             for j in qd.static(range(7)):

@@ -131,6 +131,7 @@ from .abd.forward_dynamics import (
     update_qvel,
 )
 from .abd.accessor import (
+    ConstraintType,
     kernel_get_state,
     kernel_set_state,
     kernel_set_links_pos,
@@ -213,11 +214,11 @@ IMP_MAX = 0.9999
 TIME_CONSTANT_SAFETY_FACTOR = 2.0
 
 
-def _sanitize_sol_params(sol_params, min_timeconst: float, default_timeconst: float | None = None):
+def _sanitize_sol_params(
+    sol_params, min_timeconst: float, default_timeconst: float | None = None, *, floor_timeconst: bool = True
+):
     timeconst, dampratio, dmin, dmax, width, mid, power = sol_params.reshape((-1, 7)).T
-    if default_timeconst is None:
-        default_timeconst = min_timeconst
-    if (timeconst < gs.EPS).any():
+    if (timeconst < gs.EPS).any() and default_timeconst is not None:
         gs.logger.debug(
             f"Constraint solver time constant not specified. Using default value (`{default_timeconst:0.6g}`)."
         )
@@ -228,8 +229,13 @@ def _sanitize_sol_params(sol_params, min_timeconst: float, default_timeconst: fl
             f"`{min(timeconst[invalid_mask]):0.6g}` to `{min_timeconst:0.6g}`). Decrease simulation timestep or "
             "increase timeconst to avoid altering the original value."
         )
-    timeconst[timeconst < gs.EPS] = default_timeconst
-    timeconst[:] = timeconst.clip(min_timeconst)
+    # An unspecified time constant takes the default, when there is one; a caller that passes none leaves it bare for
+    # the floor to handle. The floor itself may be deferred, which contact assembly does so that it applies to the
+    # mixed value of the two geoms rather than to each of them.
+    if default_timeconst is not None:
+        timeconst[timeconst < gs.EPS] = default_timeconst
+    if floor_timeconst:
+        timeconst[:] = timeconst.clip(min_timeconst)
     if (dampratio < gs.EPS).any():
         gs.raise_exception(
             "Constraint solver `dampratio` must be strictly positive. Despite its name, it controls spring stiffness, "
@@ -803,9 +809,6 @@ class RigidSolver(KinematicSolver):
     def _sanitize_joint_sol_params(self, sol_params):
         return _sanitize_sol_params(sol_params, self._sol_min_timeconst, self._sol_default_timeconst)
 
-    def _sanitize_geom_sol_params(self, sol_params):
-        return _sanitize_sol_params(sol_params, self._sol_min_timeconst, self._sol_default_timeconst)
-
     def _jacobi_mass_spread_bound(self):
         """Upper-bound the spread of the mass matrix diagonal over every configuration, from the model alone.
 
@@ -1237,7 +1240,13 @@ class RigidSolver(KinematicSolver):
         if self.n_geoms > 0:
             geoms = self.geoms
             geoms_sol_params = np.array([geom.sol_params for geom in geoms], dtype=gs.np_float)
-            _sanitize_sol_params(geoms_sol_params, self._sol_min_timeconst, self._sol_default_timeconst)
+            # A geom keeps the time constant the model states; the floor lands on the value a contact mixes out of its
+            # two geoms (see func_set_contact_data), the value the solver actually consumes. Flooring per geom would
+            # raise the mix of a pair that is already above the floor, distorting the stated stiffness with no
+            # stability benefit.
+            _sanitize_sol_params(
+                geoms_sol_params, self._sol_min_timeconst, self._sol_default_timeconst, floor_timeconst=False
+            )
 
             # Accurately compute the center of mass of each geometry if possible.
             # Note that the mean vertex position is a bad approximation, which is impeding the ability of MPR to
@@ -2547,19 +2556,19 @@ class RigidSolver(KinematicSolver):
 
         # Select the right input type
         if eqs_idx is not None:
-            constraint_type = 2
+            constraint_type = ConstraintType.EQUALITY
             idx_name = "eqs_idx"
             inputs_idx = eqs_idx
             inputs_length = self.n_equalities
             batched = True
         elif joints_idx is not None:
-            constraint_type = 1
+            constraint_type = ConstraintType.JOINT
             idx_name = "joints_idx"
             inputs_idx = joints_idx
             inputs_length = self.n_joints
             batched = self._options.batch_joints_info
         else:
-            constraint_type = 0
+            constraint_type = ConstraintType.GEOM
             idx_name = "geoms_idx"
             inputs_idx = geoms_idx
             inputs_length = self.n_geoms
@@ -2569,11 +2578,19 @@ class RigidSolver(KinematicSolver):
         sol_params_, inputs_idx, envs_idx = self._sanitize_io_variables(
             sol_params, inputs_idx, inputs_length, idx_name, envs_idx, (7,), batched=batched, skip_allocation=True
         )
-        sol_params_ = _sanitize_sol_params(sol_params_.clone(), self._sol_min_timeconst)
+        # Geom values resolve an unspecified time constant to the default, then defer the floor to contact
+        # assembly, which floors the mixed pair value (see func_set_contact_data), mirroring the build-time
+        # sanitization; joint and equality values are consumed unmixed, so they are floored here.
+        sol_params_ = _sanitize_sol_params(
+            sol_params_.clone(),
+            self._sol_min_timeconst,
+            self._sol_default_timeconst if constraint_type == ConstraintType.GEOM else None,
+            floor_timeconst=constraint_type != ConstraintType.GEOM,
+        )
         if self.n_envs == 0 and batched:
             sol_params_ = sol_params_[None]
 
-        kernel_set_sol_params(inputs_idx, envs_idx, sol_params_, self.dyn_info, self.rigid_config, constraint_type)
+        kernel_set_sol_params(inputs_idx, envs_idx, sol_params_, self.dyn_info, self.rigid_config, int(constraint_type))
 
     def _set_dofs_info(self, tensor_list, dofs_idx, name, envs_idx=None):
         if gs.use_zerocopy and name in {
