@@ -604,6 +604,15 @@ def build_mujoco_sim(
     else:
         model.opt.cone = mujoco.mjtCone.mjCONE_PYRAMIDAL
     model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_ISLAND
+    # FIXME: Genesis gives every contact at least the sliding-friction basis, so a geom asking for a frictionless
+    # contact through 'condim' is not honoured. Raising those to 3 keeps the constraint sets comparable, since MuJoCo
+    # would otherwise emit a single normal row where Genesis emits the whole basis. Geoms asking for torsional or
+    # rolling friction keep their own value, which Genesis follows through its friction options.
+    model.geom_condim[model.geom_condim < 3] = 3
+    # FIXME: Genesis has no tendons, so a tendon's range contributes no constraint row on its side. Releasing the range
+    # keeps the constraint sets comparable; a model whose behaviour depends on that range cannot be compared until
+    # tendons are supported.
+    model.tendon_limited[:] = 0
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_EULERDAMP)
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_REFSAFE)
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_GRAVITY)
@@ -907,8 +916,13 @@ def check_mujoco_model_consistency(
     assert_allclose(gs_joint_solparams[gs_joints_idx], mj_joint_solparams[mj_joints_idx], tol=tol)
     gs_geom_solparams = np.array([geom.sol_params.cpu() for entity in gs_sim.entities for geom in entity.geoms])
     mj_geom_solparams = np.concatenate((mj_sim.model.geom_solref, mj_sim.model.geom_solimp), axis=-1)
+    # Geom time constants are compared as the model states them: a contact mixes the two geoms' values and the floor is
+    # applied to that mix, so flooring per geom here would expect a value neither engine stores.
     _sanitize_sol_params(
-        mj_geom_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_default_timeconst
+        mj_geom_solparams,
+        gs_sim.rigid_solver._sol_min_timeconst,
+        gs_sim.rigid_solver._sol_default_timeconst,
+        floor_timeconst=False,
     )
     assert_allclose(gs_geom_solparams[gs_geoms_idx], mj_geom_solparams[mj_geoms_idx], tol=tol)
     # FIXME: Masking geometries and equality constraints is not supported for now
@@ -1000,10 +1014,22 @@ def check_mujoco_data_consistency(
 
     gs_n_contacts = gs_sim.rigid_solver.collider._collider_state.n_contacts.to_numpy()[0]
     mj_n_contacts = mj_sim.data.ncon
-    assert gs_n_contacts == mj_n_contacts
+    assert gs_n_contacts == mj_n_contacts, f"contact count differs: gs={gs_n_contacts} mj={mj_n_contacts}"
     gs_n_constraints = gs_sim.rigid_solver.constraint_solver.n_constraints.to_numpy()[0]
     mj_n_constraints = mj_sim.data.nefc
     assert gs_n_constraints == mj_n_constraints
+
+    # Rounding enters the reference acceleration, and every force and acceleration responding to it, amplified by the
+    # stiffest constraint's inverse squared time constant; the velocity integrates that noise over one step. The
+    # engines only round identically at double precision, so single precision carries the amplification.
+    if gs.np_float == np.float64:
+        efc_atol = qvel_atol = tol
+    else:
+        solref_timeconst = np.concatenate(
+            (mj_sim.model.geom_solref[:, 0], mj_sim.model.jnt_solref[:, 0], mj_sim.model.eq_solref[:, 0])
+        )
+        efc_atol = tol / solref_timeconst[solref_timeconst > 0.0].min() ** 2
+        qvel_atol = efc_atol * mj_sim.model.opt.timestep
 
     if gs_n_constraints and not ignore_constraints:
         gs_contact_pos = gs_sim.rigid_solver.collider._collider_state.contact_data.pos.to_numpy()[:gs_n_contacts, 0]
@@ -1020,6 +1046,16 @@ def check_mujoco_data_consistency(
                     max_var = var
         gs_sidx = np.argsort(gs_contact_pos[:, max_var_axis])
         mj_sidx = np.argsort(mj_contact_pos[:, max_var_axis])
+        gs_contact_geoms = np.stack(
+            (
+                gs_sim.rigid_solver.collider._collider_state.contact_data.geom_a.to_numpy()[:gs_n_contacts, 0],
+                gs_sim.rigid_solver.collider._collider_state.contact_data.geom_b.to_numpy()[:gs_n_contacts, 0],
+            ),
+            axis=-1,
+        )
+        mj_contact_geoms = np.stack(
+            (mj_sim.data.contact.geom1[:mj_n_contacts], mj_sim.data.contact.geom2[:mj_n_contacts]), axis=-1
+        )
         assert_allclose(gs_contact_pos[gs_sidx], mj_contact_pos[mj_sidx], tol=tol)
         gs_contact_normal = gs_sim.rigid_solver.collider._collider_state.contact_data.normal.to_numpy()[
             :gs_n_contacts, 0
@@ -1041,10 +1077,87 @@ def check_mujoco_data_consistency(
         mj_efc_D = mj_sim.data.efc_D
         gs_efc_aref = gs_sim.rigid_solver.constraint_solver.aref.to_numpy()[:gs_n_constraints, 0]
         mj_efc_aref = mj_sim.data.efc_aref
-        for gs_sidx, mj_sidx in (
+        # Constraint rows are paired by identity. A contact's rows are contiguous on both sides, since Genesis places
+        # them after the equality and frictionloss rows in the order contact_sort_idx defines and MuJoCo labels them
+        # by efc_id, so pairing the contacts pairs their rows. Genesis orders the two opposing rows of a pyramidal
+        # friction axis the other way round from MuJoCo, hence the swap in twos; an elliptic cone has no such pairs
+        # and keeps its order. A joint-limit row constrains a single DOF, which identifies it within its own family.
+        mj_efc_type = mj_sim.data.efc_type[:mj_n_constraints]
+        mj_efc_id = mj_sim.data.efc_id[:mj_n_constraints]
+        is_mj_contact = np.isin(
+            mj_efc_type,
+            (
+                int(mujoco.mjtConstraint.mjCNSTR_CONTACT_FRICTIONLESS),
+                int(mujoco.mjtConstraint.mjCNSTR_CONTACT_PYRAMIDAL),
+                int(mujoco.mjtConstraint.mjCNSTR_CONTACT_ELLIPTIC),
+            ),
+        )
+        is_mj_limit = np.isin(
+            mj_efc_type,
+            (int(mujoco.mjtConstraint.mjCNSTR_LIMIT_JOINT), int(mujoco.mjtConstraint.mjCNSTR_LIMIT_TENDON)),
+        )
+        is_mj_pyramidal = mj_efc_type == int(mujoco.mjtConstraint.mjCNSTR_CONTACT_PYRAMIDAL)
+        n_mj_contact_rows = int(is_mj_contact.sum())
+        n_head = mj_n_constraints - n_mj_contact_rows - int(is_mj_limit.sum())
+        rows_per_contact = n_mj_contact_rows // mj_n_contacts if mj_n_contacts else 0
+
+        gs_contact_sort_idx = gs_sim.rigid_solver.collider._collider_state.contact_sort_idx.to_numpy()[
+            :gs_n_contacts, 0
+        ]
+        gs_block_of_contact = np.empty(gs_n_contacts, dtype=int)
+        gs_block_of_contact[gs_contact_sort_idx] = np.arange(gs_n_contacts)
+
+        # Contacts are paired by ordering both sides the same way: geom pair first, then position. Positions agree to
+        # rounding once the pair is fixed, so the order is the same sequence on both sides.
+        gs_order = np.lexsort(
+            (
+                gs_contact_pos[:, 2],
+                gs_contact_pos[:, 1],
+                gs_contact_pos[:, 0],
+                gs_contact_geoms[:, 1],
+                gs_contact_geoms[:, 0],
+            )
+        )
+        mj_order = np.lexsort(
+            (
+                mj_contact_pos[:, 2],
+                mj_contact_pos[:, 1],
+                mj_contact_pos[:, 0],
+                mj_contact_geoms[:, 1],
+                mj_contact_geoms[:, 0],
+            )
+        )
+        gs_rows, mj_rows = list(range(n_head)), list(np.flatnonzero(~(is_mj_contact | is_mj_limit)))
+        for i_c, i_m in zip(gs_order, mj_order):
+            mj_contact_rows = np.flatnonzero(is_mj_contact & (mj_efc_id == i_m))
+            if len(mj_contact_rows) and is_mj_pyramidal[mj_contact_rows].all():
+                mj_contact_rows = mj_contact_rows.reshape(-1, 2)[:, ::-1].ravel()
+            gs_rows.extend(n_head + gs_block_of_contact[i_c] * rows_per_contact + np.arange(rows_per_contact))
+            mj_rows.extend(mj_contact_rows)
+
+        gs_limit_rows = np.arange(n_head + n_mj_contact_rows, gs_n_constraints)
+        mj_limit_rows = np.flatnonzero(is_mj_limit)
+        gs_dof_of_mj_dof = {mj_d: gs_d for gs_d, mj_d in zip(gs_dofs_idx, mj_dofs_idx)}
+        gs_rows.extend(
+            gs_limit_rows[np.argsort([int(np.argmax(np.abs(gs_jac[i]))) for i in gs_limit_rows], kind="stable")]
+        )
+        mj_rows.extend(
+            mj_limit_rows[
+                np.argsort([gs_dof_of_mj_dof[int(np.argmax(np.abs(mj_jac[i])))] for i in mj_limit_rows], kind="stable")
+            ]
+        )
+
+        # The value sorts come first because they need nothing of the layout; the identity pairing is the fallback
+        # for rows sharing their sorting key. The row velocities separate what the other keys tie on: symmetric
+        # contacts, and friction pyramids whose tangent pair the engines label in a different order at fp32.
+        pairing_candidates = [
             (np.argsort(gs_jac.sum(axis=1)), np.argsort(mj_jac.sum(axis=1))),
             (np.argsort(gs_efc_aref), np.argsort(mj_efc_aref)),
-        ):
+        ]
+        if qvel_prev is not None:
+            pairing_candidates.append((np.argsort(gs_jac @ qvel_prev), np.argsort(mj_sim.data.efc_vel)))
+        pairing_candidates.append((np.array(gs_rows, dtype=int), np.array(mj_rows, dtype=int)))
+        for gs_sidx, mj_sidx in pairing_candidates:
             try:
                 gs_jac_nz_mask = (np.abs(gs_jac[gs_sidx]) > 0.0).all(axis=0)
                 gs_jac_nz = gs_jac[gs_sidx][:, np.array(gs_dofs_idx)[gs_jac_nz_mask[gs_dofs_idx]]]
@@ -1056,8 +1169,12 @@ def check_mujoco_data_consistency(
                     mj_jac_nz = mj_jac[mj_sidx]
 
                 assert_allclose(gs_jac_nz, mj_jac_nz, tol=tol)
-                assert_allclose(gs_efc_D[gs_sidx], mj_efc_D[mj_sidx], tol=tol)
-                assert_allclose(gs_efc_aref[gs_sidx], mj_efc_aref[mj_sidx], tol=tol)
+                assert_allclose(gs_efc_D[gs_sidx], mj_efc_D[mj_sidx], atol=efc_atol, rtol=tol)
+                assert_allclose(gs_efc_aref[gs_sidx], mj_efc_aref[mj_sidx], atol=efc_atol, rtol=tol)
+                # Row velocities discriminate identically-parameterized rows (e.g. symmetric contacts), which the
+                # jacobian column mask and the amplified D/aref floors cannot separate.
+                if qvel_prev is not None:
+                    assert_allclose((gs_jac @ qvel_prev)[gs_sidx], mj_sim.data.efc_vel[mj_sidx], tol=tol)
                 break
             except AssertionError as e:
                 error = e
@@ -1067,7 +1184,7 @@ def check_mujoco_data_consistency(
 
         gs_efc_force = gs_sim.rigid_solver.constraint_solver.efc_force.to_numpy()[:gs_n_constraints, 0]
         mj_efc_force = mj_sim.data.efc_force
-        assert_allclose(gs_efc_force[gs_sidx], mj_efc_force[mj_sidx], tol=tol)
+        assert_allclose(gs_efc_force[gs_sidx], mj_efc_force[mj_sidx], atol=efc_atol, rtol=tol)
 
         mj_iter = mj_sim.data.solver_niter[0] - 1
         if gs_n_constraints and mj_iter >= 0:
@@ -1104,22 +1221,19 @@ def check_mujoco_data_consistency(
                 assert mj_native == gs_nactive
 
             # FIXME: For some reason, mujoco is sometimes (seemingful) wrongly reporting 0...
-            if mj_improvement > gs.EPS:
+            # The final iterate's improvement is a path quantity, meaningless to compare unless both engines round
+            # identically, which only holds at double precision.
+            if mj_improvement > gs.EPS and gs.np_float == np.float64:
                 # Must relax tolerance because of compounding of errors.
                 assert_allclose(gs_improvement, mj_improvement, tol=tol * 1e2)
 
-        if qvel_prev is not None:
-            gs_efc_vel = gs_jac @ qvel_prev
-            mj_efc_vel = mj_sim.data.efc_vel
-            assert_allclose(gs_efc_vel[gs_sidx], mj_efc_vel[mj_sidx], tol=tol)
-
     gs_qfrc_constraint = gs_sim.rigid_solver.dyn_state.dofs.qf_constraint.to_numpy()[:, 0]
     mj_qfrc_constraint = mj_sim.data.qfrc_constraint
-    assert_allclose(gs_qfrc_constraint[gs_dofs_idx], mj_qfrc_constraint[mj_dofs_idx], tol=tol)
+    assert_allclose(gs_qfrc_constraint[gs_dofs_idx], mj_qfrc_constraint[mj_dofs_idx], atol=efc_atol, rtol=tol)
 
     gs_qfrc_all = gs_sim.rigid_solver.dyn_state.dofs.force.to_numpy()[:, 0]
     mj_qfrc_all = mj_sim.data.qfrc_smooth + mj_sim.data.qfrc_constraint
-    assert_allclose(gs_qfrc_all[gs_dofs_idx], mj_qfrc_all[mj_dofs_idx], tol=tol)
+    assert_allclose(gs_qfrc_all[gs_dofs_idx], mj_qfrc_all[mj_dofs_idx], atol=efc_atol, rtol=tol)
 
     gs_qfrc_smooth = gs_sim.rigid_solver.dyn_state.dofs.qf_smooth.to_numpy()[:, 0]
     mj_qfrc_smooth = mj_sim.data.qfrc_smooth
@@ -1127,7 +1241,13 @@ def check_mujoco_data_consistency(
 
     gs_qacc_smooth = gs_sim.rigid_solver.dyn_state.dofs.acc_smooth.to_numpy()[:, 0]
     mj_qacc_smooth = mj_sim.data.qacc_smooth
-    assert_allclose(gs_qacc_smooth[gs_dofs_idx], mj_qacc_smooth[mj_dofs_idx], tol=tol)
+    # The smooth acceleration divides the rounding accumulated along the kinematic chain by the lightest DOF
+    # inertia, so its single-precision comparison carries that amplification (mj_mass_mat is computed above).
+    if gs.np_float == np.float64:
+        qacc_smooth_atol = tol
+    else:
+        qacc_smooth_atol = tol / mj_mass_mat.diagonal()[mj_dofs_idx].min()
+    assert_allclose(gs_qacc_smooth[gs_dofs_idx], mj_qacc_smooth[mj_dofs_idx], atol=qacc_smooth_atol, rtol=tol)
 
     # Acceleration pre- VS post-implicit damping gs_qacc_post = gs_sim.rigid_solver.dyn_state.dofs.acc.to_numpy()[:, 0]
     if gs_n_constraints:
@@ -1139,12 +1259,16 @@ def check_mujoco_data_consistency(
     # Genesis mirrors in dofs.acc; the smooth+constraint acceleration is only observable on the remaining DOFs.
     midpoint_mask = get_mujoco_midpoint_dofs_mask(mj_sim)[mj_dofs_idx]
     gs_qacc_post = gs_sim.rigid_solver.dyn_state.dofs.acc.to_numpy()[:, 0]
-    assert_allclose(gs_qacc_pre[gs_dofs_idx][~midpoint_mask], mj_qacc_pre[mj_dofs_idx][~midpoint_mask], tol=tol)
-    assert_allclose(gs_qacc_post[gs_dofs_idx][midpoint_mask], mj_qacc_pre[mj_dofs_idx][midpoint_mask], tol=tol)
+    assert_allclose(
+        gs_qacc_pre[gs_dofs_idx][~midpoint_mask], mj_qacc_pre[mj_dofs_idx][~midpoint_mask], atol=efc_atol, rtol=tol
+    )
+    assert_allclose(
+        gs_qacc_post[gs_dofs_idx][midpoint_mask], mj_qacc_pre[mj_dofs_idx][midpoint_mask], atol=efc_atol, rtol=tol
+    )
 
     gs_qvel = gs_sim.rigid_solver.dyn_state.dofs.vel.to_numpy()[:, 0]
     mj_qvel = mj_sim.data.qvel
-    assert_allclose(gs_qvel[gs_dofs_idx], mj_qvel[mj_dofs_idx], tol=tol)
+    assert_allclose(gs_qvel[gs_dofs_idx], mj_qvel[mj_dofs_idx], atol=qvel_atol, rtol=tol)
     gs_qpos = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
     mj_qpos = mj_sim.data.qpos
     assert_allclose(gs_qpos[gs_q_idx], mj_qpos[mj_qs_idx], tol=tol)

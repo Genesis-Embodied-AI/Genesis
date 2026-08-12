@@ -10,6 +10,9 @@ from genesis.utils.misc import get_assets_dir
 
 @pytest.fixture
 def xml_path(request, tmp_path, model_name):
+    # An asset-relative path passes through to the asset resolver; a bare name is the fixture generating the model.
+    if "/" in model_name:
+        return model_name
     mjcf = request.getfixturevalue(model_name)
     xml_tree = ET.ElementTree(mjcf)
     file_name = f"{model_name}.urdf" if mjcf.tag == "robot" else f"{model_name}.xml"
@@ -61,6 +64,44 @@ def sphere_plane_spin():
     """Generate an MJCF model for a sphere spinning in place on a plane, with torsional friction (condim=4)."""
     mjcf = _build_plane_contact_model("sphere_plane_spin", condim="4", friction="1. 0.005 0.", plane_size="10. 10. 10.")
     _add_free_body(mjcf, name="sphere", geom_type="sphere", geom_size="0.1", pos="0. 0. 0.1")
+    return mjcf
+
+
+@pytest.fixture(scope="session")
+def humanoid_ball_floor():
+    """The humanoid model with its floor plane swapped for a large sphere. The reference engine resolves plane-capsule
+    pairs with a dedicated primitive whose analytic second cap contact the perturbation-based multi-contact cannot
+    place exactly, and any flat floor leaves a lying capsule's contact position degenerate along its axis; the
+    sphere-capsule pair is a single-contact analytic primitive in both engines and its curvature keeps the closest
+    point unique."""
+    mjcf = ET.parse(os.path.join(get_assets_dir(), "xml/humanoid.xml")).getroot()
+    floor = mjcf.find(".//worldbody/geom[@name='floor']")
+    # The sphere top sits a hair above the plane it replaces, turning the model's exact-touch rest pose into a real
+    # penetration that both engines detect from the first step. The radius keeps the floor locally flat while holding
+    # the contact coordinates near unit magnitude, where single precision still resolves them finely.
+    floor.attrib.update(type="sphere", size="5", pos="0 0 -4.9999999")
+    return mjcf
+
+
+@pytest.fixture(scope="session")
+def tet_meshball():
+    """Generate an MJCF model of three icosphere meshes falling onto a fixed tetrahedron mesh, with both meshes
+    embedded as procedural vertex lists so the two engines consume identical geometry."""
+    ball = trimesh.creation.icosphere(subdivisions=1, radius=0.1)
+    mjcf = ET.Element("mujoco", model="tet_meshball")
+    ET.SubElement(mjcf, "option", gravity="0 0 -9.81")
+    default = ET.SubElement(mjcf, "default")
+    ET.SubElement(default, "joint", damping="0.05")
+    ET.SubElement(default, "geom", friction="1 0.005 0.0001", density="500")
+    asset = ET.SubElement(mjcf, "asset")
+    ET.SubElement(asset, "mesh", name="tet", vertex="1 1 1 -1 1 -1 -1 -1 1 1 -1 -1")
+    ET.SubElement(asset, "mesh", name="icosphere", vertex=" ".join(str(c) for v in ball.vertices for c in v))
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    ET.SubElement(worldbody, "geom", name="tet", type="mesh", mesh="tet")
+    for i, pos in enumerate(("0 0 1.2", "0.3 0 1.2", "0.3 0.29 1.2")):
+        body = ET.SubElement(worldbody, "body", name=f"ball{i + 1}", pos=pos)
+        ET.SubElement(body, "joint", name=f"root{i + 1}", type="free")
+        ET.SubElement(body, "geom", name=f"ball{i + 1}_geom", type="mesh", mesh="icosphere")
     return mjcf
 
 
