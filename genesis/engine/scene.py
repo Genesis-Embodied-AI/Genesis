@@ -868,7 +868,6 @@ class Scene(RBC):
         env_spacing=(0.0, 0.0),
         n_envs_per_row: int | None = None,
         center_envs_at_origin=True,
-        compile_kernels=None,
     ):
         """
         Builds the scene once all entities have been added. This operation is required before running the simulation.
@@ -886,12 +885,7 @@ class Scene(RBC):
             The number of environments per row for visualization. If None, it will be set to `sqrt(n_envs)`.
         center_envs_at_origin : bool
             Whether to put the center of all the environments at the origin (for visualization only).
-        compile_kernels : bool, optional
-            This parameter is deprecated and will be removed in future release.
         """
-        if compile_kernels is not None:
-            warn_once("`compile_kernels` is deprecated and will be removed in future release.")
-            compile_kernels = True
 
         # Start tracking the scene right away, so that destroy is called even if some error fires during build
         def _destroy_callback(scene_ref: weakref.ReferenceType["Scene"]):
