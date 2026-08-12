@@ -1,12 +1,14 @@
 import math
 from typing import TYPE_CHECKING
 
-import quadrants as qd
 import numpy as np
 
+import quadrants as qd
+
 import genesis as gs
-import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
+import genesis.utils.geom as gu
+
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
@@ -134,15 +136,31 @@ def _kernel_init_support(
 
 @qd.func
 def _func_support_world(
-    i_g, d, pos: qd.types.vector(3), quat: qd.types.vector(4), collider_info: array_class.ColliderInfo
+    i_g,
+    d,
+    pos: qd.types.vector(3),
+    quat: qd.types.vector(4),
+    dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
+    exhaustive: qd.template() = False,
 ):
-    """
-    support position for a world direction
-    """
+    """Support position for a world direction.
 
-    d_mesh = gu.qd_transform_by_quat_fast(d, gu.qd_inv_quat(quat))
-    v_, vid = _func_support_mesh(i_g, d_mesh, collider_info)
-    v = gu.qd_transform_by_trans_quat_fast(v_, pos, quat)
+    The vertex comes from the precomputed support table, or from an exhaustive scan of the mesh vertices when
+    'exhaustive' is set: the sampled table is approximate and may return a different vertex of a tied flat face,
+    while the scan is exact at a cost linear in the vertex count.
+    """
+    v = qd.Vector.zero(gs.qd_float, 3)
+    v_ = qd.Vector.zero(gs.qd_float, 3)
+    vid = 0
+    if qd.static(exhaustive):
+        d_mesh = gu.qd_transform_by_quat(d, gu.qd_inv_quat(quat))
+        v_, vid = _func_support_mesh_exhaustive(i_g, d_mesh, dyn_info)
+        v = gu.qd_transform_by_trans_quat(v_, pos, quat)
+    else:
+        d_mesh = gu.qd_transform_by_quat_fast(d, gu.qd_inv_quat(quat))
+        v_, vid = _func_support_mesh(i_g, d_mesh, collider_info)
+        v = gu.qd_transform_by_trans_quat_fast(v_, pos, quat)
     return v, v_, vid
 
 
@@ -208,6 +226,20 @@ def _func_support_mesh(i_g, d_mesh, collider_info: array_class.ColliderInfo):
             vid = _vid
 
     return v, vid
+
+
+@qd.func
+def _func_support_mesh_exhaustive(i_g, d_mesh, dyn_info: array_class.DynInfo):
+    """Support vertex by exhaustive scan in the mesh frame, the first maximum winning, like the scan the reference
+    engine's fallback collision pipeline runs below its hill-climb threshold."""
+    dot_max = gs.qd_float(-1e20)
+    i_max = dyn_info.geoms.vert_start[i_g]
+    for i_v in range(dyn_info.geoms.vert_start[i_g], dyn_info.geoms.vert_end[i_g]):
+        vdot = d_mesh.dot(dyn_info.verts.init_pos[i_v])
+        if vdot > dot_max:
+            dot_max = vdot
+            i_max = i_v
+    return dyn_info.verts.init_pos[i_max], i_max
 
 
 @qd.func

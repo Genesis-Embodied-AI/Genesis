@@ -318,6 +318,7 @@ def func_add_contact(
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
     use_atomic: qd.template(),
     errno: qd.Tensor,
@@ -340,6 +341,7 @@ def func_add_contact(
             dyn_state,
             collider_state,
             dyn_info,
+            rigid_info,
             collider_info,
             errno,
         )
@@ -363,6 +365,7 @@ def func_set_contact(
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
     errno: qd.Tensor,
 ):
@@ -395,9 +398,11 @@ def func_set_contact(
     collider_state.contact_data.friction[i_c, i_b] = qd.max(qd.max(friction_a, friction_b), 1e-2)
     collider_state.contact_data.friction_torsional[i_c, i_b] = qd.max(friction_torsional_a, friction_torsional_b)
     collider_state.contact_data.friction_rolling[i_c, i_b] = qd.max(friction_rolling_a, friction_rolling_b)
-    collider_state.contact_data.sol_params[i_c, i_b] = 0.5 * (
-        dyn_info.geoms.sol_params[i_ga] + dyn_info.geoms.sol_params[i_gb]
-    )
+    # The constraint time constant is floored on the mixed value rather than on each geom's own (see the geom
+    # sanitize site in rigid_solver.py); 2.0 is TIME_CONSTANT_SAFETY_FACTOR (rigid_solver.py).
+    sol_params = 0.5 * (dyn_info.geoms.sol_params[i_ga] + dyn_info.geoms.sol_params[i_gb])
+    sol_params[0] = qd.max(sol_params[0], 2.0 * rigid_info.substep_dt[None])
+    collider_state.contact_data.sol_params[i_c, i_b] = sol_params
     collider_state.contact_data.link_a[i_c, i_b] = dyn_info.geoms.link_idx[i_ga]
     collider_state.contact_data.link_b[i_c, i_b] = dyn_info.geoms.link_idx[i_gb]
     collider_state.contact_data.pair_idx[i_c, i_b] = i_pair

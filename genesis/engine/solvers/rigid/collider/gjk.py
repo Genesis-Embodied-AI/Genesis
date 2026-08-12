@@ -39,10 +39,23 @@ class GJK:
         self._solver = rigid_solver
 
         # Initialize static configuration.
-        # MuJoCo's multi-contact detection algorithm is disabled by default, because it is often less stable than the
-        # other multi-contact detection algorithm. However, we keep the code here for compatibility with MuJoCo and for
-        # possible future use.
-        enable_mujoco_multi_contact = False
+        # The contact patch (polygon clipping over the touching faces) skips perturbation whenever it ran (see
+        # multi_contact_flag). It defaults on under MuJoCo compatibility with GJK because the reference engine builds
+        # its manifolds that way inside its GJK/EPA and runs its perturbation scheme only in its legacy fallback
+        # pipeline, which the MPR compatibility pipeline mirrors. It defaults off otherwise, as the perturbation-based
+        # detection is more reliable on marginal manifolds (see enable_contact_patch in RigidOptions).
+        enable_contact_patch = rigid_solver._options.enable_contact_patch
+        if enable_contact_patch is None:
+            enable_contact_patch = (
+                rigid_solver._enable_mujoco_compatibility
+                and rigid_solver._options.use_gjk_collision
+                and rigid_solver._enable_multi_contact
+            )
+        elif enable_contact_patch:
+            if not rigid_solver._options.use_gjk_collision:
+                gs.raise_exception("'enable_contact_patch' requires 'use_gjk_collision'.")
+            if not rigid_solver._enable_multi_contact:
+                gs.raise_exception("'enable_contact_patch' requires 'enable_multi_contact'.")
         gjk_max_iterations = 50
         epa_max_iterations = 50
         # 6 * epa_max_iterations is the maximum number of faces in the polytope.
@@ -52,7 +65,7 @@ class GJK:
             # For differentiable contact detection, we find multiple contact points for each pair.
             max_contacts_per_pair = 20
             max_contact_polygon_verts = 1
-        elif enable_mujoco_multi_contact:
+        elif enable_contact_patch:
             # The maximum number of contacts per pair is related to the maximum number of contact manifold vertices.
             # MuJoCo sets [max_contacts_per_pair] to 50 and [max_contact_polygon_verts] to 150, when it uses
             # multi-contact detection algorithm, assuming that the faces could have more than 4 vertices. However, we
@@ -64,7 +77,7 @@ class GJK:
             max_contacts_per_pair = 1
             max_contact_polygon_verts = 1
 
-        self._gjk_static_config = array_class.GJKStaticConfig(enable_mujoco_multi_contact=enable_mujoco_multi_contact)
+        self._gjk_static_config = array_class.GJKStaticConfig(enable_contact_patch=enable_contact_patch)
 
         # Initialize GJK info
         self._gjk_info = array_class.get_gjk_info(
@@ -322,11 +335,8 @@ def func_gjk_contact(
                     )
                     gjk_state.nearest_face[i_b] = i_f
 
-                    if qd.static(gjk_static_config.enable_mujoco_multi_contact):
-                        # To use MuJoCo's multi-contact detection algorithm,
-                        # (1) [i_f] should be a valid face index in the polytope (>= 0),
-                        # (2) Both of the geometries should be discrete,
-                        # (3) [enable_mujoco_multi_contact] should be True. Default to False.
+                    if qd.static(gjk_static_config.enable_contact_patch):
+                        # The patch needs a valid nearest polytope face and two discrete geometries to clip.
                         if i_f >= 0 and func_is_discrete_geoms(i_ga, i_gb, dyn_info):
                             func_multi_contact(
                                 i_ga, i_gb, i_b, i_f, pos_a, quat_a, pos_b, quat_b, gjk_state, dyn_info, collider_info
@@ -376,6 +386,15 @@ def func_gjk_contact(
                 rigid_config,
                 collider_static_config,
             )
+
+            if qd.static(gjk_static_config.enable_contact_patch):
+                # The patch needs a valid nearest polytope face and two discrete geometries to clip.
+                i_f = gjk_state.nearest_face[i_b]
+                if i_f >= 0 and func_is_discrete_geoms(i_ga, i_gb, dyn_info):
+                    func_multi_contact(
+                        i_ga, i_gb, i_b, i_f, pos_a, quat_a, pos_b, quat_b, gjk_state, dyn_info, collider_info
+                    )
+                    gjk_state.multi_contact_flag[i_b] = True
 
     # Compute the final contact points and normals
     n_contacts = 0

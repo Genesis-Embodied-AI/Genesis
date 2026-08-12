@@ -744,7 +744,7 @@ def test_convexify(euler, show_viewer, gjk_collision):
         obj = scene.add_entity(
             gs.morphs.MJCF(
                 file=f"{asset_path}/{asset_name}/{xml_file}",
-                pos=(OBJ_OFFSET_X * (1.5 - i), OBJ_OFFSET_Y * (i - 1.5), 0.4),
+                pos=(OBJ_OFFSET_X * (1.5 - i), OBJ_OFFSET_Y * (i - 1.5), 0.1 if euler == (90, 0, 90) else 0.4),
             ),
             vis_mode="collision",
             visualize_contact=True,

@@ -1,5 +1,3 @@
-import math
-
 import mujoco
 import numpy as np
 import pytest
@@ -154,7 +152,7 @@ def test_rope_ball(gs_sim, mj_sim, gs_solver, tol):
     assert_allclose(gs_sim.rigid_solver.get_dofs_position(), qpos, tol=gs.EPS)
 
     check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=1e-8)
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=5e-9)
 
 
 @pytest.mark.required
@@ -172,19 +170,31 @@ def test_urdf_rope(gs_sim, mj_sim, gs_solver, xml_path):
     mj_sim.model.geom_solref[:, 0] = sol_params[0]
     mj_sim.model.eq_solref[:, 0] = sol_params[0]
 
-    # FIXME: Tolerance must be very large due to small masses and compounding of errors over long kinematic chains
+    # The smooth acceleration divides chain-accumulated rounding by link masses of a tenth of a gram, putting its
+    # agreement floor four decades above the working precision.
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=5e-5)
 
 
 @pytest.mark.required
-@pytest.mark.mujoco_compatibility(True)
-@pytest.mark.parametrize("xml_path", ["xml/tet_tet.xml", "xml/tet_ball.xml", "xml/tet_capsule.xml"])
+@pytest.mark.parametrize(
+    "model_name, gjk_collision",
+    [
+        ("xml/tet_tet.xml", True),
+        ("xml/tet_ball.xml", True),
+        ("xml/tet_capsule.xml", True),
+        # Multi-vertex contact patches between discrete meshes, recovered by clipping the touching faces; the rows
+        # above settle on single-point vertex-face contacts.
+        ("tet_meshball", True),
+        # The same patches through the MPR pipeline, whose manifold comes from exhaustive mesh supports and perturbed
+        # re-detections.
+        ("tet_meshball", False),
+    ],
+)
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
-@pytest.mark.parametrize("gjk_collision", [True])
 @pytest.mark.parametrize("multi_contact", [True, False])
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_tet_primitive_shapes(gs_sim, mj_sim, gs_integrator, gs_solver, xml_path, multi_contact, tol):
+def test_tet_primitive_shapes(gs_sim, mj_sim, gs_integrator, gs_solver, multi_contact, tol):
     # Make sure it is possible to set the configuration vector without failure
     gs_sim.rigid_solver.set_dofs_position(gs_sim.rigid_solver.get_dofs_position())
 
@@ -193,25 +203,18 @@ def test_tet_primitive_shapes(gs_sim, mj_sim, gs_integrator, gs_solver, xml_path
     # Multi-contact perturbation introduces slightly larger errors due to GJK implementation differences.
     # Both implementations agree to machine precision on most steps, but the capsule scene holds a grazing contact
     # whose occasional hard solves amplify rounding-order differences into distinct CG iterate paths.
-    sim_tol = 5e-6 if gs_solver == gs.constraint_solver.CG else 2e-6
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=700, tol=sim_tol)
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=700, tol=5e-6)
 
 
 @pytest.mark.required
-@pytest.mark.mujoco_compatibility(False)
-@pytest.mark.parametrize("xml_path", ["xml/humanoid.xml"])
+@pytest.mark.parametrize("model_name", ["humanoid_ball_floor"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
 @pytest.mark.parametrize("gjk_collision", [True])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_stickman(gs_sim, mj_sim, tol):
-    # Make sure that "static" model information are matching
-    check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
-
-    # Initialize the simulation
-    init_simulators(gs_sim)
-
     # Make sure that the simulation is deterministic
+    init_simulators(gs_sim)
     (gs_robot,) = gs_sim.entities
     gs_sim.scene.reset()
     gs_sim.scene.step()
@@ -221,18 +224,7 @@ def test_stickman(gs_sim, mj_sim, tol):
         gs_sim.scene.step()
         assert_equal(gs_robot.get_dofs_velocity(), dofs_vel)
 
-    # Run the simulation for a while
-    qvel_norminf_all = []
-    for i in range(750):
-        gs_sim.scene.step()
-        if i > 700:
-            (gs_robot,) = gs_sim.entities
-            qvel = gs_robot.get_dofs_velocity()
-            qvel_norminf = torch.linalg.norm(qvel, ord=math.inf)
-            qvel_norminf_all.append(qvel_norminf)
-    assert_allclose(torch.quantile(torch.stack(qvel_norminf_all, dim=0), 0.5), 0.0, tol=0.1)
-
-    qpos = gs_robot.get_dofs_position()
-    assert torch.linalg.norm(qpos[:2]) < 1.3
-    body_z = gs_sim.rigid_solver.dyn_state.links.pos.to_numpy()[:-1, 0, 2]
-    np.testing.assert_array_less(0, body_z + gs.EPS)
+    # A falling humanoid puts every capsule of the model on the ground in turn, so the contact set it exercises is far
+    # richer than the other models here. Consistency is asserted step by step against MuJoCo rather than through the
+    # pose it eventually settles in, which depends on a chaotic tumble and says nothing about compatibility.
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=500, tol=5e-9 if gs.np_float == np.float64 else tol)

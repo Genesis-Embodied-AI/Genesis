@@ -948,6 +948,10 @@ def _add_collision_constraints_per_contact(
                             constraint_state.efc_D[n_con, i_b] = 0.0
                     continue
 
+            # FIXME: The reference engine anchors the tangent frame of a plane-capsule contact to the capsule axis,
+            # while this frame comes from the normal alone, so the friction rows of plane-capsule pairs do not match
+            # it. Anchoring the frame would make the rows depend on the capsule quaternion, whose adjoint the manual
+            # backward pass (kernel_manual_add_collision_constraints_bw) must then derive by hand.
             d1, d2 = gu.qd_orthogonals(contact_data_normal)
 
             invweight = dyn_info.links.invweight[link_a_maybe_batch][0]
@@ -6393,6 +6397,39 @@ def func_update_gradient(
 
 
 @qd.func
+def func_certify_converged_batch(
+    i_b, constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
+):
+    """Certify a warm-started solve as already converged, before its first linesearch.
+
+    The predicted next-step descent 0.5 * grad . Mgrad evaluated on the seed point is the same exit measure the
+    iteration loop applies (see func_terminate_or_update_descent_batch); a seed that already satisfies it solves in
+    zero iterations, keeping the warm-start acceleration. For CG the measure is the duality gap in the mass norm,
+    which bounds the cost suboptimality on its own; a Newton exit also requires the gradient criterion, since the gap
+    leaves force errors growing with the constraint stiffness that Newton solutions are expected to resolve. Under
+    'signorini' the loop exit demands that same joint criterion for both solvers, since the latched radii regenerate
+    the cost every iteration, so the certificate mirrors it there too.
+    """
+    n_dofs = constraint_state.jac.shape[1]
+    # Thresholds quoted as in func_terminate_or_update_descent_batch.
+    tolerance_scaled = rigid_info.meaninertia[i_b] * qd.max(1, n_dofs) * rigid_info.tolerance[None]
+    descent = gs.qd_float(0.0)
+    for i_d in range(n_dofs):
+        descent = descent + constraint_state.grad[i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
+    decrement = qd.max(0.5 * descent, 0.0)
+    if qd.static(rigid_config.solver_type == gs.constraint_solver.Newton or rigid_config.enable_signorini_contact):
+        grad_norm = gs.qd_float(0.0)
+        for i_d in range(n_dofs):
+            grad_norm = grad_norm + constraint_state.grad[i_d, i_b] ** 2
+        grad_norm = qd.sqrt(grad_norm)
+        if grad_norm <= tolerance_scaled and decrement < tolerance_scaled:
+            constraint_state.improved[i_b] = False
+    else:
+        if decrement < tolerance_scaled:
+            constraint_state.improved[i_b] = False
+
+
+@qd.func
 def func_terminate_or_update_descent_batch(
     i_b, constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
 ):
@@ -6582,6 +6619,19 @@ def func_solve_init(
     _B = dyn_state.dofs.acc_smooth.shape[1]
     n_dofs = dyn_state.dofs.acc_smooth.shape[0]
 
+    # The one arm whose factor, gradient and convergence certificate are all seeded inside its own body (see
+    # _kernel_solve_monolith) rather than here: the GPU per-island monolith with the cooperative kernels off
+    # self-inits per env, so every seed in this kernel routes around it. The perf dispatcher may serve the same
+    # simulation with either arm from one step to the next, so this predicate is a property of the entrypoint that
+    # launched this init (via is_decomposed), evaluated per instantiation.
+    is_self_seeding = qd.static(
+        rigid_config.solver_type == gs.constraint_solver.Newton
+        and not is_decomposed
+        and rigid_config.enable_per_island_solve
+        and rigid_config.backend != gs.cpu
+        and not rigid_config.enable_cooperative_constraint_kernels
+    )
+
     # Group the assembled constraints by island. The island partition itself (links_island_idx / dof_id / contact
     # ordering) is built earlier, in add_inequality_constraints, before the contact constraints are assembled; here we
     # only resolve each constraint's island (parallel per-(env, constraint)) and gather them into contiguous per-island
@@ -6735,17 +6785,7 @@ def func_solve_init(
             write_L=qd.static(not is_decomposed),
         )
     else:
-        if qd.static(
-            rigid_config.solver_type == gs.constraint_solver.Newton
-            and (
-                is_decomposed
-                or not (
-                    rigid_config.enable_per_island_solve
-                    and rigid_config.backend != gs.cpu
-                    and not rigid_config.enable_cooperative_constraint_kernels
-                )
-            )
-        ):
+        if qd.static(rigid_config.solver_type == gs.constraint_solver.Newton and not is_self_seeding):
             # Seed the initial Hessian factor. The decomposed arm has no self-init: its graph is linesearch-first, so
             # its first linesearch consumes the search direction computed here (this kernel is its "iteration 0"; the
             # graph then computes each subsequent direction at the end of an iteration). So it ALWAYS needs this seed,
@@ -6760,15 +6800,7 @@ def func_solve_init(
                 constraint_state, dyn_info, rigid_info, rigid_config, compute_envelope=True
             )
 
-        if qd.static(
-            not (
-                rigid_config.solver_type == gs.constraint_solver.Newton
-                and not is_decomposed
-                and rigid_config.enable_per_island_solve
-                and rigid_config.backend != gs.cpu
-                and not rigid_config.enable_cooperative_constraint_kernels
-            )
-        ):
+        if qd.static(not is_self_seeding):
             # Initial gradient (Mgrad = H^-1 grad for Newton, grad for CG). Seeds the decomposed arm's first search
             # direction, so it runs for the decomposed arm in all cases. Skipped only for the GPU per-island-
             # decomposition monolith (enable_per_island_solve) with the cooperative kernels disabled, which self-inits
@@ -6781,6 +6813,17 @@ def func_solve_init(
         n_dofs, _B, axes=qd.static((1, 0) if rigid_config.constraint_layout_batch_first else None)
     ):
         constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
+
+    if qd.static(
+        not rigid_config.requires_grad and not rigid_config.enable_mujoco_compatibility and not is_self_seeding
+    ):
+        # The certificate consumes the seed gradient, so the one arm that self-seeds it in its own body certifies
+        # there instead (see _kernel_solve_monolith). The differentiable path keeps its full iteration trace.
+        # TODO: Remove the MuJoCo compatibility gate once on MuJoCo 3.11, which carries this criterion natively.
+        qd.loop_config(name="certify_converged", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b in qd.ndrange(_B):
+            if constraint_state.n_constraints[i_b] > 0:
+                func_certify_converged_batch(i_b, constraint_state, rigid_info, rigid_config)
 
 
 @qd.func
@@ -6996,10 +7039,14 @@ def _kernel_solve_monolith(
                 func_update_gradient_batch(i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
                 for i_d in range(n_dofs):
                     constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
+                if qd.static(not rigid_config.requires_grad and not rigid_config.enable_mujoco_compatibility):
+                    # Certificate gating: see func_solve_init.
+                    func_certify_converged_batch(i_b, constraint_state, rigid_info, rigid_config)
             for it in range(rigid_info.iterations[None]):
-                func_solve_iter(i_b, it, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
+                # Checked at the top so a solve certified converged on its seed runs zero iterations.
                 if not constraint_state.improved[i_b]:
                     break
+                func_solve_iter(i_b, it, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
         else:
             constraint_state.improved[i_b] = False
 

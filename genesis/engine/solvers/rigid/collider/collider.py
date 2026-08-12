@@ -14,17 +14,12 @@ import torch
 import trimesh
 
 import genesis as gs
-
-import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
-from genesis.engine.materials.rigid import Rigid
-from genesis.utils.misc import assign_indexed_tensor, tensor_to_array, qd_to_torch, qd_to_numpy, indices_to_mask
+import genesis.utils.array_class as array_class
+from genesis.utils.misc import indices_to_mask, qd_to_numpy, qd_to_torch, tensor_to_array
 from genesis.utils.sdf import SDF
 
-from . import mpr
-from . import gjk
-from . import support_field
-
+from . import gjk, mpr, narrowphase, support_field
 from .broadphase import func_broad_phase
 from .contact import (
     collider_kernel_get_contacts,
@@ -35,9 +30,8 @@ from .contact import (
     kernel_collider_clear,
     kernel_masked_collider_clear,
 )
-from . import narrowphase
+from .constants import CCD_ALGORITHM_CODE
 from .narrowphase import (
-    CCD_ALGORITHM_CODE,
     func_narrow_phase_any_vs_terrain,
     func_narrow_phase_convex_specializations,
     func_narrow_phase_diff_convex_vs_convex,

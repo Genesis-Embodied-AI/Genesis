@@ -158,6 +158,7 @@ def support_driver(
     collider_state: array_class.ColliderState,
     dyn_info: array_class.DynInfo,
     collider_info: array_class.ColliderInfo,
+    rigid_config: qd.template(),
     collider_static_config: qd.template(),
 ):
     v = qd.Vector.zero(gs.qd_float, 3)
@@ -178,7 +179,17 @@ def support_driver(
             # Terrain is global and not perturbed, so we use the global state directly
             v, _ = support_field._func_support_prism(i_b, direction, collider_state)
     else:
-        v, v_, vid = support_field._func_support_world(i_g, direction, pos, quat, collider_info)
+        # The reference engine's fallback pipeline scans mesh vertices exhaustively for its supports; the sampled
+        # support table it replaces may return a different vertex of a tied flat face (see _func_support_world).
+        v, v_, vid = support_field._func_support_world(
+            i_g,
+            direction,
+            pos,
+            quat,
+            dyn_info,
+            collider_info,
+            exhaustive=qd.static(rigid_config.enable_mujoco_compatibility),
+        )
 
     return v
 
@@ -196,13 +207,32 @@ def compute_support(
     collider_state: array_class.ColliderState,
     dyn_info: array_class.DynInfo,
     collider_info: array_class.ColliderInfo,
+    rigid_config: qd.template(),
     collider_static_config: qd.template(),
 ):
     v1 = support_driver(
-        i_ga, i_b, direction, pos_a, quat_a, collider_state, dyn_info, collider_info, collider_static_config
+        i_ga,
+        i_b,
+        direction,
+        pos_a,
+        quat_a,
+        collider_state,
+        dyn_info,
+        collider_info,
+        rigid_config,
+        collider_static_config,
     )
     v2 = support_driver(
-        i_gb, i_b, -direction, pos_b, quat_b, collider_state, dyn_info, collider_info, collider_static_config
+        i_gb,
+        i_b,
+        -direction,
+        pos_b,
+        quat_b,
+        collider_state,
+        dyn_info,
+        collider_info,
+        rigid_config,
+        collider_static_config,
     )
 
     v = v1 - v2
@@ -266,6 +296,7 @@ def mpr_refine_portal(
             collider_state,
             dyn_info,
             collider_info,
+            rigid_config,
             collider_static_config,
         )
 
@@ -399,6 +430,7 @@ def mpr_find_penetration(
             collider_state,
             dyn_info,
             collider_info,
+            rigid_config,
             collider_static_config,
         )
         reached = mpr_portal_reach_tolerance(i_ga, i_gb, i_b, ccd_tol, v, direction, mpr_state, collider_info)
@@ -509,6 +541,7 @@ def mpr_discover_portal(
     mpr_state: array_class.MPRState,
     dyn_info: array_class.DynInfo,
     collider_info: array_class.ColliderInfo,
+    rigid_config: qd.template(),
     collider_static_config: qd.template(),
 ):
     mpr_state.simplex_support.v1[0, i_b] = center_a
@@ -537,6 +570,7 @@ def mpr_discover_portal(
                 collider_state,
                 dyn_info,
                 collider_info,
+                rigid_config,
                 collider_static_config,
             )
             extent = probe_v.dot(probe)
@@ -559,6 +593,7 @@ def mpr_discover_portal(
         collider_state,
         dyn_info,
         collider_info,
+        rigid_config,
         collider_static_config,
     )
 
@@ -605,6 +640,7 @@ def mpr_discover_portal(
                 collider_state,
                 dyn_info,
                 collider_info,
+                rigid_config,
                 collider_static_config,
             )
             dot = v.dot(direction)
@@ -643,6 +679,7 @@ def mpr_discover_portal(
                         collider_state,
                         dyn_info,
                         collider_info,
+                        rigid_config,
                         collider_static_config,
                     )
                     dot = v.dot(direction)
@@ -810,6 +847,7 @@ def func_mpr_contact_from_centers(
         mpr_state,
         dyn_info,
         collider_info,
+        rigid_config,
         collider_static_config,
     )
 
