@@ -525,6 +525,13 @@ class RigidOptions(Options):
     use_gjk_collision: bool, optional
         Whether to use GJK for collision detection instead of MPR. More stable but much slower. Defaults to
         `sim_options.requires_grad`.
+    enable_contact_patch: bool, optional
+        Whether to recover the full contact patch from the touching faces inside GJK, in a single detection pass,
+        instead of through perturbed re-detections. The contact patch is cheaper and reports the exact contact
+        polygon, but it is discouraged: it is less reliable than the perturbation-based detection, which is extremely
+        robust at the cost of extra detection passes. Requires GJK collision detection, and raises otherwise. If
+        None, it is enabled when MuJoCo compatibility is enabled together with GJK and multi-contact, and disabled
+        otherwise. Defaults to None.
     broadphase_traversal : gs.broadphase_traversal, optional
         Broadphase traversal strategy. ``SAP`` (sweep-and-prune) or ``ALL_VS_ALL`` (parallel pair iteration). Defaults
         to ``None`` (auto: ``SAP`` on CPU or when hibernation/heterogeneous entities are enabled, ``ALL_VS_ALL`` on GPU
@@ -586,6 +593,7 @@ class RigidOptions(Options):
 
     # GJK collision detection
     use_gjk_collision: StrictBool | None = None
+    enable_contact_patch: StrictBool | None = None
 
     # broadphase configuration
     broadphase_traversal: gs.broadphase_traversal | None = None

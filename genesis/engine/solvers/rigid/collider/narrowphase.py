@@ -5,8 +5,6 @@ This module contains SDF-based contact detection, convex-convex contact,
 terrain detection, box-box contact, and multi-contact search algorithms.
 """
 
-from enum import IntEnum
-
 import quadrants as qd
 
 import genesis as gs
@@ -15,32 +13,19 @@ import genesis.utils.geom as gu
 import genesis.utils.sdf as sdf
 
 from . import capsule_contact, diff_gjk, gjk, mpr
-from .constants import PORTAL_STATUS
 from .box_contact import func_box_box_contact, func_plane_box_contact, func_sphere_box_contact
+from .constants import CCD_ALGORITHM_CODE, PORTAL_STATUS
 from .contact import (
     func_add_contact,
     func_add_diff_contact_input,
     func_apply_smooth_refinement,
-    func_compute_geom_pair_scale_mj,
     func_compute_geom_pair_scale,
+    func_compute_geom_pair_scale_mj,
     func_contact_orthogonals,
     func_rotate_frame,
     func_set_contact,
 )
 from .utils import func_point_in_geom_aabb
-
-
-class CCD_ALGORITHM_CODE(IntEnum):
-    """Convex collision detection algorithm codes."""
-
-    # Our MPR (with SDF)
-    MPR = 0
-    # MuJoCo MPR
-    MJ_MPR = 1
-    # Our GJK
-    GJK = 2
-    # MuJoCo GJK
-    MJ_GJK = 3
 
 
 @qd.func
@@ -1335,6 +1320,7 @@ def func_contact_mpr_terrain(
                 collider_state,
                 dyn_info,
                 collider_info,
+                rigid_config,
                 collider_static_config,
             )
             collider_state.xyz_max_min[3 * i_m + i_axis, i_b] = v1[i_axis]
@@ -1915,6 +1901,7 @@ def func_convex_convex_contact(
                         collider_state,
                         dyn_info,
                         collider_info,
+                        rigid_config,
                         collider_static_config,
                     )
                     penetration = normal.dot(v1 - ga_pos_current)
@@ -2278,7 +2265,16 @@ def _func_multicontact_run_detection(
         plane_dir = gu.qd_transform_by_quat(plane_dir, ga_quat)
         normal = -plane_dir.normalized()
         v1 = mpr.support_driver(
-            i_gb, i_b, normal, gb_pos, gb_quat, collider_state, dyn_info, collider_info, collider_static_config
+            i_gb,
+            i_b,
+            normal,
+            gb_pos,
+            gb_quat,
+            collider_state,
+            dyn_info,
+            collider_info,
+            rigid_config,
+            collider_static_config,
         )
         penetration = normal.dot(v1 - ga_pos)
         contact_pos = v1 - 0.5 * penetration * normal
@@ -2875,7 +2871,16 @@ def _func_narrowphase_contact0(
                 plane_dir = gu.qd_transform_by_quat(plane_dir, ga_quat)
                 normal = -plane_dir.normalized()
                 v1 = mpr.support_driver(
-                    i_gb, i_b, normal, gb_pos, gb_quat, collider_state, dyn_info, collider_info, collider_static_config
+                    i_gb,
+                    i_b,
+                    normal,
+                    gb_pos,
+                    gb_quat,
+                    collider_state,
+                    dyn_info,
+                    collider_info,
+                    rigid_config,
+                    collider_static_config,
                 )
                 penetration = normal.dot(v1 - ga_pos)
                 contact_pos = v1 - 0.5 * penetration * normal

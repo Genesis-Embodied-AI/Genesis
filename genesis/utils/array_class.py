@@ -1450,9 +1450,7 @@ def get_gjk_info(**kwargs):
 
 @qd.data_oriented
 class GJKStaticConfig(metaclass=AutoInitMeta):
-    # This is disabled by default, because it is often less stable than the other multi-contact detection algorithm.
-    # However, we keep the code here for compatibility with MuJoCo and for possible future use.
-    enable_mujoco_multi_contact: bool
+    enable_contact_patch: bool
 
 
 # =========================================== SupportField ===========================================
