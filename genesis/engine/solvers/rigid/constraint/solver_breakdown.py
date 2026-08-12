@@ -52,8 +52,9 @@ def _func_decomp_linesearch_p0(
         tid = i_flat % _T
         i_b = i_flat // _T
 
-        # 5 shared arrays for parallel reductions (reused across phases)
+        # 6 shared arrays for parallel reductions (reused across phases)
         sh_snorm_sq = qd.simt.block.SharedArray((_T,), gs.qd_float)
+        sh_grad_sqnorm = qd.simt.block.SharedArray((_T,), gs.qd_float)
         sh_qg_grad = qd.simt.block.SharedArray((_T,), gs.qd_float)
         sh_qg_hess = qd.simt.block.SharedArray((_T,), gs.qd_float)
         sh_constraint_grad = qd.simt.block.SharedArray((_T,), gs.qd_float)
@@ -92,37 +93,44 @@ def _func_decomp_linesearch_p0(
 
             qd.simt.block.sync()  # Ensure mv and jv are written before Phase 1 reads them
 
-            # === Phase 1: Fused snorm + quad_gauss, parallel over n_dofs ===
+            # === Phase 1: Fused snorm + grad norm + quad_gauss, parallel over n_dofs ===
             local_snorm_sq = gs.qd_float(0.0)
+            local_grad_sqnorm = gs.qd_float(0.0)
             local_qg_grad = gs.qd_float(0.0)
             local_qg_hess = gs.qd_float(0.0)
 
             i_d = tid
             while i_d < n_dofs:
                 s = constraint_state.search[i_d, i_b]
+                g = constraint_state.grad[i_d, i_b]
                 local_snorm_sq += s * s
+                local_grad_sqnorm += g * g
                 local_qg_grad += s * constraint_state.Ma[i_d, i_b] - s * dyn_state.dofs.force[i_d, i_b]
                 local_qg_hess += 0.5 * s * constraint_state.mv[i_d, i_b]
                 i_d += _T
 
             sh_snorm_sq[tid] = local_snorm_sq
+            sh_grad_sqnorm[tid] = local_grad_sqnorm
             sh_qg_grad[tid] = local_qg_grad
             sh_qg_hess[tid] = local_qg_hess
 
             qd.simt.block.sync()
 
-            # Tree reduction for 3 accumulators
+            # Tree reduction for 4 accumulators
             stride = _T // 2
             while stride > 0:
                 if tid < stride:
                     sh_snorm_sq[tid] += sh_snorm_sq[tid + stride]
+                    sh_grad_sqnorm[tid] += sh_grad_sqnorm[tid + stride]
                     sh_qg_grad[tid] += sh_qg_grad[tid + stride]
                     sh_qg_hess[tid] += sh_qg_hess[tid + stride]
                 qd.simt.block.sync()
                 stride //= 2
 
-            # All threads read the reduced snorm
+            # All threads read the reduced snorm; the gradient norm is kept in a register because Phase 2 overwrites
+            # the shared arrays before the threshold below is assembled.
             snorm = qd.sqrt(sh_snorm_sq[0])
+            grad_sqnorm = sh_grad_sqnorm[0]
 
             if snorm < rigid_info.EPS[None]:
                 # Converged — only thread 0 writes
@@ -235,12 +243,17 @@ def _func_decomp_linesearch_p0(
                         constraint_state.ls_alpha_newton[i_b] = qd.abs(total_grad / total_hess)
                     else:
                         constraint_state.ls_alpha_newton[i_b] = 0.0
-                    # Store gtol for gradient-guided refinement
+                    # Store gtol for gradient-guided refinement. Same bound as the monolith linesearch, so the two
+                    # arms refine to the same accuracy - see func_linesearch_batch in solver.py for why the gradient
+                    # norm carries the scale and why the ratio is floored.
                     n_dofs_val = constraint_state.search.shape[0]
                     scale = rigid_info.meaninertia[i_b] * qd.max(1, n_dofs_val)
-                    constraint_state.ls_gtol[i_b] = (
-                        rigid_info.tolerance[None] * rigid_info.ls_tolerance[None] * snorm * scale
-                    )
+                    ls_ratio = rigid_info.tolerance[None] * rigid_info.ls_tolerance[None]
+                    if qd.static(not rigid_config.enable_mujoco_compatibility):
+                        scale = qd.sqrt(grad_sqnorm)
+                        LS_NOISE_RATIO = qd.static(10.0)
+                        ls_ratio = qd.max(ls_ratio, LS_NOISE_RATIO * rigid_info.EPS[None])
+                    constraint_state.ls_gtol[i_b] = ls_ratio * snorm * scale
 
 
 @qd.func
