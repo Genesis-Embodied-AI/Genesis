@@ -6,6 +6,7 @@ import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.utils.array_class import RigidSimStaticConfig
 from genesis.utils.misc import qd_to_numpy, tensor_to_array
 
 from ..utils import (
@@ -638,6 +639,84 @@ def test_cholesky_tiling(monkeypatch, tol):
 
     # analysis for choice tolerance: https://github.com/Genesis-Embodied-AI/Genesis/pull/2659#discussion_r3041684256
     assert_allclose(*values, tol=5e-4)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.gpu])
+def test_solve_arm_equivalence(monkeypatch, show_viewer):
+    SIZE = 0.1
+    N_STEPS = 25
+
+    # Which implementations the dispatcher may pick is resolved once per built scene, so each arm needs its own build.
+    scenes = []
+    prefer_decomposed_solver = 0
+    init_orig = RigidSimStaticConfig.__init__
+
+    def init_forced(self, *args, **kwargs):
+        kwargs["prefer_decomposed_solver"] = prefer_decomposed_solver
+        init_orig(self, *args, **kwargs)
+
+    monkeypatch.setattr(RigidSimStaticConfig, "__init__", init_forced)
+
+    for prefer_decomposed_solver in (0, 1):
+        scene = gs.Scene(
+            sim_options=gs.options.SimOptions(
+                dt=0.01,
+                gravity=(2.0, 0.0, -9.81),
+            ),
+            rigid_options=gs.options.RigidOptions(
+                friction_cone=gs.friction_cone.elliptic,
+            ),
+            viewer_options=gs.options.ViewerOptions(
+                camera_pos=(0.9, -0.9, 0.6),
+                camera_lookat=(0.1, 0.1, 0.05),
+            ),
+            show_viewer=show_viewer,
+        )
+        scene.add_entity(gs.morphs.Plane())
+        # A 3x3 base of boxes touching each other and the plane, plus a second layer seated on its seams, every body a
+        # ten-thousandth of its height into what carries it so the first solve resolves real depth, and gravity leaning
+        # sideways so the elliptic cones stay loaded in shear: one contact island spanning 78 DOFs and hundreds of
+        # constraint rows, enough for every cooperative reduction to stride over more than its 32 lanes.
+        for i in range(13):
+            offset, layer = (i % 3, i // 3) if i < 9 else (0.5 + (i - 9) % 2, 0.5 + (i - 9) // 2)
+            scene.add_entity(
+                morph=gs.morphs.Box(
+                    size=(SIZE, SIZE, SIZE),
+                    pos=(SIZE * offset, SIZE * layer, (1 - 1e-4) * SIZE * (0.5 if i < 9 else 1.5)),
+                ),
+                vis_mode="collision",
+            )
+        scene.build(n_envs=2)
+        # Eligibility is read off this field on every dispatch, so one value leaves exactly one implementation to run
+        # and a comparison cannot degenerate into the same one twice.
+        assert scene.rigid_solver.rigid_config.prefer_decomposed_solver == prefer_decomposed_solver
+        scenes.append(scene)
+
+    reference, compared = (scene.rigid_solver for scene in scenes)
+    reference_state = reference.constraint_solver.constraint_state
+    compared_state = compared.constraint_solver.constraint_state
+
+    # Both scenes solve the same problem every step: the compared arm is handed the reference arm's state along with the
+    # warm start it left, which the state setter clears on its own and which decides how close to the optimum the solve
+    # starts - the regime the linesearch refinement lives in. Resynchronizing every step keeps each comparison a single
+    # solve from a common state, while the trajectory still walks the pile through settling under shear.
+    for i_step in range(N_STEPS):
+        compared.set_state(scenes[1].sim.cur_substep_local, reference.get_state())
+        compared_state.qacc_ws.from_numpy(qd_to_numpy(reference_state.qacc_ws, copy=True))
+        compared_state.is_warmstart.from_numpy(qd_to_numpy(reference_state.is_warmstart, copy=True))
+
+        velocities = []
+        for scene, solver in zip(scenes, (reference, compared)):
+            scene.step()
+            assert not solver.get_error_envs_mask().any()
+            velocities.append(tensor_to_array(solver.get_dofs_velocity()))
+
+        # Neither arm may compare a solve that had nothing to resolve
+        assert (qd_to_numpy(compared_state.n_constraints) > 32).all()
+        # Velocities of a few hundredths, so the bound is absolute. It holds the arms to the rounding of their
+        # differently-ordered reductions, factors and solves, which a divergence in what the linesearch accepts exceeds.
+        assert_allclose(*velocities, atol=2e-5, err_msg=f"step {i_step}")
 
 
 @pytest.mark.slow  # ~200s
