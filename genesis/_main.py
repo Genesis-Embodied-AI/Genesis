@@ -76,7 +76,7 @@ def launch(filename=None, collision=False, rotate=False, scale=1.0, show_link_fr
                 f"{morphs.MJCF_FORMAT}, {morphs.MESH_FORMATS}, or {morphs.USD_FORMATS}."
             )
 
-    scene.build(compile_kernels=False)
+    scene.build()
 
     # 'enable_gui=True' auto-attaches the ImGui overlay, which owns the simulation through an InteractiveScene:
     # play/pause/step/reset and per-joint sliders (editable while paused) live in the overlay. Start paused so the
