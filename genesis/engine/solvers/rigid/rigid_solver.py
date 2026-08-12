@@ -747,8 +747,8 @@ class RigidSolver(KinematicSolver):
 
                 # The autotuner picks between two numerically distinct arms by timing them as the simulation runs, so
                 # which one runs at a given step follows the machine rather than the scene. Pinning the arm is what
-                # makes a trajectory reproducible, and the decomposed one is worth keeping wherever it engages at all,
-                # every case the monolith wins being pinned above already.
+                # makes a trajectory reproducible; the decomposed one takes whatever the static scene description
+                # leaves open, every case that description settles in the monolith's favor being pinned above already.
                 if gs.use_deterministic_algorithms and rigid_config.get("prefer_decomposed_solver", -1) == -1:
                     rigid_config["prefer_decomposed_solver"] = 1
 
