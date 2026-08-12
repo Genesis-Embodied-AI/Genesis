@@ -133,9 +133,12 @@ def _func_decomp_linesearch_p0(
             grad_sqnorm = sh_grad_sqnorm[0]
 
             if snorm < rigid_info.EPS[None]:
-                # Converged — only thread 0 writes
+                # A search direction that has gone to zero leaves nothing to step along, so the refinement is bypassed
+                # and this env is done - status 1, as the monolith linesearch reports it.
                 if tid == 0:
                     constraint_state.ls_alpha[i_b] = 0.0
+                    constraint_state.ls_improvement[i_b] = 0.0
+                    constraint_state.ls_result[i_b] = 1
                     constraint_state.improved[i_b] = False
             else:
                 # Thread 0 writes quad_gauss to global memory
@@ -232,17 +235,17 @@ def _func_decomp_linesearch_p0(
                     constraint_state.eq_sum[0, i_b] = sh_qg_grad[0]
                     constraint_state.eq_sum[1, i_b] = sh_qg_hess[0]
                     constraint_state.ls_it[i_b] = 1
-                    # Initialize best alpha and improvement for parallel linesearch
-                    constraint_state.ls_alpha[i_b] = 0.0  # default: no step
-                    constraint_state.ls_improvement[i_b] = 0.0
 
-                    # Newton step estimate from the full DOF + constraint gradient/hessian
+                    # Newton step from the full DOF + constraint gradient/hessian, the trial point the refinement
+                    # starts from: -grad/hess, signed because a search direction that does not descend needs a step
+                    # backwards along it, with a non-positive curvature floored rather than skipped so a flat or
+                    # concave quadratic still yields a point to bracket from. Same trial point as the monolith
+                    # linesearch's first evaluation (func_ls_init_and_eval_p0 in solver.py).
                     total_hess = 2.0 * (constraint_state.quad_gauss[1, i_b] + sh_constraint_hess[0])
-                    if total_hess > 0.0:
-                        total_grad = constraint_state.quad_gauss[0, i_b] + sh_constraint_grad[0]
-                        constraint_state.ls_alpha_newton[i_b] = qd.abs(total_grad / total_hess)
-                    else:
-                        constraint_state.ls_alpha_newton[i_b] = 0.0
+                    if total_hess <= 0.0:
+                        total_hess = rigid_info.EPS[None]
+                    total_grad = constraint_state.quad_gauss[0, i_b] + sh_constraint_grad[0]
+                    constraint_state.ls_alpha_newton[i_b] = -total_grad / total_hess
                     # Store gtol for gradient-guided refinement. Same bound as the monolith linesearch, so the two
                     # arms refine to the same accuracy - see func_linesearch_batch in solver.py for why the gradient
                     # norm carries the scale and why the ratio is floored.
@@ -270,40 +273,46 @@ def _func_decomp_linesearch_refine_coop(
     ``_func_linesearch_eval_at_alpha`` / ``func_linesearch_refine`` (called with the Python literal ``True`` for the ``coop``
     template arg). Writes to ``ls_alpha`` / ``ls_improvement`` are tid==0-guarded since the result is per-env, not
     per-lane."""
-    # Gated: skip when the Newton step is zero (degenerate hessian).
-    if alpha_newton > 0.0:
-        if tid == 0:
-            constraint_state.ls_alpha[i_b] = 0.0
+    p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
+        i_b, tid, alpha_newton, constraint_state, rigid_info, rigid_config, coop=True
+    )
+    # Costs are shifted deltas from alpha=0 (see quad_gauss in array_class.py): positive means no improvement
+    # FIXME: the monolith falls back on p0's stored derivative pair, whose curvature is floored at EPS, where this
+    # re-evaluation returns the raw one, so the two arms still part ways on a non-positive curvature. Closing it needs
+    # a state field to carry p0's derivatives across the P0 / refine kernel boundary.
+    if p1_cost > 0.0:
         p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
-            i_b, tid, alpha_newton, constraint_state, rigid_info, rigid_config, coop=True
+            i_b, tid, 0.0, constraint_state, rigid_info, rigid_config, coop=True
         )
-        # Costs are shifted deltas from alpha=0 (see quad_gauss in array_class.py): positive means no improvement
-        if p1_cost > 0.0:
-            p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
-                i_b, tid, 0.0, constraint_state, rigid_info, rigid_config, coop=True
-            )
-        if p1_cost < 0.0 and tid == 0:
-            constraint_state.ls_alpha[i_b] = p1_alpha
-            constraint_state.ls_improvement[i_b] = -p1_cost
-        if qd.abs(p1_deriv_0) > gtol:
-            res_alpha, res_cost, ls_result = solver.func_linesearch_refine(
-                i_b,
-                tid,
-                p1_alpha,
-                p1_cost,
-                p1_deriv_0,
-                p1_deriv_1,
-                gtol,
-                constraint_state,
-                rigid_info,
-                rigid_config,
-                coop=True,
-            )
-            # Skip status 7 (brackets stalled, midpoint non-improving) to preserve the validated
-            # p1_alpha already written above.
-            if qd.abs(res_alpha) > rigid_info.EPS[None] and ls_result != 7 and tid == 0:
-                constraint_state.ls_alpha[i_b] = res_alpha
-                constraint_state.ls_improvement[i_b] = -res_cost
+    res_alpha = p1_alpha
+    improvement = -p1_cost
+    ls_result = 0
+    if qd.abs(p1_deriv_0) < gtol:
+        if qd.abs(p1_alpha) < rigid_info.EPS[None]:
+            ls_result = 2
+    else:
+        res_alpha, res_cost, ls_result = solver.func_linesearch_refine(
+            i_b,
+            tid,
+            p1_alpha,
+            p1_cost,
+            p1_deriv_0,
+            p1_deriv_1,
+            gtol,
+            constraint_state,
+            rigid_info,
+            rigid_config,
+            coop=True,
+        )
+        improvement = -res_cost
+        # Status 7: both brackets stalled and the midpoint does not improve on alpha=0. Reject the alpha.
+        if ls_result == 7:
+            res_alpha = 0.0
+            improvement = 0.0
+    if tid == 0:
+        constraint_state.ls_alpha[i_b] = res_alpha
+        constraint_state.ls_improvement[i_b] = improvement
+        constraint_state.ls_result[i_b] = ls_result
 
 
 @qd.func
@@ -316,23 +325,25 @@ def _func_decomp_linesearch_refine_serial(
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
-    """1-thread-per-env variant of ``_func_decomp_linesearch_refine``: bit-identical to the pre-coop baseline.
-    Only ``tid == 0`` runs the work; the unified helpers are called with the Python literal ``False`` for ``coop``."""
-    # Gated: skip when the Newton step is zero (degenerate hessian).
-    if alpha_newton > 0.0 and tid == 0:
-        constraint_state.ls_alpha[i_b] = 0.0
+    """1-thread-per-env variant of ``_func_decomp_linesearch_refine``: only ``tid == 0`` runs the work, and the
+    unified helpers are called with the Python literal ``False`` for ``coop``."""
+    if tid == 0:
         p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
             i_b, tid, alpha_newton, constraint_state, rigid_info, rigid_config, coop=False
         )
-        # Costs are shifted deltas from alpha=0 (see quad_gauss in array_class.py): positive means no improvement
+        # Costs are shifted deltas from alpha=0 (see quad_gauss in array_class.py): positive means no improvement.
+        # Carries the same FIXME as _func_decomp_linesearch_refine_coop on p0's floored curvature.
         if p1_cost > 0.0:
             p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
                 i_b, tid, 0.0, constraint_state, rigid_info, rigid_config, coop=False
             )
-        if p1_cost < 0.0:
-            constraint_state.ls_alpha[i_b] = p1_alpha
-            constraint_state.ls_improvement[i_b] = -p1_cost
-        if qd.abs(p1_deriv_0) > gtol:
+        res_alpha = p1_alpha
+        improvement = -p1_cost
+        ls_result = 0
+        if qd.abs(p1_deriv_0) < gtol:
+            if qd.abs(p1_alpha) < rigid_info.EPS[None]:
+                ls_result = 2
+        else:
             res_alpha, res_cost, ls_result = solver.func_linesearch_refine(
                 i_b,
                 tid,
@@ -346,11 +357,14 @@ def _func_decomp_linesearch_refine_serial(
                 rigid_config,
                 coop=False,
             )
-            # Skip status 7 (brackets stalled, midpoint non-improving) to preserve the validated
-            # p1_alpha already written above.
-            if qd.abs(res_alpha) > rigid_info.EPS[None] and ls_result != 7:
-                constraint_state.ls_alpha[i_b] = res_alpha
-                constraint_state.ls_improvement[i_b] = -res_cost
+            improvement = -res_cost
+            # Status 7: both brackets stalled and the midpoint does not improve on alpha=0. Reject the alpha.
+            if ls_result == 7:
+                res_alpha = 0.0
+                improvement = 0.0
+        constraint_state.ls_alpha[i_b] = res_alpha
+        constraint_state.ls_improvement[i_b] = improvement
+        constraint_state.ls_result[i_b] = ls_result
 
 
 @qd.func
