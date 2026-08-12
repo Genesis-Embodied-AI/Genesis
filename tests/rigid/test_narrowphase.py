@@ -1012,3 +1012,53 @@ def test_split_vs_monolithic_narrowphase(
         if any(n_contacts_split):
             for field, field_atol in (("penetration", atol), ("position", atol), ("normal", normal_atol)):
                 assert_allclose(contacts_split[field], contacts_mono[field], atol=field_atol, err_msg=field)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_contact_patch_full_box_box_manifold(show_viewer: bool) -> None:
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            box_box_detection=False,
+            use_gjk_collision=True,
+            enable_contact_patch=True,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.6, -0.6, 0.5),
+            camera_lookat=(0.0, 0.0, 0.15),
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        gs.morphs.Box(
+            size=(0.2, 0.2, 0.2),
+            pos=(0.0, 0.0, 0.0),
+            fixed=True,
+        ),
+        vis_mode="collision",
+    )
+    scene.add_entity(
+        gs.morphs.Box(
+            size=(0.2, 0.2, 0.2),
+            pos=(0.0, 0.0, 0.199),
+            euler=(0, 0, 45),
+        ),
+        vis_mode="collision",
+    )
+    scene.build(n_envs=2)
+    scene.step()
+
+    # The 45-degree overlap of the two 0.2-wide faces is a regular octagon whose corners sit at the fixed box's face
+    # boundary; the contact patch must report all 8 of them, at the midpoint depth of the 1e-3 overlap.
+    corner = 0.1 * (np.sqrt(2.0) - 1.0)
+    corners_xy = np.array([(sx * 0.1, sy * corner) for sx in (-1, 1) for sy in (-1, 1)])
+    corners_xy = np.concatenate((corners_xy, corners_xy[:, ::-1]))
+    corners_xy = corners_xy[np.lexsort((corners_xy[:, 1], corners_xy[:, 0]))]
+    expected = np.column_stack((corners_xy, np.full(8, 0.0995)))
+    contacts = scene.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
+    for positions, penetrations in zip(contacts["position"], contacts["penetration"]):
+        assert positions.shape[0] == 8
+        # Rounded sort keys: corners tied in x must order by y identically on both sides of the comparison.
+        order = np.lexsort((positions[:, 1].round(4), positions[:, 0].round(4)))
+        assert_allclose(positions[order], expected, atol=1e-5)
+        assert_allclose(penetrations, 1e-3, atol=1e-5)

@@ -73,19 +73,21 @@ class Collider:
         self._prune_max_contacts_per_link_pair = 32
         self._prune_max_contacts_floor = 512
 
+        # The narrowphase sub-components are built AND activated before the collision fields, whose collider info
+        # embeds their description structs: activation may reallocate them at their final size, so it has to run
+        # before the embedding (see ColliderInfo). Their constructors also resolve the options the static
+        # configuration reads, so they run first.
+        self._sdf = SDF(rigid_solver)
+        self._mpr = mpr.MPR(rigid_solver)
+        self._gjk = gjk.GJK(rigid_solver)
+        self._support_field = support_field.SupportField(rigid_solver)
+
         self._init_static_config()
         self._use_split_narrowphase = (
             self._collider_static_config.has_non_box_plane_convex_convex
             and gs.backend != gs.cpu
             and not self._solver._requires_grad
         )
-        # The narrowphase sub-components are built AND activated before the collision fields, whose collider info
-        # embeds their description structs: activation may reallocate them at their final size, so it has to run
-        # before the embedding (see ColliderInfo).
-        self._sdf = SDF(rigid_solver)
-        self._mpr = mpr.MPR(rigid_solver)
-        self._gjk = gjk.GJK(rigid_solver)
-        self._support_field = support_field.SupportField(rigid_solver)
 
         if self._collider_static_config.has_nonconvex_nonterrain:
             self._sdf.activate()
@@ -142,7 +144,15 @@ class Collider:
             else:
                 ccd_algorithm = CCD_ALGORITHM_CODE.MPR
 
-        n_contacts_per_convex_pair = 20 if self._solver.rigid_config.requires_grad else 5
+        # The contact patch can hand back the full clipped polygon of a box-box pair, which the reference engine
+        # budgets at 8 contacts (see func_clip_polygon); the convex budget must hold it or the extra witnesses of the
+        # patch are silently dropped. 'enable_contact_patch' is resolved by the GJK constructor.
+        if self._solver.rigid_config.requires_grad:
+            n_contacts_per_convex_pair = 20
+        elif self._solver._options.enable_contact_patch:
+            n_contacts_per_convex_pair = 8
+        else:
+            n_contacts_per_convex_pair = 5
 
         # Nonconvex vertex-vs-SDF pairs and box-box pairs (via their specialized detector) emit many contacts per pair -
         # a full annular ring or face patch - unlike the handful a generic convex pair emits. They share a larger cap,

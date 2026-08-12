@@ -2413,9 +2413,9 @@ def _func_multicontact_mpr(
     tolerance = func_compute_mc_tolerance(i_ga, i_gb, geoms_init_AABB, dyn_info, collider_info, rigid_config)
 
     n_con = gs.qd_int(0)
-    local_contact_pos = qd.Matrix.zero(gs.qd_float, 5, 3)
-    local_normal = qd.Matrix.zero(gs.qd_float, 5, 3)
-    local_penetration = qd.Matrix.zero(gs.qd_float, 5, 1)
+    local_contact_pos = qd.Matrix.zero(gs.qd_float, collider_static_config.n_contacts_per_convex_pair, 3)
+    local_normal = qd.Matrix.zero(gs.qd_float, collider_static_config.n_contacts_per_convex_pair, 3)
+    local_penetration = qd.Matrix.zero(gs.qd_float, collider_static_config.n_contacts_per_convex_pair, 1)
     gjk_multi_done = False
 
     contact0_normal = normal_0
