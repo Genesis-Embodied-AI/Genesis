@@ -461,7 +461,8 @@ class ConstraintState:
     quad_gauss: qd.Tensor
     ls_alpha: qd.Tensor
     ls_improvement: qd.Tensor
-    ls_alpha_newton: qd.Tensor
+    # Cost derivative and curvature along the search direction at alpha=0, [deriv, curvature], curvature floored at EPS
+    ls_p0_deriv: qd.Tensor
     ls_gtol: qd.Tensor
     eq_sum: qd.Tensor
     ls_it: qd.Tensor
@@ -610,7 +611,7 @@ def get_constraint_state(constraint_solver, solver, collider):
         quad_gauss=V(dtype=gs.qd_float, shape=(2, _B)),
         ls_alpha=V(dtype=gs.qd_float, shape=(_B,)),
         ls_improvement=V(dtype=gs.qd_float, shape=(_B,)),
-        ls_alpha_newton=V(dtype=gs.qd_float, shape=(_B,)),
+        ls_p0_deriv=V(dtype=gs.qd_float, shape=(2, _B)),
         ls_gtol=V(dtype=gs.qd_float, shape=(_B,)),
         eq_sum=V(dtype=gs.qd_float, shape=(2, _B)),
         Ma=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
