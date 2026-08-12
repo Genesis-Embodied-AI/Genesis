@@ -9,7 +9,6 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.engine.solvers.rigid.constraint import solver as constraint_solver
 from genesis.engine.solvers.rigid.constraint.solver import ConstraintSolver
-from genesis.utils.array_class import RigidSimStaticConfig
 from genesis.utils.misc import qd_to_numpy, tensor_to_array
 
 from ..utils.assertions import assert_allclose, assert_equal
@@ -641,20 +640,11 @@ def test_cholesky_tiling(monkeypatch, tol):
 
 
 @pytest.mark.required
+@pytest.mark.use_deterministic_algorithms(False)
 @pytest.mark.parametrize("backend", [gs.gpu])
 def test_solve_arm_equivalence(monkeypatch, show_viewer, tol):
     SIZE = 0.1
     N_STEPS = 12
-
-    # Dispatch dynamically whatever the suite or the caller pinned: eligibility is filtered on this field, so only its
-    # own default leaves both implementations in the running.
-    init_orig = RigidSimStaticConfig.__init__
-
-    def init_dynamic(self, *args, **kwargs):
-        kwargs["prefer_decomposed_solver"] = -1
-        init_orig(self, *args, **kwargs)
-
-    monkeypatch.setattr(RigidSimStaticConfig, "__init__", init_dynamic)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
