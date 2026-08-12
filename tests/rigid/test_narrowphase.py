@@ -271,6 +271,9 @@ def create_modified_narrowphase_file(tmp_path: Path):
     # Disable sphere-capsule analytical path in all kernels
     lines = find_and_disable_all_conditions(lines, "capsule_contact.func_sphere_capsule_contact")
 
+    # Disable sphere-sphere analytical path in all kernels
+    lines = find_and_disable_all_conditions(lines, "capsule_contact.func_sphere_sphere_contact")
+
     # Disable sphere-box analytical path in all kernels
     lines = find_and_disable_all_conditions(lines, "func_sphere_box_contact")
 
@@ -629,56 +632,59 @@ def create_box_mjcf(name, pos, euler, size):
     return mjcf
 
 
-def scene_add_box(tmp_path: Path, scene: gs.Scene, size) -> "RigidEntity":
-    box_mjcf = create_box_mjcf("box", (0, 0, 0), (0, 0, 0), size)
-    box_path = tmp_path / "box.xml"
-    ET.ElementTree(box_mjcf).write(box_path)
-    entity_box = scene.add_entity(
-        gs.morphs.MJCF(
-            file=box_path,
-            align=False,
-        ),
-        vis_mode="collision",
-        visualize_contact=True,
-    )
-    return cast("RigidEntity", entity_box)
-
-
-@pytest.mark.slow("gpu")  # gpu ~400s
+@pytest.mark.slow("gpu")  # gpu ~400s, dominated by recompiling the patched narrowphase kernels
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer: bool) -> None:
-    # Compare the analytical sphere-capsule narrowphase against GJK by monkey-patching the collider;
-    # multiple configurations reuse a single scene build by moving the objects between checks. All analytical
-    # scenarios run first, then the patch swaps in a fresh kernel object (from a tmp file) so the GJK pass
-    # cannot hit the cached analytical kernel.
-    test_cases = [
-        # (sphere_pos, capsule_pos, capsule_euler, should_collide, description, exp_pen, exp_normal)
-        # Sphere above top cap: dist to segment endpoint (0,0,0.25) = 0.15, pen = 0.05
-        ((0, 0, 0.4), (0, 0, 0), (0, 0, 0), True, "sphere_above_capsule_top", 0.05, (0, 0, 1)),
-        # Sphere beside cylinder: dist to axis = 0.18, pen = 0.02
-        ((0.18, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_close_to_capsule", 0.02, (1, 0, 0)),
-        # dist to axis = sqrt(0.17^2+0.17^2) ≈ 0.24 > 0.2, no collision
-        ((0.17, 0.17, 0), (0, 0, 0), (0, 0, 0), False, "sphere_near_cylinder", None, None),
-        ((0.35, 0, 0.35), (0, 0, 0), (0, 45, 0), False, "sphere_near_cap", None, None),
-        # Sphere beside cylinder: dist to axis = 0.15, pen = 0.05
-        ((0.15, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_touching_cylinder", 0.05, (1, 0, 0)),
-        # Sphere at capsule centre: dist = 0, pen = sum of radii = 0.2, normal is degenerate
-        ((0, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_at_capsule_center", 0.2, None),
-        # Sphere near top cap: nearest segment pt = (0,0,0.25), dist = sqrt(0.15²+0.05²) ≈ 0.1581
-        # pen = 0.2 - sqrt(0.025) ≈ 0.041886, normal along (3, 0, 1)
-        ((0.15, 0, 0.3), (0, 0, 0), (0, 0, 0), True, "sphere_near_capsule_cap", 0.041886, (3, 0, 1)),
-        # Horizontal capsule (axis along X after 90° Y rotation), sphere offset in Y: pen = 0.05
-        ((0, 0.15, 0), (0, 0, 0), (0, 90, 0), True, "sphere_horizontal_capsule", 0.05, (0, 1, 0)),
-    ]
-
+def test_sphere_pairs_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer: bool) -> None:
+    # Compare the analytical sphere-capsule and sphere-sphere narrowphase against GJK by monkey-patching the
+    # collider. One scene holds a reference sphere, a capsule and a second sphere; each configuration moves the
+    # reference sphere and the case's partner while parking the third entity far away. All analytical scenarios run
+    # first, then the patch swaps in a fresh kernel object (from a tmp file) so the GJK pass cannot hit the cached
+    # analytical kernel. The GJK arm of the sphere-sphere cases also covers EPA robustness on smooth geometries,
+    # whose extremely small polytope faces near convergence amplify the relative reprojection error and can cause
+    # false contact rejections.
     sphere_radius = 0.1
     capsule_radius = 0.1
     capsule_half_length = 0.25
+    sphere_b_radius = 0.08
+
+    test_cases = [
+        # (partner_idx, sphere_pos, partner_pos, partner_euler, should_collide, description, exp_pen, exp_normal)
+        # --- sphere vs capsule ---
+        # Sphere above top cap: dist to segment endpoint (0,0,0.25) = 0.15, pen = 0.05
+        (1, (0, 0, 0.4), (0, 0, 0), (0, 0, 0), True, "sphere_above_capsule_top", 0.05, (0, 0, 1)),
+        # Sphere beside cylinder: dist to axis = 0.18, pen = 0.02
+        (1, (0.18, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_close_to_capsule", 0.02, (1, 0, 0)),
+        # dist to axis = sqrt(0.17^2+0.17^2) ≈ 0.24 > 0.2, no collision
+        (1, (0.17, 0.17, 0), (0, 0, 0), (0, 0, 0), False, "sphere_near_cylinder", None, None),
+        (1, (0.35, 0, 0.35), (0, 0, 0), (0, 45, 0), False, "sphere_near_cap", None, None),
+        # Sphere beside cylinder: dist to axis = 0.15, pen = 0.05
+        (1, (0.15, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_touching_cylinder", 0.05, (1, 0, 0)),
+        # Sphere at capsule centre: dist = 0, pen = sum of radii = 0.2, normal is degenerate
+        (1, (0, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_at_capsule_center", 0.2, None),
+        # Sphere near top cap: nearest segment pt = (0,0,0.25), dist = sqrt(0.15²+0.05²) ≈ 0.1581
+        # pen = 0.2 - sqrt(0.025) ≈ 0.041886, normal along (3, 0, 1)
+        (1, (0.15, 0, 0.3), (0, 0, 0), (0, 0, 0), True, "sphere_near_capsule_cap", 0.041886, (3, 0, 1)),
+        # Horizontal capsule (axis along X after 90° Y rotation), sphere offset in Y: pen = 0.05
+        (1, (0, 0.15, 0), (0, 0, 0), (0, 90, 0), True, "sphere_horizontal_capsule", 0.05, (0, 1, 0)),
+        # --- sphere vs sphere ---
+        # Diagonal offset: dist ≈ 0.1166, pen ≈ 0.0634
+        (2, (0, 0, 0), (0.08, 0.06, 0.06), (0, 0, 0), True, "diagonal_3d", 0.0634, (0.08, 0.06, 0.06)),
+        # Axis-aligned overlap: dist = 0.15, pen = 0.03
+        (2, (0, 0, 0), (0.15, 0, 0), (0, 0, 0), True, "axis_aligned", 0.03, (1, 0, 0)),
+        # Near-touching: dist = 0.17, pen = 0.01
+        (2, (0, 0, 0), (0.17, 0, 0), (0, 0, 0), True, "near_touching", 0.01, (1, 0, 0)),
+        # No collision: diagonal near-miss, dist ≈ 0.212 > 0.18, with per-axis offsets below the radii sum so the
+        # bounding boxes still overlap and the pair reaches the narrowphase.
+        (2, (0, 0, 0), (0.15, 0.15, 0), (0, 0, 0), False, "separated", None, None),
+        # Concentric spheres: fully degenerate, just check collision is detected
+        (2, (0, 0, 0), (0, 0, 0), (0, 0, 0), True, "concentric", None, None),
+    ]
 
     def build_scene(scene: gs.Scene, tmp_path: Path, entities: list) -> None:
         entities.append(scene_add_sphere(tmp_path, scene, radius=sphere_radius))
         entities.append(scene_add_capsule(tmp_path, scene, half_length=capsule_half_length, radius=capsule_radius))
+        entities.append(scene_add_sphere(tmp_path, scene, radius=sphere_b_radius))
         scene.build()
 
     scene_creator = AnalyticalVsGJKSceneCreator(
@@ -693,79 +699,93 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
 
     # Phase 1: Run all analytical scenarios (original, unpatched kernel)
     analytical_results = {}
-    for sphere_pos, capsule_pos, capsule_euler, should_collide, description, exp_pen, exp_normal in test_cases:
+    for (
+        partner_idx,
+        sphere_pos,
+        partner_pos,
+        partner_euler,
+        should_collide,
+        description,
+        exp_pen,
+        exp_normal,
+    ) in test_cases:
         try:
             scene_creator.update_pos_quat_analytical(entity_idx=0, pos=sphere_pos, euler=[0, 0, 0])
-            scene_creator.update_pos_quat_analytical(entity_idx=1, pos=capsule_pos, euler=capsule_euler)
+            scene_creator.update_pos_quat_analytical(entity_idx=partner_idx, pos=partner_pos, euler=partner_euler)
+            scene_creator.update_pos_quat_analytical(entity_idx=3 - partner_idx, pos=(0.0, 0.0, 10.0), euler=[0, 0, 0])
             scene_creator.step_analytical()
 
             contacts = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
-            has_collision = len(contacts["geom_a"]) > 0
-            assert has_collision == should_collide, "Analytical collision mismatch"
+            assert (len(contacts["geom_a"]) > 0) == should_collide, "Analytical collision mismatch"
             _check_expected_values(
                 contacts, description, exp_pen, exp_normal, "analytical", ANALYTICAL_PEN_TOL, ANALYTICAL_NORMAL_TOL
             )
             # Deep-copy so subsequent steps can't corrupt stored data
             analytical_results[description] = copy.deepcopy(contacts)
         except AssertionError as e:
-            raise AssertionError(
-                f"\nFAILED TEST SCENARIO (analytical phase): {description}\n"
-                f"Sphere: pos={sphere_pos}\n"
-                f"Capsule: pos={capsule_pos}, euler={capsule_euler}\n"
-                f"Expected collision: {should_collide}\n"
-                f"Backend: {backend}\n"
-                f"Sphere radius: {sphere_radius}\n"
-                f"Capsule radius: {capsule_radius}, Half-length: {capsule_half_length}\n"
-            ) from e
+            raise AssertionError(f"\nFAILED TEST SCENARIO (analytical phase): {description}\n") from e
 
     # Phase 2: Apply monkey-patch (replace @qd.kernel with version from tmp file)
     scene_creator.apply_gjk_patch()
 
     # Phase 3: Run all GJK scenarios (patched kernel, fresh cache)
-    for sphere_pos, capsule_pos, capsule_euler, should_collide, description, exp_pen, exp_normal in test_cases:
+    for (
+        partner_idx,
+        sphere_pos,
+        partner_pos,
+        partner_euler,
+        should_collide,
+        description,
+        exp_pen,
+        exp_normal,
+    ) in test_cases:
         try:
             scene_creator.update_pos_quat_gjk(entity_idx=0, pos=sphere_pos, euler=[0, 0, 0])
-            scene_creator.update_pos_quat_gjk(entity_idx=1, pos=capsule_pos, euler=capsule_euler)
+            scene_creator.update_pos_quat_gjk(entity_idx=partner_idx, pos=partner_pos, euler=partner_euler)
+            scene_creator.update_pos_quat_gjk(entity_idx=3 - partner_idx, pos=(0.0, 0.0, 10.0), euler=[0, 0, 0])
             scene_creator.step_gjk(should_collide)
 
             contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
             contacts_analytical = analytical_results[description]
-
-            has_collision_analytical = len(contacts_analytical["geom_a"]) > 0
-            has_collision_gjk = len(contacts_gjk["geom_a"]) > 0
-
-            assert has_collision_analytical == has_collision_gjk, "Collision detection mismatch!"
-            assert has_collision_gjk == should_collide
-
+            assert (len(contacts_gjk["geom_a"]) > 0) == should_collide, "GJK collision mismatch"
             _check_expected_values(contacts_gjk, description, exp_pen, exp_normal, "GJK", GJK_PEN_TOL, GJK_NORMAL_TOL)
 
-            # If both detected a collision, compare the contact details
-            if has_collision_analytical and has_collision_gjk:
-                pen_analytical = contacts_analytical["penetration"][0]
-                pen_gjk = contacts_gjk["penetration"][0]
-
-                normal_analytical = np.array(contacts_analytical["normal"][0])
-                normal_gjk = np.array(contacts_gjk["normal"][0])
-
-                pos_analytical = np.array(contacts_analytical["position"][0])
-                pos_gjk = np.array(contacts_gjk["position"][0])
-                assert_allclose(pen_analytical, pen_gjk, atol=POS_TOL, rtol=0.1, err_msg="Penetration mismatch!")
-
-                normal_agreement = abs(np.dot(normal_analytical, normal_gjk))
-                normal_tol = 0.5 if description == "sphere_at_capsule_center" else 0.95
-                assert normal_agreement > normal_tol, "Normal mismatch!"
-
-                assert_allclose(pos_analytical, pos_gjk, tol=POS_TOL)
+            # If both detected a collision, compare the contact details. The concentric sphere pair only compares
+            # penetration: its contact frame is fully arbitrary and, with distinct radii, its contact position moves
+            # with it. The coincident sphere-capsule case keeps a loose frame check, and its position is
+            # direction-independent since the sphere radius equals half the penetration there.
+            if should_collide:
+                assert_allclose(
+                    contacts_analytical["penetration"][0],
+                    contacts_gjk["penetration"][0],
+                    atol=POS_TOL,
+                    rtol=0.1,
+                    err_msg="Penetration mismatch!",
+                )
+                if description != "concentric":
+                    normal_agreement = abs(
+                        np.dot(np.array(contacts_analytical["normal"][0]), np.array(contacts_gjk["normal"][0]))
+                    )
+                    normal_tol = 0.5 if description == "sphere_at_capsule_center" else 0.95
+                    assert normal_agreement > normal_tol, "Normal mismatch!"
+                    assert_allclose(contacts_analytical["position"][0], contacts_gjk["position"][0], tol=POS_TOL)
         except AssertionError as e:
-            raise AssertionError(
-                f"\nFAILED TEST SCENARIO (GJK phase): {description}\n"
-                f"Sphere: pos={sphere_pos}\n"
-                f"Capsule: pos={capsule_pos}, euler={capsule_euler}\n"
-                f"Expected collision: {should_collide}\n"
-                f"Backend: {backend}\n"
-                f"Sphere radius: {sphere_radius}\n"
-                f"Capsule radius: {capsule_radius}, Half-length: {capsule_half_length}\n"
-            ) from e
+            raise AssertionError(f"\nFAILED TEST SCENARIO (GJK phase): {description}\n") from e
+
+
+def scene_add_box(tmp_path: Path, scene: gs.Scene, size) -> "RigidEntity":
+    box_mjcf = create_box_mjcf("box", (0, 0, 0), (0, 0, 0), size)
+    box_path = tmp_path / "box.xml"
+    ET.ElementTree(box_mjcf).write(box_path)
+    entity_box = scene.add_entity(
+        gs.morphs.MJCF(
+            file=box_path,
+            align=False,
+        ),
+        vis_mode="collision",
+        visualize_contact=True,
+    )
+    return cast("RigidEntity", entity_box)
 
 
 @pytest.mark.slow  # ~250s
@@ -909,51 +929,6 @@ def test_sphere_box_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer: bo
                 f"Sphere radius: {sphere_radius}\n"
                 f"Box size: {box_size}\n"
             ) from e
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_sphere_sphere_gjk(tmp_path: Path, show_viewer: bool) -> None:
-    # Smooth geometries like spheres produce extremely small polytope faces near EPA convergence, which
-    # amplifies the relative reprojection error and can cause false contact rejections.
-    test_cases = [
-        # (pos_b, should_collide, description, exp_pen, exp_normal)
-        # Original bug report: diagonal offset, dist ≈ 0.1166, pen ≈ 0.0634
-        ((0.08, 0.06, 0.06), True, "diagonal_3d", 0.0634, (0.08, 0.06, 0.06)),
-        # Axis-aligned overlap: dist = 0.15, pen = 0.03
-        ((0.15, 0, 0), True, "axis_aligned", 0.03, (1, 0, 0)),
-        # Near-touching: dist = 0.17, pen = 0.01
-        ((0.17, 0, 0), True, "near_touching", 0.01, (1, 0, 0)),
-        # No collision: dist = 0.25
-        ((0.25, 0, 0), False, "separated", None, None),
-        # Concentric spheres: fully degenerate, just check collision is detected
-        ((0, 0, 0), True, "concentric", None, None),
-    ]
-
-    scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
-            use_gjk_collision=True,
-        ),
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(0.0, 1.0, 0.0),
-            camera_lookat=(0.0, 0.0, 0.0),
-        ),
-        show_viewer=show_viewer,
-    )
-    entity_a = scene_add_sphere(tmp_path, scene, radius=0.10)
-    entity_b = scene_add_sphere(tmp_path, scene, radius=0.08)
-    scene.build()
-    assert scene.rigid_solver.collider is not None
-
-    for pos_b, should_collide, description, exp_pen, exp_normal in test_cases:
-        entity_a.set_pos(0.0)
-        entity_b.set_pos(pos_b)
-
-        scene.step()
-
-        contacts = scene.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
-        assert len(contacts["geom_a"]) == should_collide
-        _check_expected_values(contacts, description, exp_pen, exp_normal, "GJK", GJK_PEN_TOL, GJK_NORMAL_TOL)
 
 
 @pytest.mark.required

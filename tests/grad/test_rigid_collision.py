@@ -1,3 +1,5 @@
+import xml.etree.ElementTree as ET
+
 import numpy as np
 import pytest
 import torch
@@ -207,15 +209,17 @@ def test_diff_unsupported_configuration_raises():
             fixed=True,
         ),
     )
+    ellipsoid_mjcf = ET.Element("mujoco", model="ellipsoid")
+    ellipsoid_body = ET.SubElement(ET.SubElement(ellipsoid_mjcf, "worldbody"), "body", name="ellipsoid", pos="0 0 0.5")
+    ET.SubElement(ellipsoid_body, "geom", type="ellipsoid", size="0.2 0.15 0.1")
+    ET.SubElement(ellipsoid_body, "joint", name="ellipsoid_joint", type="free")
     scene.add_entity(
-        gs.morphs.Sphere(
-            radius=0.2,
-            pos=(0.0, 0.0, 0.5),
-        ),
+        gs.morphs.MJCF(file=ET.tostring(ellipsoid_mjcf, encoding="unicode")),
     )
 
-    # A sphere/sphere pair has an everywhere-curved Minkowski boundary on which diff_gjk's EPA never converges, so
-    # it would silently tunnel; the build must reject it instead.
+    # A sphere/ellipsoid pair has an everywhere-curved Minkowski boundary on which diff_gjk's EPA never converges,
+    # so it would silently tunnel; the build must reject it instead. A sphere/sphere pair is exempt, since it is
+    # reconstructed in closed form.
     with pytest.raises(gs.GenesisException):
         scene.build()
 
@@ -287,6 +291,20 @@ def test_contact_detection_jacobian_matches_fd():
             pos=box_pos_offset + 0.8 * box_size * np.array([0, 0, 1]),
         ),
     )
+    # A sphere pair overlapping off-axis, placed away from the boxes: it exercises the closed-form sphere-sphere
+    # reconstruction (func_differentiable_sphere_contact) through the same loss and finite-difference sweep.
+    sphere0 = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=0.2,
+            pos=(2.0, 0.0, 0.2),
+        ),
+    )
+    sphere1 = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=0.15,
+            pos=(2.02, 0.01, 0.46),
+        ),
+    )
     scene.build()
     collider = scene.sim.rigid_solver.collider
 
@@ -295,6 +313,8 @@ def test_contact_detection_jacobian_matches_fd():
     box1_init_pos = box1.get_pos().clone()
     box0_init_quat = box0.get_quat().clone()
     box1_init_quat = box1.get_quat().clone()
+    sphere0_init_pos = sphere0.get_pos().clone()
+    sphere1_init_pos = sphere1.get_pos().clone()
 
     collider.detection()
     contacts = collider.get_contacts(as_tensor=True, to_torch=True, keep_batch_dim=True)
@@ -323,11 +343,15 @@ def test_contact_detection_jacobian_matches_fd():
                 if x_type == "pos":
                     box0.set_pos(box0_init_pos + sign * rand_dx[0, 0] * fd_eps)
                     box1.set_pos(box1_init_pos + sign * rand_dx[1, 0] * fd_eps)
+                    sphere0.set_pos(sphere0_init_pos + sign * rand_dx[2, 0] * fd_eps)
+                    sphere1.set_pos(sphere1_init_pos + sign * rand_dx[3, 0] * fd_eps)
                     box0.set_quat(box0_init_quat)
                     box1.set_quat(box1_init_quat)
                 else:
                     box0.set_pos(box0_init_pos)
                     box1.set_pos(box1_init_pos)
+                    sphere0.set_pos(sphere0_init_pos)
+                    sphere1.set_pos(sphere1_init_pos)
                     box0.set_quat(box0_init_quat + sign * rand_dx[0, 0] * fd_eps)
                     box1.set_quat(box1_init_quat + sign * rand_dx[1, 0] * fd_eps)
                 collider._collider_state.n_contacts.fill(0)
@@ -340,6 +364,29 @@ def test_contact_detection_jacobian_matches_fd():
 
     assert_allclose(directional_error(dL_dpos, "pos"), 0.0, atol=1e-4)
     assert_allclose(directional_error(dL_dquat, "quat"), 0.0, atol=1e-4)
+
+    # Coincident sphere centers: the forward falls back to an arbitrary contact direction, and the backward must
+    # reuse that fallback instead of dividing by the zero distance, which would emit NaN gradients.
+    sphere0.set_pos(sphere0_init_pos)
+    sphere1.set_pos(sphere0_init_pos)
+    box0.set_pos(box0_init_pos)
+    box1.set_pos(box1_init_pos)
+    box0.set_quat(box0_init_quat)
+    box1.set_quat(box1_init_quat)
+    collider._collider_state.n_contacts.fill(0)
+    collider.detection()
+    contacts = collider.get_contacts(as_tensor=True, to_torch=True, keep_batch_dim=True)
+    assert torch.isfinite(contacts["normal"]).all()
+    assert torch.isfinite(contacts["position"]).all()
+    normal = contacts["normal"].requires_grad_()
+    position = contacts["position"].requires_grad_()
+    penetration = contacts["penetration"].requires_grad_()
+    loss = ((normal * position).sum(dim=-1) * penetration).sum()
+    dL_dnormal = torch.autograd.grad(loss, normal, retain_graph=True)[0]
+    dL_dposition = torch.autograd.grad(loss, position, retain_graph=True)[0]
+    dL_dpenetration = torch.autograd.grad(loss, penetration)[0]
+    collider.backward(dL_dposition, dL_dnormal, dL_dpenetration)
+    assert torch.isfinite(qd_to_torch(scene.sim.rigid_solver.dyn_state.geoms.pos.grad)).all()
 
 
 @pytest.mark.required
