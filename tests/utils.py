@@ -976,7 +976,10 @@ def _compute_efc_tolerances(mj_sim, tol):
     solref_timeconst = np.concatenate(
         (mj_sim.model.geom_solref[:, 0], mj_sim.model.jnt_solref[:, 0], mj_sim.model.eq_solref[:, 0])
     )
-    efc_atol = tol / solref_timeconst[solref_timeconst > 0.0].min() ** 2
+    # MuJoCo clamps a positive time constant to at least twice the timestep at runtime, so the sub-timestep
+    # epsilon defaults Genesis's parser authors for hard constraints amplify no further than that.
+    timeconst_min = max(solref_timeconst[solref_timeconst > 0.0].min(), 2.0 * mj_sim.model.opt.timestep)
+    efc_atol = tol / timeconst_min**2
     return efc_atol, efc_atol * mj_sim.model.opt.timestep
 
 
@@ -1135,10 +1138,12 @@ def check_mujoco_data_consistency(
     mj_meaninertia = mj_sim.model.stat.meaninertia
     assert_allclose(gs_meaninertia, mj_meaninertia, tol=tol)
 
-    # Pre-constraint so-called bias forces in configuration space
+    # Pre-constraint so-called bias forces in configuration space. The bias force of a fast articulated chain reaches
+    # hundreds of newtons and its rounding floor scales with that magnitude, surfacing after cancellation as absolute
+    # noise on the small entries; the relative tolerance still guards the large ones.
     gs_qfrc_bias = gs_sim.rigid_solver.dyn_state.dofs.qf_bias.to_numpy()[:, 0]
     mj_qfrc_bias = mj_sim.data.qfrc_bias
-    assert_allclose(gs_qfrc_bias, mj_qfrc_bias[mj_dofs_idx], tol=tol)
+    assert_allclose(gs_qfrc_bias, mj_qfrc_bias[mj_dofs_idx], rtol=tol, atol=tol * max(1.0, np.abs(mj_qfrc_bias).max()))
     gs_qfrc_passive = gs_sim.rigid_solver.dyn_state.dofs.qf_passive.to_numpy()[:, 0]
     mj_qfrc_passive = mj_sim.data.qfrc_passive
     assert_allclose(gs_qfrc_passive, mj_qfrc_passive[mj_dofs_idx], tol=tol)
@@ -1239,9 +1244,16 @@ def check_mujoco_data_consistency(
     mj_qfrc_all = mj_sim.data.qfrc_smooth + mj_sim.data.qfrc_constraint
     assert_allclose(gs_qfrc_all[gs_dofs_idx], mj_qfrc_all[mj_dofs_idx], atol=efc_atol, rtol=tol)
 
+    # The smooth force sums the bias force with the passive and actuation forces, so it carries the bias force's
+    # magnitude-scaled rounding floor (see the qfrc_bias comparison above).
     gs_qfrc_smooth = gs_sim.rigid_solver.dyn_state.dofs.qf_smooth.to_numpy()[:, 0]
     mj_qfrc_smooth = mj_sim.data.qfrc_smooth
-    assert_allclose(gs_qfrc_smooth[gs_dofs_idx], mj_qfrc_smooth[mj_dofs_idx], tol=tol)
+    assert_allclose(
+        gs_qfrc_smooth[gs_dofs_idx],
+        mj_qfrc_smooth[mj_dofs_idx],
+        rtol=tol,
+        atol=tol * max(1.0, np.abs(mj_qfrc_bias).max()),
+    )
 
     gs_qacc_smooth = gs_sim.rigid_solver.dyn_state.dofs.acc_smooth.to_numpy()[:, 0]
     mj_qacc_smooth = mj_sim.data.qacc_smooth
