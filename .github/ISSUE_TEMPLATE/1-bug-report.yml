@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to fill out this bug report, please make sure to [search for existing issues](https://github.com/Genesis-Embodied-AI/Genesis/issues) before filing a new one!
+        Thanks for taking the time to fill out this bug report, please make sure to [search for existing issues](https://github.com/Genesis-Embodied-AI/genesis-world/issues) before filing a new one!
   - type: textarea
     id: bug-description
     attributes:
