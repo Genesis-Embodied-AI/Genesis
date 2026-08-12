@@ -948,6 +948,10 @@ def _add_collision_constraints_per_contact(
                             constraint_state.efc_D[n_con, i_b] = 0.0
                     continue
 
+            # FIXME: The reference engine anchors the tangent frame of a plane-capsule contact to the capsule axis,
+            # while this frame comes from the normal alone, so the friction rows of plane-capsule pairs do not match
+            # it. Anchoring the frame would make the rows depend on the capsule quaternion, whose adjoint the manual
+            # backward pass (kernel_manual_add_collision_constraints_bw) must then derive by hand.
             d1, d2 = gu.qd_orthogonals(contact_data_normal)
 
             invweight = dyn_info.links.invweight[link_a_maybe_batch][0]

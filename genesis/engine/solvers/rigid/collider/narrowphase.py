@@ -1774,6 +1774,12 @@ def func_convex_convex_contact(
             and dyn_info.geoms.type[i_gb] != gs.GEOM_TYPE.SPHERE
             and dyn_info.geoms.type[i_gb] != gs.GEOM_TYPE.ELLIPSOID
         )
+        if qd.static(rigid_config.enable_mujoco_compatibility):
+            # The reference engine resolves capsule-capsule pairs analytically with a single contact, outside the
+            # generic convex pipeline that carries its perturbation-based multi-contact.
+            multi_contact = multi_contact and not (
+                dyn_info.geoms.type[i_ga] == gs.GEOM_TYPE.CAPSULE and dyn_info.geoms.type[i_gb] == gs.GEOM_TYPE.CAPSULE
+            )
 
         geom_pair_scale = func_compute_geom_pair_scale(i_ga, i_gb, geoms_init_AABB, dyn_info)
         tolerance = collider_info.mc_tolerance[None] * geom_pair_scale
@@ -2397,6 +2403,11 @@ def _func_multicontact_mpr(
         and dyn_info.geoms.type[i_gb] != gs.GEOM_TYPE.SPHERE
         and dyn_info.geoms.type[i_gb] != gs.GEOM_TYPE.ELLIPSOID
     )
+    if qd.static(rigid_config.enable_mujoco_compatibility):
+        # Capsule-capsule exclusion under compatibility: see func_convex_convex_contact.
+        multi_contact = multi_contact and not (
+            dyn_info.geoms.type[i_ga] == gs.GEOM_TYPE.CAPSULE and dyn_info.geoms.type[i_gb] == gs.GEOM_TYPE.CAPSULE
+        )
 
     geom_pair_scale = func_compute_geom_pair_scale(i_ga, i_gb, geoms_init_AABB, dyn_info)
     tolerance = collider_info.mc_tolerance[None] * geom_pair_scale
