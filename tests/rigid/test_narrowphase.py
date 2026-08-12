@@ -932,40 +932,66 @@ def test_sphere_box_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer: bo
 
 
 @pytest.mark.required
+# Both arms carry mode-specific narrowphase blocks: MuJoCo compatibility gates its own acceptance tolerance,
+# perturbation pattern and penetration override, which must stay mirrored between the split and monolithic consumers.
+@pytest.mark.parametrize("enable_mujoco_compatibility", [False, True])
 @pytest.mark.parametrize("backend", [gs.gpu])
-def test_split_vs_monolithic_narrowphase(monkeypatch, tmp_path: Path, show_viewer: bool, tol: float) -> None:
+def test_split_vs_monolithic_narrowphase(
+    enable_mujoco_compatibility, monkeypatch, tmp_path: Path, show_viewer: bool, tol: float
+) -> None:
     radius = 0.1
     half_length = 0.25
 
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
+            enable_mujoco_compatibility=enable_mujoco_compatibility,
             use_gjk_collision=True,
         ),
         show_viewer=show_viewer,
     )
     capsule_a = scene_add_capsule(tmp_path, scene, half_length=half_length, radius=radius)
     capsule_b = scene_add_capsule(tmp_path, scene, half_length=half_length, radius=radius)
-    scene.build()
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.3, 0.3, 0.3),
+            pos=(10.0, 0.0, 0.0),
+        ),
+        vis_mode="collision",
+    )
+    # Batched build: the split arm packs its work queue across environments through one global counter, a structure
+    # a single environment cannot exercise.
+    scene.build(n_envs=2)
 
     collider = scene.rigid_solver.collider
     assert collider is not None
     assert collider._use_split_narrowphase, "Expected split narrowphase on GPU backend"
 
     test_configs = [
-        # (pos_a, euler_a, pos_b, euler_b)
-        ((0, 0, 0), (0, 0, 0), (0.15, 0, 0), (0, 90, 0)),
-        ((0, 0, 0), (0, 0, 0), (0.18, 0, 0), (0, 0, 0)),
-        ((0, 0, 0), (0, 0, 0), (0.15, 0, 0), (0, 0, 0)),
-        ((0, 0, 0), (0, 0, 0), (0, 0, 0), (90, 0, 0)),
+        # (pos_a, euler_a, pos_b, euler_b, pos_box, atol, normal_atol). Analytic capsule-capsule contacts agree
+        # across arms at the generic tolerance. A GJK/EPA contact carries per-config tolerances pinned to its
+        # measured cross-kernel floors, since the two arms schedule the GJK/EPA chain's instructions differently;
+        # the normal is loosest because its direction divides the witness-point difference by the penetration
+        # length, which amplifies witness noise (see the contact conversion in gjk.py).
+        ((0, 0, 0), (0, 0, 0), (0.15, 0, 0), (0, 90, 0), (10, 0, 0), None, None),
+        ((0, 0, 0), (0, 0, 0), (0.18, 0, 0), (0, 0, 0), (10, 0, 0), None, None),
+        ((0, 0, 0), (0, 0, 0), (0.15, 0, 0), (0, 0, 0), (10, 0, 0), None, None),
+        ((0, 0, 0), (0, 0, 0), (0, 0, 0), (90, 0, 0), (10, 0, 0), None, None),
+        # Tilted capsule with its lower end sphere on a box face: the perturbed multi-contact and its acceptance
+        # tolerance run in both arms, on a contact whose deepest point is unique. A capsule lying flat on the face
+        # makes a line contact whose detected witness is a rounding tie-break, differing across kernels.
+        ((0, 0, 0.013), (0, 87, 0), (10, 0, 0.5), (0, 0, 0), (-0.25, 0.0, -0.245), 2e-4, 2e-3),
     ]
 
-    for pos_a, euler_a, pos_b, euler_b in test_configs:
+    for pos_a, euler_a, pos_b, euler_b, pos_box, config_atol, config_normal_atol in test_configs:
+        atol = tol if config_atol is None else config_atol
+        normal_atol = tol if config_normal_atol is None else config_normal_atol
         quat_a = gs.utils.geom.xyz_to_quat(xyz=np.array(euler_a, dtype=gs.np_float), degrees=True)
         quat_b = gs.utils.geom.xyz_to_quat(xyz=np.array(euler_b, dtype=gs.np_float), degrees=True)
 
         # Run with split narrowphase (default on GPU)
         capsule_a.set_qpos((*pos_a, *quat_a))
         capsule_b.set_qpos((*pos_b, *quat_b))
+        box.set_pos(pos_box)
         scene.step()
         contacts_split = collider.get_contacts(as_tensor=False, to_torch=False)
 
@@ -973,14 +999,16 @@ def test_split_vs_monolithic_narrowphase(monkeypatch, tmp_path: Path, show_viewe
         monkeypatch.setattr(collider, "_use_split_narrowphase", False)
         capsule_a.set_qpos((*pos_a, *quat_a))
         capsule_b.set_qpos((*pos_b, *quat_b))
+        box.set_pos(pos_box)
         scene.step()
         contacts_mono = collider.get_contacts(as_tensor=False, to_torch=False)
         monkeypatch.undo()
 
-        assert len(contacts_split["geom_a"]) == len(contacts_mono["geom_a"]), (
-            f"Contact count mismatch: split={len(contacts_split['geom_a'])}, mono={len(contacts_mono['geom_a'])}"
+        n_contacts_split = [len(geoms) for geoms in contacts_split["geom_a"]]
+        n_contacts_mono = [len(geoms) for geoms in contacts_mono["geom_a"]]
+        assert n_contacts_split == n_contacts_mono, (
+            f"Contact count mismatch: split={n_contacts_split}, mono={n_contacts_mono}"
         )
-        if len(contacts_split["geom_a"]) > 0:
-            assert_allclose(contacts_split["penetration"], contacts_mono["penetration"], tol=tol)
-            assert_allclose(contacts_split["position"], contacts_mono["position"], tol=tol)
-            assert_allclose(contacts_split["normal"], contacts_mono["normal"], tol=tol)
+        if any(n_contacts_split):
+            for field, field_atol in (("penetration", atol), ("position", atol), ("normal", normal_atol)):
+                assert_allclose(contacts_split[field], contacts_mono[field], atol=field_atol, err_msg=field)

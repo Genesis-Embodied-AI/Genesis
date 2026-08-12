@@ -488,6 +488,26 @@ def func_compute_geom_pair_scale_mj(
 
 
 @qd.func
+def func_compute_mc_tolerance(
+    i_ga,
+    i_gb,
+    geoms_init_AABB: array_class.GeomsInitAABB,
+    dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
+    rigid_config: qd.template(),
+):
+    """Absolute multi-contact acceptance tolerance of a geom pair.
+
+    Shared by every convex narrowphase arm so the accepted contact set stays backend-independent. The relative
+    tolerance scales with the reference engine's pair scale under MuJoCo compatibility and with the intrinsic pair
+    scale otherwise."""
+    scale = func_compute_geom_pair_scale(i_ga, i_gb, geoms_init_AABB, dyn_info)
+    if qd.static(rigid_config.enable_mujoco_compatibility):
+        scale = func_compute_geom_pair_scale_mj(i_ga, i_gb, geoms_init_AABB, dyn_info)
+    return collider_info.mc_tolerance[None] * scale
+
+
+@qd.func
 def func_contact_orthogonals(
     i_ga,
     i_gb,
