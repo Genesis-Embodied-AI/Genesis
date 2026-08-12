@@ -246,7 +246,10 @@ class MPMSolver(Solver):
         # @qd.data_oriented class, and Quadrants doesn't support Ndarray attrs on data_oriented in kernel scope. Fix by either:
         # (1) adding Ndarray support to data_oriented template resolution, or (2) migrating the solver to a frozen dataclass
         # so _predeclare_struct_ndarrays can register the Ndarray.
-        if self._gravity is not None:
+        # Only when active: the field costs an SNode tree that Quadrants never gives back short of
+        # qd.reset(), and nothing reads an inactive solver's gravity from kernel scope (`set_gravity`
+        # skips inactive solvers, and `SolverBase.set_gravity` / `get_gravity` accept the Ndarray).
+        if self.is_active and self._gravity is not None:
             gravity = self._gravity.to_numpy()
             self._gravity = qd.field(dtype=gs.qd_vec3, shape=(self._B,))
             self._gravity.from_numpy(gravity)
