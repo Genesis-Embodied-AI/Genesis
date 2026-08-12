@@ -173,7 +173,7 @@ class ConstraintSolver:
 
         self.ls_alpha = cs.ls_alpha
         self.ls_improvement = cs.ls_improvement
-        self.ls_alpha_newton = cs.ls_alpha_newton
+        self.ls_p0_deriv = cs.ls_p0_deriv
         self.ls_gtol = cs.ls_gtol
         self.ls_it = cs.ls_it
         self.ls_result = cs.ls_result

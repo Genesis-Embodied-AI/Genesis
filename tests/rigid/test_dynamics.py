@@ -3,9 +3,12 @@ import math
 import numpy as np
 import pytest
 import torch
+from quadrants.lang._perf_dispatch import PerformanceDispatcher
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.engine.solvers.rigid.constraint import solver as constraint_solver
+from genesis.engine.solvers.rigid.constraint.solver import ConstraintSolver
 from genesis.utils.array_class import RigidSimStaticConfig
 from genesis.utils.misc import qd_to_numpy, tensor_to_array
 
@@ -643,80 +646,108 @@ def test_cholesky_tiling(monkeypatch, tol):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.gpu])
-def test_solve_arm_equivalence(monkeypatch, show_viewer):
+def test_solve_arm_equivalence(monkeypatch, show_viewer, tol):
     SIZE = 0.1
-    N_STEPS = 25
+    N_STEPS = 12
 
-    # Which implementations the dispatcher may pick is resolved once per built scene, so each arm needs its own build.
-    scenes = []
-    prefer_decomposed_solver = 0
+    # Dispatch dynamically whatever the suite or the caller pinned: eligibility is filtered on this field, so only its
+    # own default leaves both implementations in the running.
     init_orig = RigidSimStaticConfig.__init__
 
-    def init_forced(self, *args, **kwargs):
-        kwargs["prefer_decomposed_solver"] = prefer_decomposed_solver
+    def init_dynamic(self, *args, **kwargs):
+        kwargs["prefer_decomposed_solver"] = -1
         init_orig(self, *args, **kwargs)
 
-    monkeypatch.setattr(RigidSimStaticConfig, "__init__", init_forced)
+    monkeypatch.setattr(RigidSimStaticConfig, "__init__", init_dynamic)
 
-    for prefer_decomposed_solver in (0, 1):
-        scene = gs.Scene(
-            sim_options=gs.options.SimOptions(
-                dt=0.01,
-                gravity=(2.0, 0.0, -9.81),
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+            gravity=(0.0, 0.0, -9.81),
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.1, -1.1, 0.7),
+            camera_lookat=(1.1, 0.1, 0.05),
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    # Islands of one, three and nine bodies at once, each sunk a ten-thousandth of its height so contact has real depth
+    positions = [(0.0, 0.0, (1 - 1e-4) * SIZE / 2)]
+    positions += [(10 * SIZE, 0.0, (1 - 1e-4) * SIZE * (0.5 + i)) for i in range(3)]
+    positions += [(20 * SIZE + SIZE * (i % 3), SIZE * (i // 3), (1 - 1e-4) * SIZE / 2) for i in range(9)]
+    for pos in positions:
+        scene.add_entity(
+            morph=gs.morphs.Box(
+                size=(SIZE, SIZE, SIZE),
+                pos=pos,
             ),
-            rigid_options=gs.options.RigidOptions(
-                friction_cone=gs.friction_cone.elliptic,
-            ),
-            viewer_options=gs.options.ViewerOptions(
-                camera_pos=(0.9, -0.9, 0.6),
-                camera_lookat=(0.1, 0.1, 0.05),
-            ),
-            show_viewer=show_viewer,
+            vis_mode="collision",
         )
-        scene.add_entity(gs.morphs.Plane())
-        # A 3x3 base of boxes touching each other and the plane, plus a second layer seated on its seams, every body a
-        # ten-thousandth of its height into what carries it so the first solve resolves real depth, and gravity leaning
-        # sideways so the elliptic cones stay loaded in shear: one contact island spanning 78 DOFs and hundreds of
-        # constraint rows, enough for every cooperative reduction to stride over more than its 32 lanes.
-        for i in range(13):
-            offset, layer = (i % 3, i // 3) if i < 9 else (0.5 + (i - 9) % 2, 0.5 + (i - 9) // 2)
-            scene.add_entity(
-                morph=gs.morphs.Box(
-                    size=(SIZE, SIZE, SIZE),
-                    pos=(SIZE * offset, SIZE * layer, (1 - 1e-4) * SIZE * (0.5 if i < 9 else 1.5)),
-                ),
-                vis_mode="collision",
-            )
-        scene.build(n_envs=2)
-        # Eligibility is read off this field on every dispatch, so one value leaves exactly one implementation to run
-        # and a comparison cannot degenerate into the same one twice.
-        assert scene.rigid_solver.rigid_config.prefer_decomposed_solver == prefer_decomposed_solver
-        scenes.append(scene)
+    scene.build(n_envs=2)
+    solver = scene.rigid_solver
+    constraint_state = solver.constraint_solver.constraint_state
+    dofs = solver.dyn_state.dofs
 
-    reference, compared = (scene.rigid_solver for scene in scenes)
-    reference_state = reference.constraint_solver.constraint_state
-    compared_state = compared.constraint_solver.constraint_state
+    # Selecting by index into the candidates the dispatcher deems eligible replaces its whole decision, the timing it
+    # would do and any QD_PERFDISPATCH_FORCE in the environment alike, and demanding more than one candidate means a
+    # selection that stopped working fails here instead of quietly comparing one implementation against itself.
+    selected = 0
 
-    # Both scenes solve the same problem every step: the compared arm is handed the reference arm's state along with the
-    # warm start it left, which the state setter clears on its own and which decides how close to the optimum the solve
-    # starts - the regime the linesearch refinement lives in. Resynchronizing every step keeps each comparison a single
-    # solve from a common state, while the trajectory still walks the pile through settling under shear.
+    def call_selected(self, *args, **kwargs):
+        eligible = self._get_compatible_functions(*args, **kwargs)
+        # Registration order, so an index means the same implementation on every call and every run.
+        candidates = [impl for impl in self._dispatch_impls if impl in eligible]
+        assert len(candidates) > 1
+        return candidates[selected](*args, **kwargs)
+
+    monkeypatch.setattr(PerformanceDispatcher, "__call__", call_selected)
+
+    # A solve leaves its own inputs changed: the warm start it wrote, the factor and active set the incremental path
+    # maintains across calls, and the applied force it folded the constraint force into. The second implementation gets
+    # all of them back exactly as the first one received them, or it would be solving a different problem.
+    solve_inputs = (
+        constraint_state.qacc_ws,
+        constraint_state.is_warmstart,
+        constraint_state.active,
+        constraint_state.prev_active,
+        constraint_state.incr_changed_idx,
+        constraint_state.incr_n_changed,
+        constraint_state.nt_H,
+        constraint_state.nt_jacobi,
+        constraint_state.use_full_hessian,
+        constraint_state.solver_iter_counter,
+        constraint_state.improved,
+        dofs.force,
+    )
+
+    accelerations = []
+    resolve_orig = ConstraintSolver.resolve
+
+    def resolve_compared(self):
+        nonlocal selected
+        inputs = [qd_to_numpy(tensor, copy=True) for tensor in solve_inputs]
+        accelerations.clear()
+        # The candidate order is fixed, so solving with index 0 last leaves the trajectory to one implementation.
+        for selected in (1, 0):
+            for tensor, value in zip(solve_inputs, inputs):
+                tensor.from_numpy(value)
+            resolve_orig(self)
+            accelerations.append(qd_to_numpy(constraint_state.qacc, copy=True))
+
+    monkeypatch.setattr(ConstraintSolver, "resolve", resolve_compared)
+
     for i_step in range(N_STEPS):
-        compared.set_state(scenes[1].sim.cur_substep_local, reference.get_state())
-        compared_state.qacc_ws.from_numpy(qd_to_numpy(reference_state.qacc_ws, copy=True))
-        compared_state.is_warmstart.from_numpy(qd_to_numpy(reference_state.is_warmstart, copy=True))
+        scene.step()
+        assert not solver.get_error_envs_mask().any()
+        # Neither implementation may be compared on a solve that had nothing to resolve
+        assert (qd_to_numpy(constraint_state.n_constraints) > 32).all()
 
-        velocities = []
-        for scene, solver in zip(scenes, (reference, compared)):
-            scene.step()
-            assert not solver.get_error_envs_mask().any()
-            velocities.append(tensor_to_array(solver.get_dofs_velocity()))
-
-        # Neither arm may compare a solve that had nothing to resolve
-        assert (qd_to_numpy(compared_state.n_constraints) > 32).all()
-        # Velocities of a few hundredths, so the bound is absolute. It holds the arms to the rounding of their
-        # differently-ordered reductions, factors and solves, which a divergence in what the linesearch accepts exceeds.
-        assert_allclose(*velocities, atol=2e-5, err_msg=f"step {i_step}")
+        compared, reference = accelerations
+        # The two implementations spread every reduction, factor and solve differently, so their accelerations land
+        # within rounding of each other and never on the same value: a gap of exactly zero means one of them ran twice.
+        assert np.abs(compared.astype(np.float64) - reference.astype(np.float64)).max() > 0.0
+        assert_allclose(compared, reference, tol=tol, err_msg=f"step {i_step}")
 
 
 @pytest.mark.slow  # ~200s
