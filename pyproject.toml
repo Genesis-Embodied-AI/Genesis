@@ -57,7 +57,7 @@ dependencies = [
     # Use to display camera images and export images
     "opencv-python",
     # Use by `RigidGeom.visualize_sdf` to render SDF as level 0 marching cubes
-    "scikit-image",
+    "scikit-image>=0.23.1",
     # Convex decomposition library
     "coacd",
     # Ray casting used in mesh to height field conversion
