@@ -912,9 +912,9 @@ def nonconvex_spacecraft(solver, n_envs, gjk):
 # ---------------------------------------------------------------------------
 
 
-# A single instance of each benchmark (solver/gjk left at their defaults), run on both the 'field' and 'ndarray'
-# dtypes. TODO: add ("table_bussing", None, None, 50, gs.cpu) once its assets are on the shared HF dataset.
-BENCHMARKS = [
+# Full benchmark suite (one instance of each, solver/gjk left at their defaults), run on the 'field' dtype.
+# TODO: add ("table_bussing", None, None, 50, gs.cpu) once its assets are on the shared HF dataset.
+BENCHMARKS_FIELD = [
     ("go2", None, None, 4096, gs.gpu),
     ("anymal_random", None, None, 20000, gs.gpu),
     ("g1_fall", None, None, 4096, gs.gpu),
@@ -924,6 +924,16 @@ BENCHMARKS = [
     ("convexify", None, None, 0, gs.cpu),
     ("nonconvex_spacecraft", None, None, 64, gs.cpu),
 ]
+
+# Reduced subset, run on the 'ndarray' dtype only.
+BENCHMARKS_NDARRAY = [
+    ("go2", None, None, 4096, gs.gpu),
+    ("g1_fall", None, None, 4096, gs.gpu),
+    ("dex_hand", None, None, 4096, gs.gpu),
+]
+
+# The dtype is selected before collection via 'GS_ENABLE_NDARRAY' ('0' => field, otherwise ndarray).
+BENCHMARKS = BENCHMARKS_FIELD if os.environ.get("GS_ENABLE_NDARRAY", "1") == "0" else BENCHMARKS_NDARRAY
 
 
 @pytest.mark.parametrize(
