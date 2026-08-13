@@ -1,4 +1,3 @@
-import inspect
 import os
 import time
 
@@ -7,6 +6,7 @@ import quadrants as qd
 from PIL import Image
 
 import genesis as gs
+from genesis.utils.misc import get_entry_point_name
 
 
 def animate(imgs, filename=None, fps=60):
@@ -15,7 +15,8 @@ def animate(imgs, filename=None, fps=60):
 
     Args:
         imgs (list): List of input images.
-        filename (str, optional): Name of the output video file. If not provided, the name will be default to the name of the caller file, with a timestamp and '.mp4' extension.
+        filename (str, optional): Name of the output video file. If not provided, the name will default to the name
+            of the script the process was launched from, with a timestamp and '.mp4' extension.
     """
     assert isinstance(imgs, list)
     if len(imgs) == 0:
@@ -23,9 +24,7 @@ def animate(imgs, filename=None, fps=60):
         return
 
     if filename is None:
-        caller_file = inspect.stack()[-1].filename
-        # caller file + timestamp + .mp4
-        filename = os.path.splitext(os.path.basename(caller_file))[0] + f"_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
+        filename = f"{get_entry_point_name()}_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
     os.makedirs(os.path.abspath(os.path.dirname(filename)), exist_ok=True)
 
     gs.logger.info(f'Saving video to ~<"{filename}">~...')
