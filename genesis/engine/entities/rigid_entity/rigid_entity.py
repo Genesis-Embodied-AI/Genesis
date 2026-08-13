@@ -21,7 +21,14 @@ from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
-from genesis.utils.misc import DeprecationError, broadcast_tensor, qd_to_numpy, qd_to_torch, tensor_to_array
+from genesis.utils.misc import (
+    DeprecationError,
+    broadcast_tensor,
+    qd_to_numpy,
+    qd_to_torch,
+    sanitize_index,
+    tensor_to_array,
+)
 from genesis.typing import UnitVec4FType, Vec3FType
 from genesis.engine.states.entities import RigidEntityState
 
@@ -1688,7 +1695,6 @@ class KinematicEntity(Entity):
         return state
 
     def _get_global_idx(self, idx_local, idx_local_max, idx_global_start=0, *, unsafe=False):
-        # Handling default argument and special cases
         if idx_local is None:
             idx_global = range(idx_global_start, idx_local_max + idx_global_start)
         elif isinstance(idx_local, (int, np.integer)):
@@ -1698,32 +1704,32 @@ class KinematicEntity(Entity):
         elif isinstance(idx_local, slice):
             start, stop, step = idx_local.indices(idx_local_max)
             idx_global = range(start + idx_global_start, stop + idx_global_start, step)
+            if step < 0:
+                idx_global = tuple(idx_global)
         elif isinstance(idx_local, range):
-            # Wrapping negative entries may break a range's constant step, so only those ranges are expanded
-            if idx_local and (idx_local[0] < 0 or idx_local[-1] < 0):
-                idx_global = [i + idx_global_start + (idx_local_max if i < 0 else 0) for i in idx_local]
-            else:
+            if idx_local and idx_local[0] < 0 and idx_local[-1] < 0:
+                idx_local = range(
+                    idx_local.start + idx_local_max,
+                    idx_local.stop + idx_local_max,
+                    idx_local.step,
+                )
+                if idx_local.step < 0:
+                    idx_local = tuple(idx_local)
+            elif idx_local and (idx_local[0] < 0 or idx_local[-1] < 0):
+                idx_local = sanitize_index(idx_local, -1, idx_local_max, 0, "idx_local")
+
+            if isinstance(idx_local, range) and idx_local.step > 0:
                 idx_global = range(
                     idx_local.start + idx_global_start, idx_local.stop + idx_global_start, idx_local.step
                 )
-        elif isinstance(idx_local, (list, tuple)):
-            try:
-                idx_global = [i + idx_global_start + (idx_local_max if i < 0 else 0) for i in idx_local]
-            except TypeError:
-                gs.raise_exception("Expecting a sequence of integers for `idx_local`.")
+            else:
+                idx_global = sanitize_index(idx_local, -1, idx_local_max, 0, "idx_local")
+                if idx_global_start > 0:
+                    idx_global = idx_global + idx_global_start
         else:
-            if isinstance(idx_local, torch.Tensor):
-                is_negative_wrap_required = idx_local.dtype != torch.bool and idx_local.dtype.is_signed
-            else:
-                is_negative_wrap_required = np.issubdtype(idx_local.dtype, np.signedinteger)
-            if is_negative_wrap_required:
-                # Negative values wrap within the entity-owned range before the global offset is applied
-                idx_local = idx_local + idx_local_max * (idx_local < 0)
-            # Increment may be slow when dealing with heterogenuous data, so it must be avoided if possible
+            idx_global = sanitize_index(idx_local, -1, idx_local_max, 0, "idx_local")
             if idx_global_start > 0:
-                idx_global = idx_local + idx_global_start
-            else:
-                idx_global = idx_local
+                idx_global = idx_global + idx_global_start
 
         # Early return if unsafe
         if unsafe:

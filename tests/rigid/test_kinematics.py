@@ -9,7 +9,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils.misc import tensor_to_array
 
-from ..utils.assertions import assert_allclose
+from ..utils.assertions import assert_allclose, assert_equal
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity.rigid_entity import RigidEntity
@@ -699,7 +699,51 @@ def test_setters(show_viewer, tol):
     assert_allclose(ghost_box.get_vAABB()[0], ((-0.20, -0.05, -0.10), (0.20, 0.05, 0.1)), tol=tol)
     assert_allclose(ghost_box.get_vAABB()[1], ((-0.05, -0.10, -0.2), (0.05, 0.10, 0.2)), tol=tol)
 
-    ghost_robot.set_dofs_position([0.1, -0.1], dofs_idx_local=[-1])
+    n_dofs = ghost_robot.n_dofs
+    dofs_idx_cases = (
+        (-1, (n_dofs - 1,)),
+        ([-n_dofs, -1], (0, n_dofs - 1)),
+        ((-2, -1), (n_dofs - 2, n_dofs - 1)),
+        (np.array((-2, -1), dtype=np.int32), (n_dofs - 2, n_dofs - 1)),
+        (np.array((-2.0, -1.0), dtype=np.float64), (n_dofs - 2, n_dofs - 1)),
+        (torch.tensor((-2, -1), dtype=torch.int32), (n_dofs - 2, n_dofs - 1)),
+        (range(-n_dofs, 0), tuple(range(n_dofs))),
+        (range(-2, 1), (n_dofs - 2, n_dofs - 1, 0)),
+        (slice(-2, None), (n_dofs - 2, n_dofs - 1)),
+        (slice(-1, None, -1), tuple(range(n_dofs - 1, -1, -1))),
+        (np.array((False, True, True, True, True, True, False)), (1, 2, 3, 4, 5)),
+        (torch.tensor((False, True, True, True, True, True, False)), (1, 2, 3, 4, 5)),
+    )
+    box_baseline = torch.arange(ghost_box.n_dofs, device=gs.device) * 0.01 + 0.1
+    robot_baseline = torch.arange(n_dofs, device=gs.device) * 0.01 + 0.2
+    ghost_box.set_dofs_position(box_baseline)
+    ghost_robot.set_dofs_position(robot_baseline)
+    for dofs_idx_local, expected_dofs_idx_local in dofs_idx_cases:
+        assert_equal(
+            ghost_robot.get_dofs_position(dofs_idx_local),
+            ghost_robot.get_dofs_position(expected_dofs_idx_local),
+        )
+
+        values = torch.arange(1, len(expected_dofs_idx_local) + 1, device=gs.device) * 0.01
+        ghost_box.set_dofs_position(box_baseline)
+        ghost_robot.set_dofs_position(robot_baseline)
+        ghost_robot.set_dofs_position(values, dofs_idx_local=dofs_idx_local)
+        box_result = ghost_box.get_dofs_position()
+        robot_result = ghost_robot.get_dofs_position()
+
+        ghost_box.set_dofs_position(box_baseline)
+        ghost_robot.set_dofs_position(robot_baseline)
+        ghost_robot.set_dofs_position(values, dofs_idx_local=expected_dofs_idx_local)
+        assert_equal(box_result, ghost_box.get_dofs_position())
+        assert_equal(robot_result, ghost_robot.get_dofs_position())
+
+    for dofs_idx_local in ({0, 1}, [[0, 1]], ["a"]):
+        with pytest.raises(gs.GenesisException):
+            ghost_robot.get_dofs_position(dofs_idx_local)
+
+    ghost_box.set_dofs_position(torch.zeros(ghost_box.n_dofs, device=gs.device))
+    ghost_robot.set_dofs_position(torch.zeros(n_dofs, device=gs.device))
+    ghost_robot.set_dofs_position([0.1, -0.1], dofs_idx_local=-1)
     assert_allclose(ghost_robot.get_vAABB()[0], ((-0.05, -0.05, -0.05), (0.25, 0.05, 0.05)), tol=tol)
     assert_allclose(ghost_robot.get_vAABB()[1], ((-0.05, -0.05, -0.05), (0.05, 0.05, 0.05)), tol=tol)
 
