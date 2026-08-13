@@ -900,10 +900,32 @@ def test_axis_aligned_bounding_boxes(n_envs):
 
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
-def test_reset(show_viewer):
+@pytest.mark.parametrize(
+    "friction_cone, sparse_solve, use_hibernation, enable_mujoco_compatibility",
+    [
+        (gs.friction_cone.pyramidal, None, False, False),
+        # Every feature holding or reusing a buffer across steps at once: the elliptic cone keeps a cone-free Hessian
+        # mirror, the sparse solve zeroes each Jacobian row through the pattern the previous step left, hibernation
+        # sleeps both boxes before the state is captured so the reset has to wake them, and MuJoCo compatibility reads
+        # the warm-start acceleration unconditionally.
+        (gs.friction_cone.elliptic, True, True, True),
+    ],
+    ids=["default", "extreme"],
+)
+def test_reset(show_viewer, friction_cone, sparse_solve, use_hibernation, enable_mujoco_compatibility):
     BOOL_MASK = torch.tensor([True, False, True, False], dtype=torch.bool, device=gs.device)
 
     scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            friction_cone=friction_cone,
+            sparse_solve=sparse_solve,
+            use_hibernation=use_hibernation,
+            enable_mujoco_compatibility=enable_mujoco_compatibility,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.0, -2.5, 1.2),
+            camera_lookat=(1.0, 0.0, 0.05),
+        ),
         show_viewer=show_viewer,
     )
     scene.add_entity(
@@ -912,54 +934,80 @@ def test_reset(show_viewer):
             fixed=True,
         )
     )
-    scene.add_entity(
+    box = scene.add_entity(
         gs.morphs.Box(
             size=(0.1, 0.1, 0.1),
             pos=(0, 0, 0.5),
         )
     )
+    # Far enough from the first box to never interact, so each lands in its own island - the structure hibernation
+    # needs to engage.
+    scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(2.0, 0, 0.5),
+        )
+    )
     scene.build(n_envs=4)
+
+    # Every position- and velocity-level accessor must read the same in a restored state as it did at capture, starting
+    # before the first step that follows the reset. Acceleration only matches from the first step onwards: a restored
+    # state derives it from the restored velocity, while the capture reflects the refresh the setter left pending.
+    GETTERS = (
+        box.get_pos,
+        box.get_quat,
+        box.get_vel,
+        box.get_ang,
+        box.get_links_pos,
+        box.get_links_quat,
+        box.get_links_vel,
+        box.get_links_ang,
+        box.get_dofs_position,
+        box.get_dofs_velocity,
+    )
+    ACC_GETTERS = (
+        box.get_links_acc,
+        box.get_links_acc_ang,
+    )
 
     init_state = scene.get_state()
     init_rigid_state = next(s for s in init_state.solvers_state if isinstance(s, RigidSolverState))
-    for _ in range(50):
+    init_getters = tuple(getter() for getter in GETTERS)
+    # The horizon reaches past the point where both boxes come to rest, so the captured state is taken with them
+    # already hibernated whenever hibernation is enabled.
+    for _ in range(60):
         scene.step()
     fallen_state = scene.get_state()
     fallen_rigid_state = next(s for s in fallen_state.solvers_state if isinstance(s, RigidSolverState))
+    fallen_getters = tuple(getter() for getter in GETTERS)
+    fallen_acc_getters = tuple(getter() for getter in ACC_GETTERS)
 
     for envs_idx in (BOOL_MASK, torch.where(BOOL_MASK)[0]):
         scene.reset(state=fallen_state)
         scene.reset(state=init_state, envs_idx=envs_idx)
+        restored_rigid_state = next(s for s in scene.get_state().solvers_state if isinstance(s, RigidSolverState))
+        restored_getters = tuple(getter() for getter in GETTERS)
         for actual, init_ref, fallen_ref in (
-            (
-                qd_to_torch(scene.rigid_solver.rigid_info.qpos, transpose=True, copy=True),
-                init_rigid_state.qpos,
-                fallen_rigid_state.qpos,
-            ),
-            (
-                qd_to_torch(scene.rigid_solver.dyn_state.dofs.vel, transpose=True, copy=True),
-                init_rigid_state.dofs_vel,
-                fallen_rigid_state.dofs_vel,
-            ),
-            (
-                qd_to_torch(scene.rigid_solver.dyn_state.links.pos, transpose=True, copy=True),
-                init_rigid_state.links_pos,
-                fallen_rigid_state.links_pos,
-            ),
+            (restored_rigid_state.qpos, init_rigid_state.qpos, fallen_rigid_state.qpos),
+            (restored_rigid_state.dofs_vel, init_rigid_state.dofs_vel, fallen_rigid_state.dofs_vel),
+            (restored_rigid_state.links_pos, init_rigid_state.links_pos, fallen_rigid_state.links_pos),
+            *zip(restored_getters, init_getters, fallen_getters),
         ):
             assert_allclose(actual[BOOL_MASK], init_ref[BOOL_MASK], tol=gs.EPS)
             assert_allclose(actual[~BOOL_MASK], fallen_ref[~BOOL_MASK], tol=gs.EPS)
 
     # After reset, simulation from init_state should reproduce the original fallen_state trajectory
-    for _ in range(50):
+    for _ in range(60):
         scene.step()
+    replayed_rigid_state = next(s for s in scene.get_state().solvers_state if isinstance(s, RigidSolverState))
+    replayed_getters = tuple(getter() for getter in GETTERS)
+    replayed_acc_getters = tuple(getter() for getter in ACC_GETTERS)
     for actual, fallen_ref in (
-        (qd_to_torch(scene.rigid_solver.rigid_info.qpos, transpose=True, copy=True), fallen_rigid_state.qpos),
-        (qd_to_torch(scene.rigid_solver.dyn_state.dofs.vel, transpose=True, copy=True), fallen_rigid_state.dofs_vel),
-        (
-            qd_to_torch(scene.rigid_solver.dyn_state.links.pos, transpose=True, copy=True),
-            fallen_rigid_state.links_pos,
-        ),
+        (replayed_rigid_state.qpos, fallen_rigid_state.qpos),
+        (replayed_rigid_state.dofs_vel, fallen_rigid_state.dofs_vel),
+        (replayed_rigid_state.links_pos, fallen_rigid_state.links_pos),
+        *zip(replayed_getters, fallen_getters),
+        *zip(replayed_acc_getters, fallen_acc_getters),
     ):
         assert_allclose(actual[BOOL_MASK], fallen_ref[BOOL_MASK], tol=gs.EPS)
 
