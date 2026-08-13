@@ -28,6 +28,8 @@ pytestmark = [
     pytest.mark.benchmarks,
     pytest.mark.cache(False),
     pytest.mark.debug(False),
+    # Benchmarks measure the solve implementation the autotuner actually settles on, so the choice is left to it
+    pytest.mark.use_deterministic_algorithms(False),
 ]
 
 

@@ -737,7 +737,13 @@ def test_setters(show_viewer, tol):
         assert_equal(box_result, ghost_box.get_dofs_position())
         assert_equal(robot_result, ghost_robot.get_dofs_position())
 
-    for dofs_idx_local in ({0, 1}, [[0, 1]], ["a"]):
+    for dofs_idx_local in (
+        {0, 1},
+        [[0, 1]],
+        ["a"],
+        np.array((True,), dtype=bool),
+        torch.tensor((True,), dtype=torch.bool),
+    ):
         with pytest.raises(gs.GenesisException):
             ghost_robot.get_dofs_position(dofs_idx_local)
 

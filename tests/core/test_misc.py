@@ -299,7 +299,16 @@ def test_sanitize_index(index, expected):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("index", ({0, 1}, [[0, 1]], ["a"]))
+@pytest.mark.parametrize(
+    "index",
+    (
+        {0, 1},
+        [[0, 1]],
+        ["a"],
+        np.array((True,), dtype=bool),
+        torch.tensor((True,), dtype=torch.bool),
+    ),
+)
 def test_sanitize_index_rejects_invalid_collections(index):
     with pytest.raises(gs.GenesisException):
         sanitize_index(index, -1, 4, 0, "index")

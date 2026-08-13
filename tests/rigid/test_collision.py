@@ -1209,14 +1209,22 @@ def test_contype_conaffinity(show_viewer, tol):
 @pytest.mark.precision("32")
 @pytest.mark.parametrize("backend", [gs.gpu])
 @pytest.mark.parametrize("contact_pruning_tolerance", [0.02, None], ids=["prune", "noprune"])
-@pytest.mark.parametrize("prefer_decomposed_solver", [0, 1], ids=["monolith", "decomposed"])
+@pytest.mark.parametrize(
+    "prefer_decomposed_solver",
+    [
+        pytest.param(False, marks=pytest.mark.use_deterministic_algorithms(False)),
+        pytest.param(True, marks=pytest.mark.use_deterministic_algorithms(False)),
+        None,
+    ],
+    ids=["monolith", "decomposed", "deterministic"],
+)
 def test_gpu_simulation_determinism(prefer_decomposed_solver, contact_pruning_tolerance, monkeypatch, show_viewer):
     # Run-to-run reproducibility on GPU: from an identical initial state, every trial must reproduce a bit-identical
     # trajectory. CPU is serialized and deterministic by construction, so this targets GPU parallel races only
     # (atomic_add slot reservation, parallel reductions, scheduling). The two registered solve implementations are
-    # numerically distinct, so each is pinned via prefer_decomposed_solver (0 -> monolith, 1 -> decomposed) to bypass
-    # the perf-dispatch autotuner, whose timing-based choice between them is a separate nondeterminism source; this
-    # isolates physics-kernel determinism per variant.
+    # numerically distinct, so each is pinned via prefer_decomposed_solver to isolate physics-kernel determinism per
+    # variant. The third case asks for neither and runs under 'use_deterministic_algorithms', whose job is precisely
+    # to resolve that choice itself instead of leaving it to a timing measurement that varies with machine load.
     #
     # The authored-decomposition tower is the stress case: stacked rings pre-split into convex wedges produce many
     # multi-contact manifolds per geom pair, exercising the narrowphase, contact pruning, the contact sort, and the
@@ -1227,13 +1235,14 @@ def test_gpu_simulation_determinism(prefer_decomposed_solver, contact_pruning_to
     #   - dofs velocity  -> constraint solve
     from genesis.utils.array_class import RigidSimStaticConfig
 
-    init_orig = RigidSimStaticConfig.__init__
+    if prefer_decomposed_solver is not None:
+        init_orig = RigidSimStaticConfig.__init__
 
-    def init_forced(self, *args, **kwargs):
-        kwargs["prefer_decomposed_solver"] = prefer_decomposed_solver
-        init_orig(self, *args, **kwargs)
+        def init_forced(self, *args, **kwargs):
+            kwargs["prefer_decomposed_solver"] = int(prefer_decomposed_solver)
+            init_orig(self, *args, **kwargs)
 
-    monkeypatch.setattr(RigidSimStaticConfig, "__init__", init_forced)
+        monkeypatch.setattr(RigidSimStaticConfig, "__init__", init_forced)
 
     N_TRIALS = 8
     N_STEPS = 25

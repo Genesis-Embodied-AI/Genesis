@@ -1724,12 +1724,16 @@ class KinematicEntity(Entity):
         else:
             if isinstance(idx_local, torch.Tensor):
                 if idx_local.dtype == torch.bool:
+                    if idx_local.shape != (idx_local_max,):
+                        gs.raise_exception(f"Boolean masks for `idx_local` must have shape ({idx_local_max},).")
                     idx_local, *_ = torch.where(idx_local)
                     is_negative_wrap_required = False
                 else:
                     is_negative_wrap_required = idx_local.dtype.is_signed
             elif isinstance(idx_local, np.ndarray):
                 if np.issubdtype(idx_local.dtype, np.bool_):
+                    if idx_local.shape != (idx_local_max,):
+                        gs.raise_exception(f"Boolean masks for `idx_local` must have shape ({idx_local_max},).")
                     idx_local, *_ = np.where(idx_local)
                     is_negative_wrap_required = False
                 else:

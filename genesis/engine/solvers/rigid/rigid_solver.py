@@ -745,6 +745,13 @@ class RigidSolver(KinematicSolver):
                     # arm has nothing to exploit, so the scalar one-thread-per-env monolith is the clear winner.
                     rigid_config["prefer_decomposed_solver"] = 0
 
+                # The autotuner picks between two numerically distinct arms by timing them as the simulation runs, so
+                # which one runs at a given step follows the machine rather than the scene. Pinning the arm is what
+                # makes a trajectory reproducible; the decomposed one takes whatever the static scene description
+                # leaves open, every case that description settles in the monolith's favor being pinned above already.
+                if gs.use_deterministic_algorithms and rigid_config.get("prefer_decomposed_solver", -1) == -1:
+                    rigid_config["prefer_decomposed_solver"] = 1
+
             # Add terms for static inner loops, use -1 if not requires_grad to avoid re-compilation
             if self.sim.options.requires_grad:
                 rigid_config.update(
