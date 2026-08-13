@@ -1065,43 +1065,57 @@ def dex_hand(solver, n_envs, gjk):
 # ---------------------------------------------------------------------------
 
 
+# Full benchmark suite, run on the 'field' dtype.
+BENCHMARKS_ALL = [
+    ("duck_in_box_easy", None, True, 30000, gs.gpu),
+    ("duck_in_box_easy", None, False, 30000, gs.gpu),
+    ("duck_in_box_hard", None, True, 30000, gs.gpu),
+    ("duck_in_box_hard", None, False, 30000, gs.gpu),
+    ("duck_in_box_hard", None, None, 0, gs.cpu),
+    ("anymal_random", None, None, 30000, gs.gpu),
+    ("anymal_uniform", None, None, 30000, gs.gpu),
+    ("anymal_zero", None, None, 30000, gs.gpu),
+    ("anymal_zero", None, None, 0, gs.cpu),
+    ("anymal_uniform_kinematic", None, None, 30000, gs.gpu),
+    ("anymal_uniform_kinematic", None, None, 0, gs.cpu),
+    ("go2", None, True, 4096, gs.gpu),
+    ("go2", gs.constraint_solver.CG, False, 4096, gs.gpu),
+    ("go2", gs.constraint_solver.Newton, False, 4096, gs.gpu),
+    ("franka_accessors", None, None, 0, gs.cpu),
+    ("franka_accessors", None, None, 30000, gs.gpu),
+    ("franka_free", None, None, 30000, gs.gpu),
+    ("franka", None, None, 30000, gs.gpu),
+    ("franka_random", None, False, 30000, gs.gpu),
+    ("franka_random", None, True, 30000, gs.gpu),
+    ("franka_random", gs.constraint_solver.CG, None, 30000, gs.gpu),
+    ("franka_random", gs.constraint_solver.Newton, None, 30000, gs.gpu),
+    ("franka_random", None, None, 0, gs.cpu),
+    ("box_pyramid_3", None, None, 4096, gs.gpu),
+    ("box_pyramid_4", None, None, 4096, gs.gpu),
+    ("box_pyramid_5", None, None, 4096, gs.gpu),
+    ("box_pyramid_6", None, True, 4096, gs.gpu),
+    ("box_pyramid_6", None, False, 4096, gs.gpu),
+    ("g1_fall", gs.constraint_solver.Newton, None, 4096, gs.gpu),
+    ("double_smplx", gs.constraint_solver.Newton, None, 4096, gs.gpu),
+    ("shadow_hand_cubes", None, None, 0, gs.cpu),
+    ("shadow_hand_cubes_sparse", None, None, 0, gs.cpu),
+    ("dex_hand", None, None, 4096, gs.gpu),
+]
+
+# Reduced subset, run on the 'ndarray' dtype only.
+BENCHMARKS_NDARRAY = [
+    ("franka_random", None, None, 0, gs.cpu),
+    ("g1_fall", gs.constraint_solver.Newton, None, 4096, gs.gpu),
+    ("dex_hand", None, None, 4096, gs.gpu),
+]
+
+# The dtype is selected before collection via 'GS_ENABLE_NDARRAY' ('0' => field, otherwise ndarray).
+BENCHMARKS = BENCHMARKS_ALL if os.environ.get("GS_ENABLE_NDARRAY", "1") == "0" else BENCHMARKS_NDARRAY
+
+
 @pytest.mark.parametrize(
     "runnable, solver, gjk, n_envs, backend",
-    [
-        ("duck_in_box_easy", None, True, 30000, gs.gpu),
-        ("duck_in_box_easy", None, False, 30000, gs.gpu),
-        ("duck_in_box_hard", None, True, 30000, gs.gpu),
-        ("duck_in_box_hard", None, False, 30000, gs.gpu),
-        ("duck_in_box_hard", None, None, 0, gs.cpu),
-        ("anymal_random", None, None, 30000, gs.gpu),
-        ("anymal_uniform", None, None, 30000, gs.gpu),
-        ("anymal_zero", None, None, 30000, gs.gpu),
-        ("anymal_zero", None, None, 0, gs.cpu),
-        ("anymal_uniform_kinematic", None, None, 30000, gs.gpu),
-        ("anymal_uniform_kinematic", None, None, 0, gs.cpu),
-        ("go2", None, True, 4096, gs.gpu),
-        ("go2", gs.constraint_solver.CG, False, 4096, gs.gpu),
-        ("go2", gs.constraint_solver.Newton, False, 4096, gs.gpu),
-        ("franka_accessors", None, None, 0, gs.cpu),
-        ("franka_accessors", None, None, 30000, gs.gpu),
-        ("franka_free", None, None, 30000, gs.gpu),
-        ("franka", None, None, 30000, gs.gpu),
-        ("franka_random", None, False, 30000, gs.gpu),
-        ("franka_random", None, True, 30000, gs.gpu),
-        ("franka_random", gs.constraint_solver.CG, None, 30000, gs.gpu),
-        ("franka_random", gs.constraint_solver.Newton, None, 30000, gs.gpu),
-        ("franka_random", None, None, 0, gs.cpu),
-        ("box_pyramid_3", None, None, 4096, gs.gpu),
-        ("box_pyramid_4", None, None, 4096, gs.gpu),
-        ("box_pyramid_5", None, None, 4096, gs.gpu),
-        ("box_pyramid_6", None, True, 4096, gs.gpu),
-        ("box_pyramid_6", None, False, 4096, gs.gpu),
-        ("g1_fall", gs.constraint_solver.Newton, None, 4096, gs.gpu),
-        ("double_smplx", gs.constraint_solver.Newton, None, 4096, gs.gpu),
-        ("shadow_hand_cubes", None, None, 0, gs.cpu),
-        ("shadow_hand_cubes_sparse", None, None, 0, gs.cpu),
-        ("dex_hand", None, None, 4096, gs.gpu),
-    ],
+    BENCHMARKS,
 )
 def test_speed(factory_logger, request, runnable, solver, gjk, n_envs):
     with factory_logger(
