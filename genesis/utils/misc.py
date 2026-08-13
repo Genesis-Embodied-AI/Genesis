@@ -853,6 +853,7 @@ def sanitize_index(
     dim: int,
     name: str,
 ) -> torch.Tensor:
+    is_bool_mask = False
     is_negative_wrap_required = False
     if index is None:
         index = range(max_size)
@@ -868,16 +869,13 @@ def sanitize_index(
                 index = tuple(index)
                 is_negative_wrap_required = True
     elif isinstance(index, (list, tuple, torch.Tensor, np.ndarray)):
-        is_negative_wrap_required = not (
-            (isinstance(index, torch.Tensor) and index.dtype == torch.bool)
-            or (isinstance(index, np.ndarray) and np.issubdtype(index.dtype, np.bool_))
+        is_bool_mask = (isinstance(index, torch.Tensor) and index.dtype == torch.bool) or (
+            isinstance(index, np.ndarray) and np.issubdtype(index.dtype, np.bool_)
         )
+        is_negative_wrap_required = not is_bool_mask
     else:
         gs.raise_exception(f"Expecting integer indices for `{name}`.")
 
-    is_bool_mask = (isinstance(index, torch.Tensor) and index.dtype == torch.bool) or (
-        isinstance(index, np.ndarray) and np.issubdtype(index.dtype, np.bool_)
-    )
     try:
         if is_bool_mask:
             index = torch.as_tensor(index, device=gs.device)
@@ -905,7 +903,8 @@ def sanitize_index(
         )
 
     if is_negative_wrap_required:
-        # Quadrants kernels address buffers directly, so negative indices must be normalized before they reach kernels.
+        # Deferring the wrap until after the shared tensor conversion lets one dtype-preserving operation cover every
+        # input form that can hold negative entries
         index = torch.where(index < 0, index + max_size, index)
 
     # FIXME: This check is too expensive

@@ -743,23 +743,8 @@ def debug(request):
     return debug
 
 
-@pytest.fixture
-def use_deterministic_algorithms(request):
-    use_deterministic_algorithms = None
-    for mark in request.node.iter_markers("use_deterministic_algorithms"):
-        if mark.args:
-            if use_deterministic_algorithms is not None:
-                pytest.fail("'use_deterministic_algorithms' can only be specified once.")
-            (use_deterministic_algorithms,) = mark.args
-    if use_deterministic_algorithms is None:
-        use_deterministic_algorithms = True
-    return use_deterministic_algorithms
-
-
 @pytest.fixture(scope="function", autouse=True)
-def initialize_genesis(
-    request, monkeypatch, tmp_path, backend, precision, performance_mode, debug, cache, use_deterministic_algorithms
-):
+def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, performance_mode, debug, cache):
     import genesis as gs
 
     # Early return if backend is None
@@ -816,9 +801,23 @@ def initialize_genesis(
             seed=0,
             logging_level=logging_level,
             performance_mode=performance_mode,
-            use_deterministic_algorithms=use_deterministic_algorithms,
         )
         gc.collect()
+
+        # Prefer the decomposed solver on GPU so both code paths (decomposed on GPU, monolith on CPU) are tested
+        # Skip for benchmarks - let auto-detection choose freely
+        expr = Expression.compile(request.config.option.markexpr)
+        is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
+        if not is_benchmarks:
+            from genesis.utils.array_class import RigidSimStaticConfig
+
+            _RigidSimStaticConfig_init_orig = RigidSimStaticConfig.__init__
+
+            def _RigidSimStaticConfig_init(self, *args, **kwargs):
+                kwargs.setdefault("prefer_decomposed_solver", int(gs.backend != gs.cpu))
+                _RigidSimStaticConfig_init_orig(self, *args, **kwargs)
+
+            monkeypatch.setattr(RigidSimStaticConfig, "__init__", _RigidSimStaticConfig_init)
 
         if gs.backend != gs.cpu and gs.device.index is not None:
             # The device torch selected must be one this worker is allowed to use. Anything else - including a

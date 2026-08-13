@@ -21,14 +21,7 @@ from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
-from genesis.utils.misc import (
-    DeprecationError,
-    broadcast_tensor,
-    qd_to_numpy,
-    qd_to_torch,
-    sanitize_index,
-    tensor_to_array,
-)
+from genesis.utils.misc import DeprecationError, broadcast_tensor, qd_to_numpy, qd_to_torch, tensor_to_array
 from genesis.typing import UnitVec4FType, Vec3FType
 from genesis.engine.states.entities import RigidEntityState
 
@@ -1708,49 +1701,66 @@ class KinematicEntity(Entity):
                 idx_global = tuple(idx_global)
         elif isinstance(idx_local, range):
             if idx_local and idx_local[0] < 0 and idx_local[-1] < 0:
-                idx_local = range(
-                    idx_local.start + idx_local_max,
-                    idx_local.stop + idx_local_max,
+                # Every entry shifts by the same amount, so the constant step and the range form are preserved
+                idx_global = range(
+                    idx_local.start + idx_local_max + idx_global_start,
+                    idx_local.stop + idx_local_max + idx_global_start,
                     idx_local.step,
                 )
-                if idx_local.step < 0:
-                    idx_local = tuple(idx_local)
             elif idx_local and (idx_local[0] < 0 or idx_local[-1] < 0):
-                idx_local = sanitize_index(idx_local, -1, idx_local_max, 0, "idx_local")
-
-            if isinstance(idx_local, range) and idx_local.step > 0:
+                # Mixed-sign entries wrap by different amounts, which breaks the constant step
+                idx_global = [i + idx_global_start + (idx_local_max if i < 0 else 0) for i in idx_local]
+            else:
                 idx_global = range(
                     idx_local.start + idx_global_start, idx_local.stop + idx_global_start, idx_local.step
                 )
-            else:
-                idx_global = sanitize_index(idx_local, -1, idx_local_max, 0, "idx_local")
-                if idx_global_start > 0:
-                    idx_global = idx_global + idx_global_start
+            if isinstance(idx_global, range) and idx_global.step < 0:
+                idx_global = tuple(idx_global)
+        elif isinstance(idx_local, (list, tuple)):
+            try:
+                idx_global = [i + idx_global_start + (idx_local_max if i < 0 else 0) for i in idx_local]
+            except TypeError:
+                gs.raise_exception("Expecting a sequence of integers for `idx_local`.")
         else:
-            idx_global = sanitize_index(idx_local, -1, idx_local_max, 0, "idx_local")
+            if isinstance(idx_local, torch.Tensor):
+                if idx_local.dtype == torch.bool:
+                    idx_local, *_ = torch.where(idx_local)
+                    is_negative_wrap_required = False
+                else:
+                    is_negative_wrap_required = idx_local.dtype.is_signed
+            elif isinstance(idx_local, np.ndarray):
+                if np.issubdtype(idx_local.dtype, np.bool_):
+                    idx_local, *_ = np.where(idx_local)
+                    is_negative_wrap_required = False
+                else:
+                    is_negative_wrap_required = not np.issubdtype(idx_local.dtype, np.unsignedinteger)
+            else:
+                gs.raise_exception("Expecting integer indices for `idx_local`.")
+            if is_negative_wrap_required:
+                # Wrapping after the global offset would send negative entries into the preceding entity's data, and
+                # a remainder is the only sync-free single-op form that preserves the integer dtype
+                idx_local = idx_local % idx_local_max
+            # Increment may be slow when dealing with heterogenuous data, so it must be avoided if possible
             if idx_global_start > 0:
-                idx_global = idx_global + idx_global_start
+                idx_global = idx_local + idx_global_start
+            else:
+                idx_global = idx_local
 
         # Early return if unsafe
         if unsafe:
             return idx_global
 
         # Perform a bunch of sanity checks
-        if isinstance(idx_global, torch.Tensor) and idx_global.dtype == torch.bool:
-            if idx_global.shape != (idx_local_max - idx_global_start,):
-                gs.raise_exception("Boolean masks must be 1D tensors of fixed size.")
-            idx_global = idx_global_start + idx_global.nonzero()[:, 0]
-        else:
-            idx_global = torch.as_tensor(idx_global, dtype=gs.tc_int, device=gs.device).contiguous()
-            ndim = idx_global.ndim
-            if ndim == 0:
-                idx_global = idx_global[None]
-            elif ndim > 1:
-                gs.raise_exception("Expecting a 1D tensor for local index.")
+        idx_global = torch.as_tensor(idx_global, dtype=gs.tc_int, device=gs.device).contiguous()
+        ndim = idx_global.ndim
+        if ndim == 0:
+            idx_global = idx_global[None]
+        elif ndim > 1:
+            gs.raise_exception("Expecting a 1D tensor for local index.")
 
-            # FIXME: This check is too expensive
-            # if (idx_global < 0).any() or (idx_global >= idx_global_start + idx_local_max).any():
-            #     gs.raise_exception("`idx_local` exceeds valid range.")
+        # FIXME: This check is too expensive
+        # if (idx_global < 0).any() or (idx_global >= idx_global_start + idx_local_max).any():
+        #     gs.raise_exception("`idx_local` exceeds valid range.")
 
         return idx_global
 
