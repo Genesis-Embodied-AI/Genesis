@@ -1,4 +1,3 @@
-import inspect
 import os
 import time
 from functools import cached_property
@@ -11,7 +10,7 @@ import genesis.utils.geom as gu
 from genesis.constants import IMAGE_TYPE
 from genesis.repr_base import RBC
 from genesis.utils.image_exporter import as_grayscale_image
-from genesis.utils.misc import tensor_to_array
+from genesis.utils.misc import get_entry_point_name, tensor_to_array
 from genesis.utils.video_encoder import VideoEncoder
 
 RECORDING_DEFAULT_FPS = 60
@@ -738,8 +737,8 @@ class Camera(RBC):
         Parameters
         ----------
         save_to_filename : str, optional
-            Name of the output video file, ending in '.mp4'. Defaults to the name of the caller file, with camera
-            idx, a timestamp and '.mp4' extension.
+            Name of the output video file, ending in '.mp4'. Defaults to the name of the script the process was
+            launched from, with camera idx, a timestamp and '.mp4' extension.
         fps : float, optional
             Framerate of the recorded video. A low framerate keeps the file small and spares the renderer, at the
             cost of temporal resolution; a high one resolves fast motion. One second of video always covers one
@@ -762,11 +761,7 @@ class Camera(RBC):
         if fps <= 0.0:
             gs.raise_exception("Framerate of a recording must be positive.")
         if save_to_filename is None:
-            caller_file = inspect.stack()[-1].filename
-            save_to_filename = (
-                os.path.splitext(os.path.basename(caller_file))[0]
-                + f"_cam_{self.idx}_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
-            )
+            save_to_filename = f"{get_entry_point_name()}_cam_{self.idx}_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
 
         # A realtime factor left unset means running as fast as possible, which carries no time scale to honor.
         viewer = self._visualizer.viewer

@@ -1,5 +1,30 @@
 # Genesis Release Note
 
+## 1.3.3
+
+This minor release fixes rigid solver convergence regressions and introduces a new torch-like option 'use_deterministic_algorithms' to ensure bit-exact reproducibility on a given machine. Besides, Mujoco compatibility mode has been improved to now cover native contact patch-based multi-contact (as opposed to the old perturbation-based approach). This experimental feature is now exposed to the user via 'RigidOptions.enable_contact_patch'.
+
+### New Features
+
+* Add bit-exact deterministic simulation mode on a given machine. (@duburcqa) (#3222)
+
+### Bug Fixes
+
+* Keep the contact manifold and the constraint solve consistent across orientations and scales. (@duburcqa) (#3158)
+* Fix physics discrepancy between generic and GPU-only constraint solver implementations. (@duburcqa) (#3218)
+* Fix dropped and backend-dependent contacts under MuJoCo compatibility. (@duburcqa) (#3223)
+
+### Miscellaneous
+
+* Add analytical sphere-sphere collision detection. (@Kashu7100) (#2963)
+* Stricter Mujoco parity under compatibility mode. (@duburcqa) (#3154)
+* Skip already-converged warm-started constraint solves. (@duburcqa) (#3154)
+* Support PyTorch prerelease builds. (@PhysicistJohn) (#3203)
+* Add documentation issue template. (@Milotrince) (#3189)
+* Remove deprecated 'compile_kernels' build arg. (@Milotrince) (#3220)
+* Skip Quadrants memory allocation for inactive solvers. (@Kashu7100) (#3155)
+* Upgrade Quadrants to 1.3.0. (@hughperkins) (#3219)
+
 ## 1.3.2
 
 This minor release improves compliance of rigid body simulation wrt the orientation- and scale-based physics invariants, while improving numerical robustness to ill-conditioning for the mass matrix. Besides, the simulation is now fully deterministic on a given machine for both CPU and GPU.
