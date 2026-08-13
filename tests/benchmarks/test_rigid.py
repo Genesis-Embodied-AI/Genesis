@@ -312,142 +312,6 @@ def make_anymal(n_envs, solver=None, gjk=None, control=None, with_kinematic=Fals
     return scene, step, SceneMeta(compile_time=compile_time)
 
 
-def make_franka(
-    n_envs, solver=None, gjk=None, is_collision_free=False, is_randomized=False, accessors=False, **scene_kwargs
-):
-    scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
-            **get_rigid_solver_options(
-                dt=STEP_DT,
-                enable_neutral_collision=True,
-                **(dict(constraint_solver=solver) if solver is not None else {}),
-                **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
-            )
-        ),
-        **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
-    )
-
-    scene.add_entity(gs.morphs.Plane())
-    franka = scene.add_entity(
-        gs.morphs.MJCF(
-            **get_file_morph_options(
-                file="xml/franka_emika_panda/panda.xml",
-            )
-        ),
-    )
-    time_start = time.time()
-    scene.build(n_envs=n_envs)
-    compile_time = time.time() - time_start
-
-    qpos0 = torch.tensor([0, 0, 0, -1.0, 0, 1.0, 0, 0.02, 0.02], dtype=gs.tc_float, device=gs.device)
-    if n_envs > 0:
-        qpos0 = torch.tile(qpos0, (n_envs, 1))
-    if is_collision_free:
-        franka.set_qpos(qpos0)
-        franka.control_dofs_position(qpos0)
-
-    if n_envs > 0 and is_randomized:
-        vel0 = 0.2 * np.clip(np.random.randn(n_envs, franka.n_dofs), -1.0, 1.0)
-        vel0[:, [link.dof_start for link in franka.links if not link.name.startswith("link") and link.n_dofs]] = 0.0
-    else:
-        vel0 = torch.zeros((*((n_envs,) if n_envs > 0 else ()), franka.n_dofs), dtype=gs.tc_float, device=gs.device)
-    franka.set_dofs_velocity(vel0)
-
-    # scene.rigid_solver._queried_states.clear()
-    # state_0 = scene.get_state()
-    state_rigid_0 = scene.rigid_solver.get_state()
-
-    if n_envs > 0:
-        n_reset_envs = max(int(0.02 * n_envs), 1)
-        reset_envs_idx = torch.as_tensor(
-            np.random.permutation(n_envs)[:n_reset_envs], dtype=gs.tc_int, device=gs.device
-        )
-        reset_envs_mask = torch.isin(scene._envs_idx, reset_envs_idx)
-    else:
-        reset_envs_mask = None
-
-    dofs_stiffness = franka.get_dofs_stiffness()
-    dofs_damping = franka.get_dofs_damping()
-
-    # Per-selected-env base pose subset exercising the bool-mask zero-copy 'masked_scatter_' path
-    base_pos0 = franka.get_pos(reset_envs_mask)
-    base_quat0 = franka.get_quat(reset_envs_mask)
-
-    def step():
-        scene.step()
-        if accessors:
-            franka.get_ang()
-            franka.get_vel()
-            franka.get_dofs_position()
-            franka.get_dofs_velocity()
-            franka.get_links_pos()
-            franka.get_links_quat()
-            franka.get_links_vel()
-            franka.get_contacts()
-
-            # TODO: Entire scene reset is still slow currently because 'partial=False' by default.
-            scene.rigid_solver.set_state(0, state_rigid_0, envs_idx=reset_envs_mask, partial=True)
-
-            franka.control_dofs_position(qpos0)
-            franka.set_dofs_stiffness(dofs_stiffness)
-            franka.set_dofs_damping(dofs_damping)
-            franka.set_dofs_velocity(vel0, envs_idx=reset_envs_mask, skip_forward=True)
-            franka.set_qpos(qpos0, envs_idx=reset_envs_mask, zero_velocity=False, skip_forward=True)
-            franka.set_pos(base_pos0, envs_idx=reset_envs_mask, skip_forward=True)
-            franka.set_quat(base_quat0, envs_idx=reset_envs_mask, relative=False, skip_forward=True)
-
-    return scene, step, SceneMeta(compile_time=compile_time)
-
-
-def make_box_pyramid(n_envs, solver=None, gjk=None, n_cubes=3, **scene_kwargs):
-    scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
-            **get_rigid_solver_options(
-                dt=STEP_DT,
-                tolerance=1e-5,
-                **(dict(constraint_solver=solver) if solver is not None else {}),
-                **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
-            )
-        ),
-        **{
-            "viewer_options": gs.options.ViewerOptions(
-                camera_pos=(0.0, -3.5, 2.5),
-                camera_lookat=(0.0, 0.0, 0.5),
-                camera_fov=30,
-            ),
-            "show_viewer": False,
-            "show_FPS": False,
-            **scene_kwargs,
-        },
-    )
-
-    scene.add_entity(gs.morphs.Plane())
-    box_size = 0.25
-    box_spacing = (1.0 - 1e-3) * box_size
-    box_pos_offset = (-0.5, 1.0, 0.0) + 0.5 * np.array([box_size, box_size, box_size])
-    for i in range(n_cubes):
-        for j in range(n_cubes - i):
-            scene.add_entity(
-                gs.morphs.Box(
-                    size=[box_size, box_size, box_size],
-                    pos=box_pos_offset + box_spacing * np.array([i + 0.5 * j, 0.0, j]),
-                ),
-            )
-
-    time_start = time.time()
-    scene.build(n_envs=n_envs)
-    compile_time = time.time() - time_start
-
-    if n_envs > 0:
-        for box in scene.entities[1:]:
-            box.set_dofs_velocity(0.04 * np.random.rand(n_envs, 6))
-
-    def step():
-        scene.step()
-
-    return scene, step, SceneMeta(compile_time=compile_time)
-
-
 def make_g1_fall(n_envs, solver=None, gjk=None, **scene_kwargs):
     step_dt = 0.005
 
@@ -564,7 +428,7 @@ def make_double_smplx(n_envs, solver=None, gjk=None, **scene_kwargs):
     )
 
 
-def make_shadow_hand_cubes(n_envs, solver=None, gjk=None, sparse_solve=False, **scene_kwargs):
+def make_shadow_hand_cubes(n_envs, solver=None, gjk=None, sparse_solve=None, **scene_kwargs):
     STEP_DT = 1.0 / 30
     TABLE_Z = 0.762
 
@@ -774,6 +638,109 @@ def make_dex_hand(n_envs, solver=None, gjk=None, **scene_kwargs):
     )
 
 
+def make_convexify(n_envs, solver=None, gjk=None, **scene_kwargs):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=0.004),
+        rigid_options=gs.options.RigidOptions(
+            max_collision_pairs=8000,
+            **(dict(constraint_solver=solver) if solver is not None else {}),
+            **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
+        ),
+        **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
+    )
+
+    scene.add_entity(
+        gs.morphs.Mesh(file="meshes/tank.obj", scale=5.0, fixed=True, euler=(90, 0, 90)),
+        vis_mode="collision",
+    )
+    # 80 auto-decomposed objects (mug/donut/cup/apple, CoACD) stacked in a 4x4x5 staggered grid that collapses
+    # into the tank -- exercises the convex-decomposition collision path at a high contact count.
+    assets = (("mug_1", "output.xml"), ("donut_0", "output.xml"), ("cup_2", "model.xml"), ("apple_15", "model.xml"))
+    asset_files = {name: f"{get_hf_dataset(pattern=f'{name}/*')}/{name}/{xml}" for name, xml in assets}
+    for i in range(80):
+        gx, gy, gz = i % 4, (i // 4) % 4, i // 16
+        name = assets[(gx + gy + gz) % len(assets)][0]
+        scene.add_entity(
+            gs.morphs.MJCF(
+                file=asset_files[name],
+                pos=((gx + 0.5 * (gz % 2)) * 0.1 - 0.18, (gy + 0.5 * (gz % 2)) * 0.145 - 0.265, 0.11 + gz * 0.08),
+                euler=(90.0, 0.0, 0.0),
+            ),
+            vis_mode="collision",
+        )
+
+    time_start = time.time()
+    scene.build(n_envs=n_envs)
+    compile_time = time.time() - time_start
+
+    def step():
+        scene.step()
+
+    return (
+        scene,
+        step,
+        SceneMeta(
+            compile_time=compile_time,
+            step_dt=0.004,
+            duration_warmup=20.0,
+            duration_record=5.0,
+        ),
+    )
+
+
+def make_nonconvex_spacecraft(n_envs, solver=None, gjk=None, **scene_kwargs):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=0.002),
+        rigid_options=gs.options.RigidOptions(
+            max_collision_pairs=20,
+            **(dict(constraint_solver=solver) if solver is not None else {}),
+            **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
+        ),
+        **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
+    )
+
+    # Non-watertight, non-convex spacecraft hull (convexify disabled) with a grid of boxes settling against it.
+    asset_path = get_hf_dataset(pattern="spacecraft.obj")
+    scene.add_entity(
+        gs.morphs.Mesh(
+            file=f"{asset_path}/spacecraft.obj",
+            pos=(-0.4, 0.0, -4.0),
+            euler=(90.0, 0.0, 0.0),
+            scale=3.0,
+            convexify=False,
+            fixed=True,
+        ),
+        vis_mode="collision",
+    )
+    obj = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1)))
+
+    time_start = time.time()
+    scene.build(n_envs=n_envs)
+    compile_time = time.time() - time_start
+
+    obj.set_pos(
+        torch.cartesian_prod(
+            torch.linspace(-6.25, 9.05, 8),
+            torch.linspace(-5.2, 5.5, 8),
+            torch.tensor((0.39,)),
+        )
+    )
+
+    def step():
+        scene.step()
+
+    return (
+        scene,
+        step,
+        SceneMeta(
+            compile_time=compile_time,
+            step_dt=0.002,
+            duration_warmup=20.0,
+            duration_record=5.0,
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Benchmark runner
 # ---------------------------------------------------------------------------
@@ -898,56 +865,8 @@ def go2(solver, n_envs, gjk):
 
 
 @pytest.fixture
-def anymal_zero(solver, n_envs, gjk):
-    _, step_fn, meta = make_anymal(n_envs, solver=solver, gjk=gjk, control=None)
-    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
-
-
-@pytest.fixture
-def anymal_uniform(solver, n_envs, gjk):
-    _, step_fn, meta = make_anymal(n_envs, solver=solver, gjk=gjk, control="uniform")
-    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
-
-
-@pytest.fixture
 def anymal_random(solver, n_envs, gjk):
     _, step_fn, meta = make_anymal(n_envs, solver=solver, gjk=gjk, control="per_env")
-    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
-
-
-@pytest.fixture
-def anymal_uniform_kinematic(solver, n_envs, gjk):
-    _, step_fn, meta = make_anymal(n_envs, solver=solver, gjk=gjk, control="uniform", with_kinematic=True)
-    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
-
-
-@pytest.fixture
-def franka(solver, n_envs, gjk):
-    _, step_fn, meta = make_franka(n_envs, solver=solver, gjk=gjk)
-    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
-
-
-@pytest.fixture
-def franka_random(solver, n_envs, gjk):
-    _, step_fn, meta = make_franka(n_envs, solver=solver, gjk=gjk, is_randomized=True)
-    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
-
-
-@pytest.fixture
-def franka_free(solver, n_envs, gjk):
-    _, step_fn, meta = make_franka(n_envs, solver=solver, gjk=gjk, is_collision_free=True)
-    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
-
-
-@pytest.fixture
-def franka_accessors(solver, n_envs, gjk):
-    _, step_fn, meta = make_franka(n_envs, solver=solver, gjk=gjk, is_collision_free=True, accessors=True)
-    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
-
-
-@pytest.fixture
-def box_pyramid_6(solver, n_envs, gjk):
-    _, step_fn, meta = make_box_pyramid(n_envs, solver=solver, gjk=gjk, n_cubes=6)
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
@@ -964,14 +883,9 @@ def double_smplx(solver, n_envs, gjk):
 
 
 @pytest.fixture
-def shadow_hand_cubes(solver, n_envs, gjk):
+def shadow_hand(solver, n_envs, gjk):
+    # sparse_solve left at its default (None) so the solver auto-selects (CPU multi-island -> sparse skyline).
     _, step_fn, meta = make_shadow_hand_cubes(n_envs, solver=solver, gjk=gjk)
-    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
-
-
-@pytest.fixture
-def shadow_hand_cubes_sparse(solver, n_envs, gjk):
-    _, step_fn, meta = make_shadow_hand_cubes(n_envs, solver=solver, gjk=gjk, sparse_solve=True)
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
@@ -981,48 +895,35 @@ def dex_hand(solver, n_envs, gjk):
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
+@pytest.fixture
+def convexify(solver, n_envs, gjk):
+    _, step_fn, meta = make_convexify(n_envs, solver=solver, gjk=gjk)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
+def nonconvex_spacecraft(solver, n_envs, gjk):
+    _, step_fn, meta = make_nonconvex_spacecraft(n_envs, solver=solver, gjk=gjk)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
 # ---------------------------------------------------------------------------
 # Parametrized benchmark test
 # ---------------------------------------------------------------------------
 
 
-# Full benchmark suite, run on the 'field' dtype.
-BENCHMARKS_FIELD = [
-    ("anymal_random", None, None, 30000, gs.gpu),
-    ("anymal_uniform", None, None, 30000, gs.gpu),
-    ("anymal_zero", None, None, 30000, gs.gpu),
-    ("anymal_zero", None, None, 0, gs.cpu),
-    ("anymal_uniform_kinematic", None, None, 30000, gs.gpu),
-    ("anymal_uniform_kinematic", None, None, 0, gs.cpu),
-    ("go2", None, True, 4096, gs.gpu),
-    ("go2", gs.constraint_solver.CG, False, 4096, gs.gpu),
-    ("go2", gs.constraint_solver.Newton, False, 4096, gs.gpu),
-    ("franka_accessors", None, None, 0, gs.cpu),
-    ("franka_accessors", None, None, 30000, gs.gpu),
-    ("franka_free", None, None, 30000, gs.gpu),
-    ("franka", None, None, 30000, gs.gpu),
-    ("franka_random", None, False, 30000, gs.gpu),
-    ("franka_random", None, True, 30000, gs.gpu),
-    ("franka_random", gs.constraint_solver.CG, None, 30000, gs.gpu),
-    ("franka_random", gs.constraint_solver.Newton, None, 30000, gs.gpu),
-    ("franka_random", None, None, 0, gs.cpu),
-    ("box_pyramid_6", None, None, 4096, gs.gpu),
-    ("g1_fall", gs.constraint_solver.Newton, None, 4096, gs.gpu),
-    ("double_smplx", gs.constraint_solver.Newton, None, 4096, gs.gpu),
-    ("shadow_hand_cubes", None, None, 0, gs.cpu),
-    ("shadow_hand_cubes_sparse", None, None, 0, gs.cpu),
+# A single instance of each benchmark (solver/gjk left at their defaults), run on both the 'field' and 'ndarray'
+# dtypes. TODO: add ("table_bussing", None, None, 50, gs.cpu) once its assets are on the shared HF dataset.
+BENCHMARKS = [
+    ("go2", None, None, 4096, gs.gpu),
+    ("anymal_random", None, None, 20000, gs.gpu),
+    ("g1_fall", None, None, 4096, gs.gpu),
+    ("double_smplx", None, None, 4096, gs.gpu),
     ("dex_hand", None, None, 4096, gs.gpu),
+    ("shadow_hand", None, None, 0, gs.cpu),
+    ("convexify", None, None, 0, gs.cpu),
+    ("nonconvex_spacecraft", None, None, 64, gs.cpu),
 ]
-
-# Reduced subset, run on the 'ndarray' dtype only.
-BENCHMARKS_NDARRAY = [
-    ("franka_random", None, None, 0, gs.cpu),
-    ("g1_fall", gs.constraint_solver.Newton, None, 4096, gs.gpu),
-    ("dex_hand", None, None, 4096, gs.gpu),
-]
-
-# The dtype is selected before collection via 'GS_ENABLE_NDARRAY' ('0' => field, otherwise ndarray).
-BENCHMARKS = BENCHMARKS_FIELD if os.environ.get("GS_ENABLE_NDARRAY", "1") == "0" else BENCHMARKS_NDARRAY
 
 
 @pytest.mark.parametrize(
