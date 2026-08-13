@@ -21,11 +21,10 @@ For more technical details, refer to our [blog post](https://genesis.ai/blog/the
 1. [What is Genesis World?](#what-is-genesis-world)
 2. [Catalogue](#catalogue)
 3. [Quick Installation](#quick-installation)
-4. [Docker](#docker)
-5. [Contribution](#contributing-to-genesis)
-6. [Support](#support)
-7. [License and Acknowledgments](#license-and-acknowledgments)
-8. [Citation](#citation)
+4. [Contribution](#contributing-to-genesis)
+5. [Support](#support)
+6. [License and Acknowledgments](#license-and-acknowledgments)
+7. [Citation](#citation)
 
 ## What is Genesis World?
 
@@ -167,52 +166,6 @@ Run an example:
 ```bash
 uv run examples/rigid/single_franka.py
 ```
-
-## Docker
-
-If you want to use Genesis from Docker, you can first build the Docker image as:
-
-```bash
-docker build -t genesis -f docker/Dockerfile docker
-```
-
-Then you can run the examples inside the docker image (mounted to `/workspace/examples`):
-
-```bash
-xhost +local:root # Allow the container to access the display
-
-docker run --gpus all --rm -it \
--e DISPLAY=$DISPLAY \
--e LOCAL_USER_ID="$(id -u)" \
--v /dev/dri:/dev/dri \
--v /tmp/.X11-unix/:/tmp/.X11-unix \
--v $(pwd):/workspace \
---name genesis genesis:latest
-```
-
-### AMD users
-AMD users can use Genesis using the `docker/Dockerfile.amdgpu` file, which is built by running:
-```
-docker build -t genesis-amd -f docker/Dockerfile.amdgpu docker
-```
-
-and can then be used by running:
-
-```xhost +local:docker \
-docker run -it --network=host \
- --device=/dev/kfd \
- --device=/dev/dri \
- --group-add=video \
- --ipc=host \
- --cap-add=SYS_PTRACE \
- --security-opt seccomp=unconfined \
- --shm-size 8G \
- -v $PWD:/workspace \
- -e DISPLAY=$DISPLAY \
- genesis-amd
- ```
-
-The examples will be accessible from `/workspace/examples`. Note: AMD users should use the ROCm (HIP) backend. This means you will need to call `gs.init(backend=gs.amdgpu)` to initialise Genesis.
 
 ## Contributing to Genesis
 
