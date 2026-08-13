@@ -1066,7 +1066,7 @@ def dex_hand(solver, n_envs, gjk):
 
 
 # Full benchmark suite, run on the 'field' dtype.
-BENCHMARKS_ALL = [
+BENCHMARKS_FIELD = [
     ("duck_in_box_easy", None, True, 30000, gs.gpu),
     ("duck_in_box_easy", None, False, 30000, gs.gpu),
     ("duck_in_box_hard", None, True, 30000, gs.gpu),
@@ -1110,7 +1110,7 @@ BENCHMARKS_NDARRAY = [
 ]
 
 # The dtype is selected before collection via 'GS_ENABLE_NDARRAY' ('0' => field, otherwise ndarray).
-BENCHMARKS = BENCHMARKS_ALL if os.environ.get("GS_ENABLE_NDARRAY", "1") == "0" else BENCHMARKS_NDARRAY
+BENCHMARKS = BENCHMARKS_FIELD if os.environ.get("GS_ENABLE_NDARRAY", "1") == "0" else BENCHMARKS_NDARRAY
 
 
 @pytest.mark.parametrize(
