@@ -10,7 +10,7 @@ import genesis as gs
 from genesis.ext.pyrender.overlay import ImGuiOverlayPlugin
 
 from ..conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
-from ..utils import assert_allclose, assert_pixel_match, rgb_array_to_png_bytes
+from ..utils.assertions import assert_allclose, assert_pixel_match, rgb_array_to_png_bytes
 
 try:
     import imgui_bundle  # noqa: F401

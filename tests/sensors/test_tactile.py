@@ -6,7 +6,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils.misc import gaussian_crosstalk_kernel, tensor_to_array
 
-from ..utils import assert_allclose, assert_equal
+from ..utils.assertions import assert_allclose, assert_equal
 
 
 @pytest.mark.slow  # ~200s

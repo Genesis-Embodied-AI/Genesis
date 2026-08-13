@@ -38,7 +38,7 @@ import numpy as np
 import pytest
 
 import genesis as gs
-from ..utils import assert_allclose
+from ..utils.assertions import assert_allclose
 from ..conftest import TOL_SINGLE
 
 if TYPE_CHECKING:

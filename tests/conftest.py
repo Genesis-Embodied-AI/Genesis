@@ -849,7 +849,7 @@ def mj_sim(
     gjk_collision,
     friction_cone,
 ):
-    from .utils import build_mujoco_sim
+    from .utils.simulators import build_mujoco_sim
 
     return build_mujoco_sim(
         xml_path,
@@ -879,7 +879,7 @@ def gs_sim(
     show_viewer,
     mj_sim,
 ):
-    from .utils import build_genesis_sim
+    from .utils.simulators import build_genesis_sim
 
     return build_genesis_sim(
         xml_path,
@@ -951,7 +951,7 @@ class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
     def matches(self, *, serialized_data, snapshot_data) -> bool:
         # Imported here rather than at module top: conftest must not be coupled to any other test module at load
         # time, as that can cause hard-to-debug side effects.
-        from .utils import IMG_BLUR_KERNEL_SIZE, IMG_NUM_ERR_THR, IMG_STD_ERR_THR, assert_pixel_match
+        from .utils.assertions import IMG_BLUR_KERNEL_SIZE, IMG_NUM_ERR_THR, IMG_STD_ERR_THR, assert_pixel_match
 
         std_err_threshold = IMG_STD_ERR_THR if self._std_err_threshold is None else self._std_err_threshold
         ratio_err_threshold = IMG_NUM_ERR_THR if self._ratio_err_threshold is None else self._ratio_err_threshold
@@ -985,7 +985,7 @@ def png_snapshot(request, snapshot):
             assert path.is_file()
             path.unlink()
     else:
-        from .utils import get_hf_dataset
+        from .utils.assets import get_hf_dataset
 
         # The snapshots repository mirrors the tests tree ('rendering/__snapshots__/test_offscreen/...'), so the
         # snapshot directory path relative to the tests root is also its path in the repository.

@@ -12,11 +12,7 @@ from genesis.engine.solvers.rigid.constraint.solver import ConstraintSolver
 from genesis.utils.array_class import RigidSimStaticConfig
 from genesis.utils.misc import qd_to_numpy, tensor_to_array
 
-from ..utils import (
-    assert_allclose,
-    assert_equal,
-    init_simulators,
-)
+from ..utils.assertions import assert_allclose, assert_equal
 
 
 @pytest.mark.required
@@ -97,7 +93,7 @@ def test_box_box_dynamics(gs_sim):
         cube2_quat = gu.xyz_to_quat(
             np.array([*(0.15 * np.random.rand(2)), np.pi * np.random.rand()]),
         )
-        init_simulators(gs_sim, qpos=np.concatenate((cube1_pos, cube1_quat, cube2_pos, cube2_quat)))
+        gs_robot.set_qpos(np.concatenate((cube1_pos, cube1_quat, cube2_pos, cube2_quat)))
         for i in range(110):
             gs_sim.scene.step()
             if i > 100:

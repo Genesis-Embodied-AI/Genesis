@@ -3,7 +3,8 @@ import pytest
 
 import genesis as gs
 
-from ..utils import assert_allclose, get_hf_dataset
+from ..utils.assertions import assert_allclose
+from ..utils.assets import get_hf_dataset
 
 
 @pytest.mark.slow("gpu")  # gpu ~250s

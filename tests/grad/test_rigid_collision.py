@@ -9,7 +9,7 @@ from genesis.utils import set_random_seed
 from genesis.utils.geom import R_to_quat
 from genesis.utils.misc import qd_to_numpy, qd_to_torch, tensor_to_array
 
-from ..utils import assert_allclose
+from ..utils.assertions import assert_allclose
 
 
 @pytest.mark.required

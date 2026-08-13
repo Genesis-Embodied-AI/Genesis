@@ -14,7 +14,8 @@ import genesis.utils.geom as gu
 
 from genesis.utils.misc import get_assets_dir
 
-from ..utils import assert_allclose, assert_equal, get_hf_dataset
+from ..utils.assertions import assert_allclose, assert_equal
+from ..utils.assets import get_hf_dataset
 
 try:
     from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics, UsdShade, UsdUtils

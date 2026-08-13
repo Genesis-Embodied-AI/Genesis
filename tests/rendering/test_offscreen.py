@@ -16,7 +16,7 @@ from genesis.utils.misc import tensor_to_array
 from genesis.utils.video_encoder import VideoEncoder
 
 from ..conftest import IS_INTERACTIVE_VIEWER_AVAILABLE, SKIP_NO_VIEWER
-from ..utils import assert_allclose, assert_equal, assert_pixel_match, rgb_array_to_png_bytes
+from ..utils.assertions import assert_allclose, assert_equal, assert_pixel_match, rgb_array_to_png_bytes
 from .conftest import RENDERER_TYPE
 
 

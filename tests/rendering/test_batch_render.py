@@ -2,7 +2,7 @@ import pytest
 
 import genesis as gs
 
-from ..utils import rgb_array_to_png_bytes
+from ..utils.assertions import rgb_array_to_png_bytes
 from .conftest import RENDERER_TYPE
 
 

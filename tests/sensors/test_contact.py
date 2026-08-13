@@ -4,7 +4,7 @@ import pytest
 import genesis as gs
 import genesis.utils.geom as gu
 
-from ..utils import assert_allclose
+from ..utils.assertions import assert_allclose
 
 
 @pytest.mark.slow  # ~200s

@@ -11,12 +11,9 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils.misc import qd_to_numpy, tensor_to_array
 
-from ..utils import (
-    assert_allclose,
-    display_collision_pairs,
-    get_genuine_interpenetration,
-    get_hf_dataset,
-)
+from ..utils.assertions import assert_allclose
+from ..utils.assets import get_hf_dataset
+from ..utils.collision import display_collision_pairs, get_genuine_interpenetration
 
 
 # Force CPU because it would be too slow otherwise

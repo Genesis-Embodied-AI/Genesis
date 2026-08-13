@@ -8,7 +8,7 @@ import av
 import genesis as gs
 from genesis.utils.image_exporter import as_grayscale_image
 
-from ..utils import assert_allclose, rgb_array_to_png_bytes
+from ..utils.assertions import assert_allclose, rgb_array_to_png_bytes
 
 
 @pytest.fixture

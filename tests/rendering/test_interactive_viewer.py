@@ -13,7 +13,7 @@ from genesis.utils.misc import tensor_to_array
 from genesis.vis.keybindings import Key, KeyAction, Keybind, KeyMod, MouseButton
 
 from ..conftest import IS_INTERACTIVE_VIEWER_AVAILABLE, SKIP_NO_VIEWER
-from ..utils import assert_allclose
+from ..utils.assertions import assert_allclose
 from .conftest import RENDERER_TYPE
 
 CAM_RES = (480, 320)

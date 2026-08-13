@@ -18,7 +18,9 @@ from genesis.utils import warnings as warnings_mod
 from genesis.utils.warnings import warn_once
 from genesis.utils.urdf import compose_inertial_properties
 
-from ..utils import assert_allclose, display_collision_pairs, get_genuine_interpenetration, get_hf_dataset
+from ..utils.assertions import assert_allclose
+from ..utils.assets import get_hf_dataset
+from ..utils.collision import display_collision_pairs, get_genuine_interpenetration
 
 
 TOL = 1e-7

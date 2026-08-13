@@ -11,7 +11,7 @@ import genesis.utils.geom as gu
 import genesis.utils.terrain as tu
 from genesis.utils.misc import get_assets_dir, tensor_to_array
 
-from ..utils import assert_allclose
+from ..utils.assertions import assert_allclose
 
 
 @pytest.mark.parametrize(
