@@ -348,6 +348,91 @@ def test_static_friction(mode, friction, n_boxes, solver, scale, mesh_boxes, sho
 
 
 @pytest.mark.required
+def test_static_hold_unaffected_by_press_on_separate_body(show_viewer):
+    # The convergence thresholds must stay independent of the forces applied elsewhere in the environment, so a box
+    # held against a wall by friction keeps its hold whether or not a body half a metre away is pressed.
+    GRAVITY = -9.81
+    BOX = 0.06
+    WALL = (0.02, 0.4, 0.5)
+    FRICTION = 0.25
+    SAFETY = 1.25  # push over the Coulomb minimum; tilt-balanced while SAFETY >= 2 * FRICTION
+    NOSLIP_ITERATIONS = 20  # leaves the hold resting on a converged solve rather than on regularized creep
+    PRESS_SIZE = 0.3
+    PRESS_KP = 1.0e5
+    PRESS_DEPTH = 0.25  # commanded below the floor, so the press reaches thousands of times the presser's own weight
+    N_SETTLE = 30
+    N_PRESS = 40
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, GRAVITY),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            noslip_iterations=NOSLIP_ITERATIONS,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.3, -1.4, 0.6),
+            camera_lookat=(0.3, 0.0, 0.25),
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        gs.morphs.Plane(),
+        material=gs.materials.Rigid(
+            friction=FRICTION,
+        ),
+    )
+    scene.add_entity(
+        gs.morphs.Box(
+            size=WALL,
+            pos=(0.0, 0.0, 0.5 * WALL[2]),
+            fixed=True,
+        ),
+        material=gs.materials.Rigid(
+            friction=FRICTION,
+        ),
+    )
+    held_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX, BOX, BOX),
+            pos=(0.5 * (WALL[0] + BOX), 0.0, 0.75 * WALL[2]),
+        ),
+        material=gs.materials.Rigid(
+            friction=FRICTION,
+        ),
+    )
+    presser = scene.add_entity(
+        gs.morphs.Box(
+            size=(PRESS_SIZE, PRESS_SIZE, PRESS_SIZE),
+            pos=(0.5, 0.0, 0.5 * PRESS_SIZE),
+        ),
+        material=gs.materials.Rigid(
+            friction=FRICTION,
+        ),
+    )
+    scene.build(n_envs=2)
+
+    held_box.control_dofs_force(-SAFETY * held_box.get_mass() * -GRAVITY / FRICTION, dofs_idx_local=0)
+    for _ in range(N_SETTLE):
+        scene.step()
+    hold_z = held_box.get_pos()[..., 2]
+
+    press_mass = presser.get_mass()
+    presser.set_dofs_kp(PRESS_KP * press_mass, dofs_idx_local=[2])
+    presser.set_dofs_kv(0.1 * PRESS_KP * press_mass, dofs_idx_local=[2])
+    presser.control_dofs_position([[0.5 * PRESS_SIZE], [0.5 * PRESS_SIZE - PRESS_DEPTH]], dofs_idx_local=[2])
+    for _ in range(N_PRESS):
+        scene.step()
+
+    # The contact carries the press instead of letting the presser through the floor.
+    assert_allclose(presser.get_pos()[..., 2], 0.5 * PRESS_SIZE, atol=0.02 * PRESS_SIZE)
+    # A friction solve truncated on the press loses the hold, and the box slides down the wall to the floor.
+    slip = held_box.get_pos()[..., 2] - hold_z
+    assert_allclose(slip, 0.0, atol=0.05 * BOX)
+    assert_allclose(slip[1], slip[0], atol=1e-5)
+
+
+@pytest.mark.required
 @pytest.mark.parametrize(
     "sparse_solve, use_contact_island",
     [
