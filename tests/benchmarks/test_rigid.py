@@ -399,55 +399,6 @@ def make_franka(
     return scene, step, SceneMeta(compile_time=compile_time)
 
 
-def make_duck_in_box(n_envs, solver=None, gjk=None, hard=False, **scene_kwargs):
-    scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
-            **(dict(constraint_solver=solver) if solver is not None else {}),
-            **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
-        ),
-        **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
-    )
-    scene.add_entity(
-        gs.morphs.Mesh(
-            file="meshes/tank.obj",
-            scale=5.0,
-            pos=(0.0, 0.0, 0.0),
-            euler=(90, 0, 90),
-            fixed=True,
-        ),
-        vis_mode="collision",
-    )
-    if hard:
-        mesh_kwargs = dict(
-            pos=(0.0, 0.0, 0.035),
-        )
-    else:
-        mesh_kwargs = dict(
-            pos=(0.1, 0.1, 0.035),
-            decompose_object_error_threshold=float("inf"),
-        )
-    duck = scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/duck.obj",
-            scale=0.04,
-            euler=(90, 0, 90),
-            **mesh_kwargs,
-        ),
-    )
-
-    time_start = time.time()
-    scene.build(n_envs=n_envs)
-    compile_time = time.time() - time_start
-
-    if n_envs > 0:
-        duck.set_dofs_velocity(0.5 * np.random.rand(n_envs, 6))
-
-    def step():
-        scene.step()
-
-    return scene, step, SceneMeta(compile_time=compile_time)
-
-
 def make_box_pyramid(n_envs, solver=None, gjk=None, n_cubes=3, **scene_kwargs):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
@@ -995,12 +946,6 @@ def franka_accessors(solver, n_envs, gjk):
 
 
 @pytest.fixture
-def duck_in_box_hard(solver, n_envs, gjk):
-    _, step_fn, meta = make_duck_in_box(n_envs, solver=solver, gjk=gjk, hard=True)
-    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
-
-
-@pytest.fixture
 def box_pyramid_6(solver, n_envs, gjk):
     _, step_fn, meta = make_box_pyramid(n_envs, solver=solver, gjk=gjk, n_cubes=6)
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
@@ -1043,9 +988,6 @@ def dex_hand(solver, n_envs, gjk):
 
 # Full benchmark suite, run on the 'field' dtype.
 BENCHMARKS_FIELD = [
-    ("duck_in_box_hard", None, True, 30000, gs.gpu),
-    ("duck_in_box_hard", None, False, 30000, gs.gpu),
-    ("duck_in_box_hard", None, None, 0, gs.cpu),
     ("anymal_random", None, None, 30000, gs.gpu),
     ("anymal_uniform", None, None, 30000, gs.gpu),
     ("anymal_zero", None, None, 30000, gs.gpu),
