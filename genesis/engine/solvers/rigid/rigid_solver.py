@@ -434,6 +434,9 @@ class RigidSolver(KinematicSolver):
 
         self._init_invweight_and_meaninertia(force_update=False)
         self._func_update_geoms(self._scene._envs_idx, force_update_fixed_geoms=True)
+        # Seed the geom AABBs from the initial poses. Collision detection refreshes them at every step, so this only
+        # matters before the first one, where 'get_AABB' would otherwise report an empty box at the origin.
+        kernel_update_geom_aabbs(self.geoms_init_AABB, self.dyn_state, self.rigid_config)
 
         self._init_collider()
         self._init_constraint_solver()

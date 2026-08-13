@@ -908,9 +908,16 @@ class Scene(RBC):
 
             self._is_built = True
 
-        with gs.logger.timer("Compiling simulation kernels..."):
-            self._sim.step()
-            self._reset()
+        # Running one step ahead of time compiles (or loads from cache) the kernels it goes through, so the first user
+        # step is not slowed down by compilation. Set 'GS_SKIP_BUILD_WARMUP=1' to skip it when the scene is built for
+        # visualization only and never stepped.
+        if os.environ.get("GS_SKIP_BUILD_WARMUP") != "1":
+            with gs.logger.timer("Warming up the simulation..."):
+                self._sim.step()
+
+        # Restore the initial state, which also seeds the sensors and the coupler. Must run whether or not the warmup
+        # step did, since it is the only simulator reset during build.
+        self._reset()
 
         # visualizer
         with gs.logger.timer("Building visualizer..."):

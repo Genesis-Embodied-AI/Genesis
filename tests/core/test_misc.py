@@ -5,6 +5,7 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
+import torch
 import trimesh
 
 import quadrants as qd
@@ -546,3 +547,87 @@ def test_warn_solver_numerical_stability(boxes_size, caplog):
     with caplog.at_level("WARNING"):
         scene.build()
     assert any("too small for the constraint solver" in record.message for record in caplog.records)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+@pytest.mark.parametrize("is_warmup_skipped", [False, True])
+def test_build_state_independent_of_warmup_step(monkeypatch, show_viewer, tol, n_envs, is_warmup_skipped):
+    DT = 0.01
+    GRAVITY = -10.0
+    N_STEPS = 20
+    DROP_HEIGHT = 0.5
+    PLATFORM_SIZE = 0.2
+    BASE_TEMP = 22.0
+
+    if is_warmup_skipped:
+        monkeypatch.setenv("GS_SKIP_BUILD_WARMUP", "1")
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+            gravity=(0.0, 0.0, GRAVITY),
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.5, -1.5, 1.0),
+            camera_lookat=(0.0, 0.0, 0.3),
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
+    platform = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(PLATFORM_SIZE, PLATFORM_SIZE, PLATFORM_SIZE),
+            pos=(0.0, 0.0, PLATFORM_SIZE / 2),
+            fixed=True,
+        ),
+    )
+    ball = scene.add_entity(
+        morph=gs.morphs.Sphere(
+            radius=0.05,
+            pos=(1.0, 0.0, DROP_HEIGHT),
+        ),
+    )
+    contact = scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=ball.idx,
+            history_length=4,
+        )
+    )
+    temperature = scene.add_sensor(
+        gs.sensors.TemperatureGrid(
+            ambient_temperature=BASE_TEMP,
+            entity_idx=platform.idx,
+            grid_size=(2, 2, 1),
+            properties_dict={
+                platform.base_link_idx: gs.sensors.TemperatureProperties(
+                    base_temperature=BASE_TEMP,
+                ),
+            },
+        )
+    )
+    scene.build(n_envs=n_envs)
+
+    # Sensors are seeded by the reset that closes the build, which the warmup step must not be the only trigger for.
+    assert_allclose(temperature.read_ground_truth(), BASE_TEMP, tol=tol)
+    assert_equal(contact.read(), 0)
+
+    # Collision detection refreshes the geom AABBs at every step, so they are only meaningful before the first one if
+    # the build seeds them.
+    aabb_shape = (*((n_envs,) if n_envs > 0 else ()), 2, 3)
+    geoms_aabb = torch.stack(
+        [geom.get_AABB().expand(aabb_shape) for entity in scene.entities for geom in entity.geoms], dim=-3
+    )
+    assert_allclose(scene.sim.rigid_solver.get_AABB(), geoms_aabb, tol=gs.EPS)
+
+    for _ in range(N_STEPS):
+        scene.step()
+
+    # Semi-implicit Euler free fall, the ball being far from the platform and above the ground the whole time.
+    assert_allclose(
+        np.atleast_1d(tensor_to_array(ball.get_pos()))[..., 2],
+        DROP_HEIGHT + GRAVITY * DT**2 * N_STEPS * (N_STEPS + 1) / 2,
+        tol=tol,
+    )
