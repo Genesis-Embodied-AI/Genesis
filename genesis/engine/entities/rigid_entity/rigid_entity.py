@@ -9,16 +9,13 @@ import numpy as np
 import torch
 import trimesh
 
-import quadrants as qd
-
 import genesis as gs
 from genesis.engine.materials.base import Material
 from genesis.engine.mesh import InertialProperties
 from genesis.engine.states.entities import RigidEntityState
 from genesis.options.morphs import Morph
 from genesis.options.surfaces import Surface
-from genesis.typing import LinkRefFrameType, UnitVec4FType, Vec3FType
-from genesis.utils import array_class
+from genesis.typing import LinkFrameType, LinkRefFrameType, UnitVec4FType, Vec3FType
 from genesis.utils import geom as gu
 from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
@@ -3496,7 +3493,7 @@ class RigidEntity(KinematicEntity):
         return self._solver.get_links_pos(links_idx, envs_idx, ref=ref, relative=relative)
 
     @gs.assert_built
-    def get_links_vel(self, links_idx_local=None, envs_idx=None, *, ref: LinkRefFrameType = "link_origin"):
+    def get_links_vel(self, links_idx_local=None, envs_idx=None, *, ref: LinkFrameType = "link_origin"):
         """
         Returns linear velocity of all the entity's links expressed at a given reference position in world coordinates.
 
@@ -3506,7 +3503,7 @@ class RigidEntity(KinematicEntity):
             The indices of the links. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
-        ref: "link_origin" | "link_com" | "root_com"
+        ref: "link_origin" | "link_com"
             The reference point being used to expressed the velocity of each link.
 
         Returns
@@ -3528,74 +3525,47 @@ class RigidEntity(KinematicEntity):
         return self._solver.get_links_acc_ang(links_idx, envs_idx)
 
     @gs.assert_built
-    def apply_links_external_force(
+    def apply_links_external_wrench(
         self,
-        force,
+        force=None,
+        torque=None,
         links_idx_local=None,
         envs_idx=None,
         *,
         pos=None,
-        ref: LinkRefFrameType = "link_origin",
+        ref: LinkFrameType = "link_origin",
         local: bool = False,
     ):
         """
-        Apply external linear force over one simulation step on a set of the entity's links.
+        Apply an external wrench over one simulation step on a set of the entity's links.
 
         Parameters
         ----------
-        force : array_like
-            The force to apply.
+        force : None | array_like, optional
+            The linear force to apply. None for a pure torque. Defaults to None.
+        torque : None | array_like, optional
+            The torque to apply, on top of the moment induced by the linear force. None for a pure force. Defaults to
+            None.
         links_idx_local : None | array_like, optional
             The indices of the links. None to specify all the entity's links. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         pos : None | array_like, optional
-            The point at which the force is applied, which sets the moment arm of the induced torque. None to apply it
-            at the origin of the reference frame designated by `ref`. With `local=True`, it is an offset from that
-            origin expressed in the coordinates of that frame, hence a point that follows the link as it moves.
+            The point at which the linear force is applied, which sets the moment arm of the induced torque. None to
+            apply it at the origin of the reference frame designated by `ref`. With `local=True`, it is an offset from
+            that origin expressed in the coordinates of that frame, hence a point that follows the link as it moves.
             Otherwise, it is a world position that locates the point on its own, leaving `ref` to only select the frame
-            of `force`. Defaults to None.
-        ref: "link_origin" | "link_com" | "root_com", optional
-            The reference frame on which the linear force will be applied. "link_origin" refers to the origin of each
-            link, "link_com" refers to the center of mass of each link, and "root_com" refers to the center of mass of
-            the entire kinematic tree to which a link belongs.
+            of `force` and `torque`. Defaults to None.
+        ref: "link_origin" | "link_com", optional
+            The reference frame on which the wrench will be applied. "link_origin" refers to the origin of each link and
+            "link_com" refers to the center of mass of each link. This argument only selects the frame of the input
+            coordinates unless a linear force is applied at the origin of that frame, ie without specifying `pos`.
         local: bool, optional
-            Whether the force and the application point are expressed in the local coordinates associated with the
-            reference frame instead of world frame. Only supported for `ref="link_origin"` or `ref="link_com"`.
+            Whether the wrench and the application point are expressed in the local coordinates associated with the
+            reference frame instead of world frame.
         """
         links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
-        self._solver.apply_links_external_force(force, links_idx, envs_idx, pos=pos, ref=ref, local=local)
-
-    @gs.assert_built
-    def apply_links_external_torque(
-        self,
-        torque,
-        links_idx_local=None,
-        envs_idx=None,
-        *,
-        ref: LinkRefFrameType = "link_origin",
-        local: bool = False,
-    ):
-        """
-        Apply external torque over one simulation step on a set of the entity's links.
-
-        Parameters
-        ----------
-        torque : array_like
-            The torque to apply.
-        links_idx_local : None | array_like, optional
-            The indices of the links. None to specify all the entity's links. Defaults to None.
-        envs_idx : None | array_like, optional
-            The indices of the environments. If None, all environments will be considered. Defaults to None.
-        ref: "link_origin" | "link_com" | "root_com", optional
-            The reference frame whose coordinates the torque is expressed in. This argument has no effect unless
-            `local=True`, a torque being a couple that acts the same wherever it is attached.
-        local: bool, optional
-            Whether the torque is expressed in the local coordinates associated with the reference frame instead of
-            world frame. Only supported for `ref="link_origin"` or `ref="link_com"`.
-        """
-        links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
-        self._solver.apply_links_external_torque(torque, links_idx, envs_idx, ref=ref, local=local)
+        self._solver.apply_links_external_wrench(force, torque, links_idx, envs_idx, pos=pos, ref=ref, local=local)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------- links mass properties --------------------------------

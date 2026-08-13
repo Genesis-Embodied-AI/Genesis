@@ -383,4 +383,4 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
             total_impulse[i % 3] += impulse
 
         # The force acts at the grabbed point, so its moment about the center of mass swings the body to the cursor.
-        self._held_link.apply_external_force(total_impulse / dt, envs_idx, pos=held_point_env_local)
+        self._held_link.apply_external_wrench(total_impulse / dt, envs_idx=envs_idx, pos=held_point_env_local)

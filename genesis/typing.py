@@ -207,6 +207,8 @@ else:
     FrozenDictType = Annotated[frozendict[_K, _V], _FrozenDictValidator]
 
 
-# The frame at which a per-link quantity is expressed: the origin of the link, the center of mass of the link, or the
-# center of mass of the whole kinematic tree the link belongs to (see 'RigidSolver.get_links_root_COM').
+# The frame at which a per-link quantity is expressed: the origin of the link, or the center of mass of the link.
+LinkFrameType = Literal["link_origin", "link_com"]
+# The frames of 'LinkFrameType', extended with the center of mass of the whole kinematic tree the link belongs to (see
+# 'RigidSolver.get_links_root_COM').
 LinkRefFrameType = Literal["link_origin", "link_com", "root_com"]

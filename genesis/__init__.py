@@ -495,6 +495,7 @@ from .constants import (
     GEOM_TYPE,
     EQUALITY_TYPE,
     CTRL_MODE,
+    LINK_REF_FRAME,
     PARA_LEVEL,
     ACTIVE,
     INACTIVE,

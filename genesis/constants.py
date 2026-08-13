@@ -47,6 +47,13 @@ class CTRL_MODE(IntEnum):
     FORCE = 2
 
 
+# reference frame at which a per-link quantity is expressed in the rigid solver
+class LINK_REF_FRAME(IntEnum):
+    ROOT_COM = 0
+    LINK_COM = 1
+    LINK_ORIGIN = 2
+
+
 ######### User accessible constants do not capitalize #########
 # rigid solver intergrator
 class integrator(IntEnum):

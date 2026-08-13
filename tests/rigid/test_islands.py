@@ -699,7 +699,7 @@ def test_hibernation_wakes_on_user_input(show_viewer, n_envs):
 
     z0 = z_of(box_force)
     for _ in range(6):
-        solver.apply_links_external_force([0.0, 0.0, 40.0], links_idx=[box_force.base_link_idx])
+        solver.apply_links_external_wrench([0.0, 0.0, 40.0], links_idx=box_force.base_link_idx)
         scene.step()
     assert not asleep(box_force) and (z_of(box_force) > z0 + 0.02).all()
     assert all(map(asleep, (box_pos, box_vel, box_qpos, box_cforce, box_cvel, box_cpos)))
@@ -876,7 +876,7 @@ def test_hibernation_wakes_on_daisy_chain(show_viewer, n_envs):
         scene.step()
     assert asleep(box_a) and asleep(box_b) and asleep(box_far)
 
-    solver.apply_links_external_force([20.0, 0.0, 0.0], links_idx=[box_a.base_link_idx])
+    solver.apply_links_external_wrench([20.0, 0.0, 0.0], links_idx=box_a.base_link_idx)
     scene.step()
     assert not asleep(box_a)
     assert not asleep(box_b)

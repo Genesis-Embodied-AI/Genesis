@@ -1491,7 +1491,7 @@ def test_align_heterogeneous_inertial(show_viewer, tol):
     assert_allclose(het_obj.get_links_acc()[..., 2], GRAVITY, tol=tol)
     het_obj.zero_all_dofs_velocity()
     for _ in range(10):
-        scene.rigid_solver.apply_links_external_force(force, links_idx=links_idx, ref="link_com")
+        scene.rigid_solver.apply_links_external_wrench(force, links_idx=links_idx, ref="link_com")
         scene.step()
         assert_allclose(het_obj.get_links_acc(), 0.0, tol=tol)
 
