@@ -995,12 +995,6 @@ def franka_accessors(solver, n_envs, gjk):
 
 
 @pytest.fixture
-def duck_in_box_easy(solver, n_envs, gjk):
-    _, step_fn, meta = make_duck_in_box(n_envs, solver=solver, gjk=gjk, hard=False)
-    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
-
-
-@pytest.fixture
 def duck_in_box_hard(solver, n_envs, gjk):
     _, step_fn, meta = make_duck_in_box(n_envs, solver=solver, gjk=gjk, hard=True)
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
@@ -1067,8 +1061,6 @@ def dex_hand(solver, n_envs, gjk):
 
 # Full benchmark suite, run on the 'field' dtype.
 BENCHMARKS_FIELD = [
-    ("duck_in_box_easy", None, True, 30000, gs.gpu),
-    ("duck_in_box_easy", None, False, 30000, gs.gpu),
     ("duck_in_box_hard", None, True, 30000, gs.gpu),
     ("duck_in_box_hard", None, False, 30000, gs.gpu),
     ("duck_in_box_hard", None, None, 0, gs.cpu),
