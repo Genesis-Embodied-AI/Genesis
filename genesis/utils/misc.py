@@ -235,6 +235,19 @@ def fits_in_gpu_shared_memory(*dims: int) -> bool:
     return math.prod(dims) * itemsize <= qd.lang.impl.get_max_shared_memory_bytes(is_lowerbound_ok=True)
 
 
+def get_entry_point_name():
+    """
+    Name of the script the process was launched from, without directory nor extension.
+
+    Falls back to 'genesis' whenever the process has no script to be named after, as when running interactively or
+    through 'python -c', so that a name derived from it is always a valid filename.
+    """
+    entry_point = sys.argv[0]
+    if not os.path.isfile(entry_point):
+        return "genesis"
+    return os.path.splitext(os.path.basename(entry_point))[0]
+
+
 def get_src_dir():
     return os.path.dirname(gs.__file__)
 
