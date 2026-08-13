@@ -11,7 +11,7 @@ import numpy as np
 import genesis as gs
 from genesis.utils.misc import qd_to_torch
 
-from ..utils import assert_allclose
+from ..utils.assertions import assert_allclose
 
 
 RET_SUCCESS = 42

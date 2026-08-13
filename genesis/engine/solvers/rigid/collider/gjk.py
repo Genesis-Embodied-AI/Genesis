@@ -38,12 +38,12 @@ class GJK:
     def __init__(self, rigid_solver):
         self._solver = rigid_solver
 
-        # Initialize static configuration.
-        # The contact patch (polygon clipping over the touching faces) skips perturbation whenever it ran (see
-        # multi_contact_flag). It defaults on under MuJoCo compatibility with GJK because the reference engine builds
-        # its manifolds that way inside its GJK/EPA and runs its perturbation scheme only in its legacy fallback
-        # pipeline, which the MPR compatibility pipeline mirrors. It defaults off otherwise, as the perturbation-based
-        # detection is more reliable on marginal manifolds (see enable_contact_patch in RigidOptions).
+        # Resolve the 'enable_contact_patch' option in place, so later consumers (the collider's convex contact
+        # budget) read the resolved value. The contact patch (polygon clipping over the touching faces) skips
+        # perturbation whenever it ran (see multi_contact_flag). It defaults on under MuJoCo compatibility with GJK
+        # because the reference engine builds its manifolds that way inside its GJK/EPA and runs its perturbation
+        # scheme only in its legacy fallback pipeline, which the MPR compatibility pipeline mirrors. It defaults off
+        # otherwise, as the perturbation-based detection is more reliable on marginal manifolds.
         enable_contact_patch = rigid_solver._options.enable_contact_patch
         if enable_contact_patch is None:
             enable_contact_patch = (
@@ -56,6 +56,7 @@ class GJK:
                 gs.raise_exception("'enable_contact_patch' requires 'use_gjk_collision'.")
             if not rigid_solver._enable_multi_contact:
                 gs.raise_exception("'enable_contact_patch' requires 'enable_multi_contact'.")
+        rigid_solver._options.enable_contact_patch = enable_contact_patch
         gjk_max_iterations = 50
         epa_max_iterations = 50
         # 6 * epa_max_iterations is the maximum number of faces in the polytope.
@@ -263,9 +264,6 @@ def func_gjk_contact(
             do_epa = (not shrink_sphere) and collided and (nsimplex > 0)
 
             if do_epa:
-                # Assume touching
-                gjk_state.distance[i_b] = 0
-
                 # Initialize polytope
                 gjk_state.polytope.nverts[i_b] = 0
                 gjk_state.polytope.nfaces[i_b] = 0
@@ -315,6 +313,10 @@ def func_gjk_contact(
                         rigid_config,
                         collider_static_config,
                     )
+
+                # Assume touching. Zeroed only after the initialization above, whose 2-simplex path rejects a
+                # separated near-miss by reading the distance GJK reported (see func_epa_init_polytope_3d).
+                gjk_state.distance[i_b] = 0
 
                 # Run EPA from the polytope
                 if polytope_flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:

@@ -8,7 +8,7 @@ import trimesh
 import genesis as gs
 from genesis.utils.misc import qd_to_numpy, tensor_to_array
 
-from ..utils import assert_allclose, assert_equal
+from ..utils.assertions import assert_allclose, assert_equal
 
 
 @pytest.fixture

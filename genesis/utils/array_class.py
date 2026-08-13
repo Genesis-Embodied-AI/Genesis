@@ -1090,12 +1090,11 @@ def get_epa_polytope_vertex(_B, gjk_info, is_active):
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class GJKSimplex:
     nverts: qd.Tensor
-    dist: qd.Tensor
 
 
 def get_gjk_simplex(_B, is_active):
     shape = maybe_shape((_B,), is_active)
-    return GJKSimplex(nverts=V(dtype=gs.qd_int, shape=shape), dist=V(dtype=gs.qd_float, shape=shape))
+    return GJKSimplex(nverts=V(dtype=gs.qd_int, shape=shape))
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)

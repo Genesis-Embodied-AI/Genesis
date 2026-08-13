@@ -15,7 +15,8 @@ import genesis as gs
 from genesis.utils.misc import tensor_to_array, qd_to_numpy
 
 from ..conftest import TOL_SINGLE
-from ..utils import assert_allclose, get_hf_dataset
+from ..utils.assertions import assert_allclose
+from ..utils.assets import get_hf_dataset
 from .utils import (
     find_ipc_geometries,
     get_ipc_positions,

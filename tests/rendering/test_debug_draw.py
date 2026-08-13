@@ -8,7 +8,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 
 from ..conftest import IS_INTERACTIVE_VIEWER_AVAILABLE, SKIP_NO_VIEWER
-from ..utils import assert_allclose, rgb_array_to_png_bytes
+from ..utils.assertions import assert_allclose, rgb_array_to_png_bytes
 from .conftest import RENDERER_TYPE
 
 

@@ -12,11 +12,8 @@ from genesis.ext import urdfpy
 from genesis.utils import urdf as uu
 from genesis.utils.misc import get_assets_dir, qd_to_numpy, tensor_to_array
 
-from ..utils import (
-    assert_allclose,
-    assert_equal,
-    get_hf_dataset,
-)
+from ..utils.assertions import assert_allclose, assert_equal
+from ..utils.assets import get_hf_dataset
 
 
 @pytest.mark.required

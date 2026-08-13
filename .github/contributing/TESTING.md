@@ -29,7 +29,7 @@ Tests are organized per component, with one file per capability inside each fold
 - `tests/benchmarks/` - performance benchmarks (run with `-m benchmarks`, excluded from regular runs)
 - `tests/test_examples.py` - runner exposing the `examples/` scripts as tests (`-m examples`)
 
-Shared model fixtures of a component live in its folder-level `conftest.py`; suite-wide fixtures and helpers live in `tests/conftest.py` and `tests/utils.py`.
+Shared model fixtures of a component live in its folder-level `conftest.py`; suite-wide fixtures live in `tests/conftest.py`; shared helpers live in the `tests/utils/` package, one module per concern (`assertions.py`, `mujoco_parity.py`, `collision.py`, `assets.py`, `hardware.py`, `misc.py`).
 
 ## Running Tests
 

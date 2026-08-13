@@ -11,7 +11,7 @@ from genesis.utils.misc import tensor_to_array
 from genesis.utils.geom import pos_lookat_up_to_T, trans_quat_to_T, trans_to_T
 
 from ..conftest import SKIP_NO_LUISA, SKIP_NO_MADRONA
-from ..utils import assert_allclose, assert_equal, rgb_array_to_png_bytes
+from ..utils.assertions import assert_allclose, assert_equal, rgb_array_to_png_bytes
 
 
 try:

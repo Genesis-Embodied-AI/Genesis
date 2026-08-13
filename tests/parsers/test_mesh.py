@@ -15,7 +15,8 @@ import genesis.utils.geom as gu
 import genesis.utils.gltf as gltf_utils
 import genesis.utils.mesh as mu
 
-from ..utils import assert_allclose, assert_equal, get_hf_dataset
+from ..utils.assertions import assert_allclose, assert_equal
+from ..utils.assets import get_hf_dataset
 from .conftest import (
     check_gs_meshes,
     check_gs_surfaces,

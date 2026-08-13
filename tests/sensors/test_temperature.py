@@ -3,7 +3,7 @@ import torch
 
 import genesis as gs
 
-from ..utils import assert_allclose, assert_equal
+from ..utils.assertions import assert_allclose, assert_equal
 
 
 @pytest.mark.required

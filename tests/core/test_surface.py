@@ -8,7 +8,7 @@ import genesis.utils.mesh as mu
 from genesis.options.surfaces import Surface
 from genesis.options.textures import ColorTexture
 
-from ..utils import assert_equal
+from ..utils.assertions import assert_equal
 
 
 @pytest.mark.required

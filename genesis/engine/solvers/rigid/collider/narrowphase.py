@@ -20,7 +20,7 @@ from .contact import (
     func_add_diff_contact_input,
     func_apply_smooth_refinement,
     func_compute_geom_pair_scale,
-    func_compute_geom_pair_scale_mj,
+    func_compute_mc_tolerance,
     func_contact_orthogonals,
     func_rotate_frame,
     func_set_contact,
@@ -1772,11 +1772,7 @@ def func_convex_convex_contact(
             )
 
         geom_pair_scale = func_compute_geom_pair_scale(i_ga, i_gb, geoms_init_AABB, dyn_info)
-        tolerance = collider_info.mc_tolerance[None] * geom_pair_scale
-        if qd.static(rigid_config.enable_mujoco_compatibility):
-            tolerance = collider_info.mc_tolerance[None] * func_compute_geom_pair_scale_mj(
-                i_ga, i_gb, geoms_init_AABB, dyn_info
-            )
+        tolerance = func_compute_mc_tolerance(i_ga, i_gb, geoms_init_AABB, dyn_info, collider_info, rigid_config)
         diff_pos_tolerance = collider_info.diff_pos_tolerance[None] * geom_pair_scale
         diff_normal_tolerance = collider_info.diff_normal_tolerance[None]
 
@@ -2248,7 +2244,7 @@ def _func_multicontact_run_detection(
     contact_pos = qd.Vector.zero(gs.qd_float, 3)
     used_gjk = False
     geom_pair_scale = func_compute_geom_pair_scale(i_ga, i_gb, geoms_init_AABB, dyn_info)
-    tolerance = collider_info.mc_tolerance[None] * geom_pair_scale
+    tolerance = func_compute_mc_tolerance(i_ga, i_gb, geoms_init_AABB, dyn_info, collider_info, rigid_config)
 
     if dyn_info.geoms.type[i_ga] == gs.GEOM_TYPE.CAPSULE and dyn_info.geoms.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
         is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(
@@ -2414,12 +2410,12 @@ def _func_multicontact_mpr(
         )
 
     geom_pair_scale = func_compute_geom_pair_scale(i_ga, i_gb, geoms_init_AABB, dyn_info)
-    tolerance = collider_info.mc_tolerance[None] * geom_pair_scale
+    tolerance = func_compute_mc_tolerance(i_ga, i_gb, geoms_init_AABB, dyn_info, collider_info, rigid_config)
 
     n_con = gs.qd_int(0)
-    local_contact_pos = qd.Matrix.zero(gs.qd_float, 5, 3)
-    local_normal = qd.Matrix.zero(gs.qd_float, 5, 3)
-    local_penetration = qd.Matrix.zero(gs.qd_float, 5, 1)
+    local_contact_pos = qd.Matrix.zero(gs.qd_float, collider_static_config.n_contacts_per_convex_pair, 3)
+    local_normal = qd.Matrix.zero(gs.qd_float, collider_static_config.n_contacts_per_convex_pair, 3)
+    local_penetration = qd.Matrix.zero(gs.qd_float, collider_static_config.n_contacts_per_convex_pair, 1)
     gjk_multi_done = False
 
     contact0_normal = normal_0
@@ -2527,8 +2523,18 @@ def _func_multicontact_mpr(
 
         for i_detection in range(4):
             i_det = i_detection + 1
-            axis = (2 * (i_det % 2) - 1) * axis_0 + (1 - 2 * ((i_det // 2) % 2)) * axis_1
-            qrot = gu.qd_rotvec_to_quat(collider_info.mc_perturbation[None] * axis, EPS)
+            # Declared ahead of the static branches that assign it, as quadrants scoping requires.
+            qrot = qd.Vector.zero(gs.qd_float, 4)
+            if qd.static(rigid_config.enable_mujoco_compatibility):
+                # Single-axis perturbation pattern: see the twin loop in func_convex_convex_contact.
+                axis_idx = (i_det - 1) // 2
+                angle_sign = 2 * ((i_det - 1) % 2) - 1
+                axis = axis_0 if axis_idx == 0 else axis_1
+                qrot = gu.qd_rotvec_to_quat(angle_sign * collider_info.mc_perturbation[None] * axis, EPS)
+            else:
+                # Combined-axes perturbation: see the twin loop in func_convex_convex_contact.
+                axis = (2 * (i_det % 2) - 1) * axis_0 + (1 - 2 * ((i_det // 2) % 2)) * axis_1
+                qrot = gu.qd_rotvec_to_quat(collider_info.mc_perturbation[None] * axis, EPS)
 
             ga_pos_current, ga_quat_current = func_rotate_frame(ga_pos_original, ga_quat_original, contact0_pos, qrot)
             gb_pos_current, gb_quat_current = func_rotate_frame(
@@ -2633,6 +2639,13 @@ def _func_multicontact_mpr(
                         collider_info,
                         rigid_config,
                     )
+
+                # Perturbed contacts carry the initial contact's penetration under compatibility: see the twin
+                # acceptance in func_convex_convex_contact.
+                if qd.static(
+                    collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MJ_MPR, CCD_ALGORITHM_CODE.MJ_GJK)
+                ):
+                    penetration = local_penetration[0, 0]
 
                 repeated = False
                 for i_c in range(n_con):
@@ -2838,7 +2851,7 @@ def _func_narrowphase_contact0(
             )
 
             geom_pair_scale = func_compute_geom_pair_scale(i_ga, i_gb, geoms_init_AABB, dyn_info)
-            tolerance = collider_info.mc_tolerance[None] * geom_pair_scale
+            tolerance = func_compute_mc_tolerance(i_ga, i_gb, geoms_init_AABB, dyn_info, collider_info, rigid_config)
 
             ga_pos = dyn_state.geoms.pos[i_ga, i_b]
             ga_quat = dyn_state.geoms.quat[i_ga, i_b]

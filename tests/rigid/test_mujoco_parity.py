@@ -6,11 +6,11 @@ import torch
 import genesis as gs
 import genesis.utils.geom as gu
 
-from ..utils import (
-    assert_allclose,
-    assert_equal,
+from ..utils.assertions import assert_allclose, assert_equal
+from ..utils.mujoco_parity import (
+    check_mujoco_data_consistency,
     check_mujoco_model_consistency,
-    init_simulators,
+    init_paired_simulators,
     simulate_and_check_mujoco_consistency,
 )
 
@@ -214,7 +214,6 @@ def test_tet_primitive_shapes(gs_sim, mj_sim, gs_integrator, gs_solver, multi_co
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_stickman(gs_sim, mj_sim, tol):
     # Make sure that the simulation is deterministic
-    init_simulators(gs_sim)
     (gs_robot,) = gs_sim.entities
     gs_sim.scene.reset()
     gs_sim.scene.step()
@@ -228,3 +227,123 @@ def test_stickman(gs_sim, mj_sim, tol):
     # richer than the other models here. Consistency is asserted step by step against MuJoCo rather than through the
     # pose it eventually settles in, which depends on a chaotic tumble and says nothing about compatibility.
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=500, tol=5e-9 if gs.np_float == np.float64 else tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["general_actuator"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_general_actuator(gs_sim, mj_sim, tol):
+    (entity,) = gs_sim.entities
+
+    # get_dofs_kp raises for all DOFs (joint 1 is non-PD-reducible from parser)
+    with pytest.raises(gs.GenesisException):
+        entity.get_dofs_kp()
+
+    # but succeeds for the PD joint (joint 0)
+    entity.get_dofs_kp(dofs_idx_local=[0])
+
+    # Set different control modes per DOF via public API
+    entity.control_dofs_force(0.0, dofs_idx_local=[0])
+    entity.control_dofs_velocity(0.0, dofs_idx_local=[1])
+    entity.control_dofs_position(0.0, dofs_idx_local=[2])
+    ctrl_mode = gs_sim.rigid_solver.dyn_state.dofs.ctrl_mode.to_numpy()[:, 0]
+    assert ctrl_mode[entity.dof_start + 0] == gs.CTRL_MODE.FORCE
+    assert ctrl_mode[entity.dof_start + 1] == gs.CTRL_MODE.VELOCITY
+    assert ctrl_mode[entity.dof_start + 2] == gs.CTRL_MODE.POSITION
+
+    # control_dofs_position overrides all to POSITION
+    entity.control_dofs_position([0.0, 0.0, 0.0])
+    ctrl_mode = gs_sim.rigid_solver.dyn_state.dofs.ctrl_mode.to_numpy()[:, 0]
+    assert (ctrl_mode[entity.dof_start : entity.dof_start + 3] == gs.CTRL_MODE.POSITION).all()
+
+    # Disable constraints, keep actuation enabled
+    mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONSTRAINT
+    gs_sim.rigid_solver._enable_collision = False
+    gs_sim.rigid_solver._enable_joint_limit = False
+    gs_sim.rigid_solver._disable_constraint = True
+    gs_sim.rigid_solver.collider.clear()
+    gs_sim.rigid_solver.constraint_solver.clear()
+
+    # Compare all dynamic quantities against MuJoCo with both PD and general actuators active.
+    check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
+    init_paired_simulators(gs_sim, mj_sim, qpos=[0.2, 0.1, 0.0], qvel=[0.1, -0.1, 0.0])
+
+    mj_sim.data.ctrl[:] = [0.5, 0.3, 1.0]
+    entity.control_dofs_position([0.5, 0.3, 0.0])
+    entity.control_dofs_force(5.0, dofs_idx_local=[2])  # motor: gear(5) * gainprm(1) * ctrl(1) = 5
+
+    # Pre-step so that Genesis computes qf_applied (needed for data consistency checks)
+    mj_sim.data.qpos[:] = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
+    mj_sim.data.qvel[:] = gs_sim.rigid_solver.dyn_state.dofs.vel.to_numpy()[:, 0]
+    mujoco.mj_step(mj_sim.model, mj_sim.data)
+    gs_sim.scene.step()
+
+    for _ in range(99):
+        check_mujoco_data_consistency(gs_sim, mj_sim, tol=tol, ignore_constraints=True)
+
+        mj_sim.data.qpos[:] = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
+        mj_sim.data.qvel[:] = gs_sim.rigid_solver.dyn_state.dofs.vel.to_numpy()[:, 0]
+        mujoco.mj_step(mj_sim.model, mj_sim.data)
+        gs_sim.scene.step()
+
+    # Validate setter/getter round-trips for actuator parameters
+    entity.set_dofs_act_gain([200.0], dofs_idx_local=[1])
+    assert_allclose(entity.get_dofs_act_gain()[1], 200.0, tol=1e-6)
+    entity.set_dofs_act_bias([0.5], [-100.0], [-5.0], dofs_idx_local=[1])
+    b0, b1, b2 = entity.get_dofs_act_bias()
+    assert_allclose(b0[1], 0.5, tol=1e-6)
+    assert_allclose(b1[1], -100.0, tol=1e-6)
+    assert_allclose(b2[1], -5.0, tol=1e-6)
+
+    # set_dofs_kp restores PD on joint 1: act_gain=kp, act_bias[0]=0, act_bias[1]=-kp
+    entity.set_dofs_kp([50.0], dofs_idx_local=[1])
+    assert_allclose(entity.get_dofs_kp(dofs_idx_local=[0, 1]), [100.0, 50.0], tol=1e-6)
+    b0, b1, _ = entity.get_dofs_act_bias()
+    assert_allclose(b0[1], 0.0, tol=1e-6)
+    assert_allclose(b1[1], -50.0, tol=1e-6)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("xml_path", ["xml/franka_emika_panda/panda.xml"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_robot_kinematics(gs_sim, mj_sim, tol):
+    # Disable all constraints and actuation
+    mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONSTRAINT
+    mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_ACTUATION
+    gs_sim.rigid_solver.dyn_state.dofs.ctrl_mode.fill(int(gs.CTRL_MODE.FORCE))
+    gs_sim.rigid_solver._enable_collision = False
+    gs_sim.rigid_solver._enable_joint_limit = False
+    gs_sim.rigid_solver._disable_constraint = True
+    gs_sim.rigid_solver.collider.clear()
+    gs_sim.rigid_solver.constraint_solver.clear()
+
+    check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
+
+    (gs_robot,) = gs_sim.entities
+    dof_bounds = gs_sim.rigid_solver.dyn_info.dofs.limit.to_numpy()
+    for _ in range(100):
+        qpos = dof_bounds[:, 0] + (dof_bounds[:, 1] - dof_bounds[:, 0]) * np.random.rand(gs_robot.n_qs)
+        init_paired_simulators(gs_sim, mj_sim, qpos)
+        check_mujoco_data_consistency(gs_sim, mj_sim, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["compound_joint"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+def test_jacobian_compound_joints(gs_sim, mj_sim, tol):
+    (gs_robot,) = gs_sim.entities
+    end_link = gs_robot.get_link("seg2")
+    end_body_id = mujoco.mj_name2id(mj_sim.model, mujoco.mjtObj.mjOBJ_BODY, "seg2")
+    jacp = np.empty((3, mj_sim.model.nv), dtype=np.float64)
+    jacr = np.empty((3, mj_sim.model.nv), dtype=np.float64)
+
+    for qpos in ((0.0, 0.0, 0.0), (0.3, -0.5, 0.7)):
+        init_paired_simulators(gs_sim, mj_sim, qpos)
+        mujoco.mj_jacBody(mj_sim.model, mj_sim.data, jacp, jacr, end_body_id)
+
+        assert_allclose(gs_robot.get_jacobian(end_link), np.concatenate([jacp, jacr]), tol=tol)

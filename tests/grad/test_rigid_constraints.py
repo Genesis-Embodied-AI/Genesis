@@ -6,7 +6,7 @@ import pytest
 import genesis as gs
 from genesis.utils.misc import qd_to_torch, tensor_to_array
 
-from ..utils import assert_allclose
+from ..utils.assertions import assert_allclose
 from .utils import assert_grad_matches_fd, make_diff_scene_pair
 
 

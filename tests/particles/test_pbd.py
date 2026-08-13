@@ -4,7 +4,7 @@ import torch
 
 import genesis as gs
 
-from ..utils import assert_allclose
+from ..utils.assertions import assert_allclose
 
 
 # Note that "session" scope must NOT be used because the material while be altered without copy when building the scene

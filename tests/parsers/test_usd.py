@@ -23,7 +23,8 @@ from ..conftest import SKIP_NO_OMNIVERSE_KIT
 import genesis as gs
 from genesis.utils.misc import tensor_to_array
 
-from ..utils import assert_allclose, assert_equal, get_hf_dataset
+from ..utils.assertions import assert_allclose, assert_equal
+from ..utils.assets import get_hf_dataset
 from .conftest import (
     USD_COLOR_TOL,
     build_mesh_scene,

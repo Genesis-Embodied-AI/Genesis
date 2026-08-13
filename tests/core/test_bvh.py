@@ -4,7 +4,7 @@ import pytest
 import genesis as gs
 from genesis.engine.bvh import LBVH, AABB
 
-from ..utils import assert_allclose
+from ..utils.assertions import assert_allclose
 
 
 @pytest.fixture(scope="function")

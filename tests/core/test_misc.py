@@ -14,7 +14,7 @@ import genesis.utils.geom as gu
 import genesis.utils.point_cloud as pc
 from genesis.utils.misc import tensor_to_array
 
-from ..utils import assert_allclose, assert_equal
+from ..utils.assertions import assert_allclose, assert_equal
 
 
 @pytest.mark.required

@@ -98,7 +98,9 @@ def tet_meshball():
     ET.SubElement(asset, "mesh", name="icosphere", vertex=" ".join(str(c) for v in ball.vertices for c in v))
     worldbody = ET.SubElement(mjcf, "worldbody")
     ET.SubElement(worldbody, "geom", name="tet", type="mesh", mesh="tet")
-    for i, pos in enumerate(("0 0 1.2", "0.3 0 1.2", "0.3 0.29 1.2")):
+    # The first ball lands off the tetrahedron's symmetry plane: a centered drop leaves the deepest face an exact
+    # tie between two mirror faces, whose resolution is platform rounding in both engines.
+    for i, pos in enumerate(("0.02 0 1.2", "0.3 0 1.2", "0.3 0.29 1.2")):
         body = ET.SubElement(worldbody, "body", name=f"ball{i + 1}", pos=pos)
         ET.SubElement(body, "joint", name=f"root{i + 1}", type="free")
         ET.SubElement(body, "geom", name=f"ball{i + 1}_geom", type="mesh", mesh="icosphere")

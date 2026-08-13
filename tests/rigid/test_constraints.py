@@ -7,11 +7,8 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils.misc import tensor_to_array
 
-from ..utils import (
-    assert_allclose,
-    assert_equal,
-    simulate_and_check_mujoco_consistency,
-)
+from ..utils.assertions import assert_allclose, assert_equal
+from ..utils.mujoco_parity import simulate_and_check_mujoco_consistency
 
 
 @pytest.mark.parametrize("model_name", ["mimic_hinges"])

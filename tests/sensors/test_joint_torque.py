@@ -6,7 +6,7 @@ import torch
 
 import genesis as gs
 
-from ..utils import assert_allclose
+from ..utils.assertions import assert_allclose
 
 
 @pytest.fixture(scope="session")

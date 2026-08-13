@@ -9,7 +9,8 @@ import genesis as gs
 from genesis.utils.misc import qd_to_numpy, tensor_to_array
 
 from ..conftest import IS_INTERACTIVE_VIEWER_AVAILABLE, SKIP_NO_VIEWER
-from ..utils import assert_allclose, assert_equal, get_hf_dataset, rgb_array_to_png_bytes
+from ..utils.assertions import assert_allclose, assert_equal, rgb_array_to_png_bytes
+from ..utils.assets import get_hf_dataset
 from .conftest import RENDERER_TYPE
 
 

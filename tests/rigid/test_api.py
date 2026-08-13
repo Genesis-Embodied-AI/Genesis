@@ -10,9 +10,7 @@ import genesis.utils.geom as gu
 from genesis.engine.states.solvers import RigidSolverState
 from genesis.utils.misc import qd_to_torch
 
-from ..utils import (
-    assert_allclose,
-)
+from ..utils.assertions import assert_allclose
 
 
 @pytest.mark.slow  # ~200s
