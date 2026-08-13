@@ -63,6 +63,8 @@ Three sections, mirroring the Genesis layers that ship runnable demos: **Physics
 | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/coupling_cloth_on_rigid.webp" width="240"> | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/coupling_rigid_mpm_attachment.webp" width="240"> | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/coupling_cut_dragon.webp" width="240"> |
 | [Coupler: water wheel](./examples/coupling/water_wheel.py) | [Coupler: flush cubes](./examples/coupling/flush_cubes.py) | [SAP: Franka grasp rigid cube](./examples/sap_coupling/franka_grasp_rigid_cube.py) |
 | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/coupling_water_wheel.webp" width="240"> | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/coupling_flush_cubes.webp" width="240"> | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/sap_franka_grasp_rigid_cube.webp" width="240"> |
+| [Rigid: contact patch](./examples/collision/contact_manifold.py) | | |
+| <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/collision_contact_manifold.webp" width="240"> | | |
 
 ### Rendering
 
