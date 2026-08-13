@@ -1884,6 +1884,12 @@ class RigidSolver(KinematicSolver):
 
             state = RigidSolverState(self._scene, s_global)
 
+            # A captured state must be self-consistent: links_pos / links_quat have to be the Cartesian pose implied by
+            # the qpos captured alongside them, otherwise restoring it does not reproduce the configuration it was taken
+            # from. The step loop leaves that pose one integration behind qpos whenever it defers the post-integrate
+            # refresh, so catch up here - a no-op when the pose is already current, which is the common case.
+            self.update_forward_pos()
+
             kernel_get_state(
                 state.i_pos_shift,
                 state.qpos,
