@@ -866,20 +866,41 @@ def sanitize_index(
     dim: int,
     name: str,
 ) -> torch.Tensor:
+    is_bool_mask = False
+    is_negative_wrap_required = False
     if index is None:
         index = range(max_size)
     elif isinstance(index, slice):
-        index = range(
-            index.start or 0,
-            index.stop if index.stop is not None else max_size,
-            index.step or 1,
-        )
+        index = range(*index.indices(max_size))
     elif isinstance(index, (int, np.integer)):
-        index = [index]
-    elif isinstance(index, torch.Tensor) and index.dtype == torch.bool:
-        index, *_ = torch.where(index)
+        index = (index + max_size if -max_size <= index < 0 else index,)
+    elif isinstance(index, range):
+        if index:
+            if -max_size <= index[0] < 0 and -max_size <= index[-1] < 0:
+                index = range(index.start + max_size, index.stop + max_size, index.step)
+            elif index[0] < 0 or index[-1] < 0:
+                index = tuple(index)
+                is_negative_wrap_required = True
+    elif isinstance(index, (list, tuple, torch.Tensor, np.ndarray)):
+        is_bool_mask = (isinstance(index, torch.Tensor) and index.dtype == torch.bool) or (
+            isinstance(index, np.ndarray) and np.issubdtype(index.dtype, np.bool_)
+        )
+        is_negative_wrap_required = not is_bool_mask
+    else:
+        gs.raise_exception(f"Expecting integer indices for `{name}`.")
 
-    index = torch.as_tensor(index, dtype=gs.tc_int, device=gs.device)
+    try:
+        if is_bool_mask:
+            index = torch.as_tensor(index, device=gs.device)
+        else:
+            index = torch.as_tensor(index, dtype=gs.tc_int, device=gs.device)
+    except (TypeError, ValueError, RuntimeError) as err:
+        gs.raise_exception_from(f"Expecting integer indices for `{name}`.", cause=err)
+
+    if index.dtype == torch.bool:
+        if index.ndim != 1 or len(index) != max_size:
+            gs.raise_exception(f"Boolean masks for `{name}` must have shape ({max_size},).")
+        index = torch.as_tensor(torch.where(index)[0], dtype=gs.tc_int, device=gs.device)
 
     ndim = index.ndim
     if ndim == 0:
@@ -893,6 +914,12 @@ def sanitize_index(
         gs.raise_exception(
             f"Invalid shape: {index.shape}. Expecting 1D tensor of length {expected_size} for {dim}-th index{dim_info}."
         )
+
+    if is_negative_wrap_required:
+        # Deferring the wrap until after the shared tensor conversion lets one dtype-preserving operation cover every
+        # input form that can hold negative entries
+        is_valid_negative = (-max_size <= index) & (index < 0)
+        index = torch.where(is_valid_negative, index + max_size, index)
 
     # FIXME: This check is too expensive
     # if not (0 <= dim_idx & dim_idx < size).all():
