@@ -741,6 +741,81 @@ def make_nonconvex_spacecraft(n_envs, solver=None, gjk=None, **scene_kwargs):
     )
 
 
+def make_table_bussing(n_envs, solver=None, gjk=None, **scene_kwargs):
+    # Table-bussing digital twin: a fixed 18-DOF bimanual robot posed over a work table, with a clutter of dining
+    # objects dropped and settling on the tabletop -- a contact-rich mesh-collision workload with a high-DOF
+    # articulated system held in place. Every asset is already on the pinned HF dataset (dual_arms_primitives is the
+    # all-primitive, mesh-free stand-in robot; work_table.glb and the mug/cup/apple/donut clutter are public), so
+    # this benchmark needs no additional asset upload.
+    STEP_DT = 1.0 / 30.0
+    # work_table.glb sits with its top face ~0.54 above the mesh origin at the default scale (cf. test_mesh_repair,
+    # which places the table at z=-0.54 so its top lands at z~0), so at pos z=0 the tabletop is at z~0.54.
+    TABLE_TOP_Z = 0.54
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=STEP_DT, substeps=10),
+        rigid_options=gs.options.RigidOptions(
+            noslip_iterations=5,
+            max_collision_pairs=256,
+            max_contacts=1024,
+            **(dict(constraint_solver=solver) if solver is not None else {}),
+            **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
+        ),
+        **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
+    )
+
+    scene.add_entity(gs.morphs.Plane())
+
+    table_path = get_hf_dataset(pattern="work_table.glb")
+    scene.add_entity(
+        gs.morphs.Mesh(file=f"{table_path}/work_table.glb", pos=(0.5, 0.0, 0.0), fixed=True),
+        vis_mode="collision",
+    )
+
+    robot_path = get_hf_dataset(pattern="dual_arms_primitives.urdf")
+    robot = scene.add_entity(
+        gs.morphs.URDF(file=f"{robot_path}/dual_arms_primitives.urdf", pos=(0.0, 0.0, TABLE_TOP_Z + 0.5), fixed=True),
+    )
+
+    # Dining clutter to bus off the table: auto-decomposed (CoACD) mug/cup/apple/donut in a 4x4 grid in front of the
+    # robot, staggered in height so none overlap at spawn, then dropped so they settle on the tabletop.
+    assets = (("mug_1", "output.xml"), ("cup_2", "model.xml"), ("apple_15", "model.xml"), ("donut_0", "output.xml"))
+    asset_files = {name: f"{get_hf_dataset(pattern=f'{name}/*')}/{name}/{xml}" for name, xml in assets}
+    for i in range(16):
+        gx, gy = i % 4, i // 4
+        name = assets[(gx + gy) % len(assets)][0]
+        scene.add_entity(
+            gs.morphs.MJCF(
+                file=asset_files[name],
+                pos=(0.30 + 0.11 * gx, -0.17 + 0.11 * gy, TABLE_TOP_Z + 0.06 + 0.02 * i),
+                euler=(90.0, 0.0, 0.0),
+            ),
+            vis_mode="collision",
+        )
+
+    time_start = time.time()
+    scene.build(n_envs=n_envs)
+    compile_time = time.time() - time_start
+
+    # Hold every actuated DOF at its initial pose so the arms stay posed over the table instead of collapsing.
+    robot.set_dofs_kp(np.full((robot.n_dofs,), 100.0, dtype=np.float32))
+    robot.control_dofs_position(torch.zeros((n_envs, robot.n_dofs), dtype=gs.tc_float, device=gs.device))
+
+    def step():
+        scene.step()
+
+    return (
+        scene,
+        step,
+        SceneMeta(
+            compile_time=compile_time,
+            step_dt=STEP_DT,
+            duration_warmup=20.0,
+            duration_record=5.0,
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Benchmark runner
 # ---------------------------------------------------------------------------
@@ -907,13 +982,18 @@ def nonconvex_spacecraft(solver, n_envs, gjk):
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
+@pytest.fixture
+def table_bussing(solver, n_envs, gjk):
+    _, step_fn, meta = make_table_bussing(n_envs, solver=solver, gjk=gjk)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
 # ---------------------------------------------------------------------------
 # Parametrized benchmark test
 # ---------------------------------------------------------------------------
 
 
 # Full benchmark suite (one instance of each, solver/gjk left at their defaults), run on the 'field' dtype.
-# TODO: add ("table_bussing", None, None, 50, gs.cpu) once its assets are on the shared HF dataset.
 BENCHMARKS_FIELD = [
     ("go2", None, None, 4096, gs.gpu),
     ("anymal_random", None, None, 20000, gs.gpu),
@@ -923,6 +1003,7 @@ BENCHMARKS_FIELD = [
     ("shadow_hand", None, None, 0, gs.cpu),
     ("convexify", None, None, 0, gs.cpu),
     ("nonconvex_spacecraft", None, None, 64, gs.cpu),
+    ("table_bussing", None, None, 50, gs.cpu),
 ]
 
 # Reduced subset, run on the 'ndarray' dtype only.
