@@ -2705,7 +2705,6 @@ class RigidEntity(KinematicEntity):
 
     def _load_model(self):
         self._equalities = gs.List()
-        self._requires_jac_and_IK = self._morph.requires_jac_and_IK
         # MJCF and USD express in-model collision filtering (MJCF '<contact><exclude>', USD CollisionGroup /
         # FilteredPairsAPI) through synthesized contype/conaffinity bitmasks. Those masks are only consistent within
         # the entity: applied across entities, they would spuriously disable collision against geoms whose default
@@ -2770,9 +2769,6 @@ class RigidEntity(KinematicEntity):
         # (a small NumPy array, also read by path planning) and the IK error dimensions. The Jacobian / IK scratch
         # `qd.field`s are allocated lazily on first use (in `get_jacobian` / `inverse_kinematics_multilink`) so that
         # entities which never query the Jacobian or run IK do not each add a per-entity field bundle to the SNode tree.
-        if not self._requires_jac_and_IK:
-            return
-
         if self.n_dofs == 0:
             return
 
@@ -2955,11 +2951,6 @@ class RigidEntity(KinematicEntity):
         jacobian : torch.Tensor
             The Jacobian matrix of shape (n_envs, 6, entity.n_dofs) or (6, entity.n_dofs) if n_envs == 0.
         """
-        if not self._requires_jac_and_IK:
-            gs.raise_exception(
-                "Inverse kinematics and jacobian are disabled for this entity. Set `morph.requires_jac_and_IK` to True if you need them."
-            )
-
         if self.n_dofs == 0:
             gs.raise_exception("Entity has zero dofs.")
 
@@ -3263,11 +3254,6 @@ class RigidEntity(KinematicEntity):
         from genesis.engine.solvers.rigid.abd.inverse_kinematics import kernel_rigid_entity_inverse_kinematics
 
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-
-        if not self._requires_jac_and_IK:
-            gs.raise_exception(
-                "Inverse kinematics and jacobian are disabled for this entity. Set `morph.requires_jac_and_IK` to True if you need them."
-            )
 
         if self.n_dofs == 0:
             gs.raise_exception("Entity has zero dofs.")
