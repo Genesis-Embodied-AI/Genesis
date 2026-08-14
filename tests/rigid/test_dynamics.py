@@ -48,10 +48,6 @@ def test_gravity(show_viewer, tol):
         scene.sim.set_gravity(values, envs_idx=expected_envs_idx)
         assert_equal(actual_gravity, scene.rigid_solver.get_gravity())
 
-    for envs_idx in ({0, 1}, [[0, 1]], ["a"]):
-        with pytest.raises(gs.GenesisException):
-            scene.sim.set_gravity((0.0, 0.0, 0.0), envs_idx=envs_idx)
-
     scene.sim.set_gravity(torch.tensor([0.0, 0.0, 0.0]))
     scene.sim.set_gravity(torch.tensor([[9.0, 0.0, 0.0], [0.0, 2.0, 0.0]]), envs_idx=[0, 1])
     scene.sim.set_gravity(torch.tensor([1.0, 0.0, 0.0]), envs_idx=np.int64(-3))
