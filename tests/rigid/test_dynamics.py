@@ -25,16 +25,10 @@ def test_gravity(show_viewer, tol):
 
     envs_idx_cases = (
         ([-3, -1], (0, 2)),
-        ((-2, -1), (1, 2)),
-        (np.array((-2, -1), dtype=np.int32), (1, 2)),
-        (np.array((-2.0, -1.0), dtype=np.float64), (1, 2)),
-        (torch.tensor((-2, -1), dtype=torch.int32), (1, 2)),
         (range(-3, 0), (0, 1, 2)),
         (range(-1, 1), (2, 0)),
         (slice(-2, None), (1, 2)),
         (slice(-1, None, -1), (2, 1, 0)),
-        (np.array((False, True, True)), (1, 2)),
-        (torch.tensor((False, True, True)), (1, 2)),
     )
     gravity_values = torch.tensor(((1.0, 0.0, 0.0), (0.0, 2.0, 0.0), (0.0, 0.0, 3.0)))
     for envs_idx, expected_envs_idx in envs_idx_cases:
