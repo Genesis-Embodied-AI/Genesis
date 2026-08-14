@@ -7,6 +7,13 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.engine.entities.rigid_entity import KinematicEntity
+from genesis.engine.solvers.rigid.abd.inverse_kinematics import (
+    kernel_forward_kinematics_query,
+    kernel_get_jacobian,
+    kernel_get_jacobian_zero,
+    kernel_inverse_kinematics_entity,
+    kernel_set_ik_targets,
+)
 from genesis.engine.states.solvers import KinematicSolverState
 from genesis.options.solvers import KinematicOptions, RigidOptions
 from genesis.utils.misc import (
@@ -377,6 +384,7 @@ class KinematicSolver(Solver):
         self._rigid_adjoint_cache = self.data_manager.rigid_adjoint_cache
         self.dyn_info = self.data_manager.dyn_info
         self.dyn_state = self.data_manager.dyn_state
+        self.kinematics_scratch = self.data_manager.kinematics_scratch
 
     # ------------------------------------------------------------------------------------
     # --------------------------------- hook methods -------------------------------------
@@ -1251,6 +1259,180 @@ class KinematicSolver(Solver):
             self.dyn_state.vverts.pos, envs_idx, slice(custom_vvert_start, custom_vvert_end), transpose=True, copy=True
         )
         return tensor[0] if self.n_envs == 0 else tensor
+
+    # ------------------------------------------------------------------------------------
+    # --------------------------------- Jacobian & IK ------------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def get_links_jacobian(self, link_idx, dof_start, n_dofs, local_point=None):
+        """Spatial Jacobian of a link-local point, as (n_envs, 6, n_dofs), for the entity owning that link.
+
+        dof_start offsets the entity degrees of freedom into the solver and n_dofs narrows the shared buffer down to
+        that entity. local_point defaults to the link origin.
+        """
+        jacobian = self.kinematics_scratch.jacobian
+        if local_point is None:
+            kernel_get_jacobian_zero(
+                link_idx, dof_start, jacobian, self.dyn_state, self.dyn_info, self.rigid_config, self._B
+            )
+        else:
+            kernel_get_jacobian(
+                link_idx, dof_start, local_point, jacobian, self.dyn_state, self.dyn_info, self.rigid_config, self._B
+            )
+        return qd_to_torch(jacobian, transpose=True, copy=True)[..., :n_dofs]
+
+    def forward_kinematics_query(self, entity, qpos, envs_idx=None):
+        """Link poses one entity would have at the given configuration, leaving the live configuration as it was.
+
+        Distinct from the forward kinematics the step propagates: this evaluates a configuration the solver does not
+        hold, and restores the one it does. Returns positions (n_envs, n_links, 3) and orientations
+        (n_envs, n_links, 4), without the batch dimension when the scene is not batched.
+        """
+        if self.n_envs == 0:
+            envs_idx = torch.zeros(1, dtype=gs.tc_int)
+        else:
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        qpos = broadcast_tensor(qpos, gs.tc_float, (len(envs_idx), entity.n_qs), ("envs_idx", "qs_idx")).contiguous()
+
+        qs_idx = torch.arange(entity._q_start, entity._q_start + entity.n_qs, dtype=gs.tc_int, device=gs.device)
+        links_idx = torch.arange(
+            entity._link_start, entity._link_start + entity.n_links, dtype=gs.tc_int, device=gs.device
+        )
+        links_pos = torch.empty((len(envs_idx), entity.n_links, 3), dtype=gs.tc_float, device=gs.device)
+        links_quat = torch.empty((len(envs_idx), entity.n_links, 4), dtype=gs.tc_float, device=gs.device)
+        kernel_forward_kinematics_query(
+            entity._idx_in_solver,
+            qs_idx,
+            links_idx,
+            envs_idx,
+            links_pos,
+            links_quat,
+            qpos,
+            self.kinematics_scratch.qpos_cache,
+            self.dyn_state,
+            self.dyn_info,
+            self.rigid_info,
+            self.rigid_config,
+        )
+
+        if self.n_envs == 0:
+            links_pos = links_pos[0]
+            links_quat = links_quat[0]
+        return links_pos, links_quat
+
+    def inverse_kinematics(
+        self,
+        entity_idx,
+        q_start,
+        link_start,
+        joint_start,
+        links_idx,
+        dofs_idx,
+        envs_idx,
+        poss,
+        quats,
+        local_points,
+        init_qpos,
+        pos_mask,
+        rot_mask,
+        link_pos_mask,
+        link_rot_mask,
+        n_qs,
+        n_dofs,
+        custom_init_qpos,
+        max_samples,
+        max_solver_iters,
+        damping,
+        pos_tol,
+        rot_tol,
+        max_step_size,
+        seed,
+        respect_joint_limit,
+    ):
+        """Damped-least-squares inverse kinematics of one entity for the given link targets.
+
+        Returns the best configuration per environment, spanning the entity, and the stacked pose residual of every
+        target it carries. Callers narrow both to the environments and targets they asked for.
+        """
+        n_links = len(links_idx)
+        n_tgts = self._options.IK_max_targets
+        if n_links > n_tgts:
+            gs.raise_exception(f"Cannot solve for {n_links} targets. Raise 'IK_max_targets' above {n_tgts}.")
+
+        ik_state, ik_fk, targets = self.data_manager.ik_scratch
+
+        # Only the leading rows each buffer holds for this solve are written, and the kernel reads no further.
+        if gs.use_zerocopy:
+            for member, data in (
+                (targets.links_idx, links_idx),
+                (targets.local_point, local_points),
+                (targets.link_pos_mask, link_pos_mask),
+                (targets.link_rot_mask, link_rot_mask),
+            ):
+                member_t = qd_to_torch(member, copy=False)
+                member_t[:n_links] = data
+            dofs_idx_t = qd_to_torch(targets.dofs_idx, copy=False)
+            dofs_idx_t[: len(dofs_idx)] = dofs_idx
+            envs_idx_t = qd_to_torch(targets.envs_idx, copy=False)
+            envs_idx_t[: len(envs_idx)] = envs_idx
+            pos_mask_t = qd_to_torch(targets.pos_mask, copy=False)
+            pos_mask_t[:] = pos_mask
+            rot_mask_t = qd_to_torch(targets.rot_mask, copy=False)
+            rot_mask_t[:] = rot_mask
+            for member, data in ((targets.pos, poss), (targets.quat, quats)):
+                member_t = qd_to_torch(member, copy=False)
+                member_t[:n_links, envs_idx] = data
+            init_qpos_t = qd_to_torch(targets.init_qpos, copy=False)
+            init_qpos_t[envs_idx, :n_qs] = init_qpos
+            if gs.backend == gs.metal:
+                torch.mps.synchronize()
+        else:
+            kernel_set_ik_targets(
+                links_idx,
+                dofs_idx,
+                envs_idx,
+                poss,
+                quats,
+                local_points,
+                init_qpos,
+                pos_mask,
+                rot_mask,
+                link_pos_mask,
+                link_rot_mask,
+                targets,
+            )
+
+        kernel_inverse_kinematics_entity(
+            entity_idx,
+            q_start,
+            link_start,
+            joint_start,
+            self.dyn_state,
+            ik_state,
+            ik_fk,
+            targets,
+            self.dyn_info,
+            self.rigid_info,
+            self.rigid_config,
+            n_qs,
+            n_dofs,
+            n_links,
+            len(dofs_idx),
+            len(envs_idx),
+            custom_init_qpos,
+            max_samples,
+            max_solver_iters,
+            damping,
+            pos_tol,
+            rot_tol,
+            max_step_size,
+            seed,
+            respect_joint_limit,
+        )
+
+        qpos = qd_to_torch(ik_state.qpos_best, transpose=True, copy=True)[..., :n_qs]
+        err_pose = qd_to_torch(ik_state.err_pose_best, transpose=True, copy=True).reshape((-1, n_tgts, 6))
+        return qpos, err_pose[:, :n_links]
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

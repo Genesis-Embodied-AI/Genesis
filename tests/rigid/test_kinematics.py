@@ -355,7 +355,8 @@ def test_inverse_kinematics_multilink(show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_inverse_kinematics_local_point(n_envs, show_viewer, tol):
-    # local_point positions an offset point of the link at the target instead of the link origin.
+    # local_point positions an offset point of the link at the target. The floating-base go2 also exercises the
+    # FREE root joint (base translation and orientation degrees of freedom) at a non-zero entity offset.
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.5, 0.0, 1.5),
@@ -365,6 +366,12 @@ def test_inverse_kinematics_local_point(n_envs, show_viewer, tol):
     )
     robot = scene.add_entity(
         morph=gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    floating = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file="urdf/go2/urdf/go2.urdf",
+            pos=(0.0, 1.5, 0.42),
+        ),
     )
     scene.build(n_envs=n_envs)
 
@@ -419,8 +426,44 @@ def test_inverse_kinematics_local_point(n_envs, show_viewer, tol):
     # Check that the offset point reached the target
     assert_allclose(actual_point_pos, target_pos, tol=tol)
 
+    # Floating-base IK: place an offset point of the go2 trunk (its FREE root link) at a target pose, reached purely
+    # through the FREE joint's translation and orientation degrees of freedom.
+    base = floating.base_link
+    base_offset = torch.tensor([0.1, 0.05, 0.0], dtype=gs.tc_float, device=gs.device)
+    base_pos_all = [[0.1, 1.5, 0.6], [0.05, 1.45, 0.55]][:num_envs]
+    base_quat_all = torch.tensor(
+        [[0.9239, 0.0, 0.0, 0.3827], [1.0, 0.0, 0.0, 0.0]], dtype=gs.tc_float, device=gs.device
+    )[:num_envs]
+
+    base_qpos_live = floating.get_qpos().clone()
+    base_links_pos_live = floating.get_links_pos(relative=False).clone()
+    base_vgeoms_idx = [vgeom.idx for link in floating.links for vgeom in link.vgeoms]
+    base_vgeoms_pos_live = scene.rigid_solver.get_vgeoms_pos(base_vgeoms_idx).clone()
+
+    base_qpos, base_err = floating.inverse_kinematics(
+        link=base,
+        pos=base_pos_all,
+        quat=base_quat_all,
+        local_point=base_offset,
+        max_solver_iters=100,
+        pos_tol=tol,
+        rot_tol=tol,
+        return_error=True,
+    )
+    assert_allclose(base_err, 0.0, atol=tol)
+
+    # The solve reports a configuration without moving the entity to it, so the live state is what it was.
+    assert_allclose(floating.get_qpos(), base_qpos_live, tol=gs.EPS)
+    assert_allclose(floating.get_links_pos(relative=False), base_links_pos_live, tol=gs.EPS)
+    assert_allclose(scene.rigid_solver.get_vgeoms_pos(base_vgeoms_idx), base_vgeoms_pos_live, tol=gs.EPS)
+
+    floating.set_qpos(base_qpos)
+    assert_allclose(base.get_pos() + gu.transform_by_quat(base_offset, base.get_quat()), base_pos_all, tol=tol)
+    base_rpy = gu.quat_to_xyz(gu.transform_quat_by_quat(gu.inv_quat(base_quat_all), base.get_quat()), rpy=True)
+    assert_allclose(base_rpy, 0.0, atol=tol)
+
     # Also verify via forward kinematics
-    links_pos, links_quat = robot.forward_kinematics(qpos)
+    links_pos, links_quat = scene.rigid_solver.forward_kinematics_query(robot, qpos)
 
     # Handle indexing based on n_envs
     if n_envs > 0:
@@ -819,3 +862,91 @@ def test_track_rigid(show_viewer, tol):
     assert_allclose(ghost.get_vAABB(), frozen_ghost_vaabb, tol=gs.EPS)
     with pytest.raises(AssertionError):
         assert_allclose(robot.get_vAABB(), frozen_robot_vaabb, atol=0.1)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_kinematics_queries_span_entities_and_solvers(n_envs, show_viewer, tol):
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.0, 1.0, 1.2),
+            camera_lookat=(0.2, 0.6, 0.3),
+        ),
+        show_viewer=show_viewer,
+    )
+    franka = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
+    )
+    go2 = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file="urdf/go2/urdf/go2.urdf",
+            pos=(0.0, 1.5, 0.42),
+        ),
+    )
+    fixed_box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(1.0, 0.0, 0.05),
+            fixed=True,
+        ),
+    )
+    ghost = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
+        material=gs.materials.Kinematic(),
+    )
+    scene.build(n_envs=n_envs)
+
+    # Queried at the configuration it already holds, every entity must report its live link poses: whatever its offset
+    # in the solver configuration, with or without a degree of freedom, and whichever solver backs it.
+    for entity in (franka, go2, fixed_box, ghost):
+        links_pos, links_quat = entity.solver.forward_kinematics_query(entity, entity.get_qpos())
+        assert_allclose(links_pos, entity.get_links_pos(relative=False), tol=gs.EPS)
+        assert_allclose(links_quat, entity.get_links_quat(relative=False), tol=gs.EPS)
+
+    # Callers hand the query whatever array-like configuration they hold, a NumPy trajectory included.
+    links_pos, links_quat = franka.solver.forward_kinematics_query(franka, tensor_to_array(franka.get_qpos()))
+    assert_allclose(links_pos, franka.get_links_pos(relative=False), tol=gs.EPS)
+    assert_allclose(links_quat, franka.get_links_quat(relative=False), tol=gs.EPS)
+
+    # Inverse kinematics reaches its target for an entity of either solver.
+    target_pos = [[0.45, 0.1, 0.5], [0.4, 0.0, 0.55]][: max(n_envs, 1)]
+    if n_envs == 0:
+        target_pos = target_pos[0]
+    for entity in (franka, ghost):
+        end_effector = entity.get_link("hand")
+        qpos_live = entity.get_qpos().clone()
+        links_pos_live = entity.get_links_pos(relative=False).clone()
+        vgeoms_idx = [vgeom.idx for link in entity.links for vgeom in link.vgeoms]
+        vgeoms_pos_live = entity.solver.get_vgeoms_pos(vgeoms_idx).clone()
+
+        qpos, err_pose = entity.inverse_kinematics(
+            link=end_effector,
+            pos=target_pos,
+            max_solver_iters=100,
+            pos_tol=tol,
+            rot_tol=tol,
+            return_error=True,
+        )
+        assert_allclose(err_pose, 0.0, atol=tol)
+
+        # The solve reports a configuration without moving the entity to it, so the live state is what it was.
+        assert_allclose(entity.get_qpos(), qpos_live, tol=gs.EPS)
+        assert_allclose(entity.get_links_pos(relative=False), links_pos_live, tol=gs.EPS)
+        assert_allclose(entity.solver.get_vgeoms_pos(vgeoms_idx), vgeoms_pos_live, tol=gs.EPS)
+        with pytest.raises(AssertionError):
+            assert_allclose(end_effector.get_pos(), target_pos, tol=tol)
+
+        entity.set_qpos(qpos)
+        assert_allclose(end_effector.get_pos(), target_pos, tol=tol)
+
+    # Carrying more targets than the error buffer is sized for is refused, rather than written past.
+    n_tgts = franka.solver._options.IK_max_targets
+    with pytest.raises(gs.GenesisException):
+        franka.inverse_kinematics_multilink(
+            links=franka.links[: n_tgts + 1],
+            poss=[target_pos] * (n_tgts + 1),
+        )
