@@ -718,6 +718,19 @@ def test_setters(show_viewer, tol):
     robot_baseline = torch.arange(n_dofs, device=gs.device) * 0.01 + 0.2
     ghost_box.set_dofs_position(box_baseline)
     ghost_robot.set_dofs_position(robot_baseline)
+
+    for dofs_idx_local in (
+        [-n_dofs - 1, -1],
+        (-n_dofs - 1, -1),
+        range(-n_dofs - 1, 0, n_dofs),
+        np.array((-n_dofs - 1, -1), dtype=np.int32),
+        torch.tensor((-n_dofs - 1, -1), dtype=torch.int32, device=gs.device),
+    ):
+        assert_equal(
+            ghost_robot._get_global_idx(dofs_idx_local, n_dofs, ghost_robot.dof_start, unsafe=True),
+            (ghost_robot.dof_start - n_dofs - 1, ghost_robot.dof_end - 1),
+        )
+
     for dofs_idx_local, expected_dofs_idx_local in dofs_idx_cases:
         assert_equal(
             ghost_robot.get_dofs_position(dofs_idx_local),

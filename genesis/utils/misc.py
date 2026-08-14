@@ -873,10 +873,10 @@ def sanitize_index(
     elif isinstance(index, slice):
         index = range(*index.indices(max_size))
     elif isinstance(index, (int, np.integer)):
-        index = (index + max_size if index < 0 else index,)
+        index = (index + max_size if -max_size <= index < 0 else index,)
     elif isinstance(index, range):
         if index:
-            if index[0] < 0 and index[-1] < 0:
+            if -max_size <= index[0] < 0 and -max_size <= index[-1] < 0:
                 index = range(index.start + max_size, index.stop + max_size, index.step)
             elif index[0] < 0 or index[-1] < 0:
                 index = tuple(index)
@@ -918,7 +918,8 @@ def sanitize_index(
     if is_negative_wrap_required:
         # Deferring the wrap until after the shared tensor conversion lets one dtype-preserving operation cover every
         # input form that can hold negative entries
-        index = torch.where(index < 0, index + max_size, index)
+        is_valid_negative = (-max_size <= index) & (index < 0)
+        index = torch.where(is_valid_negative, index + max_size, index)
 
     # FIXME: This check is too expensive
     # if not (0 <= dim_idx & dim_idx < size).all():

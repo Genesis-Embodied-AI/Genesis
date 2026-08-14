@@ -1700,7 +1700,7 @@ class KinematicEntity(Entity):
             if step < 0:
                 idx_global = tuple(idx_global)
         elif isinstance(idx_local, range):
-            if idx_local and idx_local[0] < 0 and idx_local[-1] < 0:
+            if idx_local and -idx_local_max <= idx_local[0] < 0 and -idx_local_max <= idx_local[-1] < 0:
                 # Every entry shifts by the same amount, so the constant step and the range form are preserved
                 idx_global = range(
                     idx_local.start + idx_local_max + idx_global_start,
@@ -1709,7 +1709,9 @@ class KinematicEntity(Entity):
                 )
             elif idx_local and (idx_local[0] < 0 or idx_local[-1] < 0):
                 # Mixed-sign entries wrap by different amounts, which breaks the constant step
-                idx_global = [i + idx_global_start + (idx_local_max if i < 0 else 0) for i in idx_local]
+                idx_global = [
+                    i + idx_global_start + (idx_local_max if -idx_local_max <= i < 0 else 0) for i in idx_local
+                ]
             else:
                 idx_global = range(
                     idx_local.start + idx_global_start, idx_local.stop + idx_global_start, idx_local.step
@@ -1718,7 +1720,9 @@ class KinematicEntity(Entity):
                 idx_global = tuple(idx_global)
         elif isinstance(idx_local, (list, tuple)):
             try:
-                idx_global = [i + idx_global_start + (idx_local_max if i < 0 else 0) for i in idx_local]
+                idx_global = [
+                    i + idx_global_start + (idx_local_max if -idx_local_max <= i < 0 else 0) for i in idx_local
+                ]
             except TypeError:
                 gs.raise_exception("Expecting a sequence of integers for `idx_local`.")
         else:
@@ -1730,6 +1734,7 @@ class KinematicEntity(Entity):
                     is_negative_wrap_required = False
                 else:
                     is_negative_wrap_required = idx_local.dtype.is_signed
+                    where = torch.where
             elif isinstance(idx_local, np.ndarray):
                 if np.issubdtype(idx_local.dtype, np.bool_):
                     if idx_local.shape != (idx_local_max,):
@@ -1738,12 +1743,13 @@ class KinematicEntity(Entity):
                     is_negative_wrap_required = False
                 else:
                     is_negative_wrap_required = not np.issubdtype(idx_local.dtype, np.unsignedinteger)
+                    where = np.where
             else:
                 gs.raise_exception("Expecting integer indices for `idx_local`.")
             if is_negative_wrap_required:
-                # Wrapping after the global offset would send negative entries into the preceding entity's data, and
-                # a remainder is the only sync-free single-op form that preserves the integer dtype
-                idx_local = idx_local % idx_local_max
+                # Wrap valid Python-style negatives before the global offset so those entries stay local to the entity
+                is_valid_negative = (-idx_local_max <= idx_local) & (idx_local < 0)
+                idx_local = where(is_valid_negative, idx_local + idx_local_max, idx_local)
             # Increment may be slow when dealing with heterogenuous data, so it must be avoided if possible
             if idx_global_start > 0:
                 idx_global = idx_local + idx_global_start
