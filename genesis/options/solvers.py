@@ -365,12 +365,16 @@ class KinematicOptions(Options):
         Whether to batch link info. Automatically enabled for heterogeneous simulation. Defaults to False.
     batch_dofs_info : bool, optional
         Whether to batch DOF info. Defaults to False.
+    IK_max_targets : int, optional
+        Maximum number of IK targets. Increasing this doesn't affect IK solving speed, but will increase memory usage.
+        Defaults to 6.
     """
 
     dt: PositiveFloat | None = None
     batch_links_info: StrictBool = False
     batch_joints_info: StrictBool = False
     batch_dofs_info: StrictBool = False
+    IK_max_targets: PositiveInt = 6
 
 
 class ToolOptions(Options):

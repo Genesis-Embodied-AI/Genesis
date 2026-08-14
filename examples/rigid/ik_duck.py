@@ -32,7 +32,6 @@ def main():
             file="meshes/duck.obj",
             scale=0.06,
             pos=(3.5, -1.5, 0.7),
-            requires_jac_and_IK=True,
         ),
     )
 
