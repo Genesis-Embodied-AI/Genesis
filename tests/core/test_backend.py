@@ -1,7 +1,9 @@
 import os
 import pathlib
+import signal
 import subprocess
 import sys
+import time
 
 import numpy as np
 import pytest
@@ -118,6 +120,34 @@ def test_basic_sim_subprocess(test_backend: str, use_ndarray: bool):
         print("-" * 100)
         print(proc.stderr)
     assert proc.returncode == RET_SUCCESS
+
+
+def _termination_signal_child(args: list[str]):
+    """Child process: build a scene, then ask the operating system to terminate itself."""
+    gs.init(backend=gs.constants.backend.cpu, precision="32")
+
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(gs.morphs.Plane())
+    scene.build()
+
+    os.kill(os.getpid(), signal.SIGTERM)
+
+    # Getting here means something intercepted the signal instead of letting it through.
+    time.sleep(10.0)
+    sys.exit(RET_SUCCESS)
+
+
+@pytest.mark.parametrize("backend", [None])
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no signal-based process termination status.")
+def test_process_terminates_on_signal():
+    cmd_line = [sys.executable, "-m", MODULE, _termination_signal_child.__name__]
+
+    proc = subprocess.run(cmd_line, capture_output=True, text=True, encoding="utf-8", cwd=MODULE_ROOT_DIR)
+    if proc.returncode != -signal.SIGTERM:
+        print(proc.stdout)
+        print("-" * 100)
+        print(proc.stderr)
+    assert proc.returncode == -signal.SIGTERM
 
 
 if __name__ == "__main__":
