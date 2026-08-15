@@ -1371,13 +1371,14 @@ class FEMSolver(Solver):
     def _kernel_get_el2v(
         self,
         element_el_start: qd.i32,
-        n_elements: qd.i32,
+        element_v_start: qd.i32,
         el2v: qd.types.ndarray(),
+        n_elements: qd.i32,
     ):
-        for i_e in range(n_elements):
-            i_global = i_e + element_el_start
+        for i_e_ in range(n_elements):
+            i_e = i_e_ + element_el_start
             for j in qd.static(range(4)):
-                el2v[i_global, j] = self.elements_i[i_global].el2v[j]
+                el2v[i_e_, j] = self.elements_i[i_e].el2v[j] - element_v_start
 
     @qd.kernel
     def _kernel_get_state(
