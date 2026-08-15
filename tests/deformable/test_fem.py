@@ -316,6 +316,7 @@ def test_hard_constraint(use_implicit_solver, show_viewer):
         show_viewer=show_viewer,
         show_FPS=False,
     )
+    # Place the tested entity after another FEM entity so its local and solver indices differ.
     scene.add_entity(
         morph=gs.morphs.Box(
             pos=(-0.5, 0.0, HEIGHT + BOX_SIZE / 2),
@@ -344,7 +345,7 @@ def test_hard_constraint(use_implicit_solver, show_viewer):
 
     assert_equal(box.get_el2v(), box.elems)
 
-    target_poss = box.get_state().pos[..., VERTICES_IDX, :].clone()
+    target_poss = box.get_state().pos[..., VERTICES_IDX, :]
     box.set_vertex_constraints(VERTICES_IDX)
     scene.step(update_visualizer=False)
     assert_allclose(box.get_state().pos[..., VERTICES_IDX, :], target_poss, tol=1e-8)

@@ -1070,10 +1070,7 @@ class FEMEntity(Entity):
         """
         el2v = gs.zeros((self.n_elements, 4), dtype=int, requires_grad=False, scene=self.scene)
         self._solver._kernel_get_el2v(
-            element_el_start=self._el_start,
-            element_v_start=self._v_start,
-            el2v=el2v,
-            n_elements=self.n_elements,
+            element_el_start=self._el_start, element_v_start=self._v_start, el2v=el2v, n_elements=self.n_elements
         )
         return el2v
 
