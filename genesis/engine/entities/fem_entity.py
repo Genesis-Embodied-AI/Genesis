@@ -998,8 +998,8 @@ class FEMEntity(Entity):
 
         if link is None:
             link_idx = -1
-            link_init_pos = torch.zeros((self._sim._B, 3), dtype=gs.tc_float, device=gs.device)
-            link_init_quat = torch.zeros((self._sim._B, 4), dtype=gs.tc_float, device=gs.device)
+            link_init_pos = torch.zeros((len(envs_idx), 3), dtype=gs.tc_float, device=gs.device)
+            link_init_quat = torch.zeros((len(envs_idx), 4), dtype=gs.tc_float, device=gs.device)
         else:
             assert isinstance(link, RigidLink), "Only RigidLink is supported for vertex constraints."
             link_idx = link.idx

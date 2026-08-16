@@ -413,6 +413,7 @@ def test_hard_constraint(use_implicit_solver, show_viewer):
     box.set_position(((0.0, 0.0, 0.0), (0.0, 0.0, 0.2)))
     box.set_velocity((0.0, 0.0, 0.0))
     anchor.set_pos(((10.0, 0.0, HEIGHT), (20.0, 0.0, HEIGHT)), relative=False)
+    anchor.set_quat(((1.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)), relative=False)
     target_poss = box.get_state().pos[..., VERTICES_IDX, :]
     box.set_vertex_constraints(VERTICES_IDX, envs_idx=[1])
     scene.step(update_visualizer=False)
