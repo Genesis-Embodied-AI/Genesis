@@ -8,7 +8,7 @@ import torch
 import genesis as gs
 from genesis.utils.misc import tensor_to_array
 
-from ..utils.assertions import assert_allclose
+from ..utils.assertions import assert_allclose, assert_equal
 from ..utils.assets import get_hf_dataset
 
 
@@ -316,6 +316,19 @@ def test_hard_constraint(use_implicit_solver, show_viewer):
         show_viewer=show_viewer,
         show_FPS=False,
     )
+    # Place the tested entity after another FEM entity so its local and solver indices differ.
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(-0.5, 0.0, HEIGHT + BOX_SIZE / 2),
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+        ),
+        material=gs.materials.FEM.Elastic(
+            E=1e5,
+            nu=0.45,
+            rho=1000.0,
+            model="linear_corotated" if use_implicit_solver else "stable_neohookean",
+        ),
+    )
     box = scene.add_entity(
         morph=gs.morphs.Box(
             pos=(-BOX_SIZE / 2, BOX_SIZE / 2 + MOTION_RADIUS, HEIGHT + BOX_SIZE / 2),
@@ -329,6 +342,13 @@ def test_hard_constraint(use_implicit_solver, show_viewer):
         ),
     )
     scene.build(n_envs=2)
+
+    assert_equal(box.get_el2v(), box.elems)
+
+    target_poss = box.get_state().pos[..., VERTICES_IDX, :]
+    box.set_vertex_constraints(VERTICES_IDX)
+    scene.step(update_visualizer=False)
+    assert_allclose(box.get_state().pos[..., VERTICES_IDX, :], target_poss, tol=1e-8)
 
     # Simulate
     n_steps = int(0.5 * math.pi / MOTION_SPEED)

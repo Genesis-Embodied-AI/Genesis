@@ -994,7 +994,7 @@ class FEMEntity(Entity):
         target_poss = self._sanitize_verts_tensor(target_poss, gs.tc_float, verts_idx, envs_idx, (3,))
 
         if use_current_poss:
-            self._kernel_get_verts_pos(self._sim.cur_substep_local, target_poss, verts_idx)
+            self._kernel_get_verts_pos(self._sim.cur_substep_local, verts_idx, target_poss)
 
         if link is None:
             link_idx = -1
@@ -1053,10 +1053,9 @@ class FEMEntity(Entity):
         self._solver._kernel_remove_specific_constraints(verts_idx, envs_idx)
 
     @qd.kernel
-    def _kernel_get_verts_pos(self, f: qd.i32, pos: qd.types.ndarray(), verts_idx: qd.types.ndarray()):
-        # get current position of vertices
+    def _kernel_get_verts_pos(self, f: qd.i32, verts_idx: qd.types.ndarray(), pos: qd.types.ndarray()):
         for i_b, i_v_ in qd.ndrange(verts_idx.shape[0], verts_idx.shape[1]):
-            i_v = verts_idx[i_b, i_v_] + self.v_start
+            i_v = verts_idx[i_b, i_v_]
             for j in qd.static(range(3)):
                 pos[i_b, i_v_, j] = self._solver.elements_v[f, i_v, i_b].pos[j]
 
@@ -1067,10 +1066,12 @@ class FEMEntity(Entity):
         Returns
         -------
         el2v : gs.Tensor
-            Tensor of shape (n_elements, 4) mapping each element to its vertex indices.
+            Tensor of shape (n_elements, 4) mapping each element to its local vertex indices.
         """
         el2v = gs.zeros((self.n_elements, 4), dtype=int, requires_grad=False, scene=self.scene)
-        self._solver._kernel_get_el2v(element_el_start=self._el_start, n_elements=self.n_elements, el2v=el2v)
+        self._solver._kernel_get_el2v(
+            element_el_start=self._el_start, element_v_start=self._v_start, el2v=el2v, n_elements=self.n_elements
+        )
         return el2v
 
     @qd.kernel
