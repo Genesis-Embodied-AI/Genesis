@@ -11,27 +11,13 @@ from threading import Event, RLock, Semaphore, Thread
 from typing import TYPE_CHECKING, Optional
 
 import numpy as np
+
 import OpenGL
 from OpenGL.GL import *
+import pyglet
 
 import genesis as gs
 from genesis.vis.keybindings import Key, KeyAction, Keybind, Keybindings, KeyMod
-
-# Importing tkinter and creating a first context before importing pyglet is necessary to avoid later segfault on MacOS.
-# Note that destroying the window will cause segfault at exit.
-root = None
-if sys.platform.startswith("darwin"):
-    try:
-        from tkinter import Tk
-
-        root = Tk()
-        root.withdraw()
-    except Exception:
-        # Some minimal Python install may not provide a working tkinter interface even if it is a standard library
-        pass
-
-import pyglet
-
 from genesis.vis.viewer_plugins import EVENT_HANDLE_STATE, EVENT_HANDLED, ViewerPlugin
 
 from .camera import IntrinsicsCamera, OrthographicCamera, PerspectiveCamera
@@ -65,6 +51,10 @@ HELP_TEXT_KEYBIND_NAME = "toggle_instructions"
 pyglet.options["shadow_window"] = False
 if pyglet.options.get("dpi_scaling") != "real":
     pyglet.options["dpi_scaling"] = "real"
+
+# Keeps the screen free of any window. pyglet's own option is EGL-backed and also selects its window and display
+# classes, so it cannot be requested off Linux, whereas 'GS_HEADLESS' applies everywhere.
+IS_HEADLESS = pyglet.options["headless"] or bool(os.environ.get("GS_HEADLESS"))
 
 
 class Viewer(pyglet.window.Window):
@@ -1009,8 +999,6 @@ class Viewer(pyglet.window.Window):
         self._trackball = Trackball(self._default_camera_pose, self.viewport_size, scale, centroid)
 
     def _get_save_filename(self, file_exts):
-        global root
-
         file_types = {
             "mp4": ("video files", "*.mp4"),
             "png": ("png files", "*.png"),
@@ -1018,29 +1006,28 @@ class Viewer(pyglet.window.Window):
             "gif": ("gif files", "*.gif"),
             "all": ("all files", "*"),
         }
-        filetypes = [file_types[x] for x in file_exts]
         save_dir = self.viewer_flags["save_directory"]
         if save_dir is None:
             save_dir = os.getcwd()
 
         try:
-            # Importing tkinter is very slow and not used very often. Let's delay import.
-            from tkinter import filedialog
+            # Imported on demand because 'imgui-bundle' is an optional dependency, unavailable on some platforms.
+            from imgui_bundle import portable_file_dialogs
 
-            dialog = filedialog.SaveAs(
-                parent=None,
-                initialdir=save_dir,
-                title="Select file save location",
-                filetypes=filetypes,
-                defaultextension=".png",
-            )
-            filename = dialog.show()
+            # The dialog is the native one of the platform and runs out of process, leaving pyglet sole owner of the
+            # windowing system. Filters are a flat sequence alternating label and patterns.
+            filters = [field for file_ext in file_exts for field in file_types[file_ext]]
+            filename = portable_file_dialogs.save_file("Select file save location", save_dir, filters).result()
         except Exception as e:
             gs.logger.warning(f"Failed to open file save location dialog: {e}")
             return None
 
         if not filename:
             return None
+        # The dialog hands the name back as typed, and a missing extension would leave the writer downstream with
+        # no format to select, so fall back on the first one offered.
+        if not os.path.splitext(filename)[1]:
+            filename = f"{filename}.{file_exts[0]}"
         return os.path.normpath(filename)
 
     def _save_image(self):
@@ -1284,7 +1271,8 @@ class Viewer(pyglet.window.Window):
                 self.refresh()
 
                 # At this point, we are all set to display the graphical window
-                self.set_visible(True)
+                if not IS_HEADLESS:
+                    self.set_visible(True)
 
                 # Run the entire rendering pipeline once again, as a final validation that everything is fine
                 self.refresh()
