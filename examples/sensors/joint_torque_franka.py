@@ -92,13 +92,13 @@ def main():
         if IS_PYQTGRAPH_AVAILABLE:
             scene.start_recording(
                 data_func,
-                gs.recorders.PyQtLinePlot(title="JointTorqueSensor - Franka", labels=labels),
+                gs.recorders.PyQtLinePlot(labels=labels, title="JointTorqueSensor - Franka"),
             )
         elif IS_MATPLOTLIB_AVAILABLE:
             gs.logger.info("pyqtgraph not found, falling back to matplotlib.")
             scene.start_recording(
                 data_func,
-                gs.recorders.MPLLinePlot(title="JointTorqueSensor - Franka", labels=labels, history_length=steps),
+                gs.recorders.MPLLinePlot(labels=labels, history_length=steps, title="JointTorqueSensor - Franka"),
             )
         else:
             print("matplotlib or pyqtgraph not found, skipping real-time plotting.")

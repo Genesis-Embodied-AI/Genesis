@@ -17,9 +17,9 @@ def main():
             substeps=20,
         ),
         mpm_options=gs.options.MPMOptions(
+            grid_density=64,
             lower_bound=(-0.45, -0.65, -0.01),
             upper_bound=(0.45, 0.65, 1.0),
-            grid_density=64,
         ),
         vis_options=gs.options.VisOptions(
             visualize_mpm_boundary=True,
@@ -33,9 +33,13 @@ def main():
         show_viewer=args.vis,
     )
 
-    plane = scene.add_entity(morph=gs.morphs.Plane())
+    plane = scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
     cube0 = scene.add_entity(
-        material=gs.materials.MPM.Elastic(rho=400),
+        material=gs.materials.MPM.Elastic(
+            rho=400,
+        ),
         morph=gs.morphs.Box(
             pos=(0.0, 0.25, 0.4),
             size=(0.12, 0.12, 0.12),
@@ -47,7 +51,9 @@ def main():
     )
 
     cube0 = scene.add_entity(
-        material=gs.materials.MPM.Elastic(rho=400),
+        material=gs.materials.MPM.Elastic(
+            rho=400,
+        ),
         morph=gs.morphs.Sphere(
             pos=(0.15, 0.45, 0.5),
             radius=0.06,
@@ -59,7 +65,9 @@ def main():
     )
 
     cube0 = scene.add_entity(
-        material=gs.materials.MPM.Elastic(rho=400),
+        material=gs.materials.MPM.Elastic(
+            rho=400,
+        ),
         morph=gs.morphs.Cylinder(
             pos=(-0.15, 0.45, 0.6),
             radius=0.05,
@@ -71,14 +79,18 @@ def main():
         ),
     )
     emitter1 = scene.add_emitter(
-        material=gs.materials.MPM.Liquid(sampler="random"),
+        material=gs.materials.MPM.Liquid(
+            sampler="random",
+        ),
         max_particles=800000,
         surface=gs.surfaces.Rough(
             color=(0.0, 0.9, 0.4, 1.0),
         ),
     )
     emitter2 = scene.add_emitter(
-        material=gs.materials.MPM.Liquid(sampler="random"),
+        material=gs.materials.MPM.Liquid(
+            sampler="random",
+        ),
         max_particles=800000,
         surface=gs.surfaces.Rough(
             color=(0.0, 0.4, 0.9, 1.0),

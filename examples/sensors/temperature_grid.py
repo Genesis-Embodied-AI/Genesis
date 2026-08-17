@@ -72,7 +72,9 @@ def main():
                 euler=(0, 0, 90 * (i >= 2)),
                 fixed=True,
             ),
-            surface=gs.surfaces.Default(color=(0.5, 0.45, 0.4, 1.0)),
+            surface=gs.surfaces.Default(
+                color=(0.5, 0.45, 0.4, 1.0),
+            ),
         )
 
     platform = scene.add_entity(

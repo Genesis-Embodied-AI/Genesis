@@ -142,9 +142,9 @@ def _plot_tactile_sensor(
                 normal=plot_normal,
                 scale_factor=0.01,
                 max_magnitude=1.0,
+                subplot_titles=labels,
                 twist_scale_factor=0.002,
                 twist_max_magnitude=2.0,
-                subplot_titles=labels,
             ),
         )
     elif sensor_type == "proximity":
@@ -156,20 +156,20 @@ def _plot_tactile_sensor(
                 normal=plot_normal,
                 scale_factor=10.0,
                 max_magnitude=1.0,
+                subplot_titles=labels,
                 twist_scale_factor=0.001,
                 twist_max_magnitude=1.0,
-                subplot_titles=labels,
             ),
         )
     elif sensor_type == "depth":
         scene.start_recording(
             lambda: tuple(sensor.read().max() for sensor in sensors),
             gs.recorders.MPLLinePlot(
-                title="ContactDepthProbe max depth",
                 labels=labels,
                 x_label="step",
                 y_label="depth",
                 history_length=200,
+                title="ContactDepthProbe max depth",
             ),
         )
 
@@ -223,8 +223,8 @@ def main() -> None:
             substeps=4,
         ),
         rigid_options=gs.options.RigidOptions(
-            box_box_detection=True,
             constraint_timeconst=0.01,
+            box_box_detection=True,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.5, 0.0, 0.7),
@@ -239,7 +239,9 @@ def main() -> None:
     scene.add_entity(gs.morphs.Plane())
 
     franka = scene.add_entity(
-        morph=gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+        morph=gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
     )
 
     cube = scene.add_entity(
@@ -247,8 +249,12 @@ def main() -> None:
             size=(OBJ_SIZE, OBJ_SIZE, OBJ_SIZE),
             pos=(*CUBE_INIT_XY, OBJ_SIZE / 2),
         ),
-        material=gs.materials.Rigid(rho=OBJ_DENSITY),
-        surface=gs.surfaces.Default(color=(0.5, 1.0, 0.5)),
+        material=gs.materials.Rigid(
+            rho=OBJ_DENSITY,
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.5, 1.0, 0.5),
+        ),
     )
 
     sphere = scene.add_entity(
@@ -256,8 +262,12 @@ def main() -> None:
             radius=OBJ_SIZE / 2,
             pos=(*SPHERE_INIT_XY, OBJ_SIZE / 2),
         ),
-        material=gs.materials.Rigid(rho=OBJ_DENSITY),
-        surface=gs.surfaces.Default(color=(1.0, 0.5, 0.5)),
+        material=gs.materials.Rigid(
+            rho=OBJ_DENSITY,
+        ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.5, 0.5),
+        ),
     )
 
     probe_normal = (0.0, -1.0, 0.0)

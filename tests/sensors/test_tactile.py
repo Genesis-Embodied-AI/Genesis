@@ -266,7 +266,6 @@ def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
     )
     sphere_taxel = scene.add_sensor(
         gs.sensors.KinematicTaxel(
-            draw_debug=show_viewer,
             entity_idx=sphere.idx,
             probe_local_pos=((0.0, 0.0, -SPHERE_RADIUS),),
             probe_radius=PROBE_RADIUS,
@@ -274,6 +273,7 @@ def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
             normal_damping=0.0,
             shear_scalar=0.0,
             twist_scalar=0.0,
+            draw_debug=show_viewer,
         )
     )
     # filter_link_idx drops the ground link: only the bottom probe (idx 3) sees the ground, so filtering it must
@@ -376,9 +376,7 @@ def test_raycast_probe_on_fully_fixed_solver(show_viewer):
     # RaycastContext), so the raycast probe must traverse it through the env -> tree routing. Fixed-fixed pairs are
     # filtered out of collision detection, so the candidate-geom mask stays empty and the probe reads zero depth
     # despite the geometric overlap.
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
+    scene = gs.Scene(show_viewer=show_viewer)
     pad = scene.add_entity(
         gs.morphs.Box(
             size=(0.2, 0.2, 0.05),
@@ -1317,7 +1315,6 @@ def test_proximity_sensor_box_on_box(show_viewer, tol, n_envs):
     )
     sensor = scene.add_sensor(
         gs.sensors.ProximityTaxel(
-            draw_debug=show_viewer,
             entity_idx=taxel_box.idx,
             probe_local_pos=((0.0, 0.0, -BOX_SIZE / 2), (BOX_SIZE / 4, 0.0, -BOX_SIZE / 2)),
             probe_radius=0.06,
@@ -1327,13 +1324,13 @@ def test_proximity_sensor_box_on_box(show_viewer, tol, n_envs):
             n_sample_points=600,
             stiffness=100.0,
             shear_coupling=0.0,
+            draw_debug=show_viewer,
         )
     )
     # probe_gain variant (no radius noise so the measured branch is deterministic): force is linear in the summed
     # penetration, so the measured force scales by the gain while GT is untouched.
     gained_sensor = scene.add_sensor(
         gs.sensors.ProximityTaxel(
-            draw_debug=show_viewer,
             entity_idx=taxel_box.idx,
             probe_local_pos=((0.0, 0.0, -BOX_SIZE / 2), (BOX_SIZE / 4, 0.0, -BOX_SIZE / 2)),
             probe_radius=0.06,
@@ -1343,6 +1340,7 @@ def test_proximity_sensor_box_on_box(show_viewer, tol, n_envs):
             n_sample_points=600,
             stiffness=100.0,
             shear_coupling=0.0,
+            draw_debug=show_viewer,
         )
     )
 

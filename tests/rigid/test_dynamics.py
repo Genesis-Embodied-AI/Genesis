@@ -16,9 +16,7 @@ from ..utils.assertions import assert_allclose, assert_equal
 
 @pytest.mark.required
 def test_gravity(show_viewer, tol):
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
+    scene = gs.Scene(show_viewer=show_viewer)
 
     sphere = scene.add_entity(gs.morphs.Sphere())
     scene.build(n_envs=3)
@@ -392,12 +390,18 @@ def test_mass_mat(xml_path, show_viewer, tol):
         gs.morphs.Plane(),
     )
     franka1 = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml", pos=(0, 0, 0)),
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+            pos=(0, 0, 0),
+        ),
         vis_mode="collision",
         visualize_contact=True,
     )
     franka2 = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml", pos=(0, 2, 0)),
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+            pos=(0, 2, 0),
+        ),
         vis_mode="collision",
         visualize_contact=True,
     )
@@ -630,8 +634,8 @@ def test_cholesky_tiling(monkeypatch, tol):
         scene = gs.Scene(
             rigid_options=gs.options.RigidOptions(
                 constraint_solver=gs.constraint_solver.Newton,
-                sparse_solve=False,
                 iterations=1,
+                sparse_solve=False,
             ),
             show_viewer=False,
             show_FPS=False,

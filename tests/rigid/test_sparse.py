@@ -17,8 +17,8 @@ def test_noslip_resting_stability(show_viewer):
             dt=0.004,
         ),
         rigid_options=gs.options.RigidOptions(
-            noslip_iterations=2,
             max_collision_pairs=128,
+            noslip_iterations=2,
             sparse_solve=True,
         ),
         viewer_options=gs.options.ViewerOptions(
@@ -90,8 +90,8 @@ def test_self_collision_sparse_dense_consistency(tol):
     for sparse_solve in (False, True):
         scene = gs.Scene(
             rigid_options=gs.options.RigidOptions(
-                sparse_solve=sparse_solve,
                 noslip_iterations=2,
+                sparse_solve=sparse_solve,
             ),
             show_viewer=False,
         )

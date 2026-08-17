@@ -30,9 +30,7 @@ def test_physics_parity(show_viewer, tol):
 
     # One homogeneous reference entity per variant plus a single heterogeneous entity dispatching one variant per
     # environment, all in one scene.
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
+    scene = gs.Scene(show_viewer=show_viewer)
     scene.add_entity(gs.morphs.Plane())
     ref_objs = []
     for file, pos, offset_euler, offset in zip(asset_files, POSITIONS, OFFSET_EULERS, REFERENCE_OFFSETS):
@@ -93,9 +91,7 @@ def test_variant_inertia_matches_standalone(undefined_inertia, implicit_inertial
     # tensor, while the first has no inertial element at all and falls back to its geometry. These cannot be folded
     # into 'test_physics_parity': its variants come from MJCF, whose root joint carries a format-determined name that
     # no URDF variant can match.
-    scene = gs.Scene(
-        show_viewer=False,
-    )
+    scene = gs.Scene(show_viewer=False)
     files = (undefined_inertia, implicit_inertial_origin)
     references = [
         scene.add_entity(
@@ -123,9 +119,7 @@ def test_variant_inertia_matches_standalone(undefined_inertia, implicit_inertial
 @pytest.mark.required
 def test_fewer_envs_than_variants():
     # With n_envs < n_variants, environment i gets variant i and the variants beyond n_envs stay unused.
-    scene = gs.Scene(
-        show_viewer=False,
-    )
+    scene = gs.Scene(show_viewer=False)
     scene.add_entity(gs.morphs.Plane())
 
     # 4 variants with different positions but only 2 environments
@@ -135,7 +129,9 @@ def test_fewer_envs_than_variants():
         gs.morphs.Box(size=(0.02, 0.02, 0.02), pos=(0.2, 0.0, 0.2)),
         gs.morphs.Sphere(radius=0.02, pos=(0.3, 0.0, 0.25)),
     ]
-    het_obj = scene.add_entity(morph=morphs_heterogeneous)
+    het_obj = scene.add_entity(
+        morph=morphs_heterogeneous,
+    )
 
     # Building with only 2 environments should work - each env gets a unique variant
     scene.build(n_envs=2)
@@ -150,9 +146,7 @@ def test_fewer_envs_than_variants():
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_aabb(tol):
-    scene = gs.Scene(
-        show_viewer=False,
-    )
+    scene = gs.Scene(show_viewer=False)
     scene.add_entity(gs.morphs.Plane())
 
     # Box and sphere with different sizes and positions
@@ -160,7 +154,9 @@ def test_aabb(tol):
         gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, 0.1)),
         gs.morphs.Sphere(radius=0.01, pos=(0.1, 0.0, 0.15)),
     )
-    het_obj = scene.add_entity(morph=morphs_heterogeneous)
+    het_obj = scene.add_entity(
+        morph=morphs_heterogeneous,
+    )
     # 4 envs: envs 0-1 get box, envs 2-3 get sphere
     scene.build(n_envs=4)
 
@@ -209,11 +205,13 @@ def test_aabb(tol):
 @pytest.mark.slow  # ~250s
 @pytest.mark.parametrize("backend", [gs.gpu])  # Grasping physics requires GPU
 def test_pick_heterogenous_objects(show_viewer):
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
+    scene = gs.Scene(show_viewer=show_viewer)
     scene.add_entity(gs.morphs.Plane())
-    franka = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    franka = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        )
+    )
 
     # 4 geometry variants: env i -> variant i
     # Sizes: box0=0.04, box1=0.02, sphere0=0.03, sphere1=0.025 (radius for spheres)
@@ -307,9 +305,7 @@ def test_invalid_variant_specification_raises():
         '<mujoco><worldbody><body><joint type="free"/><geom type="sphere" size="0.1"/></body></worldbody></mujoco>'
     )
 
-    scene = gs.Scene(
-        show_viewer=False,
-    )
+    scene = gs.Scene(show_viewer=False)
 
     morphs_heterogeneous = (
         gs.morphs.Box(size=(1.0, 1.0, 1.0)),
@@ -339,18 +335,20 @@ def test_invalid_variant_specification_raises():
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_morph_property_raises():
-    scene = gs.Scene(
-        show_viewer=False,
-    )
+    scene = gs.Scene(show_viewer=False)
 
     single_morph = gs.morphs.Box(size=(0.1, 0.1, 0.1))
-    single_obj = scene.add_entity(morph=single_morph)
+    single_obj = scene.add_entity(
+        morph=single_morph,
+    )
 
     rigid_morphs_heterogeneous = (
         gs.morphs.Box(size=(0.1, 0.1, 0.1)),
         gs.morphs.Cylinder(radius=0.05, height=0.2),
     )
-    rigid_obj = scene.add_entity(morph=rigid_morphs_heterogeneous)
+    rigid_obj = scene.add_entity(
+        morph=rigid_morphs_heterogeneous,
+    )
     kinematic_morphs_heterogeneous = (
         gs.morphs.Box(size=(0.2, 0.2, 0.2)),
         gs.morphs.Sphere(radius=0.1),
@@ -360,7 +358,9 @@ def test_morph_property_raises():
         material=gs.materials.Kinematic(),
     )
     tool = scene.add_entity(
-        morph=gs.morphs.Box(size=(0.05, 0.05, 0.05)),
+        morph=gs.morphs.Box(
+            size=(0.05, 0.05, 0.05),
+        ),
     )
 
     assert single_obj.morph is single_morph
@@ -384,9 +384,7 @@ def test_morph_property_raises():
 
 @pytest.mark.required
 def test_articulated_structure_mismatch():
-    scene = gs.Scene(
-        show_viewer=False,
-    )
+    scene = gs.Scene(show_viewer=False)
     scene.add_entity(gs.morphs.Plane())
 
     # two_cube_revolute has 1 revolute joint; two_link_arm has 2 continuous joints

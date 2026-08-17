@@ -576,9 +576,7 @@ def test_capsule_analytical_accuracy(tmp_path: Path, show_viewer: bool, tol: flo
     # Sum of radii: 0.2
     # Expected penetration: 0.2 - 0.15 = 0.05
 
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
+    scene = gs.Scene(show_viewer=show_viewer)
 
     _cap1 = scene_add_capsule(tmp_path=tmp_path, scene=scene, half_length=0.25, radius=0.1)
     cap2 = scene_add_capsule(tmp_path=tmp_path, scene=scene, half_length=0.25, radius=0.1)

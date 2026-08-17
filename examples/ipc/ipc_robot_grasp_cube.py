@@ -22,11 +22,11 @@ def main():
     coupler_options = None
     if not args.no_ipc:
         coupler_options = gs.options.IPCCouplerOptions(
+            newton_translation_tolerance=10.0,
             constraint_strength_translation=10.0,
             constraint_strength_rotation=10.0,
-            enable_rigid_rigid_contact=False,
             enable_rigid_ground_contact=False,
-            newton_translation_tolerance=10.0,
+            enable_rigid_rigid_contact=False,
         )
 
     scene = gs.Scene(

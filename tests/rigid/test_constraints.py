@@ -201,9 +201,7 @@ def test_dynamic_weld_scene_reset():
 @pytest.mark.required
 def test_urdf_mimic(show_viewer, tol):
     # create and build the scene
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
+    scene = gs.Scene(show_viewer=show_viewer)
     hand = scene.add_entity(
         gs.morphs.URDF(
             file="urdf/panda_bullet/hand.urdf",
@@ -227,7 +225,9 @@ def test_urdf_mimic(show_viewer, tol):
 @pytest.mark.required
 def test_get_constraints_api(show_viewer, tol):
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
         show_viewer=show_viewer,
     )
     robot = scene.add_entity(

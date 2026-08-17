@@ -77,13 +77,13 @@ def main():
         if IS_PYQTGRAPH_AVAILABLE:
             scene.start_recording(
                 data_func,
-                gs.recorders.PyQtLinePlot(title="IMU Ground Truth Data", labels=labels),
+                gs.recorders.PyQtLinePlot(labels=labels, title="IMU Ground Truth Data"),
             )
         elif IS_MATPLOTLIB_AVAILABLE:
             gs.logger.info("pyqtgraph not found, falling back to matplotlib.")
             scene.start_recording(
                 data_func,
-                gs.recorders.MPLLinePlot(title="IMU Ground Truth Data", labels=labels),
+                gs.recorders.MPLLinePlot(labels=labels, title="IMU Ground Truth Data"),
             )
         else:
             print("matplotlib or pyqtgraph not found, skipping real-time plotting.")

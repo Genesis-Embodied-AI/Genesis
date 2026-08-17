@@ -16,10 +16,10 @@ def main():
             substeps=10,
         ),
         mpm_options=gs.options.MPMOptions(
-            lower_bound=(-1.0, -1.0, -0.01),
-            upper_bound=(1.0, 1.0, 2.0),
             grid_density=64,
             enable_CPIC=True,
+            lower_bound=(-1.0, -1.0, -0.01),
+            upper_bound=(1.0, 1.0, 2.0),
         ),
         vis_options=gs.options.VisOptions(
             visualize_mpm_boundary=True,
@@ -33,7 +33,10 @@ def main():
     )
 
     plane = scene.add_entity(
-        morph=gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True),
+        morph=gs.morphs.URDF(
+            file="urdf/plane/plane.urdf",
+            fixed=True,
+        ),
         material=gs.materials.Rigid(),
     )
     cutter = scene.add_entity(
@@ -54,7 +57,9 @@ def main():
             euler=(0, 0, 90),
             pos=(0.3, -0.0, 1.3),
         ),
-        material=gs.materials.MPM.Elastic(sampler="pbs-64"),
+        material=gs.materials.MPM.Elastic(
+            sampler="pbs-64",
+        ),
         surface=gs.surfaces.Rough(
             color=(0.6, 1.0, 0.8, 1.0),
             vis_mode="particle",

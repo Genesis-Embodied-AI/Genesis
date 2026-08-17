@@ -7,8 +7,8 @@ gs.init(backend=gs.cpu, precision="32", logging_level="info")
 
 scene = gs.Scene(
     rigid_options=gs.options.RigidOptions(
-        enable_joint_limit=False,
         enable_collision=False,
+        enable_joint_limit=False,
     ),
     viewer_options=gs.options.ViewerOptions(
         camera_pos=(2.0, -2, 1.5),

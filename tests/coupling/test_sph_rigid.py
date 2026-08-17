@@ -22,10 +22,10 @@ def test_rigid_flotation_follows_density_ratio(n_envs, pressure_solver, show_vie
             gravity=(0.0, 0.0, -9.81),
         ),
         sph_options=gs.options.SPHOptions(
-            lower_bound=(-0.25, -0.25, 0.0),
-            upper_bound=(0.25, 0.25, 1.0),
             particle_size=0.02,
             pressure_solver=pressure_solver,
+            lower_bound=(-0.25, -0.25, 0.0),
+            upper_bound=(0.25, 0.25, 1.0),
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.2, 0.0, 0.7),
@@ -91,9 +91,9 @@ def test_coupling_force_wakes_hibernated_link(n_envs, show_viewer):
             use_hibernation=True,
         ),
         sph_options=gs.options.SPHOptions(
+            particle_size=0.02,
             lower_bound=(-0.55, -0.25, 0.0),
             upper_bound=(0.55, 0.25, 1.0),
-            particle_size=0.02,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.0, -1.5, 1.0),

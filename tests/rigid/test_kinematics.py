@@ -365,7 +365,9 @@ def test_inverse_kinematics_local_point(n_envs, show_viewer, tol):
         show_viewer=show_viewer,
     )
     robot = scene.add_entity(
-        morph=gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+        morph=gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
     )
     floating = scene.add_entity(
         morph=gs.morphs.URDF(
@@ -542,9 +544,7 @@ def test_inverse_kinematics_multilink_local_points(show_viewer, tol):
 @pytest.mark.slow  # ~250s
 @pytest.mark.required
 def test_multi_robot_inverse_kinematics(show_viewer, tol):
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
+    scene = gs.Scene(show_viewer=show_viewer)
     scene.add_entity(gs.morphs.Plane())
 
     robot_positions = [

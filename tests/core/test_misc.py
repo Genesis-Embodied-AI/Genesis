@@ -22,10 +22,10 @@ from ..utils.assertions import assert_allclose, assert_equal
 def test_repr_does_not_crash():
     inline_mjcf = '<mujoco model="probe"><worldbody><body><geom type="box" size="1 1 1"/></body></worldbody></mujoco>'
 
-    scene = gs.Scene(
-        show_viewer=False,
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
     )
-    scene.add_entity(morph=gs.morphs.Plane())
     scene.add_entity(
         morph=gs.morphs.Box(
             size=(0.1, 0.1, 0.1),
@@ -87,10 +87,10 @@ def test_repr_does_not_crash():
 
 @pytest.mark.required
 def test_scene_destroy_cleans_up_simulator():
-    scene = gs.Scene(
-        show_viewer=False,
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
     )
-    scene.add_entity(morph=gs.morphs.Plane())
     scene.build()
     scene.step()
 
@@ -104,10 +104,10 @@ def test_scene_destroy_cleans_up_simulator():
 
 @pytest.mark.required
 def test_scene_destroy_idempotent():
-    scene = gs.Scene(
-        show_viewer=False,
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
     )
-    scene.add_entity(morph=gs.morphs.Plane())
     scene.build()
     scene.step()
 
@@ -123,9 +123,7 @@ def test_scene_destroy_idempotent():
 def test_destroy_after_aborted_camera_build(monkeypatch, raise_before_build):
     from genesis.engine.sensors.camera import RasterizerCameraSensor
 
-    scene = gs.Scene(
-        show_viewer=False,
-    )
+    scene = gs.Scene(show_viewer=False)
     camera = scene.add_sensor(
         gs.sensors.RasterizerCameraOptions(
             res=(64, 64),
@@ -314,69 +312,37 @@ def test_morph_orientation_offset_resolution():
     quat_90z = gu.xyz_to_quat(np.array((0.0, 0.0, 90.0)), rpy=True, degrees=True)
 
     # An unset offset resolves to identity, whether omitted or passed as the None unset sentinel.
-    assert_equal(
-        gs.morphs.Box(
-            size=(0.1, 0.1, 0.1),
-        ).offset_quat,
-        (1.0, 0.0, 0.0, 0.0),
-    )
-    assert_equal(
-        gs.morphs.Box(
-            size=(0.1, 0.1, 0.1),
-            offset_quat=None,
-        ).offset_quat,
-        (1.0, 0.0, 0.0, 0.0),
-    )
+    assert_equal(gs.morphs.Box(size=(0.1, 0.1, 0.1)).offset_quat, (1.0, 0.0, 0.0, 0.0))
+    assert_equal(gs.morphs.Box(size=(0.1, 0.1, 0.1), offset_quat=None).offset_quat, (1.0, 0.0, 0.0, 0.0))
 
     # 'offset_euler' resolves into 'offset_quat'.
     assert_allclose(
-        gs.morphs.Box(
-            size=(0.1, 0.1, 0.1),
-            offset_euler=(0.0, 0.0, 90.0),
-        ).offset_quat,
-        quat_90z,
-        tol=gs.EPS,
+        gs.morphs.Box(size=(0.1, 0.1, 0.1), offset_euler=(0.0, 0.0, 90.0)).offset_quat, quat_90z, tol=gs.EPS
     )
 
     # An explicit 'offset_quat' is kept verbatim.
     assert_equal(
-        gs.morphs.Box(
-            size=(0.1, 0.1, 0.1),
-            offset_quat=(0.0, 1.0, 0.0, 0.0),
-        ).offset_quat,
-        (0.0, 1.0, 0.0, 0.0),
+        gs.morphs.Box(size=(0.1, 0.1, 0.1), offset_quat=(0.0, 1.0, 0.0, 0.0)).offset_quat, (0.0, 1.0, 0.0, 0.0)
     )
 
     # A None 'offset_quat' means unset, so a serializer can forward it unconditionally alongside 'offset_euler';
     # it resolves to 'offset_euler'.
     assert_allclose(
-        gs.morphs.Box(
-            size=(0.1, 0.1, 0.1),
-            offset_euler=(0.0, 0.0, 90.0),
-            offset_quat=None,
-        ).offset_quat,
+        gs.morphs.Box(size=(0.1, 0.1, 0.1), offset_euler=(0.0, 0.0, 90.0), offset_quat=None).offset_quat,
         quat_90z,
         tol=gs.EPS,
     )
 
     # 'offset_euler' and 'offset_quat' are mutually exclusive.
     with pytest.raises(Exception, match="'offset_euler' and 'offset_quat' cannot both be set"):
-        gs.morphs.Box(
-            size=(0.1, 0.1, 0.1),
-            offset_euler=(0.0, 0.0, 90.0),
-            offset_quat=(0.0, 1.0, 0.0, 0.0),
-        )
+        gs.morphs.Box(size=(0.1, 0.1, 0.1), offset_euler=(0.0, 0.0, 90.0), offset_quat=(0.0, 1.0, 0.0, 0.0))
 
 
 @pytest.mark.required
 def test_coacd_options_pca_validation():
-    gs.options.CoacdOptions(
-        pca=False,
-    )
+    gs.options.CoacdOptions(pca=False)
     with pytest.raises(gs.GenesisException, match="pca=True"):
-        gs.options.CoacdOptions(
-            pca=True,
-        )
+        gs.options.CoacdOptions(pca=True)
 
 
 @pytest.mark.required
@@ -523,9 +489,7 @@ def test_solver_state_change_subscribers(show_viewer, two_link_fixed_urdf):
     # Imported lazily: the solver package pulls in quadrants kernels that need gs.qd_float, set only by gs.init.
     from genesis.engine.solvers.base_solver import StateChange, Subscriber
 
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
+    scene = gs.Scene(show_viewer=show_viewer)
     plane = scene.add_entity(gs.morphs.Plane())
     # A fixed entity whose collision geometry lives on a fixed child link, the common URDF/MJCF layout: teleporting
     # it through its base link must reach subscribers watching the child.
@@ -651,6 +615,9 @@ def test_set_gravity_accepts_field_and_tensor():
         gs.init(backend=gs.cpu, seed=0)
 
         scene = gs.Scene(
+            sim_options=gs.options.SimOptions(
+                gravity=(0.0, 0.0, -9.81),
+            ),
             show_viewer=False,
         )
         scene.add_entity(gs.morphs.Plane())
@@ -699,9 +666,7 @@ def test_set_gravity_accepts_field_and_tensor():
     ],
 )
 def test_warn_solver_numerical_stability(boxes_size, caplog):
-    scene = gs.Scene(
-        show_viewer=False,
-    )
+    scene = gs.Scene(show_viewer=False)
     for i, size in enumerate(boxes_size):
         scene.add_entity(
             gs.morphs.Box(

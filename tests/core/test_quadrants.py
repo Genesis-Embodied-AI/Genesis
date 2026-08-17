@@ -190,9 +190,7 @@ def gs_num_envs_child(args: list[str]):
 
     _initialize_genesis(backend=args.backend)
 
-    scene = gs.Scene(
-        show_viewer=False,
-    )
+    scene = gs.Scene(show_viewer=False)
     scene.add_entity(
         gs.morphs.Plane(),
     )

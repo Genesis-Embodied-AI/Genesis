@@ -18,9 +18,9 @@ def main():
             substeps=15,
         ),
         mpm_options=gs.options.MPMOptions(
+            grid_density=128,
             lower_bound=(0.55, -0.1, -0.05),
             upper_bound=(0.75, 0.1, 0.3),
-            grid_density=128,
         ),
         vis_options=gs.options.VisOptions(
             visualize_mpm_boundary=True,
@@ -48,8 +48,12 @@ def main():
         ),
     )
     franka = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
-        material=gs.materials.Rigid(coup_friction=1.0),
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
+        material=gs.materials.Rigid(
+            coup_friction=1.0,
+        ),
     )
 
     scene.build()

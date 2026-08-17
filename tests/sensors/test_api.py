@@ -102,9 +102,7 @@ def test_lazy_sensor_discovery(show_viewer, tmp_path):
         assert SensorManager.SENSOR_TYPES_MAP[FakeSensorOptions] is sensor_cls
 
         # Verify it works end-to-end with a scene
-        scene = gs.Scene(
-            show_viewer=show_viewer,
-        )
+        scene = gs.Scene(show_viewer=show_viewer)
         scene.add_entity(gs.morphs.Plane())
         sensor = scene.add_sensor(FakeSensorOptions())
         scene.build()
@@ -452,9 +450,7 @@ def test_pipeline_contract_uint8_delay(tol):
 def test_add_and_read_all_registered_sensors():
     from genesis.engine.sensors.sensor_manager import SensorManager
 
-    scene = gs.Scene(
-        show_viewer=False,
-    )
+    scene = gs.Scene(show_viewer=False)
     scene.add_entity(gs.morphs.Plane())
     box = scene.add_entity(
         gs.morphs.Box(
@@ -520,7 +516,9 @@ def test_sensor_history_length_contact_and_imu(show_viewer, tol, n_envs):
             dt=DT,
             gravity=(0.0, 0.0, GRAVITY),
         ),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=show_viewer,
     )
     scene.add_entity(gs.morphs.Plane())
@@ -591,11 +589,14 @@ def test_shared_context(show_viewer):
     # must resolve to None.
     from genesis.engine.sensors.raycaster import RaycastContext
 
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
+    scene = gs.Scene(show_viewer=show_viewer)
     scene.add_entity(gs.morphs.Plane())
-    box = scene.add_entity(gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(0.0, 0.0, 1.0)))
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.4, 0.4, 0.4),
+            pos=(0.0, 0.0, 1.0),
+        )
+    )
 
     raycaster = scene.add_sensor(
         gs.sensors.Raycaster(

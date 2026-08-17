@@ -20,10 +20,10 @@ def main():
             gravity=(0.0, 0.0, -10.0),
         ),
         viewer_options=gs.options.ViewerOptions(
+            run_in_thread=False,
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
-            run_in_thread=False,
         ),
         show_viewer=True,
         show_FPS=True,

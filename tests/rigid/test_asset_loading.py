@@ -22,9 +22,7 @@ def test_depth_first_link_ordering(xml_path, model_name, show_viewer):
     # Links must be parsed depth-first so every subtree - hence every free body's DOFs - occupies a contiguous index
     # range. The per-tree mass-matrix factorization relies on this so a multi-body file costs the same as the
     # equivalent separate entities.
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
+    scene = gs.Scene(show_viewer=show_viewer)
     morph = gs.morphs.MJCF(file=xml_path) if model_name.endswith("mjcf") else gs.morphs.URDF(file=xml_path, fixed=True)
     entity = scene.add_entity(morph)
     scene.build(n_envs=0)
@@ -49,9 +47,21 @@ def test_depth_first_link_ordering(xml_path, model_name, show_viewer):
 @pytest.mark.required
 def test_mjcf_parsing_with_include():
     scene = gs.Scene()
-    robot1 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/scene.xml"))
-    robot2 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
-    robot3 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_sim/franka_panda.xml"))
+    robot1 = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file="xml/franka_emika_panda/scene.xml",
+        )
+    )
+    robot2 = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        )
+    )
+    robot3 = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file="xml/franka_sim/franka_panda.xml",
+        )
+    )
     scene.build()
     assert_allclose(robot1.get_qpos(), robot2.get_qpos(), tol=gs.EPS)
     assert_allclose(robot1.get_qpos(), robot3.get_qpos(), tol=gs.EPS)
@@ -307,9 +317,7 @@ def test_urdf_parsing_merge_fixed_links(urdf_path, fixed, show_viewer, tol):
     POS = (0.0, -0.2, 0.5)
     EULER = (0.0, 90.0, 45.0)
 
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
+    scene = gs.Scene(show_viewer=show_viewer)
     urdf_rootdir = os.path.dirname(urdf_path)
     asset_path = get_hf_dataset(pattern=os.path.join(urdf_rootdir, "*") if urdf_rootdir else urdf_path)
     robot_1 = scene.add_entity(
@@ -373,9 +381,7 @@ def test_mjcf_parsing_merge_fixed_links(xml_path, show_viewer):
     POS = (1.0, 2.0, 3.0)
     QUAT = (0.0, 1.0, 0.0, 0.0)
 
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
+    scene = gs.Scene(show_viewer=show_viewer)
     robot = scene.add_entity(
         gs.morphs.MJCF(
             file=xml_path,
@@ -431,9 +437,7 @@ def test_urdf_capsule(tmp_path, show_viewer, tol):
             """
         )
 
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
+    scene = gs.Scene(show_viewer=show_viewer)
     scene.add_entity(gs.morphs.Plane())
     robot = scene.add_entity(
         gs.morphs.URDF(
@@ -517,9 +521,7 @@ def test_default_armature_freeflyer(xml_path):
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_xacro_loading(xacro_robot, show_viewer, tol):
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
+    scene = gs.Scene(show_viewer=show_viewer)
 
     # Load with default args (mass=1.0, length=0.4)
     morph = gs.morphs.URDF(
@@ -571,9 +573,7 @@ def test_xacro_loading(xacro_robot, show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("overwrite", [False, True])
 def test_color_overwrite(overwrite, show_viewer):
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
+    scene = gs.Scene(show_viewer=show_viewer)
     box = scene.add_entity(
         gs.morphs.URDF(
             file="genesis/assets/urdf/blue_box/model.urdf",
@@ -885,7 +885,9 @@ def test_align_mesh(show_viewer, tol):
                 align=True,
             ),
         ),
-        material=gs.materials.Rigid(rho=1000.0),
+        material=gs.materials.Rigid(
+            rho=1000.0,
+        ),
     )
     scene.build(n_envs=2)
 
@@ -1279,10 +1281,18 @@ def test_align_heterogeneous_inertial(show_viewer, tol):
         gs.morphs.URDF(file=_build_free_body_urdf("free_body_a", "0.02 0 0"), pos=FREE_POS, align=True),
         gs.morphs.URDF(file=_build_free_body_urdf("free_body_b", "0 0 0.03"), pos=FREE_POS, align=True),
     )
-    free_het = scene.add_entity(morph=free_morph, material=gs.materials.Rigid(rho=200.0))
+    free_het = scene.add_entity(
+        morph=free_morph,
+        material=gs.materials.Rigid(
+            rho=200.0,
+        ),
+    )
     # Kinematic counterpart of the aligned free bodies. The COM/principal anchoring is applied in the base entity, so
     # for the same qpos a kinematic visualization and the rigid body it tracks must place identical world geometry.
-    free_kin = scene.add_entity(morph=free_morph, material=gs.materials.Kinematic())
+    free_kin = scene.add_entity(
+        morph=free_morph,
+        material=gs.materials.Kinematic(),
+    )
     # A free entity whose two variants are identical, so the solver resolves a single shared offset and takes the
     # broadcast path (the base link offset) rather than the per-env variant offset. That shared base offset must still
     # carry the COM anchoring, else the relative getter cannot strip the alignment on this path.
@@ -1290,7 +1300,10 @@ def test_align_heterogeneous_inertial(show_viewer, tol):
         gs.morphs.URDF(file=_build_free_body_urdf("free_dup_a", "0.02 0 0"), pos=FREE_POS, align=True),
         gs.morphs.URDF(file=_build_free_body_urdf("free_dup_b", "0.02 0 0"), pos=FREE_POS, align=True),
     )
-    free_dup = scene.add_entity(morph=dup_morph, material=gs.materials.Rigid())
+    free_dup = scene.add_entity(
+        morph=dup_morph,
+        material=gs.materials.Rigid(),
+    )
     # Free bodies whose root link is empty and whose mass lives on a fixed child (merge_fixed_links=False keeps the
     # wrapper). Alignment folds the child's mass onto the root; the subsumed child keeps only the gs.EPS placeholder.
     WRAP_MASS_A, WRAP_MASS_B = 0.5, 0.25
@@ -1308,7 +1321,9 @@ def test_align_heterogeneous_inertial(show_viewer, tol):
             merge_fixed_links=False,
         ),
     )
-    free_wrapped = scene.add_entity(morph=wrapped_morph)
+    free_wrapped = scene.add_entity(
+        morph=wrapped_morph,
+    )
     scene.build(n_envs=4, env_spacing=(0.0, 0.5))
 
     # Same absolute qpos must map to the same world geometry for the aligned rigid body and its kinematic counterpart;

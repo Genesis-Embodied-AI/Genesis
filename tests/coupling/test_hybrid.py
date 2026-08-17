@@ -27,10 +27,10 @@ def test_rigid_mpm_muscle(show_viewer):
             constraint_timeconst=0.02,
         ),
         mpm_options=gs.options.MPMOptions(
-            lower_bound=(0.0, 0.0, -0.2),
-            upper_bound=(1.0, 1.0, 1.0),
             gravity=(0.0, 0.0, 0.0),  # mimic gravity compensation
             enable_CPIC=True,
+            lower_bound=(0.0, 0.0, -0.2),
+            upper_bound=(1.0, 1.0, 1.0),
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.5, 1.3, 0.5),
@@ -41,7 +41,9 @@ def test_rigid_mpm_muscle(show_viewer):
         show_FPS=False,
     )
 
-    scene.add_entity(morph=gs.morphs.Plane())
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
     robot = scene.add_entity(
         morph=gs.morphs.URDF(
             file="urdf/simple/two_link_arm.urdf",
@@ -60,8 +62,8 @@ def test_rigid_mpm_muscle(show_viewer):
                 rho=1000.0,
                 model="neohooken",
             ),
-            thickness=0.05,
             damping=1000.0,
+            thickness=0.05,
         ),
     )
     ball = scene.add_entity(
@@ -69,7 +71,10 @@ def test_rigid_mpm_muscle(show_viewer):
             pos=BALL_POS_INIT,
             radius=0.12,
         ),
-        material=gs.materials.Rigid(rho=1000, friction=0.5),
+        material=gs.materials.Rigid(
+            rho=1000,
+            friction=0.5,
+        ),
     )
     scene.build()
 
@@ -251,7 +256,9 @@ def test_deformable_parallel(show_viewer):
             pos=(0.6, 0, 0.1),
             size=(0.1, 0.1, 0.1),
         ),
-        material=gs.materials.MPM.Elastic(rho=200),
+        material=gs.materials.MPM.Elastic(
+            rho=200,
+        ),
         surface=gs.surfaces.Default(
             color=(0.9, 0.8, 0.2, 1.0),
         ),
@@ -376,9 +383,9 @@ def test_sap_rigid_rigid_hydroelastic_contact(show_viewer):
             substeps=2,
         ),
         coupler_options=gs.options.SAPCouplerOptions(
-            pcg_threshold=1e-10,
             sap_convergence_atol=1e-10,
             sap_convergence_rtol=1e-10,
+            pcg_threshold=1e-10,
             linesearch_ftol=1e-10,
         ),
         show_viewer=show_viewer,
@@ -445,10 +452,10 @@ def test_sap_fem_vs_robot(show_viewer):
             dt=1 / 60,
             substeps=2,
         ),
-        coupler_options=gs.options.SAPCouplerOptions(),
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=True,
         ),
+        coupler_options=gs.options.SAPCouplerOptions(),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.0, 1.5, 1.2),
         ),

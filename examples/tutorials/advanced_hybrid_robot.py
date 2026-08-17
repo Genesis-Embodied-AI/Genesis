@@ -21,10 +21,10 @@ scene = gs.Scene(
         constraint_timeconst=0.02,
     ),
     mpm_options=gs.options.MPMOptions(
-        lower_bound=(0.0, 0.0, -0.2),
-        upper_bound=(1.0, 1.0, 1.0),
         gravity=(0, 0, 0),  # mimic gravity compensation
         enable_CPIC=True,
+        lower_bound=(0.0, 0.0, -0.2),
+        upper_bound=(1.0, 1.0, 1.0),
     ),
     vis_options=gs.options.VisOptions(
         show_world_frame=True,
@@ -39,7 +39,9 @@ scene = gs.Scene(
     show_FPS=False,
 )
 
-scene.add_entity(morph=gs.morphs.Plane())
+scene.add_entity(
+    morph=gs.morphs.Plane(),
+)
 
 robot = scene.add_entity(
     morph=gs.morphs.URDF(
@@ -59,8 +61,8 @@ robot = scene.add_entity(
             rho=1000.0,
             model="neohooken",
         ),
-        thickness=0.05,
         damping=1000.0,
+        thickness=0.05,
     ),
 )
 
@@ -69,7 +71,10 @@ ball = scene.add_entity(
         pos=(0.8, 0.6, 0.1),
         radius=0.1,
     ),
-    material=gs.materials.Rigid(rho=1000, friction=0.5),
+    material=gs.materials.Rigid(
+        rho=1000,
+        friction=0.5,
+    ),
 )
 
 scene.build()

@@ -118,7 +118,9 @@ def main():
             pos=(2.0, -3, 0.0),
         ),
         material=gs.materials.Kinematic(),
-        surface=gs.surfaces.Smooth(color=(1.0, 1.0, 1.0, 0.5)),
+        surface=gs.surfaces.Smooth(
+            color=(1.0, 1.0, 1.0, 0.5),
+        ),
     )
     # asset's own attributes
     scene.add_entity(

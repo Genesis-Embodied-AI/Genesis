@@ -10,10 +10,10 @@ scene = gs.Scene(
         dt=0.01,
     ),
     viewer_options=gs.options.ViewerOptions(
+        res=(1920, 1080),
         camera_pos=(3.5, -1.0, 2.5),
         camera_lookat=(0.0, 0.0, 0.5),
         camera_fov=40,
-        res=(1920, 1080),
     ),
     show_viewer=False,
 )

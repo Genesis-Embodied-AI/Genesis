@@ -17,11 +17,11 @@ def main():
 
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
-            plane_reflection=True,
-            rendered_envs_idx=list(range(args.num_envs)),
-            env_separate_rigid=args.sep,
             show_world_frame=True,
             show_link_frame=True,
+            plane_reflection=True,
+            env_separate_rigid=args.sep,
+            rendered_envs_idx=list(range(args.num_envs)),
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),
@@ -35,7 +35,9 @@ def main():
         gs.morphs.Plane(),
     )
     franka = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
         visualize_contact=True,
     )
 

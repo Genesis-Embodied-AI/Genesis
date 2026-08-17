@@ -58,10 +58,10 @@ def test_switching(backend, order):
             scene = gs.Scene(show_viewer=False)
             scene.add_entity(gs.morphs.Plane())
             scene.add_entity(
-                gs.morphs.Box(
+                morph=gs.morphs.Box(
                     size=(0.4, 0.4, 0.4),
                     pos=(0.0, 0.0, 0.5),
-                )
+                ),
             )
             scene.build()
             for _ in range(10):
@@ -95,10 +95,10 @@ def _basic_sim_child(args: list[str]):
     scene = gs.Scene(show_viewer=False)
     scene.add_entity(gs.morphs.Plane())
     scene.add_entity(
-        gs.morphs.Box(
+        morph=gs.morphs.Box(
             size=(0.4, 0.4, 0.4),
             pos=(0.0, 0.0, 0.5),
-        )
+        ),
     )
     scene.build()
     for _ in range(10):

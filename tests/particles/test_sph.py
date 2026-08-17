@@ -21,10 +21,10 @@ def create_sph_scene(show_viewer, particle_size=0.01, pressure_solver="WCSPH"):
             substeps=10,
         ),
         sph_options=gs.options.SPHOptions(
-            lower_bound=(-0.5, -0.5, 0.0),
-            upper_bound=(0.5, 0.5, 1),
             particle_size=particle_size,
             pressure_solver=pressure_solver,
+            lower_bound=(-0.5, -0.5, 0.0),
+            upper_bound=(0.5, 0.5, 1),
         ),
         show_viewer=show_viewer,
     )
@@ -34,7 +34,9 @@ def create_sph_scene(show_viewer, particle_size=0.01, pressure_solver="WCSPH"):
     )
 
     liquid = scene.add_entity(
-        material=gs.materials.SPH.Liquid(sampler="regular"),
+        material=gs.materials.SPH.Liquid(
+            sampler="regular",
+        ),
         morph=gs.morphs.Box(
             pos=(0.0, 0.0, 0.65),
             size=(0.4, 0.4, 0.4),
@@ -286,10 +288,10 @@ def test_pressure_carries_column_weight(show_viewer, pressure_solver):
             gravity=(0.0, 0.0, -9.81),
         ),
         sph_options=gs.options.SPHOptions(
-            lower_bound=(-0.15, -0.15, 0.0),
-            upper_bound=(0.15, 0.15, 1.0),
             particle_size=0.02,
             pressure_solver=pressure_solver,
+            lower_bound=(-0.15, -0.15, 0.0),
+            upper_bound=(0.15, 0.15, 1.0),
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.9, 0.0, 0.5),

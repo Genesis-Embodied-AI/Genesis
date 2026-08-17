@@ -25,12 +25,12 @@ def main():
         rigid_options=gs.options.RigidOptions(
             # NOTE: Batching dofs/links info to set different physical attributes across environments (in parallel)
             #       By default, both are False as it's faster and thus only turn this on if necessary
-            batch_dofs_info=True,
-            batch_joints_info=True,
             batch_links_info=True,
+            batch_joints_info=True,
+            batch_dofs_info=True,
         ),
-        show_viewer=args.vis,
         viewer_options=viewer_options,
+        show_viewer=args.vis,
     )
 
     plane = scene.add_entity(

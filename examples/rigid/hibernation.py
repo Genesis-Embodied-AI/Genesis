@@ -45,9 +45,9 @@ def main():
             gravity=(0.0, 0.0, -9.81),
         ),
         rigid_options=gs.options.RigidOptions(
+            max_collision_pairs=3000,
             use_contact_island=True,
             use_hibernation=True,
-            max_collision_pairs=3000,
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
@@ -84,7 +84,9 @@ def main():
         # One MJCF entity whose worldbody holds the ground plane and a chain of free-body dominoes; the leading domino
         # is tilted so gravity alone kicks off the cascade.
         scene.add_entity(
-            gs.morphs.MJCF(file="xml/dominos.xml"),
+            gs.morphs.MJCF(
+                file="xml/dominos.xml",
+            ),
             vis_mode="collision",
         )
         camera_pos = (1.2, -2.2, 1.6)
@@ -112,10 +114,10 @@ def main():
     scene.start_recording(
         plot_data,
         gs.recorders.MPLLinePlot(
-            title="Islands + hibernation",
             labels={"step_rate": ["steps/s"], "awake_bodies": ["awake bodies"]},
-            hz=RECORDING_FPS,
             history_length=10000,
+            hz=RECORDING_FPS,
+            title="Islands + hibernation",
             save_to_filename=f"out/hibernation_{args.scene}_fps.mp4" if args.record else None,
         ),
     )

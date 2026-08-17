@@ -2,9 +2,7 @@ import genesis as gs
 
 gs.init(backend=gs.cpu)
 
-scene = gs.Scene(
-    show_viewer=False,
-)
+scene = gs.Scene(show_viewer=False)
 
 plane = scene.add_entity(gs.morphs.Plane())
 franka = scene.add_entity(

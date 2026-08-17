@@ -38,18 +38,23 @@ class HoverEnv:
         self.reward_scales = copy.deepcopy(reward_cfg["reward_scales"])
 
         self.scene = gs.Scene(
-            sim_options=gs.options.SimOptions(dt=self.dt, substeps=2),
+            sim_options=gs.options.SimOptions(
+                dt=self.dt,
+                substeps=2,
+            ),
+            rigid_options=gs.options.RigidOptions(
+                dt=self.dt,
+                enable_collision=True,
+                enable_joint_limit=True,
+                constraint_solver=gs.constraint_solver.Newton,
+            ),
+            vis_options=gs.options.VisOptions(
+                rendered_envs_idx=list(range(self.rendered_env_num)),
+            ),
             viewer_options=gs.options.ViewerOptions(
                 camera_pos=(3.0, 0.0, 3.0),
                 camera_lookat=(0.0, 0.0, 1.0),
                 camera_fov=40,
-            ),
-            vis_options=gs.options.VisOptions(rendered_envs_idx=list(range(self.rendered_env_num))),
-            rigid_options=gs.options.RigidOptions(
-                dt=self.dt,
-                constraint_solver=gs.constraint_solver.Newton,
-                enable_collision=True,
-                enable_joint_limit=True,
             ),
             show_viewer=show_viewer,
         )
@@ -86,7 +91,11 @@ class HoverEnv:
         self.base_init_pos = torch.tensor(self.env_cfg["base_init_pos"], device=gs.device)
         self.base_init_quat = torch.tensor(self.env_cfg["base_init_quat"], device=gs.device)
         self.inv_base_init_quat = inv_quat(self.base_init_quat)
-        self.drone = self.scene.add_entity(gs.morphs.Drone(file="urdf/drones/cf2x.urdf"))
+        self.drone = self.scene.add_entity(
+            morph=gs.morphs.Drone(
+                file="urdf/drones/cf2x.urdf",
+            )
+        )
 
         self.scene.build(n_envs=num_envs)
 

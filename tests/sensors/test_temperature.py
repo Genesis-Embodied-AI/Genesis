@@ -17,9 +17,7 @@ def test_grid_sensor_contact_and_reset(show_viewer, tol, n_envs):
     BASE_TEMP = 22.0
     DIFF_TEMP = 0.5
 
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
+    scene = gs.Scene(show_viewer=show_viewer)
     scene.add_entity(gs.morphs.Plane())
     platform = scene.add_entity(
         gs.morphs.Box(
@@ -121,9 +119,7 @@ def test_grid_simulate_all_link_temps(show_viewer, tol, n_envs):
     HOT_BASE = BASE_TEMP + 80.0
     COLD_BASE = BASE_TEMP - 80.0
 
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
+    scene = gs.Scene(show_viewer=show_viewer)
     scene.add_entity(gs.morphs.Plane())
     hot_box = scene.add_entity(
         gs.morphs.Box(

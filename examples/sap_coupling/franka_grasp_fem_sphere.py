@@ -22,18 +22,18 @@ def main():
             dt=1.0 / 60,
             substeps=2,
         ),
-        coupler_options=gs.options.SAPCouplerOptions(
-            pcg_threshold=1e-10,
-            sap_convergence_atol=1e-10,
-            sap_convergence_rtol=1e-10,
-            linesearch_ftol=1e-10,
-        ),
         rigid_options=gs.options.RigidOptions(
             enable_self_collision=False,
         ),
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=True,
             pcg_threshold=1e-10,
+        ),
+        coupler_options=gs.options.SAPCouplerOptions(
+            sap_convergence_atol=1e-10,
+            sap_convergence_rtol=1e-10,
+            pcg_threshold=1e-10,
+            linesearch_ftol=1e-10,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.3, 0.0, 0.15),
@@ -43,10 +43,12 @@ def main():
     )
 
     franka = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
         material=gs.materials.Rigid(
-            coup_friction=1.0,
             friction=1.0,
+            coup_friction=1.0,
         ),
     )
     sphere = scene.add_entity(
@@ -55,10 +57,10 @@ def main():
             pos=(0.65, 0.0, 0.02),
         ),
         material=gs.materials.FEM.Elastic(
-            model="linear_corotated",
-            friction_mu=1.0,
             E=1e5,
             nu=0.4,
+            friction_mu=1.0,
+            model="linear_corotated",
         ),
     )
 
