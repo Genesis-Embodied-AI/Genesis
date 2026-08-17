@@ -21,23 +21,30 @@ from syrupy.extensions.image import PNGImageSnapshotExtension
 
 from tests.gpu_info import detect_gpu_backend
 
-# Determine whether rendering without a screen is possible, which pyglet implements through its EGL backend.
-is_headless_supported = True
+# Determine whether EGL driver is available, which is what backs pyglet's own headless mode
+has_egl = True
 try:
     pyglet.lib.load_library("EGL")
 except ImportError:
-    is_headless_supported = False
+    has_egl = False
 
-# Determine whether a screen is available, which only the interactive viewer needs. Resolving a display binds pyglet's
-# windowing backend and would rule out its headless one, so the environment answers where headless exists, and pyglet
-# elsewhere, which is what detects a Mac whose displays are all asleep.
-if is_headless_supported:
+# Determine whether a screen is available, which only the interactive viewer needs. Resolving a display binds
+# pyglet's windowing backend and would rule out its headless one, so the environment answers where headless exists.
+if has_egl:
     has_display = bool(os.environ.get("DISPLAY")) if sys.platform.startswith("linux") else False
 else:
     try:
         has_display = bool(pyglet.display.get_display().get_screens())
     except Exception:
         has_display = False
+    if not has_display and sys.platform == "darwin":
+        # A display asleep, as while the screen is locked, stops being active but stays online, and Genesis opens
+        # the viewer window on it all the same, which 'genesis.utils.misc.get_default_screen' takes care of.
+        from pyglet.libs.darwin.cocoapy import quartz
+
+        num_displays = ctypes.c_uint32()
+        quartz.CGGetOnlineDisplayList(0, None, ctypes.byref(num_displays))
+        has_display = bool(num_displays.value)
 
 # Determine whether the optional 'imgui-bundle' dependency is available
 try:
@@ -55,11 +62,11 @@ os.environ["TQDM_DISABLE"] = "1"
 
 # pyglet must be configured in headless mode before importing Genesis if necessary.
 # Note that environment variables are used instead of global options to ease option propagation to subprocesses.
-if not has_display and is_headless_supported:
+if not has_display and has_egl:
     pyglet.options["headless"] = True
     os.environ["PYGLET_HEADLESS"] = "1"
 
-IS_INTERACTIVE_VIEWER_AVAILABLE = has_display or is_headless_supported
+IS_INTERACTIVE_VIEWER_AVAILABLE = has_display or has_egl
 
 TOL_SINGLE = 5e-5
 TOL_DOUBLE = 1e-9
@@ -184,13 +191,10 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     if is_pdb_enabled:
         config.option.reruns = 0
 
-    # Force headless mode when the viewer is not wanted, so a local run stays off the developer's desktop. Exporting
-    # the variable carries the request to the xdist workers; pyglet's own option only applies where EGL backs it.
+    # Keep the viewer off the developer's desktop when it is not wanted, the variable carrying the request to the
+    # xdist workers.
     if not show_viewer:
         os.environ["GS_HEADLESS"] = "1"
-        if is_headless_supported:
-            pyglet.options["headless"] = True
-            os.environ["PYGLET_HEADLESS"] = "1"
 
     # Make sure that the number of workers is not too large if specified
     if isinstance(config.option.numprocesses, int):
@@ -457,7 +461,7 @@ def pytest_runtest_setup(item):
         cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
         if cuda_visible_devices is not None:
             gpu_index = int(cuda_visible_devices)
-            if is_headless_supported:
+            if has_egl:
                 try:
                     os.environ["EGL_DEVICE_ID"] = str(_get_egl_index(gpu_index))
                 except (AttributeError, KeyError):
