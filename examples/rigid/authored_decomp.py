@@ -36,12 +36,12 @@ def main():
         rigid_options=gs.options.RigidOptions(
             use_gjk_collision=args.gjk,
         ),
+        vis_options=gs.options.VisOptions(
+            show_world_frame=False,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.4, 0.0, 0.3),
             camera_lookat=(0.0, 0.0, 0.1),
-        ),
-        vis_options=gs.options.VisOptions(
-            show_world_frame=False,
         ),
         show_viewer=args.vis,
     )

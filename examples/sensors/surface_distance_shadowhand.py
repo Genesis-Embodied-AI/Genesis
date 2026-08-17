@@ -43,12 +43,12 @@ def main():
     )
 
     scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(-1.2, 0.6, 1.0),
             camera_lookat=(0.0, 0.0, 0.5),
-        ),
-        rigid_options=gs.options.RigidOptions(
-            gravity=(0.0, 0.0, 0.0),
         ),
         show_viewer=args.vis,
     )

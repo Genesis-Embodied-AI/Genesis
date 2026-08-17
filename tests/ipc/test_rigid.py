@@ -700,9 +700,6 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
             dt=DT,
             gravity=GRAVITY,
         ),
-        rigid_options=gs.options.RigidOptions(
-            enable_collision=False,
-        ),
         coupler_options=gs.options.IPCCouplerOptions(
             contact_d_hat=CONTACT_MARGIN,
             constraint_strength_translation=1,
@@ -713,6 +710,9 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
             linear_system_tolerance=1e-3,
             newton_semi_implicit_enable=False,
             two_way_coupling=True,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.0, 1.0, 0.8),

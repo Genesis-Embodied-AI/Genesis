@@ -28,9 +28,6 @@ def test_batch_deformable_render(monkeypatch, png_snapshot):
             dt=5e-4,
             substeps=10,
         ),
-        pbd_options=gs.options.PBDOptions(
-            particle_size=1e-2,
-        ),
         mpm_options=gs.options.MPMOptions(
             lower_bound=(-1.0, -1.0, -0.2),
             upper_bound=(1.0, 1.0, 1.0),
@@ -40,6 +37,14 @@ def test_batch_deformable_render(monkeypatch, png_snapshot):
             upper_bound=(0.5, 0.5, 1),
             particle_size=0.01,
         ),
+        pbd_options=gs.options.PBDOptions(
+            particle_size=1e-2,
+        ),
+        vis_options=gs.options.VisOptions(
+            visualize_mpm_boundary=True,
+            visualize_sph_boundary=True,
+            show_world_frame=True,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(6.0, 0.0, 4.0),
             camera_lookat=(0.0, 0.0, 0.0),
@@ -48,11 +53,6 @@ def test_batch_deformable_render(monkeypatch, png_snapshot):
             run_in_thread=False,
             # Disable text rendering as it is messing up with pixel matching when using old CPU-based Mesa driver
             enable_help_text=False,
-        ),
-        vis_options=gs.options.VisOptions(
-            visualize_mpm_boundary=True,
-            visualize_sph_boundary=True,
-            show_world_frame=True,
         ),
         show_viewer=True,
         show_FPS=False,
@@ -151,14 +151,14 @@ def test_deformable_uv_textures(renderer_type, renderer, show_viewer, png_snapsh
             dt=0.04,
             substeps=6,
         ),
-        pbd_options=gs.options.PBDOptions(
-            particle_size=0.01,
-        ),
         fem_options=gs.options.FEMOptions(
             # Implicit solver allows for larger timestep without failure on GPU backend
             use_implicit_solver=True,
             # Reduce number of iterations to speedup runtime
             n_pcg_iterations=40,
+        ),
+        pbd_options=gs.options.PBDOptions(
+            particle_size=0.01,
         ),
         vis_options=gs.options.VisOptions(
             # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway

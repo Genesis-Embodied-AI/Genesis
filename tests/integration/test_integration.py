@@ -225,18 +225,18 @@ def test_franka_panda_grasp_fem_entity(primitive_type, show_viewer):
             dt=1.0 / 60,
             substeps=2,
         ),
+        coupler_options=gs.options.SAPCouplerOptions(
+            pcg_threshold=1e-10,
+            sap_convergence_atol=1e-10,
+            sap_convergence_rtol=1e-10,
+            linesearch_ftol=1e-10,
+        ),
         rigid_options=gs.options.RigidOptions(
             enable_self_collision=False,
         ),
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=True,
             pcg_threshold=1e-10,
-        ),
-        coupler_options=gs.options.SAPCouplerOptions(
-            pcg_threshold=1e-10,
-            sap_convergence_atol=1e-10,
-            sap_convergence_rtol=1e-10,
-            linesearch_ftol=1e-10,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.3, 0.0, 0.15),

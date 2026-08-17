@@ -31,11 +31,11 @@ if __name__ == "__main__":
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             substeps=4,
+            gravity=(0, 0, -9.8),
         ),
         rigid_options=gs.options.RigidOptions(
             enable_joint_limit=True,
             enable_collision=True,
-            gravity=(0, 0, -9.8),
             box_box_detection=True,
             constraint_timeconst=0.01,
         ),

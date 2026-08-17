@@ -127,7 +127,6 @@ def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=0.01, gravity=(0, 0, -9.8)),
-        rigid_options=gs.options.RigidOptions(enable_collision=False),
         coupler_options=gs.options.IPCCouplerOptions(
             constraint_strength_translation=1,
             constraint_strength_rotation=1,
@@ -135,6 +134,9 @@ def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
             newton_tolerance=1e-2,
             newton_translation_tolerance=1e-2,
             two_way_coupling=True,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
         ),
         show_viewer=show_viewer,
     )
@@ -185,11 +187,11 @@ def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
 @pytest.mark.parametrize("coup_type", ["ipc_only", "two_way_soft_constraint"])
 def test_collision_delegation_ipc_vs_rigid(coup_type, enable_rigid_ground_contact):
     scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
-            enable_self_collision=True,
-        ),
         coupler_options=gs.options.IPCCouplerOptions(
             enable_rigid_ground_contact=enable_rigid_ground_contact,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_self_collision=True,
         ),
         show_viewer=False,
     )

@@ -30,7 +30,9 @@ def test_physics_parity(show_viewer, tol):
 
     # One homogeneous reference entity per variant plus a single heterogeneous entity dispatching one variant per
     # environment, all in one scene.
-    scene = gs.Scene(show_viewer=show_viewer)
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
     scene.add_entity(gs.morphs.Plane())
     ref_objs = []
     for file, pos, offset_euler, offset in zip(asset_files, POSITIONS, OFFSET_EULERS, REFERENCE_OFFSETS):
@@ -91,7 +93,9 @@ def test_variant_inertia_matches_standalone(undefined_inertia, implicit_inertial
     # tensor, while the first has no inertial element at all and falls back to its geometry. These cannot be folded
     # into 'test_physics_parity': its variants come from MJCF, whose root joint carries a format-determined name that
     # no URDF variant can match.
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene(
+        show_viewer=False,
+    )
     files = (undefined_inertia, implicit_inertial_origin)
     references = [
         scene.add_entity(
@@ -146,7 +150,9 @@ def test_fewer_envs_than_variants():
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_aabb(tol):
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene(
+        show_viewer=False,
+    )
     scene.add_entity(gs.morphs.Plane())
 
     # Box and sphere with different sizes and positions
@@ -203,7 +209,9 @@ def test_aabb(tol):
 @pytest.mark.slow  # ~250s
 @pytest.mark.parametrize("backend", [gs.gpu])  # Grasping physics requires GPU
 def test_pick_heterogenous_objects(show_viewer):
-    scene = gs.Scene(show_viewer=show_viewer)
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
     scene.add_entity(gs.morphs.Plane())
     franka = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
 
@@ -331,7 +339,9 @@ def test_invalid_variant_specification_raises():
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_morph_property_raises():
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene(
+        show_viewer=False,
+    )
 
     single_morph = gs.morphs.Box(size=(0.1, 0.1, 0.1))
     single_obj = scene.add_entity(morph=single_morph)
@@ -374,7 +384,9 @@ def test_morph_property_raises():
 
 @pytest.mark.required
 def test_articulated_structure_mismatch():
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene(
+        show_viewer=False,
+    )
     scene.add_entity(gs.morphs.Plane())
 
     # two_cube_revolute has 1 revolute joint; two_link_arm has 2 continuous joints

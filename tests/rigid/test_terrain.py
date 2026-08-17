@@ -144,7 +144,9 @@ def test_get_terrain_height(n_envs, tol):
     )
     quat_yaw = gu.xyz_to_quat(np.array((0.0, 0.0, 90.0)), degrees=True)
 
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene(
+        show_viewer=False,
+    )
     terrain = scene.add_entity(
         morph=gs.morphs.Terrain(
             pos=(2.0, -1.0, 0.3),
@@ -245,7 +247,9 @@ def test_get_terrain_height(n_envs, tol):
 
 @pytest.mark.required
 def test_subterrain_parameters(show_viewer):
-    scene_ref = gs.Scene(show_viewer=show_viewer)
+    scene_ref = gs.Scene(
+        show_viewer=show_viewer,
+    )
     terrain_ref = scene_ref.add_entity(
         morph=gs.morphs.Terrain(
             n_subterrains=(2, 2),
@@ -257,7 +261,9 @@ def test_subterrain_parameters(show_viewer):
 
     height_ref = terrain_ref.geoms[0].metadata["height_field"]
 
-    scene_test = gs.Scene(show_viewer=show_viewer)
+    scene_test = gs.Scene(
+        show_viewer=show_viewer,
+    )
     terrain_test = scene_test.add_entity(
         morph=gs.morphs.Terrain(
             n_subterrains=(2, 2),

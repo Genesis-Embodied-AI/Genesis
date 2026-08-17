@@ -21,13 +21,13 @@ def main():
             grid_density=64,
             enable_CPIC=True,
         ),
+        vis_options=gs.options.VisOptions(
+            visualize_mpm_boundary=True,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.2, 0.9, 3.5),
             camera_lookat=(0.0, 0.0, 0.0),
             camera_fov=35,
-        ),
-        vis_options=gs.options.VisOptions(
-            visualize_mpm_boundary=True,
         ),
         show_viewer=args.vis,
     )

@@ -31,7 +31,10 @@ def mpl_agg_backend():
 
 @pytest.mark.required
 def test_vector_field_plotter_subplots(mpl_agg_backend, png_snapshot):
-    scene = gs.Scene(show_viewer=False, show_FPS=False)
+    scene = gs.Scene(
+        show_viewer=False,
+        show_FPS=False,
+    )
     scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.5)))
 
     n_probes = 9

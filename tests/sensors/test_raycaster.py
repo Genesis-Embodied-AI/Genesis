@@ -29,13 +29,13 @@ def test_hits(show_viewer, n_envs, enable_mujoco_compatibility):
         rigid_options=gs.options.RigidOptions(
             enable_mujoco_compatibility=enable_mujoco_compatibility,
         ),
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(-3.0, RAYCAST_GRID_SIZE_X * (NUM_RAYS_XY[1] / NUM_RAYS_XY[0]), 2 * RAYCAST_HEIGHT),
-            camera_lookat=(1.5, RAYCAST_GRID_SIZE_X * (NUM_RAYS_XY[1] / NUM_RAYS_XY[0]), RAYCAST_HEIGHT),
-        ),
         vis_options=gs.options.VisOptions(
             rendered_envs_idx=(0,),
             env_separate_rigid=False,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(-3.0, RAYCAST_GRID_SIZE_X * (NUM_RAYS_XY[1] / NUM_RAYS_XY[0]), 2 * RAYCAST_HEIGHT),
+            camera_lookat=(1.5, RAYCAST_GRID_SIZE_X * (NUM_RAYS_XY[1] / NUM_RAYS_XY[0]), RAYCAST_HEIGHT),
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
@@ -488,7 +488,9 @@ def test_lidar_bvh_parallel_env(show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 4])
 def test_shared_static_bvh_regroup(show_viewer, n_envs):
-    scene = gs.Scene(show_viewer=show_viewer)
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
     scene.add_entity(gs.morphs.Plane())
     box = scene.add_entity(
         gs.morphs.Box(
@@ -640,7 +642,9 @@ def test_lidar_cache_offset_parallel_env(show_viewer, tol):
 
 @pytest.mark.required
 def test_heterogeneous_object(show_viewer, tol):
-    scene = gs.Scene(show_viewer=show_viewer)
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
     scene.add_entity(gs.morphs.Plane())
     sensor_mount = scene.add_entity(
         gs.morphs.Box(

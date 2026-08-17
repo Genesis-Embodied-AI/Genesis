@@ -22,7 +22,9 @@ def test_depth_first_link_ordering(xml_path, model_name, show_viewer):
     # Links must be parsed depth-first so every subtree - hence every free body's DOFs - occupies a contiguous index
     # range. The per-tree mass-matrix factorization relies on this so a multi-body file costs the same as the
     # equivalent separate entities.
-    scene = gs.Scene(show_viewer=show_viewer)
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
     morph = gs.morphs.MJCF(file=xml_path) if model_name.endswith("mjcf") else gs.morphs.URDF(file=xml_path, fixed=True)
     entity = scene.add_entity(morph)
     scene.build(n_envs=0)
@@ -429,7 +431,9 @@ def test_urdf_capsule(tmp_path, show_viewer, tol):
             """
         )
 
-    scene = gs.Scene(show_viewer=show_viewer)
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
     scene.add_entity(gs.morphs.Plane())
     robot = scene.add_entity(
         gs.morphs.URDF(
@@ -513,7 +517,9 @@ def test_default_armature_freeflyer(xml_path):
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_xacro_loading(xacro_robot, show_viewer, tol):
-    scene = gs.Scene(show_viewer=show_viewer)
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
 
     # Load with default args (mass=1.0, length=0.4)
     morph = gs.morphs.URDF(
@@ -565,7 +571,9 @@ def test_xacro_loading(xacro_robot, show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("overwrite", [False, True])
 def test_color_overwrite(overwrite, show_viewer):
-    scene = gs.Scene(show_viewer=show_viewer)
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
     box = scene.add_entity(
         gs.morphs.URDF(
             file="genesis/assets/urdf/blue_box/model.urdf",

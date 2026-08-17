@@ -99,6 +99,10 @@ def test_draw_debug(renderer, show_viewer):
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 def test_sensors_draw_debug(n_envs, renderer_type, renderer, png_snapshot):
     scene = gs.Scene(
+        vis_options=gs.options.VisOptions(
+            # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
+            shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.2, 1.2, 1.2),
             camera_lookat=(0.0, 0.0, 0.2),
@@ -106,10 +110,6 @@ def test_sensors_draw_debug(n_envs, renderer_type, renderer, png_snapshot):
             res=(320, 320),
             # Enable running in background thread if supported by the platform
             run_in_thread=(sys.platform == "linux"),
-        ),
-        vis_options=gs.options.VisOptions(
-            # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
-            shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
@@ -214,6 +214,10 @@ def test_sensors_draw_debug(n_envs, renderer_type, renderer, png_snapshot):
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 def test_draw_debug_frustum_and_trajectory(n_envs, renderer_type, renderer, png_snapshot):
     scene = gs.Scene(
+        vis_options=gs.options.VisOptions(
+            # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
+            shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
@@ -221,10 +225,6 @@ def test_draw_debug_frustum_and_trajectory(n_envs, renderer_type, renderer, png_
             res=(480, 320),
             # Enable running in background thread if supported by the platform
             run_in_thread=(sys.platform == "linux"),
-        ),
-        vis_options=gs.options.VisOptions(
-            # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
-            shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,

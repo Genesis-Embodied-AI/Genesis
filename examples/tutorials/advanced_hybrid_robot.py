@@ -26,14 +26,14 @@ scene = gs.Scene(
         gravity=(0, 0, 0),  # mimic gravity compensation
         enable_CPIC=True,
     ),
+    vis_options=gs.options.VisOptions(
+        show_world_frame=True,
+        visualize_mpm_boundary=False,
+    ),
     viewer_options=gs.options.ViewerOptions(
         camera_pos=(1.5, 1.3, 0.5),
         camera_lookat=(0.0, 0.0, 0.0),
         camera_fov=40,
-    ),
-    vis_options=gs.options.VisOptions(
-        show_world_frame=True,
-        visualize_mpm_boundary=False,
     ),
     show_viewer=True,
     show_FPS=False,

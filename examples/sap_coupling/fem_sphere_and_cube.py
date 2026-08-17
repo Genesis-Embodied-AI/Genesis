@@ -24,10 +24,10 @@ def main():
             dt=1 / 60,
             substeps=2,
         ),
+        coupler_options=gs.options.SAPCouplerOptions(),
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=True,
         ),
-        coupler_options=gs.options.SAPCouplerOptions(),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.5, -1.5, 1.5),
             camera_lookat=(0, 0, 0),

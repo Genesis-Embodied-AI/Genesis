@@ -112,7 +112,6 @@ def test_emissive_composites_over_base_color_without_double_counting(base_plus_e
         sim_options=gs.options.SimOptions(
             dt=1e-3,
         ),
-        fem_options=gs.options.FEMOptions(),
         vis_options=gs.options.VisOptions(
             ambient_light=(1.0, 1.0, 1.0),
             shadow=False,
@@ -655,11 +654,11 @@ def test_renders_heterogeneous_entities(n_envs, show_viewer, png_snapshot, rende
     IS_BATCHRENDER = renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER)
 
     scene = gs.Scene(
-        renderer=renderer,
         vis_options=gs.options.VisOptions(
             env_separate_rigid=False,
             shadow=False,
         ),
+        renderer=renderer,
         show_viewer=show_viewer,
     )
     scene.add_entity(
@@ -782,13 +781,6 @@ def test_renders_heterogeneous_entities(n_envs, show_viewer, png_snapshot, rende
 @pytest.mark.parametrize("particle_mode", ["visual", "particle"])
 def test_segmentation_map(segmentation_level, particle_mode, renderer_type, renderer, show_viewer):
     scene = gs.Scene(
-        fem_options=gs.options.FEMOptions(
-            use_implicit_solver=True,  # Implicit solver allows for larger timestep without failure on GPU backend
-            n_pcg_iterations=40,  # Reduce number of iterations to speedup runtime
-        ),
-        rigid_options=gs.options.RigidOptions(
-            enable_collision=False,  # Disable many physics features to speedup compilation
-        ),
         coupler_options=gs.options.LegacyCouplerOptions(
             rigid_mpm=False,
             rigid_sph=False,
@@ -798,6 +790,13 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
             mpm_pbd=False,
             fem_mpm=False,
             fem_sph=False,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,  # Disable many physics features to speedup compilation
+        ),
+        fem_options=gs.options.FEMOptions(
+            use_implicit_solver=True,  # Implicit solver allows for larger timestep without failure on GPU backend
+            n_pcg_iterations=40,  # Reduce number of iterations to speedup runtime
         ),
         vis_options=gs.options.VisOptions(
             segmentation_level=segmentation_level,
@@ -1151,14 +1150,22 @@ def test_context_isolation(renderer_type):
     # that interleaving by destroying scene B in the middle of scene A's render, and assert A renders exactly as it
     # does without the interference, rather than rendering on B's destroyed context or losing its context entirely.
     # The two scenes must own independent renderers, hence a fresh Rasterizer each rather than a shared instance.
-    scene_a = gs.Scene(renderer=gs.renderers.Rasterizer(), show_viewer=False, show_FPS=False)
+    scene_a = gs.Scene(
+        renderer=gs.renderers.Rasterizer(),
+        show_viewer=False,
+        show_FPS=False,
+    )
     scene_a.add_entity(gs.morphs.Box(pos=(0.0, 0.0, 0.5), size=(0.3, 0.3, 0.3)))
     camera_a = scene_a.add_camera(res=(64, 64), pos=(1.5, 1.5, 1.0), lookat=(0.0, 0.0, 0.0))
     scene_a.build()
     rgb_reference = camera_a.render(rgb=True)[0]
 
     # Distinct content so that rendering A on B's context would be visibly wrong rather than coincidentally equal.
-    scene_b = gs.Scene(renderer=gs.renderers.Rasterizer(), show_viewer=False, show_FPS=False)
+    scene_b = gs.Scene(
+        renderer=gs.renderers.Rasterizer(),
+        show_viewer=False,
+        show_FPS=False,
+    )
     scene_b.add_entity(gs.morphs.Box(pos=(0.0, 0.0, 5.0), size=(0.3, 0.3, 0.3)))
     camera_b = scene_b.add_camera(res=(64, 64), pos=(1.5, 1.5, 1.0), lookat=(0.0, 0.0, 0.0))
     scene_b.build()

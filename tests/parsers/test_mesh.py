@@ -34,7 +34,9 @@ from .conftest import (
 @pytest.mark.parametrize("scale", [(0.5, 2.0, 8.0), (2.0, 2.0, 2.0)])
 @pytest.mark.parametrize("mesh_file", ["meshes/camera/camera.glb", "meshes/axis.obj"])
 def test_morph_scale(scale, mesh_file, mesh_urdf):
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene(
+        show_viewer=False,
+    )
     obj_orig = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=mesh_file,
@@ -146,7 +148,9 @@ def test_urdf_scale(mesh_urdf, show_viewer):
 
 @pytest.mark.required
 def test_mesh_yup(show_viewer):
-    scene = gs.Scene(show_viewer=show_viewer)
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
 
     asset_path = get_hf_dataset(pattern="yup_zup_coverage/*")
 
@@ -230,7 +234,9 @@ def test_mesh_yup(show_viewer):
     [("yup_zup_coverage/cannon_z.glb", True), ("yup_zup_coverage/cannon_y_-z.stl", False)],
 )
 def test_urdf_yup(file_meshes_are_zup, mesh_urdf, show_viewer):
-    scene = gs.Scene(show_viewer=show_viewer)
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
     robot = scene.add_entity(
         gs.morphs.URDF(
             file=mesh_urdf,
@@ -446,7 +452,9 @@ def test_glb_shared_texture_not_duplicated(tmp_path):
     glb_path = tmp_path / "shared_texture.glb"
     tm_scene.export(glb_path)
 
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene(
+        show_viewer=False,
+    )
     entity = scene.add_entity(
         gs.morphs.Mesh(
             file=str(glb_path),
@@ -593,7 +601,9 @@ def test_glb_multi_primitive_distinct_materials(tmp_path):
         dominant_channels.append(int(np.argmax(texture.image_array[..., :3].mean(axis=(0, 1)))))
     assert sorted(dominant_channels) == [0, 2]
 
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene(
+        show_viewer=False,
+    )
     entity = scene.add_entity(
         gs.morphs.Mesh(
             file=str(glb_path),
@@ -670,7 +680,10 @@ def test_2_channels_luminance_alpha_textures(show_viewer):
 
 @pytest.mark.required
 def test_plane_texture_path_preservation(show_viewer):
-    scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
     plane = scene.add_entity(gs.morphs.Plane())
 
     # The texture path should be stored in metadata

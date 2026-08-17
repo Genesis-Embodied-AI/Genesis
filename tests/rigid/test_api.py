@@ -1023,10 +1023,10 @@ def test_reset(show_viewer, friction_cone, sparse_solve, use_hibernation, enable
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_scene_saver_franka(tmp_path, show_viewer, tol):
     scene1 = gs.Scene(
-        show_viewer=show_viewer,
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
         ),
+        show_viewer=show_viewer,
     )
     franka1 = scene1.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
@@ -1049,7 +1049,9 @@ def test_scene_saver_franka(tmp_path, show_viewer, tol):
     ckpt_path = tmp_path / "franka_unit.pkl"
     scene1.save_checkpoint(ckpt_path)
 
-    scene2 = gs.Scene(show_viewer=show_viewer)
+    scene2 = gs.Scene(
+        show_viewer=show_viewer,
+    )
     franka2 = scene2.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )

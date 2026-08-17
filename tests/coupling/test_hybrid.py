@@ -192,8 +192,9 @@ def test_deformable_parallel(show_viewer):
             dt=2e-3,
             substeps=10,
         ),
-        pbd_options=gs.options.PBDOptions(
-            particle_size=1e-2,
+        mpm_options=gs.options.MPMOptions(
+            lower_bound=(0.5, -0.1, -0.05),
+            upper_bound=(0.7, 0.1, 0.3),
         ),
         sph_options=gs.options.SPHOptions(
             lower_bound=(-0.03, -0.03, -0.08),
@@ -202,17 +203,16 @@ def test_deformable_parallel(show_viewer):
         fem_options=gs.options.FEMOptions(
             damping=45.0,
         ),
-        mpm_options=gs.options.MPMOptions(
-            lower_bound=(0.5, -0.1, -0.05),
-            upper_bound=(0.7, 0.1, 0.3),
+        pbd_options=gs.options.PBDOptions(
+            particle_size=1e-2,
+        ),
+        vis_options=gs.options.VisOptions(
+            rendered_envs_idx=[1],
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
-        ),
-        vis_options=gs.options.VisOptions(
-            rendered_envs_idx=[1],
         ),
         show_viewer=show_viewer,
     )
@@ -328,13 +328,13 @@ def test_fluid_emitter(n_envs, material_type, show_viewer):
         pbd_options=gs.options.PBDOptions(
             particle_size=0.02,
         ),
+        vis_options=gs.options.VisOptions(
+            rendered_envs_idx=[0],
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(5.5, 6.5, 3.2),
             camera_lookat=(0.5, 1.5, 1.5),
             camera_fov=35,
-        ),
-        vis_options=gs.options.VisOptions(
-            rendered_envs_idx=[0],
         ),
         show_viewer=show_viewer,
     )
@@ -445,10 +445,10 @@ def test_sap_fem_vs_robot(show_viewer):
             dt=1 / 60,
             substeps=2,
         ),
+        coupler_options=gs.options.SAPCouplerOptions(),
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=True,
         ),
-        coupler_options=gs.options.SAPCouplerOptions(),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.0, 1.5, 1.2),
         ),

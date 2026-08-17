@@ -635,12 +635,12 @@ def test_contact_pruning(gjk_collision, show_viewer):
             use_gjk_collision=gjk_collision,
             contact_pruning_tolerance=0.02,
         ),
+        vis_options=gs.options.VisOptions(
+            rendered_envs_idx=(0,),
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.4, 0.3, 0.3),
             camera_lookat=(0.0, 0.0, 0.0),
-        ),
-        vis_options=gs.options.VisOptions(
-            rendered_envs_idx=(0,),
         ),
         show_viewer=show_viewer,
     )
@@ -985,8 +985,8 @@ def test_num_contact_overflow(scene_kind, max_collision_pairs, max_contacts, err
             max_collision_pairs=max_collision_pairs,
             max_contacts=max_contacts,
         ),
-        show_viewer=show_viewer,
         renderer=gs.renderers.Rasterizer(),
+        show_viewer=show_viewer,
     )
     scene.add_entity(morph=gs.morphs.Plane())
     if scene_kind == "bowls":

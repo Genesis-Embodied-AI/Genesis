@@ -22,13 +22,13 @@ def main():
             upper_bound=(0.75, 0.1, 0.3),
             grid_density=128,
         ),
+        vis_options=gs.options.VisOptions(
+            visualize_mpm_boundary=True,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3, -1, 1.5),
             camera_lookat=(0.0, 0.0, 0.0),
             camera_fov=30,
-        ),
-        vis_options=gs.options.VisOptions(
-            visualize_mpm_boundary=True,
         ),
         show_viewer=args.vis,
     )

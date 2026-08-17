@@ -296,12 +296,12 @@ def test_energy_analytical_and_conservation(spring_double_pendulum, show_viewer,
             dt=dt,
             gravity=(0, 0, -g),
         ),
+        rigid_options=gs.options.RigidOptions(
+            integrator=integrator,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.25, 1.5, 0.7),
             camera_lookat=(0.25, 0.0, 0.2),
-        ),
-        rigid_options=gs.options.RigidOptions(
-            integrator=integrator,
         ),
         show_viewer=show_viewer,
     )
@@ -772,13 +772,13 @@ def test_cholesky_tiling_large_shared_memory(show_viewer):
 
     # Stack 17 free boxes (6 DOFs each = 102 total) to exceed the default 48kB tiling limit of 96 DOFs for f32
     scene = gs.Scene(
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(1.5, 1.0, 2.5),
-            camera_lookat=(0.0, 0.0, 1.2),
-        ),
         rigid_options=gs.options.RigidOptions(
             constraint_solver=gs.constraint_solver.Newton,
             sparse_solve=False,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.5, 1.0, 2.5),
+            camera_lookat=(0.0, 0.0, 1.2),
         ),
         show_viewer=show_viewer,
         show_FPS=False,

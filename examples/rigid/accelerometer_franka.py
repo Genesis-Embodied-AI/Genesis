@@ -16,10 +16,10 @@ def main():
     )
 
     scene = gs.Scene(
-        viewer_options=viewer_options,
         sim_options=gs.options.SimOptions(
             dt=sim_dt,
         ),
+        viewer_options=viewer_options,
         show_viewer=args.vis,
     )
 

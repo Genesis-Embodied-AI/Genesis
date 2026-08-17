@@ -33,11 +33,11 @@ def main():
         sim_options=gs.options.SimOptions(
             dt=0.01,
         ),
+        coupler_options=coupler_options,
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.0, 1.0, 1.0),
             camera_lookat=(0.3, 0.0, 0.5),
         ),
-        coupler_options=coupler_options,
         show_viewer=args.vis,
     )
 

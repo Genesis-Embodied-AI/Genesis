@@ -217,6 +217,10 @@ def test_key_press(renderer_type, tmp_path, monkeypatch, renderer, png_snapshot)
 
     # Create a scene
     scene = gs.Scene(
+        vis_options=gs.options.VisOptions(
+            # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
+            shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
+        ),
         viewer_options=gs.options.ViewerOptions(
             # Force screen-independent low-quality resolution when running unit tests for consistency.
             # Still, it must be large enough since rendering text involved alpha blending, which is platform-dependent.
@@ -226,10 +230,6 @@ def test_key_press(renderer_type, tmp_path, monkeypatch, renderer, png_snapshot)
             # was only using rasterizer without interactive viewer:
             # 'EventLoop.run() must be called from the same thread that imports pyglet.app'.
             run_in_thread=(sys.platform == "linux"),
-        ),
-        vis_options=gs.options.VisOptions(
-            # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
-            shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
         ),
         renderer=renderer,
         show_viewer=True,

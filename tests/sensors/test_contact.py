@@ -19,8 +19,8 @@ def test_gravity_force(n_envs, show_viewer, tol):
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            gravity=(0.0, 0.0, GRAVITY),
             dt=DT,
+            gravity=(0.0, 0.0, GRAVITY),
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,

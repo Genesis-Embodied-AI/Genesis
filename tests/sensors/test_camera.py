@@ -279,7 +279,9 @@ def test_rasterizer_batched(show_viewer, png_snapshot):
 def test_rasterizer_attached_batched(show_viewer, png_snapshot, tol):
     png_snapshot.extension._std_err_threshold = 1.1
 
-    scene = gs.Scene(show_viewer=show_viewer)
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
 
     # Add a plane
     scene.add_entity(
@@ -359,7 +361,9 @@ def test_rasterizer_attached_batched(show_viewer, png_snapshot, tol):
 
 @pytest.mark.required
 def test_rasterizer_destroy():
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene(
+        show_viewer=False,
+    )
     cam1 = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
     cam2 = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(32, 32)))
 
@@ -439,7 +443,9 @@ def test_batch_renderer(n_envs, png_snapshot):
 @pytest.mark.parametrize("backend", [gs.cuda])
 @pytest.mark.skipif(not ENABLE_MADRONA, reason=SKIP_NO_MADRONA)
 def test_batch_renderer_destroy():
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene(
+        show_viewer=False,
+    )
     # FIXME: This test fails without any entities in the scene.
     scene.add_entity(morph=gs.morphs.Plane())
     cam1 = scene.add_sensor(gs.sensors.BatchRendererCameraOptions(res=(64, 64), use_rasterizer=True))
@@ -547,7 +553,9 @@ def test_raytracer_attached_without_offset_T():
     CAM_RES = (128, 64)
     CAM_POS = (1.0, 0.5, 2.0)
 
-    scene = gs.Scene(renderer=gs.renderers.RayTracer())
+    scene = gs.Scene(
+        renderer=gs.renderers.RayTracer(),
+    )
     scene.add_entity(morph=gs.morphs.Plane())
     sphere = scene.add_entity(morph=gs.morphs.Sphere())
 
@@ -633,7 +641,9 @@ def test_raytracer_destroy():
 @pytest.mark.slow  # ~250s
 @pytest.mark.required
 def test_lookat_entity(show_viewer, png_snapshot):
-    scene = gs.Scene(show_viewer=show_viewer)
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
 
     scene.add_entity(morph=gs.morphs.Plane())
 
@@ -698,7 +708,9 @@ def test_lookat_entity(show_viewer, png_snapshot):
 
 @pytest.mark.required
 def test_destroy_unbuilt_scene_with_camera():
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene(
+        show_viewer=False,
+    )
     scene.add_entity(morph=gs.morphs.Plane())
     scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
 
@@ -707,7 +719,9 @@ def test_destroy_unbuilt_scene_with_camera():
 
 @pytest.mark.required
 def test_destroy_idempotent_with_camera():
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene(
+        show_viewer=False,
+    )
     camera = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
 
     scene.build()

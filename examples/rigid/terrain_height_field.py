@@ -15,14 +15,16 @@ def main():
     gs.init(backend=gs.gpu if args.gpu else gs.cpu)
 
     scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            constraint_solver=gs.constraint_solver.Newton,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(-5.0, -5.0, 10.0),
             camera_lookat=(5.0, 5.0, 0.0),
             camera_fov=40,
-        ),
-        rigid_options=gs.options.RigidOptions(
-            dt=0.01,
-            constraint_solver=gs.constraint_solver.Newton,
         ),
         show_viewer=args.vis,
     )

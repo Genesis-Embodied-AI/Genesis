@@ -44,12 +44,14 @@ class Go2Env:
                 # can save memory. Violating this condition will raise an exception.
                 max_collision_pairs=20,
             ),
+            vis_options=gs.options.VisOptions(
+                rendered_envs_idx=[0],
+            ),
             viewer_options=gs.options.ViewerOptions(
                 camera_pos=(2.0, 0.0, 2.5),
                 camera_lookat=(0.0, 0.0, 0.5),
                 camera_fov=40,
             ),
-            vis_options=gs.options.VisOptions(rendered_envs_idx=[0]),
             show_viewer=show_viewer,
         )
 

@@ -20,7 +20,9 @@ def main():
 
     gs.init(backend=gs.cpu)
 
-    scene = gs.Scene(show_viewer=args.vis)
+    scene = gs.Scene(
+        show_viewer=args.vis,
+    )
 
     # Auto-generated names: {morph_type}_{uid_prefix}
     box = scene.add_entity(gs.morphs.Box(pos=(0, 0, 0.5), size=(0.2, 0.2, 0.2)))

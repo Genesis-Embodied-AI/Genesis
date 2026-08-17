@@ -51,14 +51,14 @@ def main():
     gs.init(backend=gs.cpu)
 
     scene = gs.Scene(
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(2.0, -4.5, 2.0),
-            camera_lookat=(2.0, 0.3, 0.1),
-        ),
         rigid_options=gs.options.RigidOptions(
             friction_cone=gs.friction_cone.elliptic,
             enable_torsional_friction=True,
             enable_rolling_friction=True,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.0, -4.5, 2.0),
+            camera_lookat=(2.0, 0.3, 0.1),
         ),
         show_viewer=args.vis,
     )

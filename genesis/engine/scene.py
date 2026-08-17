@@ -63,8 +63,6 @@ class Scene(RBC):
     ----------
     sim_options : gs.options.SimOptions
         The options configuring the overarching `simulator`, which in turn manages all the solvers.
-    coupler_options : gs.options.CouplerOptions
-        The options configuring the `coupler` between different solvers.
     tool_options : gs.options.ToolOptions
         The options configuring the tool_solver (``scene.sim.ToolSolver``).
     rigid_options : gs.options.RigidOptions
@@ -79,6 +77,8 @@ class Scene(RBC):
         The options configuring the sf_solver (``scene.sim.SFSolver``).
     pbd_options : gs.options.PBDOptions
         The options configuring the pbd_solver (``scene.sim.PBDSolver``).
+    coupler_options : gs.options.CouplerOptions
+        The options configuring the `coupler` between different solvers.
     vis_options : gs.options.VisOptions
         The options configuring the visualization system (``scene.visualizer``). Visualizer controls both the interactive viewer and the cameras.
     viewer_options : gs.options.ViewerOptions
@@ -94,7 +94,6 @@ class Scene(RBC):
     def __init__(
         self,
         sim_options: SimOptions | None = None,
-        coupler_options: BaseCouplerOptions | None = None,
         tool_options: ToolOptions | None = None,
         rigid_options: RigidOptions | None = None,
         kinematic_options: KinematicOptions | None = None,
@@ -103,6 +102,7 @@ class Scene(RBC):
         fem_options: FEMOptions | None = None,
         sf_options: SFOptions | None = None,
         pbd_options: PBDOptions | None = None,
+        coupler_options: BaseCouplerOptions | None = None,
         vis_options: VisOptions | None = None,
         viewer_options: ViewerOptions | None = None,
         profiling_options: ProfilingOptions | None = None,
@@ -115,7 +115,6 @@ class Scene(RBC):
 
         # Handling of default arguments
         sim_options = sim_options or SimOptions()
-        coupler_options = coupler_options or LegacyCouplerOptions()
         tool_options = tool_options or ToolOptions()
         rigid_options = rigid_options or RigidOptions()
         kinematic_options = kinematic_options or KinematicOptions()
@@ -124,6 +123,7 @@ class Scene(RBC):
         fem_options = fem_options or FEMOptions()
         sf_options = sf_options or SFOptions()
         pbd_options = pbd_options or PBDOptions()
+        coupler_options = coupler_options or LegacyCouplerOptions()
         vis_options = vis_options or VisOptions()
         viewer_options = viewer_options or ViewerOptions()
         profiling_options = profiling_options or ProfilingOptions()
@@ -136,7 +136,6 @@ class Scene(RBC):
         # validate options
         self._validate_options(
             sim_options,
-            coupler_options,
             tool_options,
             rigid_options,
             kinematic_options,
@@ -145,6 +144,7 @@ class Scene(RBC):
             fem_options,
             sf_options,
             pbd_options,
+            coupler_options,
             vis_options,
             viewer_options,
             profiling_options,
@@ -171,7 +171,6 @@ class Scene(RBC):
         self._sim = Simulator(
             scene=self,
             options=self.sim_options,
-            coupler_options=self.coupler_options,
             tool_options=self.tool_options,
             rigid_options=self.rigid_options,
             kinematic_options=self.kinematic_options,
@@ -180,6 +179,7 @@ class Scene(RBC):
             fem_options=self.fem_options,
             sf_options=self.sf_options,
             pbd_options=self.pbd_options,
+            coupler_options=self.coupler_options,
         )
 
         # visualizer
@@ -213,7 +213,6 @@ class Scene(RBC):
     def _validate_options(
         self,
         sim_options: SimOptions,
-        coupler_options: BaseCouplerOptions,
         tool_options: ToolOptions,
         rigid_options: RigidOptions,
         kinematic_options: KinematicOptions,
@@ -222,6 +221,7 @@ class Scene(RBC):
         fem_options: FEMOptions,
         sf_options: SFOptions,
         pbd_options: PBDOptions,
+        coupler_options: BaseCouplerOptions,
         vis_options: VisOptions,
         viewer_options: ViewerOptions,
         profiling_options: ProfilingOptions,

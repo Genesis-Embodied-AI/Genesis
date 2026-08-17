@@ -294,8 +294,8 @@ def main() -> None:
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            gravity=(0.0, 0.0, 0.0),
             substeps=4,
+            gravity=(0.0, 0.0, 0.0),
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.5, -0.2, 0.5),

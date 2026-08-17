@@ -30,7 +30,7 @@ def main():
     gs.init(backend=gs.gpu if args.gpu else gs.cpu)
 
     scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
+        sim_options=gs.options.SimOptions(
             dt=0.01,
             gravity=(0, 0, -9.81),
         ),

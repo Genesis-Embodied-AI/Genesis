@@ -110,12 +110,6 @@ def build_genesis_sim(
     friction_rolling,
 ):
     scene = gs.Scene(
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(3, -1, 1.5),
-            camera_lookat=(0.0, 0.0, 0.5),
-            camera_fov=30,
-            res=(960, 640),
-        ),
         sim_options=gs.options.SimOptions(
             dt=mj_sim.model.opt.timestep,
             substeps=1,
@@ -137,6 +131,12 @@ def build_genesis_sim(
             ls_iterations=mj_sim.model.opt.ls_iterations,
             ls_tolerance=mj_sim.model.opt.ls_tolerance,
             use_gjk_collision=gjk_collision,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(3, -1, 1.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+            camera_fov=30,
+            res=(960, 640),
         ),
         show_viewer=show_viewer,
         show_FPS=False,

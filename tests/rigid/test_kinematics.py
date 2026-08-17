@@ -299,12 +299,12 @@ def test_joint_get_anchor_pos_and_axis(n_envs):
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_inverse_kinematics_multilink(show_viewer, tol):
     scene = gs.Scene(
+        vis_options=gs.options.VisOptions(
+            rendered_envs_idx=(1,),
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.5, 0.0, 1.5),
             camera_lookat=(0.0, 0.0, 0.5),
-        ),
-        vis_options=gs.options.VisOptions(
-            rendered_envs_idx=(1,),
         ),
         show_viewer=show_viewer,
     )
@@ -542,7 +542,9 @@ def test_inverse_kinematics_multilink_local_points(show_viewer, tol):
 @pytest.mark.slow  # ~250s
 @pytest.mark.required
 def test_multi_robot_inverse_kinematics(show_viewer, tol):
-    scene = gs.Scene(show_viewer=show_viewer)
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
     scene.add_entity(gs.morphs.Plane())
 
     robot_positions = [

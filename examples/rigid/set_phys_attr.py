@@ -19,7 +19,6 @@ def main():
     )
 
     scene = gs.Scene(
-        viewer_options=viewer_options,
         sim_options=gs.options.SimOptions(
             dt=0.01,
         ),
@@ -31,6 +30,7 @@ def main():
             batch_links_info=True,
         ),
         show_viewer=args.vis,
+        viewer_options=viewer_options,
     )
 
     plane = scene.add_entity(

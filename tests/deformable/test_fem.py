@@ -212,10 +212,10 @@ def test_implicit_falling_sphere_box(coupler_type, material_model, show_viewer):
             dt=1.0 / 60.0,
             substeps=3 if coupler_type == gs.options.SAPCouplerOptions else 2,
         ),
+        coupler_options=coupler_type(),
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=True,
         ),
-        coupler_options=coupler_type(),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.2, 0.0, 0.0),
             camera_lookat=(0.0, 0.0, 0.0),
@@ -472,10 +472,10 @@ def test_implicit_sap_coupler_collide_sphere_box(show_viewer):
             dt=1.0 / 60.0,
             substeps=2,
         ),
+        coupler_options=gs.options.SAPCouplerOptions(),
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=True,
         ),
-        coupler_options=gs.options.SAPCouplerOptions(),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.6, 0.6, 0.45),
             camera_lookat=(0.0, 0.0, 0.15),
@@ -544,11 +544,11 @@ def test_implicit_sap_coupler_hard_constraint_and_collision(show_viewer):
             substeps=2,
             gravity=(0.0, 0.0, -9.81),
         ),
+        coupler_options=gs.options.SAPCouplerOptions(),
         fem_options=gs.options.FEMOptions(
             enable_vertex_constraints=True,
             use_implicit_solver=True,
         ),
-        coupler_options=gs.options.SAPCouplerOptions(),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.6, 0.6, HEIGHT + 0.5),
             camera_lookat=(0.0, 0.0, HEIGHT),
