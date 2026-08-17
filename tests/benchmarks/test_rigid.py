@@ -1100,9 +1100,9 @@ BENCHMARKS_FIELD = [
 
 # Reduced subset, run on the 'ndarray' dtype only.
 BENCHMARKS_NDARRAY = [
-    ("go2", None, None, 4096, gs.gpu),
-    ("g1_fall", None, None, 4096, gs.gpu),
     ("dex_hand", None, None, 4096, gs.gpu),
+    ("franka_accessors", None, None, 30000, gs.gpu),
+    ("table_bussing", None, None, 50, gs.cpu),
 ]
 
 # The dtype is selected before collection via 'GS_ENABLE_NDARRAY' ('0' => field, otherwise ndarray).
