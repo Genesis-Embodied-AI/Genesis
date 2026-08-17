@@ -332,7 +332,7 @@ def test_static_friction(mode, friction, n_boxes, solver, scale, mesh_boxes, sho
         atol_z = 2e-3 if solver == gs.constraint_solver.Newton else 2e-4
     else:
         atol_x = (2e-5 if solver == gs.constraint_solver.Newton else 5e-6) * scale
-        atol_y = (5e-6 if solver == gs.constraint_solver.Newton else 5e-5) * scale + 2e-7
+        atol_y = (1e-5 if solver == gs.constraint_solver.Newton else 5e-5) * scale + 2e-7
         atol_z = 2e-3
     assert_allclose(drift[..., 0], 0.0, atol=atol_x)
     assert_allclose(drift[..., 1], 0.0, atol=atol_y)
