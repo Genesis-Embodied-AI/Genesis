@@ -341,13 +341,21 @@ def test_hard_constraint(use_implicit_solver, show_viewer):
             model="linear_corotated" if use_implicit_solver else "stable_neohookean",
         ),
     )
+    anchor = scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(10.0, 0.0, HEIGHT),
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            fixed=True,
+        ),
+        material=gs.materials.Rigid(),
+    )
     scene.build(n_envs=2)
 
     assert_equal(box.get_el2v(), box.elems)
 
     target_poss = box.get_state().pos[..., VERTICES_IDX, :]
     box.set_vertex_constraints(VERTICES_IDX)
-    scene.step(update_visualizer=False)
+    scene.step()
     assert_allclose(box.get_state().pos[..., VERTICES_IDX, :], target_poss, tol=1e-8)
 
     # Simulate
@@ -400,6 +408,41 @@ def test_hard_constraint(use_implicit_solver, show_viewer):
     com_pos_z_f = box.get_state().pos[..., 8, 2]
     com_pos_delta = -0.5 * 9.81 * (n_steps * DT) ** 2
     assert_allclose(com_pos_z_f - com_pos_z_0, com_pos_delta, tol=0.05)
+
+    # Distinct positions and link poses per environment make cross-environment index mixups observable.
+    box.set_position(((0.0, 0.0, 0.0), (0.0, 0.0, 0.2)))
+    box.set_velocity((0.0, 0.0, 0.0))
+    anchor.set_pos(((10.0, 0.0, HEIGHT), (20.0, 0.0, HEIGHT)), relative=False)
+    anchor.set_quat(((1.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)), relative=False)
+    target_poss = box.get_state().pos[..., VERTICES_IDX, :]
+    box.set_vertex_constraints(VERTICES_IDX, envs_idx=[1])
+    scene.step()
+    assert_allclose(box.get_state().pos[1, VERTICES_IDX, :], target_poss[1], tol=1e-8)
+
+    box.remove_vertex_constraints(envs_idx=[1])
+    box.set_vertex_constraints(VERTICES_IDX, link=anchor.base_link, envs_idx=[1])
+    scene.step()
+    assert_allclose(box.get_state().pos[1, VERTICES_IDX, :], target_poss[1], tol=1e-8)
+
+    box.remove_vertex_constraints(envs_idx=[1])
+    box.set_position((0.0, 0.0, 0.0))
+    box.set_velocity((0.0, 0.0, 0.0))
+    target_poss = box.get_state().pos[..., VERTICES_IDX, :]
+    box.set_vertex_constraints(VERTICES_IDX)
+    target_poss = target_poss + torch.tensor(
+        (((0.0, 0.0, 0.0),), ((0.0, 0.0, 0.02),)), dtype=gs.tc_float, device=gs.device
+    )
+    box.update_constraint_targets(VERTICES_IDX, target_poss[1], envs_idx=[1])
+    scene.step()
+    assert_allclose(box.get_state().pos[..., VERTICES_IDX, :], target_poss, tol=1e-6)
+
+    box.remove_vertex_constraints(envs_idx=[1])
+    target_poss = target_poss + torch.tensor((0.0, 0.0, 0.05), dtype=gs.tc_float, device=gs.device)
+    box.update_constraint_targets(VERTICES_IDX, target_poss)
+    scene.step()
+    constrained_poss = box.get_state().pos[..., VERTICES_IDX, :]
+    assert_allclose(constrained_poss[0], target_poss[0], tol=1e-6)
+    assert (torch.linalg.norm(constrained_poss[1] - target_poss[1], dim=-1) > 0.01).all()
 
 
 @pytest.mark.required

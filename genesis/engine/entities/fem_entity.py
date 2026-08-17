@@ -994,31 +994,32 @@ class FEMEntity(Entity):
         target_poss = self._sanitize_verts_tensor(target_poss, gs.tc_float, verts_idx, envs_idx, (3,))
 
         if use_current_poss:
-            self._kernel_get_verts_pos(self._sim.cur_substep_local, verts_idx, target_poss)
+            self._kernel_get_verts_pos(self._sim.cur_substep_local, verts_idx, envs_idx, target_poss)
 
         if link is None:
             link_idx = -1
-            link_init_pos = torch.zeros((self._sim._B, 3), dtype=gs.tc_float, device=gs.device)
-            link_init_quat = torch.zeros((self._sim._B, 4), dtype=gs.tc_float, device=gs.device)
+            link_init_pos = torch.zeros((len(envs_idx), 3), dtype=gs.tc_float, device=gs.device)
+            link_init_quat = torch.zeros((len(envs_idx), 4), dtype=gs.tc_float, device=gs.device)
         else:
             assert isinstance(link, RigidLink), "Only RigidLink is supported for vertex constraints."
             link_idx = link.idx
-            link_init_pos = link.get_pos(relative=False)
-            link_init_quat = link.get_quat(relative=False)
             if self._scene.n_envs == 0:
-                link_init_pos = link_init_pos[None]
-                link_init_quat = link_init_quat[None]
+                link_init_pos = link.get_pos(relative=False)[None]
+                link_init_quat = link.get_quat(relative=False)[None]
+            else:
+                link_init_pos = link.get_pos(envs_idx=envs_idx, relative=False)
+                link_init_quat = link.get_quat(envs_idx=envs_idx, relative=False)
 
         self._solver._kernel_set_vertex_constraints(
             self._sim.cur_substep_local,
             verts_idx,
-            target_poss,
+            envs_idx,
+            link_idx,
             is_soft_constraint,
             stiffness,
-            link_idx,
+            target_poss,
             link_init_pos,
             link_init_quat,
-            envs_idx,
         )
 
     def update_constraint_targets(self, verts_idx_local, target_poss, envs_idx=None):
@@ -1033,16 +1034,16 @@ class FEMEntity(Entity):
         verts_idx = verts_idx_local + self._v_start
         target_poss = self._sanitize_verts_tensor(target_poss, gs.tc_float, verts_idx, envs_idx, (3,))
 
-        self._solver._kernel_update_constraint_targets(verts_idx, target_poss, envs_idx)
+        self._solver._kernel_update_constraint_targets(verts_idx, envs_idx, target_poss)
 
     def remove_vertex_constraints(self, verts_idx_local=None, envs_idx=None):
-        """Remove constraints from specified vertices, or all if None."""
+        """Remove constraints from the specified vertices and environments, or from all of them if None."""
         if not self._solver._constraints_initialized:
             gs.logger.warning("Ignoring remove_vertex_constraints; constraints have not been initialized.")
             return
 
         # FIXME: Quadrants 'fill' method is very inefficient. Try using zero-copy if possible.
-        if verts_idx_local is None:
+        if verts_idx_local is None and envs_idx is None:
             self._solver.vertex_constraints.is_constrained.fill(0)
             return
 
@@ -1053,11 +1054,14 @@ class FEMEntity(Entity):
         self._solver._kernel_remove_specific_constraints(verts_idx, envs_idx)
 
     @qd.kernel
-    def _kernel_get_verts_pos(self, f: qd.i32, verts_idx: qd.types.ndarray(), pos: qd.types.ndarray()):
-        for i_b, i_v_ in qd.ndrange(verts_idx.shape[0], verts_idx.shape[1]):
-            i_v = verts_idx[i_b, i_v_]
+    def _kernel_get_verts_pos(
+        self, f: qd.i32, verts_idx: qd.types.ndarray(), envs_idx: qd.types.ndarray(), pos: qd.types.ndarray()
+    ):
+        for i_b_, i_v_ in qd.ndrange(verts_idx.shape[0], verts_idx.shape[1]):
+            i_b = envs_idx[i_b_]
+            i_v = verts_idx[i_b_, i_v_]
             for j in qd.static(range(3)):
-                pos[i_b, i_v_, j] = self._solver.elements_v[f, i_v, i_b].pos[j]
+                pos[i_b_, i_v_, j] = self._solver.elements_v[f, i_v, i_b].pos[j]
 
     def get_el2v(self):
         """
