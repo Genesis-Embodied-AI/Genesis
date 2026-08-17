@@ -258,6 +258,10 @@ class OffscreenRenderer(object):
             from .platforms.osmesa import OSMesaPlatform
 
             self._platform = OSMesaPlatform(self.viewport_width, self.viewport_height)
+        elif platform == "cgl":
+            from .platforms.cgl import CGLPlatform
+
+            self._platform = CGLPlatform(self.viewport_width, self.viewport_height)
         else:
             raise ValueError("Unsupported PyOpenGL platform: {}".format(platform))
         self._platform.init_context()

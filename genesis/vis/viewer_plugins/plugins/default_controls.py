@@ -22,9 +22,22 @@ class DefaultControlsPlugin(ViewerPlugin):
     def build(self, viewer, camera: "Node", scene: "Scene"):
         super().build(viewer, camera, scene)
 
+        keybinds = []
+
+        # Both shortcuts prompt for a destination through 'imgui-bundle', an optional dependency, and come first to
+        # keep the on-screen help order.
+        try:
+            import imgui_bundle  # noqa: F401
+
+            keybinds += [
+                Keybind("record_video", Key.R, callback=self._toggle_record_video, allow_overload=True),
+                Keybind("save_image", Key.S, callback=self._save_image, allow_overload=True),
+            ]
+        except ImportError:
+            pass
+
         self.viewer.register_keybinds(
-            Keybind("record_video", Key.R, callback=self._toggle_record_video, allow_overload=True),
-            Keybind("save_image", Key.S, callback=self._save_image, allow_overload=True),
+            *keybinds,
             Keybind("reset_camera", Key.Z, callback=self._reset_camera, allow_overload=True),
             Keybind("camera_rotation", Key.A, callback=self._toggle_cam_rotation, allow_overload=True),
             Keybind("shadow", Key.H, callback=self._toggle_shadow, allow_overload=True),

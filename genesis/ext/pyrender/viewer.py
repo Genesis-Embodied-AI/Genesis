@@ -11,27 +11,14 @@ from threading import Event, RLock, Semaphore, Thread
 from typing import TYPE_CHECKING, Optional
 
 import numpy as np
+
 import OpenGL
 from OpenGL.GL import *
-
-import genesis as gs
-from genesis.vis.keybindings import Key, KeyAction, Keybind, Keybindings, KeyMod
-
-# Importing tkinter and creating a first context before importing pyglet is necessary to avoid later segfault on MacOS.
-# Note that destroying the window will cause segfault at exit.
-root = None
-if sys.platform.startswith("darwin"):
-    try:
-        from tkinter import Tk
-
-        root = Tk()
-        root.withdraw()
-    except Exception:
-        # Some minimal Python install may not provide a working tkinter interface even if it is a standard library
-        pass
-
 import pyglet
 
+import genesis as gs
+from genesis.utils.misc import get_default_screen
+from genesis.vis.keybindings import Key, KeyAction, Keybind, Keybindings, KeyMod
 from genesis.vis.viewer_plugins import EVENT_HANDLE_STATE, EVENT_HANDLED, ViewerPlugin
 
 from .camera import IntrinsicsCamera, OrthographicCamera, PerspectiveCamera
@@ -1009,8 +996,6 @@ class Viewer(pyglet.window.Window):
         self._trackball = Trackball(self._default_camera_pose, self.viewport_size, scale, centroid)
 
     def _get_save_filename(self, file_exts):
-        global root
-
         file_types = {
             "mp4": ("video files", "*.mp4"),
             "png": ("png files", "*.png"),
@@ -1018,29 +1003,28 @@ class Viewer(pyglet.window.Window):
             "gif": ("gif files", "*.gif"),
             "all": ("all files", "*"),
         }
-        filetypes = [file_types[x] for x in file_exts]
         save_dir = self.viewer_flags["save_directory"]
         if save_dir is None:
             save_dir = os.getcwd()
 
         try:
-            # Importing tkinter is very slow and not used very often. Let's delay import.
-            from tkinter import filedialog
+            # Imported on demand because 'imgui-bundle' is an optional dependency, unavailable on some platforms.
+            from imgui_bundle import portable_file_dialogs
 
-            dialog = filedialog.SaveAs(
-                parent=None,
-                initialdir=save_dir,
-                title="Select file save location",
-                filetypes=filetypes,
-                defaultextension=".png",
-            )
-            filename = dialog.show()
+            # The dialog is the native one of the platform and runs out of process, leaving pyglet sole owner of the
+            # windowing system. Filters are a flat sequence alternating label and patterns.
+            filters = [field for file_ext in file_exts for field in file_types[file_ext]]
+            filename = portable_file_dialogs.save_file("Select file save location", save_dir, filters).result()
         except Exception as e:
             gs.logger.warning(f"Failed to open file save location dialog: {e}")
             return None
 
         if not filename:
             return None
+        # The dialog hands the name back as typed, and a missing extension would leave the writer downstream with
+        # no format to select, so fall back on the first one offered.
+        if not os.path.splitext(filename)[1]:
+            filename = f"{filename}.{file_exts[0]}"
         return os.path.normpath(filename)
 
     def _save_image(self):
@@ -1255,12 +1239,18 @@ class Viewer(pyglet.window.Window):
                 # This approach avoids "flickering" when creating and closing an invalid context. Besides, it avoids
                 # "frozen" graphical window during compilation that would be interpreted as as bug by the end-user.
                 try:
+                    # Resolving the screen rather than letting pyglet do it keeps the viewer available while every
+                    # display is asleep, which pyglet reports as no screen at all. See 'get_default_screen'. It
+                    # belongs inside this block, whose failures are reported to the thread waiting on startup.
+                    screen = get_default_screen()
+
                     super().__init__(
                         config=conf,
                         visible=False,
                         resizable=True,
                         width=self._viewport_size[0],
                         height=self._viewport_size[1],
+                        screen=screen,
                         # Enable vsync only when the viewer owns a render thread. In main-thread mode (e.g. macOS),
                         # a vsync-locked flip() would block the simulation loop for up to a display frame on every
                         # redraw, periodically overrunning the step budget and stuttering; redraws are already
@@ -1283,8 +1273,11 @@ class Viewer(pyglet.window.Window):
                 # Run the entire rendering pipeline first without window, to make sure that all kernels are compiled
                 self.refresh()
 
-                # At this point, we are all set to display the graphical window
-                self.set_visible(True)
+                # At this point, we are all set to display the graphical window, unless asked to keep the screen
+                # free of any. The request is read here rather than at import, this module being imported before
+                # the caller gets a chance to make it. pyglet's own option only covers its EGL-backed backend.
+                if not (pyglet.options["headless"] or os.environ.get("GS_HEADLESS")):
+                    self.set_visible(True)
 
                 # Run the entire rendering pipeline once again, as a final validation that everything is fine
                 self.refresh()
@@ -1328,7 +1321,11 @@ class Viewer(pyglet.window.Window):
 
         # Update window title
         self.set_caption(self.viewer_flags["window_title"])
-        self.activate()
+
+        # Bringing the window to the front pulls the whole application forward on MacOS, which puts it on screen even
+        # though it was never mapped, so it is skipped whenever the screen must be left alone.
+        if not (pyglet.options["headless"] or os.environ.get("GS_HEADLESS")):
+            self.activate()
 
         # The viewer can be considered as fully initialized at this point
         if not self._initialized_event.is_set():

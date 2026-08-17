@@ -21,44 +21,38 @@ from syrupy.extensions.image import PNGImageSnapshotExtension
 
 from tests.gpu_info import detect_gpu_backend
 
-# Mock tkinter module for backward compatibility because it is a hard dependency for old Genesis versions
-has_tkinter = False
-try:
-    import tkinter
-
-    has_tkinter = True
-except ImportError:
-    tkinter = type(sys)("tkinter")
-    tkinter.filedialog = lambda *arg, **kwargs: None
-    tkinter.mainloop = type(sys)("mainloop")
-    tkinter.mainloop.__code__ = ""
-    tkinter.Tk = type(sys)("Tk")
-    tkinter.Misc = type(sys)("Misc")
-    tkinter.Misc.mainloop = tkinter.mainloop
-    sys.modules["tkinter"] = tkinter
-
-# Determine whether a screen is available
-if has_tkinter:
-    has_display = True
-    try:
-        root = tkinter.Tk()
-        root.withdraw()
-        root.destroy()
-    except tkinter.TclError:
-        has_display = False
-else:
-    # Assuming headless server if tkinter is not installed unless DISPLAY env var is available on Linux
-    if sys.platform.startswith("linux"):
-        has_display = bool(os.environ.get("DISPLAY"))
-    else:
-        has_display = False
-
-# Determine whether EGL driver is available
+# Determine whether EGL driver is available, which is what backs pyglet's own headless mode
 has_egl = True
 try:
     pyglet.lib.load_library("EGL")
 except ImportError:
     has_egl = False
+
+# Determine whether a screen is available, which only the interactive viewer needs. Resolving a display binds
+# pyglet's windowing backend and would rule out its headless one, so the environment answers where headless exists.
+if has_egl:
+    has_display = bool(os.environ.get("DISPLAY")) if sys.platform.startswith("linux") else False
+else:
+    try:
+        has_display = bool(pyglet.display.get_display().get_screens())
+    except Exception:
+        has_display = False
+    if not has_display and sys.platform == "darwin":
+        # A display asleep, as while the screen is locked, stops being active but stays online, and Genesis opens
+        # the viewer window on it all the same, which 'genesis.utils.misc.get_default_screen' takes care of.
+        from pyglet.libs.darwin.cocoapy import quartz
+
+        num_displays = ctypes.c_uint32()
+        quartz.CGGetOnlineDisplayList(0, None, ctypes.byref(num_displays))
+        has_display = bool(num_displays.value)
+
+# Determine whether the optional 'imgui-bundle' dependency is available
+try:
+    import imgui_bundle  # noqa: F401
+
+    is_imgui_bundle_supported = True
+except ImportError:
+    is_imgui_bundle_supported = False
 
 # Forcibly disable Mujoco OpenGL to avoid conflicts with Genesis
 os.environ["MUJOCO_GL"] = "0"
@@ -100,6 +94,7 @@ SKIP_NO_MADRONA = _skip_reason("BatchRenderer is not supported because 'gs_madro
 SKIP_NO_LUISA = _skip_reason("RayTracer is not supported because 'LuisaRenderPy' is not available.")
 SKIP_NO_VIEWER = _skip_reason("Interactive viewer not supported on this platform.")
 SKIP_NO_OMNIVERSE_KIT = _skip_reason("omniverse-kit support not available")
+SKIP_NO_IMGUI_BUNDLE = _skip_reason("'imgui-bundle' is not available.")
 
 
 def is_mem_monitoring_supported():
@@ -196,10 +191,10 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     if is_pdb_enabled:
         config.option.reruns = 0
 
-    # Force headless rendering if available and the interactive viewer is disabled.
-    # FIXME: It breaks rendering on some platform...
-    # if not show_viewer and has_egl:
-    #     pyglet.options["headless"] = True
+    # Keep the viewer off the developer's desktop when it is not wanted, the variable carrying the request to the
+    # xdist workers.
+    if not show_viewer:
+        os.environ["GS_HEADLESS"] = "1"
 
     # Make sure that the number of workers is not too large if specified
     if isinstance(config.option.numprocesses, int):

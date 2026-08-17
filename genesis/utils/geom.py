@@ -2657,3 +2657,17 @@ def orthogonals(a) -> tuple[np.ndarray, np.ndarray]:
     b_1d /= np.sqrt(np.sum(np.square(b_1d), -1)).reshape((-1, 1))
 
     return np.cross(b_1d, a_1d).reshape((*B, 3)), b_1d.reshape((*B, 3))
+
+
+@qd.func
+def qd_hash01(k0, k1, k2, k3):
+    """Counter-based hash to [0, 1): value depends only on the four keys, never on thread scheduling, so kernels
+    drawing from it stay bitwise deterministic under any parallel execution."""
+    h = qd.cast(k0, qd.u32) * qd.u32(0x9E3779B1)
+    h = (h ^ qd.cast(k1, qd.u32)) * qd.u32(0x85EBCA77)
+    h = (h ^ qd.cast(k2, qd.u32)) * qd.u32(0xC2B2AE3D)
+    h = (h ^ qd.cast(k3, qd.u32)) * qd.u32(0x27D4EB2F)
+    h = h ^ (h >> qd.u32(15))
+    h = h * qd.u32(0x2C1B3C6D)
+    h = h ^ (h >> qd.u32(12))
+    return qd.cast(h >> qd.u32(8), gs.qd_float) * (1.0 / 16777216.0)

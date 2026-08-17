@@ -110,8 +110,7 @@ class Morph(Options):
         Whether the entity needs to be considered for collision checking. Defaults to True.
         `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     requires_jac_and_IK : bool, optional
-        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
-        **This is only used for RigidEntity.**
+        This parameter is deprecated.
     is_free : bool, optional
         This parameter is deprecated.
     """
@@ -125,7 +124,6 @@ class Morph(Options):
     offset_quat: UnitVec4FType | None = None
     visualization: StrictBool = True
     collision: StrictBool = True
-    requires_jac_and_IK: StrictBool = False
     enable_custom_vverts: StrictBool = False
 
     @model_validator(mode="before")
@@ -134,6 +132,8 @@ class Morph(Options):
         is_free = data.pop("is_free", None)
         if is_free is not None:
             gs.logger.warning("'is_free' is deprecated and will be removed in the future.")
+        if data.pop("requires_jac_and_IK", None) is not None:
+            gs.logger.warning("'requires_jac_and_IK' is deprecated and has no effect.")
         euler = data.get("euler")
         quat = data.get("quat")
         if euler is not None and quat is not None:
@@ -201,9 +201,6 @@ class Primitive(Morph):
     collision : bool, optional
         Whether the entity needs to be considered for collision checking. Defaults to True.
         `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
-    requires_jac_and_IK : bool, optional
-        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics.
-        Defaults to False. **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the primitive should be fixed. Defaults to False. **This is only used for RigidEntity.**
     batch_fixed_verts : bool, optional
@@ -254,9 +251,6 @@ class Box(Primitive, TetGenMixin):
     collision : bool, optional
         Whether the entity needs to be considered for collision checking. Defaults to True.
         `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
-    requires_jac_and_IK : bool, optional
-        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
-        **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the primitive should be fixed. Defaults to False. **This is only used for RigidEntity.**
     batch_fixed_verts : bool, optional
@@ -346,9 +340,6 @@ class Cylinder(Primitive, TetGenMixin):
     collision : bool, optional
         Whether the entity needs to be considered for collision checking. Defaults to True.
         `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
-    requires_jac_and_IK : bool, optional
-        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
-        **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the primitive should be fixed. Defaults to False. **This is only used for RigidEntity.**
     batch_fixed_verts : bool, optional
@@ -411,9 +402,6 @@ class Sphere(Primitive, TetGenMixin):
     collision : bool, optional
         Whether the entity needs to be considered for collision checking. Defaults to True.
         `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
-    requires_jac_and_IK : bool, optional
-        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
-        **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the primitive should be fixed. Defaults to False. **This is only used for RigidEntity.**
     batch_fixed_verts : bool, optional
@@ -508,8 +496,6 @@ class Plane(Primitive):
             gs.raise_exception("Plane `fixed` must be True.")
         super().__init__(fixed=True, **data)
 
-        if self.requires_jac_and_IK:
-            gs.raise_exception("`requires_jac_and_IK` must be False for `Plane`.")
         if self.enable_custom_vverts:
             gs.raise_exception("`enable_custom_vverts` must be False for `Plane`.")
 
@@ -597,9 +583,6 @@ class FileMorph(Morph):
     batch_fixed_verts : bool, optional
         Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
         significantly increasing memory usage. Default to true. **This is only used for RigidEntity.**
-    requires_jac_and_IK : bool, optional
-        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
-        **This is only used for RigidEntity.**
     """
 
     # Shown in the repr header via __repr_name__ (a bounded identifier for in-memory descriptions), so it is kept out
@@ -780,9 +763,6 @@ class Mesh(FileMorph, TetGenMixin):
     collision : bool, optional
         Whether the entity needs to be considered for collision checking. Defaults to True.
         `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
-    requires_jac_and_IK : bool, optional
-        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
-        **This is only used for RigidEntity.**
     parse_glb_with_zup : bool, optional
         This parameter is deprecated, see file_meshes_are_zup.
     file_meshes_are_zup : bool, optional
@@ -979,8 +959,6 @@ class MJCF(FileMorph):
     collision : bool, optional
         Whether the entity needs to be considered for collision checking. Defaults to True.
         `visualization` and `collision` cannot both be False.
-    requires_jac_and_IK : bool, optional
-        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to True.
     batch_fixed_verts : bool, optional
         Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
         significantly increasing memory usage. Default to true. **This is only used for RigidEntity.**
@@ -998,7 +976,6 @@ class MJCF(FileMorph):
 
     pos: Vec3FType | None = None
     quat: UnitVec4FType | None = None
-    requires_jac_and_IK: StrictBool = True
     default_armature: float | None = Field(default=0.1, ge=0)
     exclude_ground_plane: StrictBool = False
 
@@ -1111,8 +1088,6 @@ class URDF(FileMorph):
     collision : bool, optional
         Whether the entity needs to be considered for collision checking. Defaults to True.
         `visualization` and `collision` cannot both be False.
-    requires_jac_and_IK : bool, optional
-        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to True.
     fixed : bool, optional
         Whether the baselink of the entity should be fixed. Defaults to False.
     batch_fixed_verts : bool, optional
@@ -1141,7 +1116,6 @@ class URDF(FileMorph):
 
     fixed: StrictBool = False
     prioritize_urdf_material: StrictBool = False
-    requires_jac_and_IK: StrictBool = True
     merge_fixed_links: StrictBool = True
     links_to_keep: StrArrayType = ()
     default_armature: float | None = Field(default=0.1, ge=0)
@@ -1610,9 +1584,6 @@ class USD(FileMorph):
     batch_fixed_verts : bool, optional
         Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
         significantly increasing memory usage. Default to true. **This is only used for RigidEntity.**
-    requires_jac_and_IK : bool, optional
-        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
-        **This is only used for RigidEntity.**
     default_armature : float, optional
         Default rotor inertia of the actuators, applied to every joint whose armature is not specified in the model
         file, regardless of whether it is actuated. None to disable. Default to 0.1.

@@ -1421,7 +1421,7 @@ class Scene(RBC):
 
             Ts = np.zeros((N_new, 4, 4))
             for i in range(N_new):
-                pos, quat = entity.forward_kinematics(qposs[indices[i]])
+                pos, quat = self.rigid_solver.forward_kinematics_query(entity, qposs[indices[i]])
                 Ts[i] = tensor_to_array(gu.trans_quat_to_T(pos[link_idx], quat[link_idx]))
 
             return self._visualizer.context.draw_debug_frames(

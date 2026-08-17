@@ -191,7 +191,8 @@ cocoapy.NSOpenGLPFAAllRenderers = 70  # NSOpenGLPFARendererID
 cocoapy.NSOpenGLPFAMaximumPolicy = 0x00020400  # kCGLRendererGenericFloatID
 ```
 
-- Run with the same flags as macOS CI: `PYTHONPATH=<dir-with-force_sw.py> GS_TORCH_FORCE_CPU_DEVICE=1 pytest -p force_sw --dev --logical --backend cpu --forked <tests>` (CI additionally selects `-m 'required and not slow'`).
+- This reaches pyglet-created contexts only, so offscreen rendering must be routed back through the pyglet platform with `PYOPENGL_PLATFORM=pyglet`; its own default on macOS is CGL, which pyglet knows nothing about.
+- Run with the same flags as macOS CI: `PYTHONPATH=<dir-with-force_sw.py> PYOPENGL_PLATFORM=pyglet GS_TORCH_FORCE_CPU_DEVICE=1 pytest -p force_sw --dev --logical --backend cpu --forked <tests>` (CI additionally selects `-m 'required and not slow'`).
 - Verify it took effect: Genesis logs "Software rendering context detected" and `scene.visualizer.is_software` is True.
 - Known failure mode: any geometry with vertices outside the camera frustum is misrasterized, breaking pixel comparisons. In practice this bites through ground planes, whose default `plane_size` is effectively infinite (1 km x 1 km): give them a finite size and a position that puts every vertex inside the view.
 - Known failure mode: shadow mapping is forcibly disabled on software rendering backends for performance reasons, so snapshot scenes must disable shadows explicitly (`shadow=False` for the rasterizer); a snapshot generated on hardware GL with shadows enabled can never match.
