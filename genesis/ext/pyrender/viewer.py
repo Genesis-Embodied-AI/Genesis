@@ -17,6 +17,7 @@ from OpenGL.GL import *
 import pyglet
 
 import genesis as gs
+from genesis.utils.misc import get_default_screen
 from genesis.vis.keybindings import Key, KeyAction, Keybind, Keybindings, KeyMod
 from genesis.vis.viewer_plugins import EVENT_HANDLE_STATE, EVENT_HANDLED, ViewerPlugin
 
@@ -51,10 +52,6 @@ HELP_TEXT_KEYBIND_NAME = "toggle_instructions"
 pyglet.options["shadow_window"] = False
 if pyglet.options.get("dpi_scaling") != "real":
     pyglet.options["dpi_scaling"] = "real"
-
-# Keeps the screen free of any window. pyglet's own option is EGL-backed and also selects its window and display
-# classes, so it cannot be requested off Linux, whereas 'GS_HEADLESS' applies everywhere.
-IS_HEADLESS = pyglet.options["headless"] or bool(os.environ.get("GS_HEADLESS"))
 
 
 class Viewer(pyglet.window.Window):
@@ -1242,12 +1239,18 @@ class Viewer(pyglet.window.Window):
                 # This approach avoids "flickering" when creating and closing an invalid context. Besides, it avoids
                 # "frozen" graphical window during compilation that would be interpreted as as bug by the end-user.
                 try:
+                    # Resolving the screen rather than letting pyglet do it keeps the viewer available while every
+                    # display is asleep, which pyglet reports as no screen at all. See 'get_default_screen'. It
+                    # belongs inside this block, whose failures are reported to the thread waiting on startup.
+                    screen = get_default_screen()
+
                     super().__init__(
                         config=conf,
                         visible=False,
                         resizable=True,
                         width=self._viewport_size[0],
                         height=self._viewport_size[1],
+                        screen=screen,
                         # Enable vsync only when the viewer owns a render thread. In main-thread mode (e.g. macOS),
                         # a vsync-locked flip() would block the simulation loop for up to a display frame on every
                         # redraw, periodically overrunning the step budget and stuttering; redraws are already
@@ -1270,8 +1273,10 @@ class Viewer(pyglet.window.Window):
                 # Run the entire rendering pipeline first without window, to make sure that all kernels are compiled
                 self.refresh()
 
-                # At this point, we are all set to display the graphical window
-                if not IS_HEADLESS:
+                # At this point, we are all set to display the graphical window, unless asked to keep the screen
+                # free of any. The request is read here rather than at import, this module being imported before
+                # the caller gets a chance to make it. pyglet's own option only covers its EGL-backed backend.
+                if not (pyglet.options["headless"] or os.environ.get("GS_HEADLESS")):
                     self.set_visible(True)
 
                 # Run the entire rendering pipeline once again, as a final validation that everything is fine
@@ -1316,7 +1321,11 @@ class Viewer(pyglet.window.Window):
 
         # Update window title
         self.set_caption(self.viewer_flags["window_title"])
-        self.activate()
+
+        # Bringing the window to the front pulls the whole application forward on MacOS, which puts it on screen even
+        # though it was never mapped, so it is skipped whenever the screen must be left alone.
+        if not (pyglet.options["headless"] or os.environ.get("GS_HEADLESS")):
+            self.activate()
 
         # The viewer can be considered as fully initialized at this point
         if not self._initialized_event.is_set():

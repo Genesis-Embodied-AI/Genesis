@@ -518,6 +518,42 @@ def make_tensor_field(shape: tuple[int, ...] = (), dtype_factory: Callable[[], t
     return field(default_factory=_default_factory)
 
 
+def get_default_screen(display=None):
+    """Return the screen a window should be created on, for the given pyglet display or the default one.
+
+    Leaving the display out selects whichever pyglet itself would use, headless included, which is what creating a
+    window must go through. Passing one explicitly is for callers that need a specific backend, such as the native
+    display backing a physical screen size.
+
+    MacOS enumerates only the displays that are awake, so every one of them being asleep, as happens while the screen
+    is locked, leaves pyglet with no screen at all and no way to open a window. Such a display is still online and
+    accepts a window all the same, hence the fallback, which keeps the interactive viewer available on a locked
+    machine. The main display is preferred throughout.
+    """
+    # The display namespace moved from 'pyglet.canvas' to 'pyglet.display' in pyglet 2.0.
+    displays = pyglet.canvas if pyglet.version < "2.0" else pyglet.display
+    if display is None:
+        display = displays.get_display()
+
+    try:
+        return display.get_default_screen()
+    except IndexError:
+        if pyglet.compat_platform != "darwin":
+            raise
+
+        from pyglet.libs.darwin.cocoapy import CGDirectDisplayID, quartz
+
+        CocoaScreen = import_module(f"{displays.__name__}.cocoa").CocoaScreen
+        display_ids = (CGDirectDisplayID * 256)()
+        num_displays = ctypes.c_uint32()
+        quartz.CGGetOnlineDisplayList(len(display_ids), display_ids, ctypes.byref(num_displays))
+        if not num_displays.value:
+            raise
+        online_ids = [display_ids[i] for i in range(num_displays.value)]
+        main_id = quartz.CGMainDisplayID()
+        return CocoaScreen(display, main_id if main_id in online_ids else online_ids[0])
+
+
 def try_get_display_size() -> tuple[int | None, int | None, float | None]:
     """
     Try to connect to display if it exists and get the screen size.
@@ -533,10 +569,10 @@ def try_get_display_size() -> tuple[int | None, int | None, float | None]:
     screen_scale : float | None
         The scale of the screen.
     """
-    # Resolve pyglet's native display backend directly (under 'pyglet.canvas' before 2.0, 'pyglet.display' from 2.0 on),
-    # never the placeholder headless one whose finalizer calls eglTerminate on the EGL display the offscreen renderers
-    # share. A headless process then raises here, reported as no display - the fallback to a default size is the
-    # viewer's concern. Reuse a display pyglet already has open if any (the isinstance check skips a headless one).
+    # Resolve pyglet's native display backend directly, never the placeholder headless one whose finalizer calls
+    # eglTerminate on the EGL display the offscreen renderers share. A headless process then raises here, reported as
+    # no display - the fallback to a default size is the viewer's concern. Reuse a display pyglet already has open if
+    # any (the isinstance check skips a headless one).
     native = {
         "darwin": ("cocoa", "CocoaDisplay"),
         "win32": ("win32", "Win32Display"),
@@ -548,16 +584,13 @@ def try_get_display_size() -> tuple[int | None, int | None, float | None]:
     # The backend submodule depends on the platform and pyglet version, and a foreign-platform one fails to import
     # (e.g. 'win32' off Windows needs Windows-only ctypes), so it cannot be a top-level import; resolving it by
     # computed name avoids a platform-by-version tree of local imports.
-    if pyglet.version < "2.0":
-        Display = getattr(import_module(f"pyglet.canvas.{native[0]}"), native[1])
-        display = next((d for d in pyglet.canvas._displays if isinstance(d, Display)), None)
-    else:
-        Display = getattr(import_module(f"pyglet.display.{native[0]}"), native[1])
-        display = next((d for d in pyglet.display._displays if isinstance(d, Display)), None)
+    displays = pyglet.canvas if pyglet.version < "2.0" else pyglet.display
+    Display = getattr(import_module(f"{displays.__name__}.{native[0]}"), native[1])
+    display = next((d for d in displays._displays if isinstance(d, Display)), None)
     if display is None:
         display = Display()
 
-    screen = display.get_default_screen()
+    screen = get_default_screen(display)
     if pyglet.version < "2.0":
         screen_scale = 1.0
     else:
