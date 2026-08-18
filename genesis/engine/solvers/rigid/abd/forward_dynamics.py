@@ -31,8 +31,13 @@ def update_qacc_from_qvel_delta(
     n_dofs = dyn_state.dofs.ctrl_mode.shape[0]
     _B = dyn_state.dofs.ctrl_mode.shape[1]
 
-    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_0, i_b in qd.ndrange(1, _B) if qd.static(rigid_config.use_hibernation) else qd.ndrange(n_dofs, _B):
+    # Read shape constants from static config (qd.template) so they're compile-time literals,
+    # avoiding _serial shape-lookup dispatches that the ndarray descriptor path would otherwise emit.
+    n_dofs = static_rigid_sim_config.n_dofs_
+    _B = static_rigid_sim_config.n_envs
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_0, i_b in qd.ndrange(1, _B) if qd.static(static_rigid_sim_config.use_hibernation) else qd.ndrange(n_dofs, _B):
         for i_1 in (
             range(rigid_info.n_awake_dofs[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
@@ -53,8 +58,11 @@ def update_qvel(
     _B = dyn_state.dofs.vel.shape[1]
     n_dofs = dyn_state.dofs.vel.shape[0]
 
-    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_0, i_b in qd.ndrange(1, _B) if qd.static(rigid_config.use_hibernation) else qd.ndrange(n_dofs, _B):
+    _B = static_rigid_sim_config.n_envs
+    n_dofs = static_rigid_sim_config.n_dofs_
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_0, i_b in qd.ndrange(1, _B) if qd.static(static_rigid_sim_config.use_hibernation) else qd.ndrange(n_dofs, _B):
         for i_1 in (
             range(rigid_info.n_awake_dofs[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
@@ -137,6 +145,155 @@ def func_vel_at_point(link_idx, i_b, pos_world, links_state: array_class.LinksSt
     return vel_rot + vel_lin
 
 
+
+@qd.func
+def func_compute_mass_matrix_lds(
+    implicit_damping: qd.template(),
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    BW = qd.static(is_backward)
+
+    # LDS-optimized GPU implementation using a fixed block size and the
+    # configured per-entity tiled DoF bound.
+    BLOCK_DIM = qd.static(64)
+    MAX_DOFS_PER_ENTITY = qd.static(static_rigid_sim_config.tiled_n_dofs_per_entity)
+
+    n_entities = static_rigid_sim_config.n_entities_
+    _B = static_rigid_sim_config.n_envs
+    n_thread_entities = static_rigid_sim_config.n_entities_ if qd.static(static_rigid_sim_config.use_hibernation) else n_entities
+
+    qd.loop_config(block_dim=BLOCK_DIM)
+    for i in range(n_thread_entities * _B * BLOCK_DIM):
+        tid = i % BLOCK_DIM
+        i_e_local = (i // BLOCK_DIM) % n_thread_entities
+        i_b = i // (BLOCK_DIM * n_thread_entities)
+
+        if i_b >= _B:
+            continue
+
+        i_e = i_e_local
+
+        if qd.static(static_rigid_sim_config.use_hibernation):
+            if not func_check_index_range(i_e_local, static_rigid_sim_config.n_entities_):
+                continue
+            i_e = rigid_global_info.awake_entities[i_e_local, i_b]
+        entity_dof_start = entities_info.dof_start[i_e]
+        entity_dof_end = entities_info.dof_end[i_e]
+        n_dofs = entities_info.n_dofs[i_e]
+
+        # This kernel uses a dense local mass matrix in shared memory, so its LDS
+        # footprint is larger than kernels that use packed lower-triangular storage.
+        # Total bytes = 4 * (n^2 + 12n), where:
+        #   - n^2      comes from mass_mat_local[n, n]
+        #   - 12n      comes from 4 vector caches of shape [n, 3]
+        # Constraining that to ~64KB gives n <= 122 for 4-byte floats.
+        KERNEL_MAX_DOFS_PER_ENTITY = qd.static(122 if MAX_DOFS_PER_ENTITY > 122 else MAX_DOFS_PER_ENTITY)
+
+        if n_dofs <= 0 or n_dofs > KERNEL_MAX_DOFS_PER_ENTITY:
+            continue
+
+        # Shared-memory allocation sized to this kernel's actual dense-matrix budget.
+        f_ang_cache = qd.simt.block.SharedArray((KERNEL_MAX_DOFS_PER_ENTITY, 3), gs.qd_float)
+        f_vel_cache = qd.simt.block.SharedArray((KERNEL_MAX_DOFS_PER_ENTITY, 3), gs.qd_float)
+        cdof_ang_cache = qd.simt.block.SharedArray((KERNEL_MAX_DOFS_PER_ENTITY, 3), gs.qd_float)
+        cdof_vel_cache = qd.simt.block.SharedArray((KERNEL_MAX_DOFS_PER_ENTITY, 3), gs.qd_float)
+        mass_mat_local = qd.simt.block.SharedArray(
+            (KERNEL_MAX_DOFS_PER_ENTITY, KERNEL_MAX_DOFS_PER_ENTITY), gs.qd_float
+        )
+
+        # Cooperative loading into LDS
+        for load_round in range((n_dofs + BLOCK_DIM - 1) // BLOCK_DIM):
+            i_d_local = load_round * BLOCK_DIM + tid
+            if i_d_local < n_dofs:
+                i_d_global = entity_dof_start + i_d_local
+
+                # Coalesced loading of all vector components
+                f_ang_cache[i_d_local, 0] = dofs_state.f_ang[i_d_global, i_b][0]
+                f_ang_cache[i_d_local, 1] = dofs_state.f_ang[i_d_global, i_b][1]
+                f_ang_cache[i_d_local, 2] = dofs_state.f_ang[i_d_global, i_b][2]
+
+                f_vel_cache[i_d_local, 0] = dofs_state.f_vel[i_d_global, i_b][0]
+                f_vel_cache[i_d_local, 1] = dofs_state.f_vel[i_d_global, i_b][1]
+                f_vel_cache[i_d_local, 2] = dofs_state.f_vel[i_d_global, i_b][2]
+
+                cdof_ang_cache[i_d_local, 0] = dofs_state.cdof_ang[i_d_global, i_b][0]
+                cdof_ang_cache[i_d_local, 1] = dofs_state.cdof_ang[i_d_global, i_b][1]
+                cdof_ang_cache[i_d_local, 2] = dofs_state.cdof_ang[i_d_global, i_b][2]
+
+                cdof_vel_cache[i_d_local, 0] = dofs_state.cdof_vel[i_d_global, i_b][0]
+                cdof_vel_cache[i_d_local, 1] = dofs_state.cdof_vel[i_d_global, i_b][1]
+                cdof_vel_cache[i_d_local, 2] = dofs_state.cdof_vel[i_d_global, i_b][2]
+
+        qd.simt.block.sync()  # Ensure all data is loaded
+
+        # Compute mass matrix using LDS - optimal performance
+        n_pairs = n_dofs * (n_dofs + 1) // 2
+        pair_idx = tid
+
+        while pair_idx < n_pairs:
+            # Convert linear index to (i, j) lower triangular
+            i_d_, j_d_ = _linear_to_lower_tri(pair_idx)
+
+            # Fast LDS-based computation
+            ang_dot = (f_ang_cache[i_d_, 0] * cdof_ang_cache[j_d_, 0] +
+                      f_ang_cache[i_d_, 1] * cdof_ang_cache[j_d_, 1] +
+                      f_ang_cache[i_d_, 2] * cdof_ang_cache[j_d_, 2])
+
+            vel_dot = (f_vel_cache[i_d_, 0] * cdof_vel_cache[j_d_, 0] +
+                      f_vel_cache[i_d_, 1] * cdof_vel_cache[j_d_, 1] +
+                      f_vel_cache[i_d_, 2] * cdof_vel_cache[j_d_, 2])
+
+            # Store in local matrix
+            mass_mat_local[i_d_, j_d_] = ang_dot + vel_dot
+            pair_idx += BLOCK_DIM
+
+        qd.simt.block.sync()
+
+        # Write results to global memory with masking
+        global_pair_idx = tid
+        while global_pair_idx < n_pairs:
+            i_d_ = qd.cast(qd.floor((qd.sqrt(qd.cast(8 * global_pair_idx + 1, qd.f32)) - 1.0) / 2.0), qd.i32)
+            if (i_d_ + 1) * (i_d_ + 2) // 2 <= global_pair_idx:
+                i_d_ = i_d_ + 1
+            j_d_ = global_pair_idx - i_d_ * (i_d_ + 1) // 2
+
+            i_d_global = entity_dof_start + i_d_
+            j_d_global = entity_dof_start + j_d_
+
+            # Apply masking and store
+            rigid_global_info.mass_mat[i_d_global, j_d_global, i_b] = (
+                mass_mat_local[i_d_, j_d_] * rigid_global_info.mass_parent_mask[i_d_global, j_d_global]
+            )
+
+            global_pair_idx += BLOCK_DIM
+
+        # Mirror upper triangle for symmetric matrix in both forward and backward passes
+        qd.simt.block.sync()  # Ensure lower-triangle stores are complete
+
+        n_upper_pairs = n_dofs * (n_dofs - 1) // 2
+        upper_idx = tid
+
+        while upper_idx < n_upper_pairs:
+            # Convert to upper triangle indices
+            i_d_ = qd.cast(qd.floor((qd.sqrt(qd.cast(8 * upper_idx + 1, qd.f32)) + 1.0) / 2.0), qd.i32)
+            if i_d_ * (i_d_ + 1) // 2 <= upper_idx:
+                i_d_ = i_d_ + 1
+            j_d_ = upper_idx - i_d_ * (i_d_ - 1) // 2
+
+            i_d_global = entity_dof_start + j_d_  # Note: swapped for upper triangle
+            j_d_global = entity_dof_start + i_d_
+
+            # Mirror from lower triangle
+            rigid_global_info.mass_mat[i_d_global, j_d_global, i_b] = rigid_global_info.mass_mat[j_d_global, i_d_global, i_b]
+
+            upper_idx += BLOCK_DIM
 @qd.func
 def func_compute_mass_matrix(
     dyn_state: array_class.DynState,
@@ -156,9 +313,9 @@ def func_compute_mass_matrix(
     # crb initialize
     qd.loop_config(name="crb_initialize", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
-        qd.ndrange(1, dyn_state.links.pos.shape[1])
-        if qd.static(rigid_config.use_hibernation)
-        else qd.ndrange(dyn_state.links.pos.shape[0], dyn_state.links.pos.shape[1])
+        qd.ndrange(1, static_rigid_sim_config.n_envs)
+        if qd.static(static_rigid_sim_config.use_hibernation)
+        else qd.ndrange(static_rigid_sim_config.n_links_, static_rigid_sim_config.n_envs)
     ):
         for i_1 in (
             range(rigid_info.n_awake_links[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
@@ -177,9 +334,9 @@ def func_compute_mass_matrix(
     # another tree, whose crb is unused. Mirrors the root_idx tree walk in func_update_cartesian_space.
     qd.loop_config(name="crb", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
-        qd.ndrange(1, dyn_state.links.pos.shape[1])
-        if qd.static(rigid_config.use_hibernation)
-        else qd.ndrange(dyn_state.links.pos.shape[0], dyn_state.links.pos.shape[1])
+        qd.ndrange(1, static_rigid_sim_config.n_envs)
+        if qd.static(static_rigid_sim_config.use_hibernation)
+        else qd.ndrange(static_rigid_sim_config.n_entities_, static_rigid_sim_config.n_envs)
     ):
         for i_1 in (
             range(rigid_info.n_awake_links[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
@@ -210,9 +367,9 @@ def func_compute_mass_matrix(
     # mass_mat
     qd.loop_config(name="mass_mat", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
-        qd.ndrange(1, dyn_state.links.pos.shape[1])
-        if qd.static(rigid_config.use_hibernation)
-        else qd.ndrange(dyn_state.links.pos.shape[0], dyn_state.links.pos.shape[1])
+        qd.ndrange(1, static_rigid_sim_config.n_envs)
+        if qd.static(static_rigid_sim_config.use_hibernation)
+        else qd.ndrange(static_rigid_sim_config.n_links_, static_rigid_sim_config.n_envs)
     ):
         for i_1 in (
             range(rigid_info.n_awake_links[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
@@ -221,13 +378,67 @@ def func_compute_mass_matrix(
                 i_l = rigid_info.awake_links[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
                 I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
 
-                for i_d in range(dyn_info.links.dof_start[I_l], dyn_info.links.dof_end[I_l]):
-                    dyn_state.dofs.f_ang[i_d, i_b], dyn_state.dofs.f_vel[i_d, i_b] = gu.inertial_mul(
-                        dyn_state.links.crb_pos[i_l, i_b],
-                        dyn_state.links.crb_inertial[i_l, i_b],
-                        dyn_state.links.crb_mass[i_l, i_b],
-                        dyn_state.dofs.cdof_vel[i_d, i_b],
-                        dyn_state.dofs.cdof_ang[i_d, i_b],
+                for i_d_ in (
+                    range(links_info.dof_start[I_l], links_info.dof_end[I_l])
+                    if qd.static(not BW)
+                    else qd.static(range(static_rigid_sim_config.max_n_dofs_per_link))
+                ):
+                    i_d = i_d_ if qd.static(not BW) else links_info.dof_start[I_l] + i_d_
+
+                    if func_check_index_range(i_d, links_info.dof_start[I_l], links_info.dof_end[I_l], BW):
+                        dofs_state.f_ang[i_d, i_b], dofs_state.f_vel[i_d, i_b] = gu.inertial_mul(
+                            links_state.crb_pos[i_l, i_b],
+                            links_state.crb_inertial[i_l, i_b],
+                            links_state.crb_mass[i_l, i_b],
+                            dofs_state.cdof_vel[i_d, i_b],
+                            dofs_state.cdof_ang[i_d, i_b],
+                        )
+
+    # Choose mass matrix computation implementation
+    if qd.static(
+        static_rigid_sim_config.enable_tiled_cholesky_mass_matrix and static_rigid_sim_config.backend != gs.cpu
+    ):
+        # Use isolated LDS-optimized function
+        func_compute_mass_matrix_lds(
+            implicit_damping=implicit_damping,
+            links_state=links_state,
+            links_info=links_info,
+            dofs_state=dofs_state,
+            dofs_info=dofs_info,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+            is_backward=BW,
+        )
+    else:
+        # Original CPU/simple implementation
+        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+        for i_0, i_b in (
+            qd.ndrange(1, static_rigid_sim_config.n_envs)
+            if qd.static(static_rigid_sim_config.use_hibernation)
+            else qd.ndrange(static_rigid_sim_config.n_entities_, static_rigid_sim_config.n_envs)
+        ):
+            for i_1 in (
+                (
+                    # Dynamic inner loop for forward pass
+                    range(rigid_global_info.n_awake_entities[i_b])
+                    if qd.static(static_rigid_sim_config.use_hibernation)
+                    else qd.static(range(1))
+                )
+                if qd.static(not BW)
+                else (
+                    qd.static(range(static_rigid_sim_config.max_n_awake_entities))  # Static inner loop for backward pass
+                    if qd.static(static_rigid_sim_config.use_hibernation)
+                    else qd.static(range(1))
+                )
+            ):
+                if func_check_index_range(
+                    i_1, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.use_hibernation
+                ):
+                    i_e = (
+                        rigid_global_info.awake_entities[i_1, i_b]
+                        if qd.static(static_rigid_sim_config.use_hibernation)
+                        else i_0
                     )
 
     if qd.static(rigid_config.enable_cooperative_constraint_kernels and not rigid_config.use_hibernation):
@@ -306,18 +517,18 @@ def func_compute_mass_matrix(
                             rigid_info.mass_mat[i_d, j_d, i_b] = rigid_info.mass_mat[j_d, i_d, i_b]
 
     # Take into account motor armature
-    qd.loop_config(name="armature", serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
-    for i_d, i_b in qd.ndrange(dyn_state.dofs.f_ang.shape[0], dyn_state.links.pos.shape[1]):
-        I_d = [i_d, i_b] if qd.static(rigid_config.batch_dofs_info) else i_d
-        func_add_safe_backward((i_d, i_d, i_b), dyn_info.dofs.armature[I_d], rigid_info.mass_mat, BW)
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_d, i_b in qd.ndrange(static_rigid_sim_config.n_dofs_, static_rigid_sim_config.n_envs):
+        I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
+        func_add_safe_backward(rigid_global_info.mass_mat, (i_d, i_d, i_b), dofs_info.armature[I_d], BW)
 
     # Take into account first-order correction terms for implicit integration scheme right away
     if qd.static(implicit_damping):
-        qd.loop_config(name="impint_order_1_corr", serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_d, i_b in qd.ndrange(dyn_state.dofs.f_ang.shape[0], dyn_state.links.pos.shape[1]):
-            I_d = [i_d, i_b] if qd.static(rigid_config.batch_dofs_info) else i_d
-            rigid_info.mass_mat[i_d, i_d, i_b] = (
-                rigid_info.mass_mat[i_d, i_d, i_b] + dyn_info.dofs.damping[I_d] * rigid_info.substep_dt[None]
+        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_d, i_b in qd.ndrange(static_rigid_sim_config.n_dofs_, static_rigid_sim_config.n_envs):
+            I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
+            rigid_global_info.mass_mat[i_d, i_d, i_b] = (
+                rigid_global_info.mass_mat[i_d, i_d, i_b] + dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
             )
             if dyn_state.dofs.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY:
                 # qM += d qfrc_actuator / d qvel = -act_bias[2] * dt
@@ -497,26 +708,9 @@ def func_factor_mass(
     n_entities = dyn_info.entities.n_links.shape[0]
     _B = dyn_state.dofs.ctrl_mode.shape[1]
 
-    if qd.static(rigid_config.enable_register_tiled_mass):
-        # Register-streaming tiled per-entity factor for the >shared-cap path (same primitive as the constraint
-        # Hessian). Implies enable_tiled_cholesky_mass_matrix and not mass_matrix_fits_shared; see
-        # func_factor_mass_tiled. Replaces the cooperative LDL^T in the elif below.
-        func_factor_mass_tiled(
-            dyn_state,
-            dyn_info,
-            rigid_info,
-            rigid_config,
-            implicit_damping,
-            qd.simt.Tile32x32 if qd.static(rigid_config.cholesky_tile_size == 32) else qd.simt.Tile16x16,
-        )
-    elif qd.static(rigid_config.enable_tiled_cholesky_mass_matrix and not rigid_config.mass_matrix_fits_shared):
-        # Uncapped cooperative per-entity LDL^T (entity submatrix does not fit shared memory): factors the entity
-        # mass submatrix in-place in global memory (mass_mat_L) over a block of BLOCK_DIM threads. Each elimination
-        # step snapshots the pivot row into a small shared vector (O(n_dofs), not O(n_dofs^2)) before updating the
-        # trailing submatrix, so the parallel per-row updates only READ the pivot row (from shared) -- race-free
-        # regardless of scheduling. Numerically identical to the scalar branch below; only parallelization differs.
-        BLOCK_DIM = qd.static(32)
-        MAX_DOFS_PER_BLOCK = qd.static(rigid_config.tiled_n_dofs_per_block)
+    if qd.static(not BW):
+        n_entities = static_rigid_sim_config.n_entities_
+        _B = static_rigid_sim_config.n_envs
 
         qd.loop_config(name="factor_mass", block_dim=BLOCK_DIM)
         for i in range(n_entities * _B * BLOCK_DIM):
@@ -577,11 +771,46 @@ def func_factor_mass(
                             if tid == 0:
                                 rigid_info.mass_mat_D_inv[i_d, i_b] = D_inv
 
-                            # Phase A: snapshot the (Schur-updated) pivot-row entries below the diagonal into shared.
-                            j_d_ = tid
-                            while j_d_ < i_d_local:
-                                pivot_row[j_d_] = rigid_info.mass_mat_L[i_d, block_start + j_d_, i_b]
-                                j_d_ = j_d_ + BLOCK_DIM
+                    for j in range(n_dofs):
+                        i_d_ = n_dofs - j - 1
+                        i_d = entity_dof_end - j - 1
+
+                        D_inv = 1.0 / mass_mat[i_d_, i_d_]
+                        if tid == 0:
+                            rigid_global_info.mass_mat_D_inv[i_d, i_b] = D_inv
+                            # FIXME: Diagonal coeffs of L are ignored in computations, so no need to update them.
+                            rigid_global_info.mass_mat_L[i_d, i_d, i_b] = 1.0
+
+                        # Cache original pivot row values before modification.
+                        # wave64: all threads in lockstep, no explicit sync needed.
+                        if tid < i_d_:
+                            sh_pivot[tid] = mass_mat[i_d_, tid]
+
+                        # Row-major rank-1 update: each thread owns rows [tid, tid+BLOCK_DIM, ...].
+                        # Eliminates the per-update sqrt needed by the flat-index decode, and keeps
+                        # sh_pivot[_r] in a VGPR register across the inner column loop.
+                        _r = tid
+                        while _r < i_d_:
+                            piv_r = sh_pivot[_r] * D_inv
+                            _c = 0
+                            while _c <= _r:
+                                mass_mat[_r, _c] = mass_mat[_r, _c] - piv_r * sh_pivot[_c]
+                                _c = _c + 1
+                            _r = _r + BLOCK_DIM
+
+                        # Write L factors to pivot row
+                        if tid < i_d_:
+                            mass_mat[i_d_, tid] = sh_pivot[tid] * D_inv
+
+                        if qd.static(
+                            static_rigid_sim_config.backend == gs.cuda
+                            or static_rigid_sim_config.backend == gs.amdgpu
+                        ):
+                            if i_d_ <= WARP_SIZE:
+                                qd.simt.warp.sync(qd.u32(0xFFFFFFFF))
+                            elif qd.static(BLOCK_DIM > 64):
+                                qd.simt.block.sync()
+                        else:
                             qd.simt.block.sync()
 
                             # Phase B: each lane eliminates one column j_d, updating its own row j_d of the trailing
@@ -656,19 +885,11 @@ def func_factor_mass(
         MAX_DOFS_PER_BLOCK = qd.static(rigid_config.tiled_n_dofs_per_block)
         WARP_SIZE = qd.static(32)
 
-        qd.loop_config(name="factor_mass", block_dim=BLOCK_DIM)
-        for i in range(n_entities * _B * BLOCK_DIM):
-            tid = i % BLOCK_DIM
-            i_e = (i // BLOCK_DIM) % n_entities
-            i_b = i // (BLOCK_DIM * n_entities)
-            if i_b >= _B:
-                continue
-            # Skip hibernated entities: their mass matrix is unchanged, so the factor from the last awake step
-            # stays valid. The slot remaps to an awake entity, so the work scales with the awake entity count.
-            if qd.static(rigid_config.use_hibernation):
-                if i_e >= rigid_info.n_awake_entities[i_b]:
-                    continue
-                i_e = rigid_info.awake_entities[i_e, i_b]
+        # Assume this is the outermost loop
+        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+        for i_e, i_b in qd.ndrange(static_rigid_sim_config.n_entities_, static_rigid_sim_config.n_envs):
+            if rigid_global_info.mass_mat_mask[i_e, i_b]:
+                EPS = rigid_global_info.EPS[None]
 
             if rigid_info.mass_mat_mask[i_e, i_b]:
                 entity_dof_start = dyn_info.entities.dof_start[i_e]
@@ -798,9 +1019,18 @@ def func_solve_mass_batch(
 ):
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_0 in (
-        range(rigid_info.n_awake_entities[i_b])
-        if qd.static(rigid_config.use_hibernation)
-        else range(dyn_info.entities.n_links.shape[0])
+        (
+            # Dynamic inner loop for forward pass
+            range(rigid_global_info.n_awake_entities[i_b])
+            if qd.static(static_rigid_sim_config.use_hibernation)
+            else range(static_rigid_sim_config.n_entities_)
+        )
+        if qd.static(not BW)
+        else (
+            qd.static(range(static_rigid_sim_config.max_n_awake_entities))  # Static inner loop for backward pass
+            if qd.static(static_rigid_sim_config.use_hibernation)
+            else qd.static(range(static_rigid_sim_config.max_n_links_per_entity))
+        )
     ):
         i_e = rigid_info.awake_entities[i_0, i_b] if qd.static(rigid_config.use_hibernation) else i_0
         func_solve_mass_entity(i_e, i_b, vec, out, dyn_info, rigid_info, rigid_config)
@@ -814,9 +1044,12 @@ def func_solve_mass(
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
-    qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
-    for i_e, i_b in qd.ndrange(dyn_info.entities.n_links.shape[0], out.shape[1]):
-        func_solve_mass_entity(i_e, i_b, vec, out, dyn_info, rigid_info, rigid_config)
+    # This loop must be the outermost loop to be differentiable
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    for i_e, i_b in qd.ndrange(static_rigid_sim_config.n_entities_, static_rigid_sim_config.n_envs):
+        func_solve_mass_entity(
+            i_e, i_b, vec, out, out_bw, entities_info, rigid_global_info, static_rigid_sim_config, is_backward
+        )
 
 
 @qd.func
@@ -831,119 +1064,198 @@ def func_torque_and_passive_force(
     BW = qd.static(is_backward)
 
     # compute force based on each dof's ctrl mode
-    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
-    for i_e, i_b in qd.ndrange(dyn_info.entities.n_links.shape[0], dyn_state.dofs.ctrl_mode.shape[1]):
-        EPS = rigid_info.EPS[None]
+    if qd.static(static_rigid_sim_config.use_hibernation):
+        # Hibernation path: keep the per-entity outer loop because the wakeup
+        # bookkeeping (`wakeup` flag, `func_wakeup_entity_and_its_temp_island`)
+        # is shared across all the dofs of an entity.
+        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_e, i_b in qd.ndrange(static_rigid_sim_config.n_entities_, static_rigid_sim_config.n_envs):
+            EPS = rigid_global_info.EPS[None]
 
-        wakeup = False
-        for i_l in range(dyn_info.entities.link_start[i_e], dyn_info.entities.link_end[i_e]):
-            I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
-            if dyn_info.links.n_dofs[I_l] > 0:
-                i_j = dyn_info.links.joint_start[I_l]
-                I_j = [i_j, i_b] if qd.static(rigid_config.batch_joints_info) else i_j
-                joint_type = dyn_info.joints.type[I_j]
+            wakeup = False
+            for i_l_ in (
+                range(entities_info.link_start[i_e], entities_info.link_end[i_e])
+                if qd.static(not BW)
+                else qd.static(range(static_rigid_sim_config.max_n_links_per_entity))
+            ):
+                i_l = i_l_ if qd.static(not BW) else (i_l_ + entities_info.link_start[i_e])
 
-                for i_d in range(dyn_info.links.dof_start[I_l], dyn_info.links.dof_end[I_l]):
-                    I_d = [i_d, i_b] if qd.static(rigid_config.batch_dofs_info) else i_d
+                if func_check_index_range(i_l, entities_info.link_start[i_e], entities_info.link_end[i_e], BW):
+                    I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+                    if links_info.n_dofs[I_l] > 0:
+                        i_j = links_info.joint_start[I_l]
+                        I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
+                        joint_type = joints_info.type[I_j]
+
+                        for i_d_ in (
+                            range(links_info.dof_start[I_l], links_info.dof_end[I_l])
+                            if qd.static(not BW)
+                            else qd.static(range(static_rigid_sim_config.max_n_dofs_per_link))
+                        ):
+                            i_d = i_d_ if qd.static(not BW) else (i_d_ + links_info.dof_start[I_l])
+
+                            if func_check_index_range(i_d, links_info.dof_start[I_l], links_info.dof_end[I_l], BW):
+                                I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
+                                force = gs.qd_float(0.0)
+                                if dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.FORCE:
+                                    force = dofs_state.ctrl_force[i_d, i_b]
+                                elif dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY:
+                                    force = dofs_info.kv[I_d] * (dofs_state.ctrl_vel[i_d, i_b] - dofs_state.vel[i_d, i_b])
+                                elif dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION and not (
+                                    joint_type == gs.JOINT_TYPE.FREE and i_d >= links_info.dof_start[I_l] + 3
+                                ):
+                                    force = dofs_info.kp[I_d] * (
+                                        dofs_state.ctrl_pos[i_d, i_b] - dofs_state.pos[i_d, i_b]
+                                    ) + dofs_info.kv[I_d] * (dofs_state.ctrl_vel[i_d, i_b] - dofs_state.vel[i_d, i_b])
+
+                                dofs_state.qf_applied[i_d, i_b] = qd.math.clamp(
+                                    force,
+                                    dofs_info.force_range[I_d][0],
+                                    dofs_info.force_range[I_d][1],
+                                )
+
+                                if qd.abs(force) > EPS:
+                                    wakeup = True
+
+                        dof_start = links_info.dof_start[I_l]
+                        if joint_type == gs.JOINT_TYPE.FREE and (
+                            dofs_state.ctrl_mode[dof_start + 3, i_b] == gs.CTRL_MODE.POSITION
+                            or dofs_state.ctrl_mode[dof_start + 4, i_b] == gs.CTRL_MODE.POSITION
+                            or dofs_state.ctrl_mode[dof_start + 5, i_b] == gs.CTRL_MODE.POSITION
+                        ):
+                            xyz = qd.Vector(
+                                [
+                                    dofs_state.pos[0 + 3 + dof_start, i_b],
+                                    dofs_state.pos[1 + 3 + dof_start, i_b],
+                                    dofs_state.pos[2 + 3 + dof_start, i_b],
+                                ],
+                                dt=gs.qd_float,
+                            )
+
+                            ctrl_xyz = qd.Vector(
+                                [
+                                    dofs_state.ctrl_pos[0 + 3 + dof_start, i_b],
+                                    dofs_state.ctrl_pos[1 + 3 + dof_start, i_b],
+                                    dofs_state.ctrl_pos[2 + 3 + dof_start, i_b],
+                                ],
+                                dt=gs.qd_float,
+                            )
+
+                            quat = gu.qd_xyz_to_quat(xyz)
+                            ctrl_quat = gu.qd_xyz_to_quat(ctrl_xyz)
+
+                            q_diff = gu.qd_transform_quat_by_quat(ctrl_quat, gu.qd_inv_quat(quat))
+                            rotvec = gu.qd_quat_to_rotvec(q_diff, EPS)
+
+                            for j in qd.static(range(3)):
+                                i_d = dof_start + 3 + j
+                                I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
+                                force = dofs_info.kp[I_d] * rotvec[j] - dofs_info.kv[I_d] * dofs_state.vel[i_d, i_b]
+
+                                dofs_state.qf_applied[i_d, i_b] = qd.math.clamp(
+                                    force, dofs_info.force_range[I_d][0], dofs_info.force_range[I_d][1]
+                                )
+
+                                if qd.abs(force) > EPS:
+                                    wakeup = True
+
+            if entities_state.hibernated[i_e, i_b] and wakeup:
+                # TODO: migrate this function
+                func_wakeup_entity_and_its_temp_island(
+                    i_e,
+                    i_b,
+                    entities_state,
+                    entities_info,
+                    dofs_state,
+                    links_state,
+                    geoms_state,
+                    rigid_global_info,
+                    contact_island_state,
+                )
+    else:
+        # Non-hibernation path: parallelize over (i_l, i_b) instead of
+        # (i_e, i_b). For G1 this lifts the launch from
+        # n_entities * n_envs (= ~16k threads / ~256 waves on MI300X, severely
+        # under-occupying gfx942's 304 CUs * 4 SIMDs = 1216 SIMDs) to
+        # n_links * n_envs (= ~245k threads / ~3840 waves), which actually
+        # fills the chip and gives the memory subsystem enough in-flight
+        # wavefronts to hide latency. block_dim=64 keeps lane utilization at
+        # 100% on wave64 hardware. Bit-exact with the per-entity version
+        # because each link writes only its own dofs' qf_applied entries.
+        n_links = static_rigid_sim_config.n_links_
+        qd.loop_config(
+            serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL),
+            block_dim=64,
+        )
+        for i_l, i_b in qd.ndrange(n_links, static_rigid_sim_config.n_envs):
+            I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+            if links_info.n_dofs[I_l] > 0:
+                EPS = rigid_global_info.EPS[None]
+                i_j = links_info.joint_start[I_l]
+                I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
+                joint_type = joints_info.type[I_j]
+                dof_start = links_info.dof_start[I_l]
+                dof_end = links_info.dof_end[I_l]
+
+                for i_d in range(dof_start, dof_end):
+                    I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
                     force = gs.qd_float(0.0)
-                    if dyn_state.dofs.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.FORCE:
-                        force = dyn_state.dofs.ctrl_force[i_d, i_b]
-                    elif dyn_state.dofs.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY:
-                        force = -dyn_info.dofs.act_bias[I_d][2] * (
-                            dyn_state.dofs.ctrl_vel[i_d, i_b] - dyn_state.dofs.vel[i_d, i_b]
-                        )
-                    elif dyn_state.dofs.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION and not (
-                        joint_type == gs.JOINT_TYPE.FREE and i_d >= dyn_info.links.dof_start[I_l] + 3
+                    if dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.FORCE:
+                        force = dofs_state.ctrl_force[i_d, i_b]
+                    elif dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY:
+                        force = dofs_info.kv[I_d] * (dofs_state.ctrl_vel[i_d, i_b] - dofs_state.vel[i_d, i_b])
+                    elif dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION and not (
+                        joint_type == gs.JOINT_TYPE.FREE and i_d >= dof_start + 3
                     ):
-                        # Unified formula for GENERAL and POSITION modes, factored for float32 stability.
-                        # For PD (act_gain == -act_bias[1], act_bias[0] == 0), the residual terms vanish.
-                        force = (
-                            dyn_info.dofs.act_gain[I_d]
-                            * (dyn_state.dofs.ctrl_pos[i_d, i_b] - dyn_state.dofs.pos[i_d, i_b])
-                            + dyn_info.dofs.act_bias[I_d][0]
-                            + (dyn_info.dofs.act_gain[I_d] + dyn_info.dofs.act_bias[I_d][1])
-                            * dyn_state.dofs.pos[i_d, i_b]
-                            + dyn_info.dofs.act_bias[I_d][2]
-                            * (dyn_state.dofs.vel[i_d, i_b] - dyn_state.dofs.ctrl_vel[i_d, i_b])
-                        )
+                        force = dofs_info.kp[I_d] * (
+                            dofs_state.ctrl_pos[i_d, i_b] - dofs_state.pos[i_d, i_b]
+                        ) + dofs_info.kv[I_d] * (dofs_state.ctrl_vel[i_d, i_b] - dofs_state.vel[i_d, i_b])
 
-                    dyn_state.dofs.qf_applied[i_d, i_b] = qd.math.clamp(
-                        force, dyn_info.dofs.force_range[I_d][0], dyn_info.dofs.force_range[I_d][1]
+                    dofs_state.qf_applied[i_d, i_b] = qd.math.clamp(
+                        force,
+                        dofs_info.force_range[I_d][0],
+                        dofs_info.force_range[I_d][1],
                     )
 
-                    if qd.abs(force) > EPS:
-                        wakeup = True
-
-                dof_start = dyn_info.links.dof_start[I_l]
                 if joint_type == gs.JOINT_TYPE.FREE and (
-                    dyn_state.dofs.ctrl_mode[dof_start + 3, i_b] == gs.CTRL_MODE.POSITION
-                    or dyn_state.dofs.ctrl_mode[dof_start + 4, i_b] == gs.CTRL_MODE.POSITION
-                    or dyn_state.dofs.ctrl_mode[dof_start + 5, i_b] == gs.CTRL_MODE.POSITION
+                    dofs_state.ctrl_mode[dof_start + 3, i_b] == gs.CTRL_MODE.POSITION
+                    or dofs_state.ctrl_mode[dof_start + 4, i_b] == gs.CTRL_MODE.POSITION
+                    or dofs_state.ctrl_mode[dof_start + 5, i_b] == gs.CTRL_MODE.POSITION
                 ):
                     xyz = qd.Vector(
                         [
-                            dyn_state.dofs.pos[0 + 3 + dof_start, i_b],
-                            dyn_state.dofs.pos[1 + 3 + dof_start, i_b],
-                            dyn_state.dofs.pos[2 + 3 + dof_start, i_b],
+                            dofs_state.pos[0 + 3 + dof_start, i_b],
+                            dofs_state.pos[1 + 3 + dof_start, i_b],
+                            dofs_state.pos[2 + 3 + dof_start, i_b],
                         ],
                         dt=gs.qd_float,
                     )
-
                     ctrl_xyz = qd.Vector(
                         [
-                            dyn_state.dofs.ctrl_pos[0 + 3 + dof_start, i_b],
-                            dyn_state.dofs.ctrl_pos[1 + 3 + dof_start, i_b],
-                            dyn_state.dofs.ctrl_pos[2 + 3 + dof_start, i_b],
+                            dofs_state.ctrl_pos[0 + 3 + dof_start, i_b],
+                            dofs_state.ctrl_pos[1 + 3 + dof_start, i_b],
+                            dofs_state.ctrl_pos[2 + 3 + dof_start, i_b],
                         ],
                         dt=gs.qd_float,
                     )
-
                     quat = gu.qd_xyz_to_quat(xyz)
                     ctrl_quat = gu.qd_xyz_to_quat(ctrl_xyz)
-
                     q_diff = gu.qd_transform_quat_by_quat(ctrl_quat, gu.qd_inv_quat(quat))
                     rotvec = gu.qd_quat_to_rotvec(q_diff, EPS)
 
                     for j in qd.static(range(3)):
                         i_d = dof_start + 3 + j
-                        I_d = [i_d, i_b] if qd.static(rigid_config.batch_dofs_info) else i_d
-                        force = (
-                            dyn_info.dofs.act_gain[I_d] * rotvec[j]
-                            + dyn_info.dofs.act_bias[I_d][0]
-                            + (dyn_info.dofs.act_gain[I_d] + dyn_info.dofs.act_bias[I_d][1])
-                            * dyn_state.dofs.pos[i_d, i_b]
-                            + dyn_info.dofs.act_bias[I_d][2]
-                            * (dyn_state.dofs.vel[i_d, i_b] - dyn_state.dofs.ctrl_vel[i_d, i_b])
+                        I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
+                        force = dofs_info.kp[I_d] * rotvec[j] - dofs_info.kv[I_d] * dofs_state.vel[i_d, i_b]
+                        dofs_state.qf_applied[i_d, i_b] = qd.math.clamp(
+                            force, dofs_info.force_range[I_d][0], dofs_info.force_range[I_d][1]
                         )
 
-                        dyn_state.dofs.qf_applied[i_d, i_b] = qd.math.clamp(
-                            force, dyn_info.dofs.force_range[I_d][0], dyn_info.dofs.force_range[I_d][1]
-                        )
-
-                        if qd.abs(force) > EPS:
-                            wakeup = True
-
-        if qd.static(rigid_config.use_hibernation):
-            if wakeup:
-                # Actuation may target any sleeping component of this entity; wake each one's island (a single call
-                # revives the whole island, so already-awake links are skipped).
-                for i_l in range(dyn_info.entities.link_start[i_e], dyn_info.entities.link_end[i_e]):
-                    if dyn_state.links.is_hibernated[i_l, i_b]:
-                        func_wakeup_island(
-                            constraint_state.island.links_island_idx[i_l, i_b],
-                            i_b,
-                            dyn_state,
-                            constraint_state,
-                            dyn_info,
-                            rigid_info,
-                            rigid_config,
-                        )
-
-    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
-        qd.ndrange(1, dyn_state.dofs.ctrl_mode.shape[1])
-        if qd.static(rigid_config.use_hibernation)
-        else qd.ndrange(dyn_state.dofs.ctrl_mode.shape[0], dyn_state.dofs.ctrl_mode.shape[1])
+        qd.ndrange(1, static_rigid_sim_config.n_envs)
+        if qd.static(static_rigid_sim_config.use_hibernation)
+        else qd.ndrange(static_rigid_sim_config.n_dofs_, static_rigid_sim_config.n_envs)
     ):
         for i_1 in (
             range(rigid_info.n_awake_dofs[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
@@ -956,9 +1268,9 @@ def func_torque_and_passive_force(
 
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
-        qd.ndrange(1, dyn_state.dofs.ctrl_mode.shape[1])
-        if qd.static(rigid_config.use_hibernation)
-        else qd.ndrange(dyn_info.links.root_idx.shape[0], dyn_state.dofs.ctrl_mode.shape[1])
+        qd.ndrange(1, static_rigid_sim_config.n_envs)
+        if qd.static(static_rigid_sim_config.use_hibernation)
+        else qd.ndrange(static_rigid_sim_config.n_links_, static_rigid_sim_config.n_envs)
     ):
         for i_1 in (
             range(rigid_info.n_awake_links[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
@@ -1002,9 +1314,9 @@ def func_update_acc(
     # Assume this is the outermost loop
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
-        qd.ndrange(1, dyn_state.dofs.ctrl_mode.shape[1])
-        if qd.static(rigid_config.use_hibernation)
-        else qd.ndrange(dyn_info.entities.n_links.shape[0], dyn_state.dofs.ctrl_mode.shape[1])
+        qd.ndrange(1, static_rigid_sim_config.n_envs)
+        if qd.static(static_rigid_sim_config.use_hibernation)
+        else qd.ndrange(static_rigid_sim_config.n_entities_, static_rigid_sim_config.n_envs)
     ):
         for i_1 in (
             range(rigid_info.n_awake_entities[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
@@ -1065,9 +1377,9 @@ def func_update_force(
 
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
-        qd.ndrange(1, dyn_state.links.pos.shape[1])
-        if qd.static(rigid_config.use_hibernation)
-        else qd.ndrange(dyn_info.links.root_idx.shape[0], dyn_state.links.pos.shape[1])
+        qd.ndrange(1, static_rigid_sim_config.n_envs)
+        if qd.static(static_rigid_sim_config.use_hibernation)
+        else qd.ndrange(static_rigid_sim_config.n_links_, static_rigid_sim_config.n_envs)
     ):
         for i_1 in (
             range(rigid_info.n_awake_links[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
@@ -1108,9 +1420,9 @@ def func_update_force(
 
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
-        qd.ndrange(1, dyn_state.links.pos.shape[1])
-        if qd.static(rigid_config.use_hibernation)
-        else qd.ndrange(dyn_info.entities.n_links.shape[0], dyn_state.links.pos.shape[1])
+        qd.ndrange(1, static_rigid_sim_config.n_envs)
+        if qd.static(static_rigid_sim_config.use_hibernation)
+        else qd.ndrange(static_rigid_sim_config.n_entities_, static_rigid_sim_config.n_envs)
     ):
         for i_1 in (
             range(rigid_info.n_awake_entities[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
@@ -1170,9 +1482,9 @@ def func_bias_force(
 
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
-        qd.ndrange(1, dyn_state.dofs.ctrl_mode.shape[1])
-        if qd.static(rigid_config.use_hibernation)
-        else qd.ndrange(dyn_info.links.root_idx.shape[0], dyn_state.dofs.ctrl_mode.shape[1])
+        qd.ndrange(1, static_rigid_sim_config.n_envs)
+        if qd.static(static_rigid_sim_config.use_hibernation)
+        else qd.ndrange(static_rigid_sim_config.n_links_, static_rigid_sim_config.n_envs)
     ):
         for i_1 in (
             range(rigid_info.n_awake_links[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
@@ -1206,193 +1518,36 @@ def func_compute_qacc(
     func_solve_mass(dyn_state.dofs.force, dyn_state.dofs.acc_smooth, dyn_info, rigid_info, rigid_config)
 
     # Assume this is the outermost loop
-    qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
-    for i_0, i_b in (
-        qd.ndrange(1, dyn_state.dofs.ctrl_mode.shape[1])
-        if qd.static(rigid_config.use_hibernation)
-        else qd.ndrange(dyn_info.entities.n_links.shape[0], dyn_state.dofs.ctrl_mode.shape[1])
-    ):
-        for i_1 in (
-            range(rigid_info.n_awake_entities[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
-        ):
-            if func_check_index_range(i_1, 0, rigid_info.n_awake_entities[i_b], rigid_config.use_hibernation):
-                i_e = rigid_info.awake_entities[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
-
-                for i_d1_ in range(dyn_info.entities.n_dofs[i_e]):
-                    i_d1 = dyn_info.entities.dof_start[i_e] + i_d1_
-                    dyn_state.dofs.acc[i_d1, i_b] = dyn_state.dofs.acc_smooth[i_d1, i_b]
-
-
-@qd.func
-def func_midpoint_eligible(
-    i_l,
-    i_b,
-    dyn_state: array_class.DynState,
-    dyn_info: array_class.DynInfo,
-    rigid_config: qd.template(),
-):
-    """Whether the link is a standalone free body eligible for midpoint integration this step.
-
-    Eligible: a 6-DOF free-joint link that is its own whole kinematic tree (no parent, and no descendant
-    contributing mass, detected as crb equal to the link's own spatial inertia), and unconstrained this step (no
-    contact touching it and no connect/weld equality involving it, per the assembly-written involvement flag; see
-    is_constrained in array_class.py). The flag covers dynamically registered welds; entities merged at build time
-    via attach are excluded by the tree tests. A constrained body must keep the standard update: the constraint
-    impulse is resolved by the solver at the current configuration and would double-count inside the discrete free
-    rigid-body equation.
-    """
-    I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
-    is_eligible = False
-    if dyn_info.links.n_dofs[I_l] == 6 and dyn_info.links.parent_idx[I_l] == -1:
-        i_j = dyn_info.links.joint_start[I_l]
-        I_j = [i_j, i_b] if qd.static(rigid_config.batch_joints_info) else i_j
-        is_eligible = (
-            dyn_info.joints.type[I_j] == gs.JOINT_TYPE.FREE
-            and dyn_state.links.crb_mass[i_l, i_b] == dyn_state.links.cinr_mass[i_l, i_b]
-            and not dyn_state.links.is_constrained[i_l, i_b]
+    if qd.static(static_rigid_sim_config.use_hibernation):
+        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+        for i_b in range(static_rigid_sim_config.n_envs):
+            for i_1 in (
+                range(rigid_global_info.n_awake_entities[i_b])
+                if qd.static(not BW)
+                else qd.static(range(static_rigid_sim_config.max_n_awake_entities))
+            ):
+                if func_check_index_range(i_1, 0, rigid_global_info.n_awake_entities[i_b], True):
+                    i_e = rigid_global_info.awake_entities[i_1, i_b]
+                    for i_d1_ in (
+                        range(entities_info.n_dofs[i_e])
+                        if qd.static(not BW)
+                        else qd.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
+                    ):
+                        i_d1 = entities_info.dof_start[i_e] + i_d1_
+                        if func_check_index_range(i_d1, entities_info.dof_start[i_e], entities_info.dof_end[i_e], BW):
+                            dofs_state.acc[i_d1, i_b] = dofs_state.acc_smooth[i_d1, i_b]
+    else:
+        # Non-hibernation: this is just a per-dof copy, so parallelize directly
+        # over (i_d, i_b). For G1 this lifts the launch from
+        # n_entities * n_envs (~16k threads) to n_dofs * n_envs (~287k threads),
+        # turning a memory-bound copy into a fully bandwidth-saturating kernel.
+        n_dofs = static_rigid_sim_config.n_dofs_
+        qd.loop_config(
+            serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL),
+            block_dim=64,
         )
-        if is_eligible:
-            # A position/velocity servo folds its stabilizing gain into the implicit velocity update; treating it
-            # explicitly inside the midpoint solve diverges at practical gains, so a servoed body keeps the
-            # standard update.
-            for i_d in range(dyn_info.links.dof_start[I_l], dyn_info.links.dof_end[I_l]):
-                if dyn_state.dofs.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY:
-                    is_eligible = False
-    return is_eligible
-
-
-@qd.func
-def func_midpoint_free_body(
-    i_l,
-    i_b,
-    dyn_state: array_class.DynState,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    rigid_config: qd.template(),
-):
-    """Advance one standalone free body with the implicit midpoint rule (matching MuJoCo's midpoint integration).
-
-    Solves the free rigid-body equation I * (w_new - w) / h = tau - w_mid x (I * w_mid) for the midpoint angular
-    velocity w_mid = (w + w_new) / 2 by Newton iteration with backtracking, in the link's inertial
-    (center-of-mass) frame where I is constant. The midpoint rule preserves the quadratic invariants of torque-free
-    tumbling (kinetic energy, squared angular momentum), which the velocity-implicit integrators lose because they
-    omit the gyroscopic derivative. When the center of mass coincides with the joint origin the translation keeps
-    its standard update; otherwise the coupled midpoint center-of-mass velocity has a closed-form solution, with
-    gravity applied in the accelerating frame.
-
-    Writes acc[dofs] = (new - old) / h and vel_next[dofs] = (new + old) / 2: the position update integrates with
-    the midpoint velocity, and the caller recovers the true next velocity from it afterwards.
-    """
-    EPS = rigid_info.EPS[None]
-    # Newton tolerance on the residual, relative to the momentum scale (matching MuJoCo's midpoint integration)
-    tol = gs.qd_float(1e-6) if qd.static(gs.qd_float == qd.f32) else gs.qd_float(1e-13)
-    h = rigid_info.substep_dt[None]
-    i2h = 2.0 / h
-
-    I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
-    dof_start = dyn_info.links.dof_start[I_l]
-
-    iquat = dyn_info.links.inertial_quat[I_l]
-    inv_iquat = gu.qd_inv_quat(iquat)
-    ipos = dyn_info.links.inertial_pos[I_l]
-    inertia = dyn_info.links.inertial_i[I_l]
-    mass = dyn_info.links.inertial_mass[I_l] + dyn_state.links.mass_shift[i_l, i_b]
-    xquat = dyn_state.links.quat[i_l, i_b]
-
-    # Angular velocity and total torque (applied + passive + constraint + external link loads) in the inertial frame.
-    # The stored bias force is re-added to make the gyroscopic and gravity terms explicit, but it also carries the
-    # external link and coupling loads (see func_bias_force): those are stripped back out so they keep their
-    # standard-path sign, leaving the midpoint equation and its accelerating-frame gravity term to regenerate only
-    # the velocity products and gravity. The free joint's angular DOFs are body-frame.
-    ext_ang = dyn_state.links.cfrc_applied_ang[i_l, i_b] + dyn_state.links.cfrc_coupling_ang[i_l, i_b]
-    ext_vel = dyn_state.links.cfrc_applied_vel[i_l, i_b] + dyn_state.links.cfrc_coupling_vel[i_l, i_b]
-    w_body = gs.qd_vec3(
-        [
-            dyn_state.dofs.vel[dof_start + 3, i_b],
-            dyn_state.dofs.vel[dof_start + 4, i_b],
-            dyn_state.dofs.vel[dof_start + 5, i_b],
-        ]
-    )
-    tau_body = qd.Vector.zero(gs.qd_float, 3)
-    for j in qd.static(range(3)):
-        i_d = dof_start + 3 + j
-        qf_ext = dyn_state.dofs.cdof_ang[i_d, i_b].dot(ext_ang) + dyn_state.dofs.cdof_vel[i_d, i_b].dot(ext_vel)
-        tau_body[j] = dyn_state.dofs.force[i_d, i_b] + dyn_state.dofs.qf_bias[i_d, i_b] - qf_ext
-    w = gu.qd_transform_by_quat(w_body, inv_iquat)
-    tau_com = gu.qd_transform_by_quat(tau_body, inv_iquat)
-
-    # A center of mass at the joint origin decouples rotation from translation
-    is_aligned = ipos[0] == 0.0 and ipos[1] == 0.0 and ipos[2] == 0.0
-
-    rot_x2i = gu.qd_quat_mul(inv_iquat, gu.qd_inv_quat(xquat))
-    force = qd.Vector.zero(gs.qd_float, 3)
-    r_com = qd.Vector.zero(gs.qd_float, 3)
-    if not is_aligned:
-        force_world = qd.Vector.zero(gs.qd_float, 3)
-        for j in qd.static(range(3)):
-            i_d = dof_start + j
-            qf_ext = dyn_state.dofs.cdof_ang[i_d, i_b].dot(ext_ang) + dyn_state.dofs.cdof_vel[i_d, i_b].dot(ext_vel)
-            force_world[j] = dyn_state.dofs.force[i_d, i_b] + dyn_state.dofs.qf_bias[i_d, i_b] - qf_ext
-        force = gu.qd_transform_by_quat(force_world, rot_x2i)
-        r_com = gu.qd_transform_by_quat(ipos, inv_iquat)
-        tau_com = tau_com - r_com.cross(force)
-
-    # Newton iteration with backtracking line search on the residual
-    # f(w_mid) = 2/h * I * (w_mid - w) + w_mid x (I * w_mid) - tau
-    w_mid = w
-    for _i_newton in range(100):
-        Iw = inertia @ w_mid
-        f = i2h * (inertia @ (w_mid - w)) + w_mid.cross(Iw) - tau_com
-        f_norm = f.norm()
-        if f_norm < tol * (1.0 + i2h * Iw.norm()):
-            break
-        # J = 2/h * I + d(w x Iw)/dw, with d(w x Iw)/dw = skew(w_mid) @ I - skew(I @ w_mid)
-        skew_w = qd.Matrix([[0.0, -w_mid[2], w_mid[1]], [w_mid[2], 0.0, -w_mid[0]], [-w_mid[1], w_mid[0], 0.0]])
-        skew_Iw = qd.Matrix([[0.0, -Iw[2], Iw[1]], [Iw[2], 0.0, -Iw[0]], [-Iw[1], Iw[0], 0.0]])
-        J = i2h * inertia + skew_w @ inertia - skew_Iw
-        delta = J.inverse() @ (-f)
-        step = gs.qd_float(1.0)
-        for _i_ls in range(20):
-            w_try = w_mid + step * delta
-            f_try = i2h * (inertia @ (w_try - w)) + w_try.cross(inertia @ w_try) - tau_com
-            if f_try.norm() < f_norm:
-                w_mid = w_try
-                break
-            step = 0.5 * step
-
-    # Next angular velocity in the body frame; positions integrate with the midpoint velocity
-    w_new = 2.0 * w_mid - w
-    w_new_body = gu.qd_transform_by_quat(w_new, iquat)
-    for j in qd.static(range(3)):
-        dyn_state.dofs.acc[dof_start + 3 + j, i_b] = (w_new_body[j] - w_body[j]) / h
-        dyn_state.dofs.vel_next[dof_start + 3 + j, i_b] = 0.5 * (w_new_body[j] + w_body[j])
-
-    if not is_aligned:
-        # Closed-form midpoint solve of the coupled translation, (2/h * Id + skew(w_mid)) @ vcom_mid = b
-        v_world = gs.qd_vec3(
-            [
-                dyn_state.dofs.vel[dof_start, i_b],
-                dyn_state.dofs.vel[dof_start + 1, i_b],
-                dyn_state.dofs.vel[dof_start + 2, i_b],
-            ]
-        )
-        v = gu.qd_transform_by_quat(v_world, rot_x2i)
-        vcom = v + w.cross(r_com)
-        i_e = dyn_info.links.entity_idx[I_l]
-        gravity = rigid_info.gravity[i_b] * (1.0 - dyn_info.entities.gravity_compensation[i_e])
-        b = force / mass + i2h * vcom + gu.qd_transform_by_quat(gravity, rot_x2i)
-        denom = i2h * i2h + w_mid.dot(w_mid)
-        vcom_mid = (i2h * b + (w_mid.dot(b) / i2h) * w_mid - w_mid.cross(b)) / denom
-        v_mid = vcom_mid - w_mid.cross(r_com)
-        v_new = 2.0 * v_mid - v
-        # The world-frame linear velocity goes through the estimated next orientation
-        w_mid_body = gu.qd_transform_by_quat(w_mid, iquat)
-        qrot = gu.qd_rotvec_to_quat(w_mid_body * h, EPS)
-        xquat_new = gu.qd_transform_quat_by_quat(qrot, xquat)
-        v_new_world = gu.qd_transform_by_quat(gu.qd_transform_by_quat(v_new, iquat), xquat_new)
-        for j in qd.static(range(3)):
-            dyn_state.dofs.acc[dof_start + j, i_b] = (v_new_world[j] - v_world[j]) / h
-            dyn_state.dofs.vel_next[dof_start + j, i_b] = 0.5 * (v_new_world[j] + v_world[j])
+        for i_d, i_b in qd.ndrange(n_dofs, static_rigid_sim_config.n_envs):
+            dofs_state.acc[i_d, i_b] = dofs_state.acc_smooth[i_d, i_b]
 
 
 @qd.func
@@ -1407,9 +1562,9 @@ def func_integrate(
 
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
-        (qd.ndrange(1, dyn_state.dofs.ctrl_mode.shape[1]))
-        if qd.static(rigid_config.use_hibernation)
-        else (qd.ndrange(dyn_state.dofs.ctrl_mode.shape[0], dyn_state.dofs.ctrl_mode.shape[1]))
+        (qd.ndrange(1, static_rigid_sim_config.n_envs))
+        if qd.static(static_rigid_sim_config.use_hibernation)
+        else (qd.ndrange(static_rigid_sim_config.n_dofs_, static_rigid_sim_config.n_envs))
     ):
         for i_1 in (
             range(rigid_info.n_awake_dofs[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
@@ -1442,9 +1597,9 @@ def func_integrate(
 
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
-        (qd.ndrange(1, dyn_state.dofs.ctrl_mode.shape[1]))
-        if qd.static(rigid_config.use_hibernation)
-        else (qd.ndrange(dyn_info.links.root_idx.shape[0], dyn_state.dofs.ctrl_mode.shape[1]))
+        (qd.ndrange(1, static_rigid_sim_config.n_envs))
+        if qd.static(static_rigid_sim_config.use_hibernation)
+        else (qd.ndrange(static_rigid_sim_config.n_links_, static_rigid_sim_config.n_envs))
     ):
         for i_1 in (
             range(rigid_info.n_awake_links[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
@@ -1579,8 +1734,10 @@ def func_implicit_damping(
 ):
     EPS = rigid_info.EPS[None]
 
-    n_entities = dyn_info.entities.dof_start.shape[0]
-    _B = dyn_state.dofs.ctrl_mode.shape[1]
+    EPS = rigid_global_info.EPS[None]
+
+    n_entities = static_rigid_sim_config.n_entities_
+    _B = static_rigid_sim_config.n_envs
 
     # Determine whether the mass matrix must be re-computed to take into account first-order correction terms.
     # Note that avoiding inverting the mass matrix twice would not only speed up simulation but also improving

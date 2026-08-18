@@ -11,3 +11,6 @@ from . import solver
 
 # now register decomposed with func_solve_body:
 from . import solver_breakdown
+
+# AMDGPU-specific variants (B3 split, B4 lifted-loop) of func_solve_body
+from . import solver_amdgpu

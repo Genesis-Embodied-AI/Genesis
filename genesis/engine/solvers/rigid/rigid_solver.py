@@ -607,13 +607,16 @@ class RigidSolver(KinematicSolver):
             enable_cone_free_hessian_reuse=enable_cone_free_hessian_reuse,
             integrator=self._integrator,
             solver_type=self._options.constraint_solver,
-            broadphase_traversal=self._resolve_broadphase_traversal(),
-            # Parallelize init over (constraints, envs) when envs alone don't saturate the GPU.
-            parallel_init=(
-                gs.backend != gs.cpu and not self.sim.options.requires_grad and self.n_envs <= get_gpu_core_count()
-            ),
-            enable_cooperative_constraint_kernels=enable_cooperative_constraint_kernels,
-            constraint_layout_batch_first=constraint_layout_batch_first,
+            # Always populate PADDED shape constants so hot kernels can use them as compile-time
+            # literals via the qd.template() static config (eliminates _serial shape-lookup
+            # dispatches under gs.use_ndarray=True). These match the actual allocated array shapes
+            # (e.g. n_entities_ = max(1, n_entities)), so they're safe drop-in replacements for
+            # `<arr>.shape[0]` / `<arr>.shape[1]` reads inside kernels.
+            n_entities_=self.n_entities_,
+            n_links_=self.n_links_,
+            n_geoms_=self.n_geoms_,
+            n_dofs_=self.n_dofs_,
+            n_envs=self._B,
         )
 
         # Prefer the monolith solver on CPU (always faster there, perf dispatch is a waste of effort)
@@ -680,14 +683,10 @@ class RigidSolver(KinematicSolver):
                 ):
                     tiled_n_island_dofs -= cholesky_tile_size
 
-                # enable_tiled_cholesky_hessian selects the register-streaming tiled factor (no shared-memory cap):
-                # worth tiling from n_dofs >= 16, and below the shared cap only when envs undersaturate (above it the
-                # scalar O(n_dofs^3) per-env factor is always worse). hessian_fits_shared additionally gates the
-                # shared-memory tiled triangular solve and fused factor+solve, which stage the full L tile in shared.
-                hessian_fits_shared = fits_in_gpu_shared_memory(tiled_n_dofs, tiled_n_dofs + 1)
-                # The elliptic cone Hessian block is added as an additive post-pass after func_hessian_direct_tiled
-                # (before the tiled factor reads the assembled H), so the tiled factor path supports elliptic.
-                enable_tiled_cholesky_hessian = self.n_dofs >= 16 and (not hessian_fits_shared or envs_undersaturate)
+                lds_per_entity = tiled_n_dofs_per_entity * (tiled_n_dofs_per_entity + 1) * bytes_per_float
+                lds_total = tiled_n_dofs * (tiled_n_dofs + 1) * bytes_per_float
+                enable_tiled_cholesky_mass_matrix = 8 <= max_n_dofs_per_entity and lds_per_entity <= max_shared_bytes
+                enable_tiled_cholesky_hessian = 16 <= self.n_dofs and lds_total <= max_shared_bytes
 
                 # The cooperative in-place LDL^T has no cap; the shared-memory tile is faster but capped. Same env logic
                 # as the Hessian: tile from the largest block >= 8 DOFs, drop the env guard above the cap where the
