@@ -1107,6 +1107,18 @@ class KinematicSolver(Solver):
             heights = heights[..., 0]
         return heights
 
+    def _links_offset_shift(self, links_idx, envs_idx):
+        """World-frame displacement from the user-facing link origin to the internal link origin.
+
+        Shaped to broadcast against a '[n_envs, n_sel, dim]' state query. The user frame is rigidly attached to the
+        link, so every relative link-origin getter is the world one transported by this displacement: the position
+        subtracts it, the velocity and acceleration apply the rigid-body transport law about it.
+        """
+        quat = qd_to_torch(self.dyn_state.links.quat, envs_idx, links_idx, transpose=True)
+        offset_pos = _select_links_offset(self._links_offset_pos, links_idx, envs_idx)
+        offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
+        return _offset_world_shift(offset_pos, offset_quat, quat)
+
     def get_links_pos(self, links_idx=None, envs_idx=None, *, relative=False):
         if not gs.use_zerocopy:
             _, links_idx, envs_idx = self._sanitize_io_variables(
@@ -1114,10 +1126,7 @@ class KinematicSolver(Solver):
             )
         tensor = qd_to_torch(self.dyn_state.links.pos, envs_idx, links_idx, transpose=True, copy=True)
         if relative and self._links_offset_pos is not None:
-            quat = qd_to_torch(self.dyn_state.links.quat, envs_idx, links_idx, transpose=True, copy=True)
-            offset_pos = _select_links_offset(self._links_offset_pos, links_idx, envs_idx)
-            offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
-            tensor -= _offset_world_shift(offset_pos, offset_quat, quat)
+            tensor -= self._links_offset_shift(links_idx, envs_idx)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_quat(self, links_idx=None, envs_idx=None, *, relative=False):
@@ -1151,25 +1160,29 @@ class KinematicSolver(Solver):
             tensor = gu.transform_quat_by_quat(gu.inv_quat(offset_quat), tensor)
         return tensor[0] if self.n_envs == 0 else tensor
 
-    def get_links_vel(self, links_idx=None, envs_idx=None):
+    def get_links_vel(self, links_idx=None, envs_idx=None, *, relative=False):
         if gs.use_zerocopy:
-            mask = (0, *indices_to_mask(links_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, links_idx)
+            mask = indices_to_mask(envs_idx, links_idx)
             cd_vel = qd_to_torch(self.dyn_state.links.cd_vel, transpose=True)
             cd_ang = qd_to_torch(self.dyn_state.links.cd_ang, transpose=True)
             pos = qd_to_torch(self.dyn_state.links.pos, transpose=True)
             root_COM = qd_to_torch(self.dyn_state.links.root_COM, transpose=True)
-            return cd_vel[mask] + cd_ang[mask].cross(pos[mask] - root_COM[mask], dim=-1)
+            tensor = cd_vel[mask] + cd_ang[mask].cross(pos[mask] - root_COM[mask], dim=-1)
+        else:
+            _tensor, links_idx, envs_idx = self._sanitize_io_variables(
+                None, links_idx, self.n_links, "links_idx", envs_idx, (3,)
+            )
+            assert _tensor is not None
+            tensor = _tensor[None] if self.n_envs == 0 else _tensor
+            # The frame is passed as a plain int, see 'RigidSolver._sanitize_ref_frame'.
+            kernel_get_links_vel(
+                links_idx, envs_idx, tensor, self.dyn_state, self.rigid_config, ref=int(gs.link_ref_frame.link_origin)
+            )
 
-        _tensor, links_idx, envs_idx = self._sanitize_io_variables(
-            None, links_idx, self.n_links, "links_idx", envs_idx, (3,)
-        )
-        assert _tensor is not None
-        tensor = _tensor[None] if self.n_envs == 0 else _tensor
-        # The frame is passed as a plain int, see 'RigidSolver._sanitize_ref_frame'.
-        kernel_get_links_vel(
-            links_idx, envs_idx, tensor, self.dyn_state, self.rigid_config, ref=int(gs.link_ref_frame.link_origin)
-        )
-        return _tensor
+        if relative and self._links_offset_pos is not None:
+            ang = qd_to_torch(self.dyn_state.links.cd_ang, envs_idx, links_idx, transpose=True)
+            tensor -= ang.cross(self._links_offset_shift(links_idx, envs_idx), dim=-1)
+        return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_ang(self, links_idx=None, envs_idx=None):
         tensor = qd_to_torch(self.dyn_state.links.cd_ang, envs_idx, links_idx, transpose=True, copy=True)

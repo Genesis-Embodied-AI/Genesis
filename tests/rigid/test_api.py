@@ -667,10 +667,12 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
     )
     POSED_BOX_POS = (2.0, 0.5, 0.3)
     POSED_BOX_OFFSET_EULER = (0.0, 0.0, 45.0)
+    # Distinct principal moments, so a free spin precesses and the angular-acceleration term of the relative-frame
+    # acceleration transport below stays above the comparison tolerance.
     posed_box = scene.add_entity(
         gs.morphs.Box(
             pos=POSED_BOX_POS,
-            size=(0.04, 0.04, 0.04),
+            size=(0.04, 0.06, 0.10),
             offset_pos=(0.0, 0.0, 0.5),
             offset_euler=POSED_BOX_OFFSET_EULER,
         ),
@@ -702,6 +704,43 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
 
     robot_aabb_init, robot_base_aabb_init = robot.get_AABB(), robot.geoms[0].get_AABB()
     cube_aabb_init, cube_base_aabb_init = cube.get_AABB(), cube.geoms[0].get_AABB()
+
+    # Velocity and acceleration describe the same point as the position. Without rotation the user frame only
+    # translates with the link origin, so both frames report the same free fall.
+    scene.step()
+    assert_allclose(posed_box.get_vel(relative=True), posed_box.get_vel(relative=False), tol=tol)
+    assert_allclose(posed_box.get_links_acc(relative=True), posed_box.get_links_acc(relative=False), tol=tol)
+
+    # Spinning the box, the user-frame origin orbits the link origin, so it is transported by the rigid-body law about
+    # the very displacement the position getters strip: 'v - omega x d' and 'a - alpha x d - omega x (omega x d)'.
+    posed_box.set_dofs_velocity((0.0, 0.0, 0.0, 1.0, 2.0, -3.0))
+    scene.step()
+    offset_shift = posed_box.get_pos(relative=False) - posed_box.get_pos(relative=True)
+    omega, alpha = posed_box.get_ang(), posed_box.get_links_acc_ang()[..., 0, :]
+    assert_allclose(
+        posed_box.get_vel(relative=True),
+        posed_box.get_vel(relative=False) - torch.cross(omega, offset_shift, dim=-1),
+        tol=tol,
+    )
+    assert_allclose(
+        posed_box.get_links_acc(relative=True)[..., 0, :],
+        posed_box.get_links_acc(relative=False)[..., 0, :]
+        - torch.cross(alpha, offset_shift, dim=-1)
+        - torch.cross(omega, torch.cross(omega, offset_shift, dim=-1), dim=-1),
+        tol=tol,
+    )
+    # Neither transported term is vacuous: the angular-acceleration contribution alone exceeds the tolerance, and
+    # both frames genuinely disagree while the box rotates.
+    assert (torch.cross(alpha, offset_shift, dim=-1).abs() > tol).any()
+    with pytest.raises(AssertionError):
+        assert_allclose(posed_box.get_vel(relative=True), posed_box.get_vel(relative=False), tol=tol)
+    with pytest.raises(AssertionError):
+        assert_allclose(posed_box.get_links_acc(relative=True), posed_box.get_links_acc(relative=False), tol=tol)
+
+    # Masking rows and columns must strip the same offset as the unmasked query.
+    assert_allclose(
+        posed_box.get_links_vel(links_idx_local=0, envs_idx=[1])[..., 0, :], posed_box.get_vel()[[1]], tol=tol
+    )
 
     # Make sure that it is not possible to end up in an inconsistent state for fixed geometries. These place entities
     # at absolute world positions, so they bypass the pose offset (relative=False).

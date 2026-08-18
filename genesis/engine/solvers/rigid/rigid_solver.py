@@ -2836,17 +2836,16 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
 
         # The pose offset is defined on the link origin, so it is only stripped for the 'link_origin' reference.
         if relative and ref_frame == link_ref_frame.link_origin and self._links_offset_pos is not None:
-            quat = qd_to_torch(self.dyn_state.links.quat, envs_idx, links_idx, transpose=True, copy=True)
-            offset_pos = _select_links_offset(self._links_offset_pos, links_idx, envs_idx)
-            offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
-            tensor -= _offset_world_shift(offset_pos, offset_quat, quat)
+            tensor -= self._links_offset_shift(links_idx, envs_idx)
 
         return tensor[0] if self.n_envs == 0 else tensor
 
-    def get_links_vel(self, links_idx=None, envs_idx=None, *, ref: link_ref_frame = link_ref_frame.link_origin):
+    def get_links_vel(
+        self, links_idx=None, envs_idx=None, *, ref: link_ref_frame = link_ref_frame.link_origin, relative=False
+    ):
         ref_frame = self._sanitize_ref_frame(ref, has_root_COM=False)
         if gs.use_zerocopy:
-            mask = (0, *indices_to_mask(links_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, links_idx)
+            mask = indices_to_mask(envs_idx, links_idx)
             cd_vel = qd_to_torch(self.dyn_state.links.cd_vel, transpose=True)
             cd_ang = qd_to_torch(self.dyn_state.links.cd_ang, transpose=True)
             if ref_frame == link_ref_frame.link_COM:
@@ -2856,23 +2855,38 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 pos = qd_to_torch(self.dyn_state.links.pos, transpose=True)
                 root_COM = qd_to_torch(self.dyn_state.links.root_COM, transpose=True)
                 delta = pos[mask] - root_COM[mask]
-            return cd_vel[mask] + cd_ang[mask].cross(delta, dim=-1)
+            tensor = cd_vel[mask] + cd_ang[mask].cross(delta, dim=-1)
+        else:
+            _tensor, links_idx, envs_idx = self._sanitize_io_variables(
+                None, links_idx, self.n_links, "links_idx", envs_idx, (3,)
+            )
+            assert _tensor is not None
+            tensor = _tensor[None] if self.n_envs == 0 else _tensor
+            kernel_get_links_vel(links_idx, envs_idx, tensor, self.dyn_state, self.rigid_config, ref_frame)
 
-        _tensor, links_idx, envs_idx = self._sanitize_io_variables(
-            None, links_idx, self.n_links, "links_idx", envs_idx, (3,)
-        )
-        assert _tensor is not None
-        tensor = _tensor[None] if self.n_envs == 0 else _tensor
-        kernel_get_links_vel(links_idx, envs_idx, tensor, self.dyn_state, self.rigid_config, ref_frame)
-        return _tensor
+        # Only the 'link_origin' reference carries the offset, as in 'get_links_pos'.
+        if relative and ref_frame == link_ref_frame.link_origin and self._links_offset_pos is not None:
+            ang = qd_to_torch(self.dyn_state.links.cd_ang, envs_idx, links_idx, transpose=True)
+            tensor -= ang.cross(self._links_offset_shift(links_idx, envs_idx), dim=-1)
 
-    def get_links_acc(self, links_idx=None, envs_idx=None):
+        return tensor[0] if self.n_envs == 0 else tensor
+
+    def get_links_acc(self, links_idx=None, envs_idx=None, *, relative=False):
         _tensor, links_idx, envs_idx = self._sanitize_io_variables(
             None, links_idx, self.n_links, "links_idx", envs_idx, (3,)
         )
         tensor = _tensor[None] if self.n_envs == 0 else _tensor
         kernel_get_links_acc(links_idx, envs_idx, tensor, self.dyn_state, self.rigid_config)
-        return _tensor
+
+        # Classical acceleration transported over a displacement of '-shift', hence both signs:
+        # 'a - alpha x shift - omega x (omega x shift)'.
+        if relative and self._links_offset_pos is not None:
+            ang = qd_to_torch(self.dyn_state.links.cd_ang, envs_idx, links_idx, transpose=True)
+            acc_ang = qd_to_torch(self.dyn_state.links.cacc_ang, envs_idx, links_idx, transpose=True)
+            shift = self._links_offset_shift(links_idx, envs_idx)
+            tensor -= acc_ang.cross(shift, dim=-1) + ang.cross(ang.cross(shift, dim=-1), dim=-1)
+
+        return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_acc_ang(self, links_idx=None, envs_idx=None):
         tensor = qd_to_torch(self.dyn_state.links.cacc_ang, envs_idx, links_idx, transpose=True, copy=True)

@@ -132,7 +132,7 @@ class KinematicLink(RBC):
         return self._solver.get_links_quat(self._idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
-    def get_vel(self, envs_idx=None) -> torch.Tensor:
+    def get_vel(self, envs_idx=None, *, relative=True) -> torch.Tensor:
         """
         Get the linear velocity of the link in the world frame.
 
@@ -140,8 +140,12 @@ class KinematicLink(RBC):
         ----------
         envs_idx : int or array of int, optional
             The indices of the environments to get the linear velocity. If None, get the linear velocity of all environments. Default is None.
+        relative : bool, optional
+            Whether to report the velocity of the user-frame origin, with the entity's morph pose offset and
+            inertial alignment stripped, rather than of the link origin used by the solver. The two differ whenever
+            the link is rotating. Defaults to True.
         """
-        return self._solver.get_links_vel(self._idx, envs_idx)[..., 0, :]
+        return self._solver.get_links_vel(self._idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
     def get_ang(self, envs_idx=None) -> torch.Tensor:

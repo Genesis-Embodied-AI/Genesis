@@ -754,7 +754,7 @@ class KinematicEntity(Entity):
         return self._solver.get_links_quat(self.base_link_idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
-    def get_vel(self, envs_idx=None):
+    def get_vel(self, envs_idx=None, *, relative=True):
         """
         Returns linear velocity of the entity's base link.
 
@@ -762,13 +762,17 @@ class KinematicEntity(Entity):
         ----------
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
+        relative : bool, optional
+            Whether to report the velocity of the user-frame origin, with the morph pose offset and inertial
+            alignment stripped, rather than of the link origin used by the solver. The two differ whenever the link
+            is rotating. Defaults to True.
 
         Returns
         -------
         vel : torch.Tensor, shape (3,) or (n_envs, 3)
             The linear velocity of the entity's base link.
         """
-        return self._solver.get_links_vel(self.base_link_idx, envs_idx)[..., 0, :]
+        return self._solver.get_links_vel(self.base_link_idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
     def get_ang(self, envs_idx=None):
@@ -870,7 +874,7 @@ class KinematicEntity(Entity):
         return torch.stack((aabbs[..., 0, :].min(dim=-2).values, aabbs[..., 1, :].max(dim=-2).values), dim=-2)
 
     @gs.assert_built
-    def get_links_vel(self, links_idx_local=None, envs_idx=None):
+    def get_links_vel(self, links_idx_local=None, envs_idx=None, *, relative=True):
         """
         Returns linear velocity of all the entity's links expressed at a given reference position in world coordinates.
 
@@ -880,6 +884,10 @@ class KinematicEntity(Entity):
             The indices of the links. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
+        relative : bool, optional
+            Whether to report the velocity of the user-frame origin, with the morph pose offset and inertial
+            alignment stripped, rather than of the link origin used by the solver. The two differ whenever the link
+            is rotating. Defaults to True.
 
         Returns
         -------
@@ -887,7 +895,7 @@ class KinematicEntity(Entity):
             The linear velocity of all the entity's links.
         """
         links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
-        return self._solver.get_links_vel(links_idx, envs_idx)
+        return self._solver.get_links_vel(links_idx, envs_idx, relative=relative)
 
     @gs.assert_built
     def get_links_ang(self, links_idx_local=None, envs_idx=None):
@@ -2187,7 +2195,9 @@ class RigidEntity(KinematicEntity):
         return self._solver.get_links_pos(links_idx, envs_idx, ref=ref, relative=relative)
 
     @gs.assert_built
-    def get_links_vel(self, links_idx_local=None, envs_idx=None, *, ref: link_ref_frame = link_ref_frame.link_origin):
+    def get_links_vel(
+        self, links_idx_local=None, envs_idx=None, *, ref: link_ref_frame = link_ref_frame.link_origin, relative=True
+    ):
         """
         Returns linear velocity of all the entity's links expressed at a given reference position in world coordinates.
 
@@ -2200,6 +2210,10 @@ class RigidEntity(KinematicEntity):
         ref: gs.link_ref_frame, optional
             The reference point used to express the velocity of each link: its origin ('link_origin') or its center of
             mass ('link_COM'). Defaults to 'link_origin'.
+        relative : bool, optional
+            If True, report the velocity of the user-frame origin, with the morph pose offset and inertial alignment
+            stripped; this only affects ref=gs.link_ref_frame.link_origin, since the offset is defined on the link
+            origin. The two frames differ whenever the link is rotating. Defaults to True.
 
         Returns
         -------
@@ -2207,12 +2221,32 @@ class RigidEntity(KinematicEntity):
             The linear velocity of all the entity's links.
         """
         links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
-        return self._solver.get_links_vel(links_idx, envs_idx, ref=ref)
+        return self._solver.get_links_vel(links_idx, envs_idx, ref=ref, relative=relative)
 
     @gs.assert_built
-    def get_links_acc(self, links_idx_local=None, envs_idx=None):
+    def get_links_acc(self, links_idx_local=None, envs_idx=None, *, relative=True):
+        """
+        Returns classical linear acceleration of all the entity's links expressed at their origin in world
+        coordinates.
+
+        Parameters
+        ----------
+        links_idx_local : None | array_like
+            The indices of the links. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        relative : bool, optional
+            Whether to report the acceleration of the user-frame origin, with the morph pose offset and inertial
+            alignment stripped, rather than of the link origin used by the solver. The two differ whenever the link
+            is rotating. Defaults to True.
+
+        Returns
+        -------
+        acc : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
+            The classical linear acceleration of all the entity's links.
+        """
         links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
-        return self._solver.get_links_acc(links_idx, envs_idx)
+        return self._solver.get_links_acc(links_idx, envs_idx, relative=relative)
 
     @gs.assert_built
     def get_links_acc_ang(self, links_idx_local=None, envs_idx=None):
