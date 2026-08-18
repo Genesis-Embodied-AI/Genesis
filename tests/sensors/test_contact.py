@@ -135,7 +135,7 @@ def test_gravity_force(n_envs, show_viewer, tol):
         scene.step()
 
     # Make sure that box CoM is valid
-    assert_allclose(box.get_links_pos(ref="root_com")[..., :2], box_com_offset[:2], tol=tol)
+    assert_allclose(box.get_links_pos(ref=gs.link_ref_frame.root_COM)[..., :2], box_com_offset[:2], tol=tol)
 
     assert not bool_sensor_floor.read().any(), "ContactSensor for floor should not detect any contact yet."
     assert not bool_sensor_box_2.read().any(), "ContactSensor for box_2 should not detect any contact yet."

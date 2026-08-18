@@ -11,11 +11,11 @@ import quadrants as qd
 import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
+from genesis.constants import link_ref_frame
 from genesis.engine.entities import DroneEntity, RigidEntity
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.states import QueriedStates, RigidSolverState
 from genesis.options.solvers import RigidOptions
-from genesis.typing import LinkFrameType, LinkRefFrameType
 from genesis.utils.misc import (
     DeprecationError,
     assign_indexed_tensor,
@@ -1606,7 +1606,7 @@ class RigidSolver(KinematicSolver):
         envs_idx=None,
         *,
         pos=None,
-        ref: LinkFrameType = "link_origin",
+        ref: link_ref_frame = link_ref_frame.link_origin,
         local: bool = False,
     ):
         """
@@ -1617,31 +1617,28 @@ class RigidSolver(KinematicSolver):
         force : None | array_like, optional
             The linear force to apply. None for a pure torque. Defaults to None.
         torque : None | array_like, optional
-            The torque to apply, on top of the moment induced by the linear force. None for a pure force. Defaults to
-            None.
+            The torque to apply, on top of the moment induced by the linear force. Defaults to None.
         links_idx : None | array_like, optional
             The indices of the links on which to apply the wrench. None to specify all links. Default to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         pos : None | array_like, optional
-            The point at which the linear force is applied, which sets the moment arm of the induced torque. None to
-            apply it at the origin of the reference frame designated by `ref`. With `local=True`, it is an offset from
-            that origin expressed in the coordinates of that frame, hence a point that follows the link as it moves.
-            Otherwise, it is a world position that locates the point on its own, leaving `ref` to only select the frame
-            of `force` and `torque`. Defaults to None.
-        ref: "link_origin" | "link_com", optional
-            The reference frame on which the wrench will be applied. "link_origin" refers to the origin of the link and
-            "link_com" refers to the center of mass of the link. This argument only selects the frame of the input
-            coordinates unless a linear force is applied at the origin of that frame, ie without specifying `pos`.
+            Where the linear force is applied, which sets the moment arm of the induced torque. With `local=True`, an
+            offset from the origin of the `ref` frame, so the point follows each link as it moves; otherwise a world
+            position. None applies the force at the origin of the `ref` frame. Defaults to None.
+        ref: gs.link_ref_frame, optional
+            The reference frame: the origin of each link ('link_origin'), or its center of mass ('link_COM'). It fixes
+            where the linear force acts when `pos` is None, and the axes of the input coordinates when `local=True`.
+            Defaults to 'link_origin'.
         local: bool, optional
-            Whether the wrench and the application point are expressed in the local coordinates associated with the
-            reference frame instead of world frame.
+            Whether `force`, `torque` and `pos` are expressed in the coordinates of the `ref` frame rather than the
+            world frame. Defaults to False.
         """
         if force is None and torque is None:
             gs.raise_exception("Either 'force' or 'torque' must be specified.")
         if force is None and pos is not None:
             gs.raise_exception("'pos' requires 'force', as a torque acts the same wherever it is applied.")
-        ref_frame = self._convert_ref_to_frame(ref, has_root_com=False)
+        ref_frame = self._sanitize_ref_frame(ref, has_root_COM=False)
 
         if pos is not None:
             pos, _, _ = self._sanitize_io_variables(
@@ -2855,27 +2852,24 @@ class RigidSolver(KinematicSolver):
         return tensor
 
     @staticmethod
-    def _convert_ref_to_frame(ref: LinkRefFrameType, *, has_root_com: bool = True) -> int:
-        """Map a user-facing reference frame name onto its 'gs.LINK_REF_FRAME' value.
+    def _sanitize_ref_frame(ref: link_ref_frame, *, has_root_COM: bool = True) -> int:
+        """Check that a reference frame is supported and return it as a plain int.
 
         The value is returned as a plain int rather than the enum member itself because quadrants' fastcache holds a
         weak reference to template arguments, which enum members do not support.
         """
-        if ref == "link_origin":
-            return int(gs.LINK_REF_FRAME.LINK_ORIGIN)
-        elif ref == "link_com":
-            return int(gs.LINK_REF_FRAME.LINK_COM)
-        elif ref == "root_com" and has_root_com:
-            return int(gs.LINK_REF_FRAME.ROOT_COM)
-        refs = "'link_origin', 'link_com', or 'root_com'" if has_root_com else "'link_origin' or 'link_com'"
-        gs.raise_exception(f"'ref' must be either {refs}.")
+        frames = tuple(link_ref_frame) if has_root_COM else (link_ref_frame.link_origin, link_ref_frame.link_COM)
+        if not isinstance(ref, link_ref_frame) or ref not in frames:
+            refs = ", ".join(f"'gs.link_ref_frame.{frame.name}'" for frame in frames)
+            gs.raise_exception(f"'ref' must be one of {refs}.")
+        return int(ref)
 
     def get_links_pos(
         self,
         links_idx=None,
         envs_idx=None,
         *,
-        ref: LinkRefFrameType = "link_origin",
+        ref: link_ref_frame = link_ref_frame.link_origin,
         relative=False,
     ):
         if not gs.use_zerocopy:
@@ -2883,10 +2877,10 @@ class RigidSolver(KinematicSolver):
                 None, links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
             )
 
-        ref_frame = self._convert_ref_to_frame(ref)
-        if ref_frame == gs.LINK_REF_FRAME.ROOT_COM:
+        ref_frame = self._sanitize_ref_frame(ref)
+        if ref_frame == link_ref_frame.root_COM:
             tensor = qd_to_torch(self.dyn_state.links.root_COM, envs_idx, links_idx, transpose=True, copy=True)
-        elif ref_frame == gs.LINK_REF_FRAME.LINK_COM:
+        elif ref_frame == link_ref_frame.link_COM:
             i_pos = qd_to_torch(self.dyn_state.links.i_pos, envs_idx, links_idx, transpose=True)
             root_COM = qd_to_torch(self.dyn_state.links.root_COM, envs_idx, links_idx, transpose=True)
             tensor = i_pos + root_COM
@@ -2894,7 +2888,7 @@ class RigidSolver(KinematicSolver):
             tensor = qd_to_torch(self.dyn_state.links.pos, envs_idx, links_idx, transpose=True, copy=True)
 
         # The pose offset is defined on the link origin, so it is only stripped for the 'link_origin' reference.
-        if relative and ref_frame == gs.LINK_REF_FRAME.LINK_ORIGIN and self._links_offset_pos is not None:
+        if relative and ref_frame == link_ref_frame.link_origin and self._links_offset_pos is not None:
             quat = qd_to_torch(self.dyn_state.links.quat, envs_idx, links_idx, transpose=True, copy=True)
             offset_pos = _select_links_offset(self._links_offset_pos, links_idx, envs_idx)
             offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
@@ -2902,13 +2896,13 @@ class RigidSolver(KinematicSolver):
 
         return tensor[0] if self.n_envs == 0 else tensor
 
-    def get_links_vel(self, links_idx=None, envs_idx=None, *, ref: LinkFrameType = "link_origin"):
-        ref_frame = self._convert_ref_to_frame(ref, has_root_com=False)
+    def get_links_vel(self, links_idx=None, envs_idx=None, *, ref: link_ref_frame = link_ref_frame.link_origin):
+        ref_frame = self._sanitize_ref_frame(ref, has_root_COM=False)
         if gs.use_zerocopy:
             mask = (0, *indices_to_mask(links_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, links_idx)
             cd_vel = qd_to_torch(self.dyn_state.links.cd_vel, transpose=True)
             cd_ang = qd_to_torch(self.dyn_state.links.cd_ang, transpose=True)
-            if ref_frame == gs.LINK_REF_FRAME.LINK_COM:
+            if ref_frame == link_ref_frame.link_COM:
                 i_pos = qd_to_torch(self.dyn_state.links.i_pos, transpose=True)
                 delta = i_pos[mask]
             else:
@@ -3208,7 +3202,7 @@ class RigidSolver(KinematicSolver):
         potential_energy : torch.Tensor, shape () or (n_envs,)
         """
         gravity = self.get_gravity(envs_idx=envs_idx)  # (3,) or (n_envs, 3)
-        links_pos = self.get_links_pos(links_idx, envs_idx, ref="link_com")  # (..., n_links, 3)
+        links_pos = self.get_links_pos(links_idx, envs_idx, ref=link_ref_frame.link_COM)  # (..., n_links, 3)
         # `get_links_inertial_mass` only accepts `envs_idx` when links info is batched, since all the environments
         # share the very same link masses otherwise.
         links_mass = self.get_links_inertial_mass(links_idx, envs_idx if self._options.batch_links_info else None)

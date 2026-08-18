@@ -5,9 +5,10 @@ import numpy as np
 import torch
 
 import genesis as gs
+from genesis.constants import link_ref_frame
 from genesis.engine.mesh import InertialProperties
 from genesis.repr_base import RBC
-from genesis.typing import LaxPositiveFArrayType, LinkFrameType, Matrix3x3Type, UnitVec4FType, Vec3FType
+from genesis.typing import LaxPositiveFArrayType, Matrix3x3Type, UnitVec4FType, Vec3FType
 from genesis.utils import geom as gu
 from genesis.utils.misc import DeprecationError, qd_to_torch, tensor_to_array
 
@@ -993,7 +994,7 @@ class RigidLink(KinematicLink):
         envs_idx=None,
         *,
         pos=None,
-        ref: LinkFrameType = "link_origin",
+        ref: link_ref_frame = link_ref_frame.link_origin,
         local: bool = False,
     ):
         """
@@ -1004,41 +1005,40 @@ class RigidLink(KinematicLink):
         force : None | array_like, optional
             The linear force to apply. None for a pure torque. Defaults to None.
         torque : None | array_like, optional
-            The torque to apply, on top of the moment induced by the linear force. None for a pure force. Defaults to
-            None.
+            The torque to apply, on top of the moment induced by the linear force. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         pos : None | array_like, optional
-            The point at which the linear force is applied, which sets the moment arm of the induced torque. None to
-            apply it at the origin of the reference frame designated by `ref`. With `local=True`, it is an offset from
-            that origin expressed in the coordinates of that frame, hence a point that follows the link as it moves.
-            Otherwise, it is a world position that locates the point on its own, leaving `ref` to only select the frame
-            of `force` and `torque`. Defaults to None.
-        ref: "link_origin" | "link_com", optional
-            The reference frame on which the wrench will be applied. "link_origin" refers to the origin of the link and
-            "link_com" refers to the center of mass of the link. This argument only selects the frame of the input
-            coordinates unless a linear force is applied at the origin of that frame, ie without specifying `pos`.
+            Where the linear force is applied, which sets the moment arm of the induced torque. With `local=True`, an
+            offset from the origin of the `ref` frame, so the point follows the link as it moves; otherwise a world
+            position. None applies the force at the origin of the `ref` frame. Defaults to None.
+        ref: gs.link_ref_frame, optional
+            The reference frame: the origin of the link ('link_origin'), or its center of mass ('link_COM'). It fixes
+            where the linear force acts when `pos` is None, and the axes of the input coordinates when `local=True`.
+            Defaults to 'link_origin'.
         local: bool, optional
-            Whether the wrench and the application point are expressed in the local coordinates associated with the
-            reference frame instead of world frame.
+            Whether `force`, `torque` and `pos` are expressed in the coordinates of the `ref` frame rather than the
+            world frame. Defaults to False.
         """
         self._solver.apply_links_external_wrench(force, torque, self._idx, envs_idx, pos=pos, ref=ref, local=local)
 
     def apply_external_force(
-        self, force, envs_idx=None, *, pos=None, ref: LinkFrameType = "link_origin", local: bool = False
+        self, force, envs_idx=None, *, pos=None, ref: link_ref_frame = link_ref_frame.link_origin, local: bool = False
     ):
         """
         Apply an external linear force over one simulation step on the link.
 
-        See `RigidLink.apply_external_wrench` documentation for details about the arguments.
+        Refer to `RigidLink.apply_external_wrench` for details.
         """
         self.apply_external_wrench(force, envs_idx=envs_idx, pos=pos, ref=ref, local=local)
 
-    def apply_external_torque(self, torque, envs_idx=None, *, ref: LinkFrameType = "link_origin", local: bool = False):
+    def apply_external_torque(
+        self, torque, envs_idx=None, *, ref: link_ref_frame = link_ref_frame.link_origin, local: bool = False
+    ):
         """
         Apply an external torque over one simulation step on the link.
 
-        See `RigidLink.apply_external_wrench` documentation for details about the arguments.
+        Refer to `RigidLink.apply_external_wrench` for details.
         """
         self.apply_external_wrench(torque=torque, envs_idx=envs_idx, ref=ref, local=local)
 

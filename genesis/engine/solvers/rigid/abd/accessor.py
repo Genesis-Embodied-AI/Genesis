@@ -1010,11 +1010,11 @@ def kernel_get_links_vel(
         vel = dyn_state.links.cd_vel[links_idx[i_l_], envs_idx[i_b_]]  # entity's CoM
 
         # Translate to get the velocity expressed at a different position if necessary link-position
-        if qd.static(ref == gs.LINK_REF_FRAME.LINK_COM):
+        if qd.static(ref == gs.link_ref_frame.link_COM):
             vel = vel + dyn_state.links.cd_ang[links_idx[i_l_], envs_idx[i_b_]].cross(
                 dyn_state.links.i_pos[links_idx[i_l_], envs_idx[i_b_]]
             )
-        if qd.static(ref == gs.LINK_REF_FRAME.LINK_ORIGIN):
+        if qd.static(ref == gs.link_ref_frame.link_origin):
             vel = vel + dyn_state.links.cd_ang[links_idx[i_l_], envs_idx[i_b_]].cross(
                 dyn_state.links.pos[links_idx[i_l_], envs_idx[i_b_]]
                 - dyn_state.links.root_COM[links_idx[i_l_], envs_idx[i_b_]]
@@ -1175,7 +1175,7 @@ def kernel_set_drone_rpm(
                 force,
                 torque,
                 dyn_state,
-                ref=gs.LINK_REF_FRAME.LINK_COM,
+                ref=gs.link_ref_frame.link_COM,
                 local=True,
                 has_pos=False,
             )

@@ -10,12 +10,13 @@ import torch
 import trimesh
 
 import genesis as gs
+from genesis.constants import link_ref_frame
 from genesis.engine.materials.base import Material
 from genesis.engine.mesh import InertialProperties
 from genesis.engine.states.entities import RigidEntityState
 from genesis.options.morphs import Morph
 from genesis.options.surfaces import Surface
-from genesis.typing import LinkFrameType, LinkRefFrameType, UnitVec4FType, Vec3FType
+from genesis.typing import UnitVec4FType, Vec3FType
 from genesis.utils import geom as gu
 from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
@@ -3462,7 +3463,7 @@ class RigidEntity(KinematicEntity):
         links_idx_local=None,
         envs_idx=None,
         *,
-        ref: LinkRefFrameType = "link_origin",
+        ref: link_ref_frame = link_ref_frame.link_origin,
         relative=True,
     ):
         """
@@ -3474,15 +3475,15 @@ class RigidEntity(KinematicEntity):
             The indices of the links. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
-        ref: "link_origin" | "link_com" | "root_com"
-            The reference point being used to express the position of each link.
-            * "root_com": center of mass of the sub-entities to which the link belongs. As a reminder, a single
-              kinematic tree (aka. 'RigidEntity') may compromise multiple "physical" entities, i.e. a kinematic tree
-              that may have at most one free joint, at its root.
+        ref: gs.link_ref_frame, optional
+            The reference point used to express the position of each link: its origin ('link_origin'), its center of
+            mass ('link_COM'), or the center of mass of the sub-entity it belongs to ('root_COM'). A single
+            'RigidEntity' may comprise several physical sub-entities, each a kinematic sub-tree with at most one free
+            joint at its root. Defaults to 'link_origin'.
         relative : bool, optional
             If True, strip the morph pose offset to return the user-frame position; this only affects
-            ref="link_origin", since the offset is defined on the link origin. If False, return the world frame.
-            Defaults to True.
+            ref=gs.link_ref_frame.link_origin, since the offset is defined on the link origin. If False, return the
+            world frame. Defaults to True.
 
         Returns
         -------
@@ -3493,7 +3494,7 @@ class RigidEntity(KinematicEntity):
         return self._solver.get_links_pos(links_idx, envs_idx, ref=ref, relative=relative)
 
     @gs.assert_built
-    def get_links_vel(self, links_idx_local=None, envs_idx=None, *, ref: LinkFrameType = "link_origin"):
+    def get_links_vel(self, links_idx_local=None, envs_idx=None, *, ref: link_ref_frame = link_ref_frame.link_origin):
         """
         Returns linear velocity of all the entity's links expressed at a given reference position in world coordinates.
 
@@ -3503,9 +3504,9 @@ class RigidEntity(KinematicEntity):
             The indices of the links. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
-        ref: "link_origin" | "link_com"
-            The reference point being used to expressed the velocity of each link.
-
+        ref: gs.link_ref_frame, optional
+            The reference point used to express the velocity of each link: its origin ('link_origin') or its center of
+            mass ('link_COM'). Defaults to 'link_origin'.
         Returns
         -------
         vel : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
@@ -3533,7 +3534,7 @@ class RigidEntity(KinematicEntity):
         envs_idx=None,
         *,
         pos=None,
-        ref: LinkFrameType = "link_origin",
+        ref: link_ref_frame = link_ref_frame.link_origin,
         local: bool = False,
     ):
         """
@@ -3544,25 +3545,22 @@ class RigidEntity(KinematicEntity):
         force : None | array_like, optional
             The linear force to apply. None for a pure torque. Defaults to None.
         torque : None | array_like, optional
-            The torque to apply, on top of the moment induced by the linear force. None for a pure force. Defaults to
-            None.
+            The torque to apply, on top of the moment induced by the linear force. Defaults to None.
         links_idx_local : None | array_like, optional
             The indices of the links. None to specify all the entity's links. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         pos : None | array_like, optional
-            The point at which the linear force is applied, which sets the moment arm of the induced torque. None to
-            apply it at the origin of the reference frame designated by `ref`. With `local=True`, it is an offset from
-            that origin expressed in the coordinates of that frame, hence a point that follows the link as it moves.
-            Otherwise, it is a world position that locates the point on its own, leaving `ref` to only select the frame
-            of `force` and `torque`. Defaults to None.
-        ref: "link_origin" | "link_com", optional
-            The reference frame on which the wrench will be applied. "link_origin" refers to the origin of each link and
-            "link_com" refers to the center of mass of each link. This argument only selects the frame of the input
-            coordinates unless a linear force is applied at the origin of that frame, ie without specifying `pos`.
+            Where the linear force is applied, which sets the moment arm of the induced torque. With `local=True`, an
+            offset from the origin of the `ref` frame, so the point follows each link as it moves; otherwise a world
+            position. None applies the force at the origin of the `ref` frame. Defaults to None.
+        ref: gs.link_ref_frame, optional
+            The reference frame: the origin of each link ('link_origin'), or its center of mass ('link_COM'). It fixes
+            where the linear force acts when `pos` is None, and the axes of the input coordinates when `local=True`.
+            Defaults to 'link_origin'.
         local: bool, optional
-            Whether the wrench and the application point are expressed in the local coordinates associated with the
-            reference frame instead of world frame.
+            Whether `force`, `torque` and `pos` are expressed in the coordinates of the `ref` frame rather than the
+            world frame. Defaults to False.
         """
         links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         self._solver.apply_links_external_wrench(force, torque, links_idx, envs_idx, pos=pos, ref=ref, local=local)

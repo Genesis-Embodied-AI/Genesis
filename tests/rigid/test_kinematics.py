@@ -57,8 +57,8 @@ def test_link_velocity(gs_sim, tol):
             0.0,
         ]
     )
-    link_COM0 = gs_sim.rigid_solver.get_links_pos(ref="link_com")[0]
-    link_COM1 = gs_sim.rigid_solver.get_links_pos(ref="link_com")[1]
+    link_COM0 = gs_sim.rigid_solver.get_links_pos(ref=gs.link_ref_frame.link_COM)[0]
+    link_COM1 = gs_sim.rigid_solver.get_links_pos(ref=gs.link_ref_frame.link_COM)[1]
 
     assert_allclose(link_COM0, COM_0, tol=tol)
     assert_allclose(link_COM1, COM_1, tol=tol)
@@ -80,7 +80,7 @@ def test_link_velocity(gs_sim, tol):
     assert_allclose(xvel_0, 0.0, tol=tol)
     xvel_1_ = omega_0 * np.array([-xpos_1[1], xpos_1[0], 0.0])
     assert_allclose(xvel_1, xvel_1_, tol=tol)
-    civel_0, civel_1 = gs_sim.rigid_solver.get_links_vel(ref="link_com")
+    civel_0, civel_1 = gs_sim.rigid_solver.get_links_vel(ref=gs.link_ref_frame.link_COM)
     civel_0_ = omega_0 * np.array([-COM_0[1], COM_0[0], 0.0])
     assert_allclose(civel_0, civel_0_, tol=tol)
     civel_1_ = omega_0 * np.array([-COM_1[1], COM_1[0], 0.0]) + (omega_1 - omega_0) * np.array(

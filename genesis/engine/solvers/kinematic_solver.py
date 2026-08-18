@@ -1157,9 +1157,9 @@ class KinematicSolver(Solver):
         )
         assert _tensor is not None
         tensor = _tensor[None] if self.n_envs == 0 else _tensor
-        # The frame is passed as a plain int, see 'RigidSolver._convert_ref_to_frame'.
+        # The frame is passed as a plain int, see 'RigidSolver._sanitize_ref_frame'.
         kernel_get_links_vel(
-            links_idx, envs_idx, tensor, self.dyn_state, self.rigid_config, ref=int(gs.LINK_REF_FRAME.LINK_ORIGIN)
+            links_idx, envs_idx, tensor, self.dyn_state, self.rigid_config, ref=int(gs.link_ref_frame.link_origin)
         )
         return _tensor
 

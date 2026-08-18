@@ -495,7 +495,6 @@ from .constants import (
     GEOM_TYPE,
     EQUALITY_TYPE,
     CTRL_MODE,
-    LINK_REF_FRAME,
     PARA_LEVEL,
     ACTIVE,
     INACTIVE,
@@ -504,6 +503,7 @@ from .constants import (
     friction_cone,
     contact_resolution,
     broadphase_traversal,
+    link_ref_frame,
 )
 
 from .utils.uid import UID

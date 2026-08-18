@@ -845,11 +845,10 @@ def func_apply_link_external_wrench(
     local: qd.template(),
     has_pos: qd.template(),
 ):
-    # The generalized force is expressed about the root COM, so the linear force contributes the moment of the lever arm
-    # going from the root COM to the point where it is applied, while the torque acts as a couple wherever it is
-    # attached.
+    # The generalized force is expressed about the root COM, so a linear force adds the moment of the arm going from
+    # the root COM to its application point, while a torque is a free couple.
     arm = qd.Vector.zero(gs.qd_float, 3)
-    if qd.static(ref == gs.LINK_REF_FRAME.LINK_COM):
+    if qd.static(ref == gs.link_ref_frame.link_COM):
         if qd.static(local):
             i_quat = dyn_state.links.i_quat[link_idx, env_idx]
             force = gu.qd_transform_by_quat(force, i_quat)
@@ -857,7 +856,7 @@ def func_apply_link_external_wrench(
             if qd.static(has_pos):
                 pos = gu.qd_transform_by_quat(pos, i_quat)
         arm = dyn_state.links.i_pos[link_idx, env_idx]
-    if qd.static(ref == gs.LINK_REF_FRAME.LINK_ORIGIN):
+    if qd.static(ref == gs.link_ref_frame.link_origin):
         if qd.static(local):
             quat = dyn_state.links.quat[link_idx, env_idx]
             force = gu.qd_transform_by_quat(force, quat)

@@ -39,7 +39,9 @@ def main():
         cube_pos = scene.sim.rigid_solver.get_links_pos(link_idx)
         cube_pos[:, :, 2] -= 1
         scene.sim.rigid_solver.apply_links_external_wrench(
-            force=-100 * cube_pos, torque=[[[0, 0, rotation_direction * 5]]], links_idx=link_idx
+            force=-100 * cube_pos,
+            torque=[0, 0, rotation_direction * 5],
+            links_idx=link_idx,
         )
 
         scene.step()
