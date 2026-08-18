@@ -1051,17 +1051,21 @@ def _add_collision_constraints_per_contact(
                         link = dyn_info.links.parent_idx[link_maybe_batch]
 
                 if qd.static(static_rigid_sim_config.sparse_solve):
-                    constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
-                    _sort_relevant_dofs_descending(constraint_state, n_con, con_n_relevant_dofs, i_b)
+                    constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_dofs
+                    _sort_relevant_dofs_descending(n_con, i_b, con_n_dofs, constraint_state, rigid_config)
                     # C4: project the dense (and now finalized) jac row through
                     # the sorted relevant_dofs index into compact storage.
                     # Reads dense jac once at constraint-build time so that the
                     # hot CG kernels (per-iter) only ever touch jac_compact_values.
-                    for i_d_ in range(con_n_relevant_dofs):
-                        i_d_proj = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
+                    for i_d_ in range(con_n_dofs):
+                        i_d_proj = constraint_state.jac_dofs_idx[n_con, i_d_, i_b]
+                        constraint_state.jac_relevant_dofs[n_con, i_d_, i_b] = i_d_proj
                         constraint_state.jac_compact_values[n_con, i_d_, i_b] = constraint_state.jac[
                             n_con, i_d_proj, i_b
                         ]
+                else:
+                    constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
+                    _sort_relevant_dofs_descending(n_con, i_b, con_n_dofs, constraint_state, rigid_config)
                 imp, aref = gu.imp_aref(
                     contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration
                 )
@@ -1291,13 +1295,17 @@ def func_equality_connect(
                 link = dyn_info.links.parent_idx[link_maybe_batch]
 
         if qd.static(static_rigid_sim_config.sparse_solve):
-            constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
-            # C4: project dense jac row into compact storage.
-            for i_d_ in range(con_n_relevant_dofs):
-                i_d_proj = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
+            constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_dofs
+            _sort_relevant_dofs_descending(n_con, i_b, con_n_dofs, constraint_state, rigid_config)
+            for i_d_ in range(con_n_dofs):
+                i_d_proj = constraint_state.jac_dofs_idx[n_con, i_d_, i_b]
+                constraint_state.jac_relevant_dofs[n_con, i_d_, i_b] = i_d_proj
                 constraint_state.jac_compact_values[n_con, i_d_, i_b] = constraint_state.jac[
                     n_con, i_d_proj, i_b
                 ]
+        else:
+            constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
+            _sort_relevant_dofs_descending(n_con, i_b, con_n_dofs, constraint_state, rigid_config)
 
         pos_diff = global_anchor1 - global_anchor2
         penetration = pos_diff.norm()
@@ -1699,13 +1707,17 @@ def func_equality_weld(
                 link = dyn_info.links.parent_idx[link_maybe_batch]
 
         if qd.static(static_rigid_sim_config.sparse_solve):
-            constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
-            # C4: project dense jac row into compact storage.
-            for i_d_ in range(con_n_relevant_dofs):
-                i_d_proj = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
+            constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_dofs
+            _sort_relevant_dofs_descending(n_con, i_b, con_n_dofs, constraint_state, rigid_config)
+            for i_d_ in range(con_n_dofs):
+                i_d_proj = constraint_state.jac_dofs_idx[n_con, i_d_, i_b]
+                constraint_state.jac_relevant_dofs[n_con, i_d_, i_b] = i_d_proj
                 constraint_state.jac_compact_values[n_con, i_d_, i_b] = constraint_state.jac[
                     n_con, i_d_proj, i_b
                 ]
+        else:
+            constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
+            _sort_relevant_dofs_descending(n_con, i_b, con_n_dofs, constraint_state, rigid_config)
 
         imp, aref = gu.imp_aref(sol_params, -pos_imp, jac_qvel, pos_error[i])
         diag = qd.max(invweight[0] * (1 - imp) / imp, EPS)
@@ -4731,6 +4743,10 @@ def func_ls_init_and_eval_p0(
             for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
                 i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
                 jv = jv + constraint_state.jac_compact_values[i_c, i_d_, i_b] * constraint_state.search[i_d, i_b]
+        elif qd.static(static_rigid_sim_config.enable_per_island_solve):
+            for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
+                jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
         else:
             for i_d in range(n_dofs):
                 jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
@@ -4863,6 +4879,10 @@ def func_ls_init_and_eval_p0_search_lds(
             for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
                 i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
                 jv = jv + constraint_state.jac_compact_values[i_c, i_d_, i_b] * search_lds[i_d, tid]
+        elif qd.static(static_rigid_sim_config.enable_per_island_solve):
+            for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
+                jv = jv + constraint_state.jac[i_c, i_d, i_b] * search_lds[i_d, tid]
         else:
             for i_d in range(n_dofs):
                 jv = jv + constraint_state.jac[i_c, i_d, i_b] * search_lds[i_d, tid]
@@ -6400,6 +6420,16 @@ def func_update_constraint_batch(
                     constraint_state.qfrc_constraint[i_d, i_b]
                     + constraint_state.jac_compact_values[i_c, i_d_, i_b] * constraint_state.efc_force[i_c, i_b]
                 )
+    elif qd.static(static_rigid_sim_config.enable_per_island_solve):
+        for i_d in range(n_dofs):
+            constraint_state.qfrc_constraint[i_d, i_b] = gs.qd_float(0.0)
+        for i_c in range(constraint_state.n_constraints[i_b]):
+            for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
+                constraint_state.qfrc_constraint[i_d, i_b] = (
+                    constraint_state.qfrc_constraint[i_d, i_b]
+                    + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+                )
     elif qd.static(not defer_dense_qfrc):
         # Dense gather. Only the `func_update_constraint` init caller
         # sets defer_dense_qfrc=True and follows up with the 2D
@@ -6990,6 +7020,10 @@ def _initialize_Jaref_per_env(
             for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
                 i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
                 Jaref = Jaref + constraint_state.jac_compact_values[i_c, i_d_, i_b] * qacc[i_d, i_b]
+        elif qd.static(static_rigid_sim_config.enable_per_island_solve):
+            for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
+                Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
         else:
             for i_d in range(n_dofs):
                 Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
