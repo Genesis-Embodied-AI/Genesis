@@ -215,94 +215,6 @@ def get_file_morph_options(**kwargs):
 # ---------------------------------------------------------------------------
 
 
-def make_franka(
-    n_envs, solver=None, gjk=None, is_collision_free=False, is_randomized=False, accessors=False, **scene_kwargs
-):
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=STEP_DT,
-        ),
-        rigid_options=gs.options.RigidOptions(
-            **get_rigid_solver_options(
-                dt=STEP_DT,
-                enable_neutral_collision=True,
-                **(dict(constraint_solver=solver) if solver is not None else {}),
-                **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
-            ),
-        ),
-        **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
-    )
-
-    scene.add_entity(gs.morphs.Plane())
-    franka = scene.add_entity(
-        gs.morphs.MJCF(
-            **get_file_morph_options(
-                file="xml/franka_emika_panda/panda.xml",
-            )
-        ),
-    )
-    time_start = time.time()
-    scene.build(n_envs=n_envs)
-    compile_time = time.time() - time_start
-
-    qpos0 = torch.tensor([0, 0, 0, -1.0, 0, 1.0, 0, 0.02, 0.02], dtype=gs.tc_float, device=gs.device)
-    if n_envs > 0:
-        qpos0 = torch.tile(qpos0, (n_envs, 1))
-    if is_collision_free:
-        franka.set_qpos(qpos0)
-        franka.control_dofs_position(qpos0)
-
-    if n_envs > 0 and is_randomized:
-        vel0 = 0.2 * np.clip(np.random.randn(n_envs, franka.n_dofs), -1.0, 1.0)
-        vel0[:, [link.dof_start for link in franka.links if not link.name.startswith("link") and link.n_dofs]] = 0.0
-    else:
-        vel0 = torch.zeros((*((n_envs,) if n_envs > 0 else ()), franka.n_dofs), dtype=gs.tc_float, device=gs.device)
-    franka.set_dofs_velocity(vel0)
-
-    state_rigid_0 = scene.rigid_solver.get_state()
-
-    if n_envs > 0:
-        n_reset_envs = max(int(0.02 * n_envs), 1)
-        reset_envs_idx = torch.as_tensor(
-            np.random.permutation(n_envs)[:n_reset_envs], dtype=gs.tc_int, device=gs.device
-        )
-        reset_envs_mask = torch.isin(scene._envs_idx, reset_envs_idx)
-    else:
-        reset_envs_mask = None
-
-    dofs_stiffness = franka.get_dofs_stiffness()
-    dofs_damping = franka.get_dofs_damping()
-
-    # Per-selected-env base pose subset exercising the bool-mask zero-copy 'masked_scatter_' path
-    base_pos0 = franka.get_pos(reset_envs_mask)
-    base_quat0 = franka.get_quat(reset_envs_mask)
-
-    def step():
-        scene.step()
-        if accessors:
-            franka.get_ang()
-            franka.get_vel()
-            franka.get_dofs_position()
-            franka.get_dofs_velocity()
-            franka.get_links_pos()
-            franka.get_links_quat()
-            franka.get_links_vel()
-            franka.get_contacts()
-
-            # TODO: Entire scene reset is still slow currently because 'partial=False' by default.
-            scene.rigid_solver.set_state(0, state_rigid_0, envs_idx=reset_envs_mask, partial=True)
-
-            franka.control_dofs_position(qpos0)
-            franka.set_dofs_stiffness(dofs_stiffness)
-            franka.set_dofs_damping(dofs_damping)
-            franka.set_dofs_velocity(vel0, envs_idx=reset_envs_mask, skip_forward=True)
-            franka.set_qpos(qpos0, envs_idx=reset_envs_mask, zero_velocity=False, skip_forward=True)
-            franka.set_pos(base_pos0, envs_idx=reset_envs_mask, skip_forward=True)
-            franka.set_quat(base_quat0, envs_idx=reset_envs_mask, relative=False, skip_forward=True)
-
-    return scene, step, SceneMeta(compile_time=compile_time)
-
-
 def make_go2(n_envs, solver=None, gjk=None, **scene_kwargs):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -449,8 +361,8 @@ def make_g1_fall(n_envs, solver=None, gjk=None, accessors=False, **scene_kwargs)
     random_forces = torch.zeros((n_envs, robot.n_dofs), dtype=gs.tc_float, device=gs.device)
     max_force = 50.0
 
-    # Snapshot the state exercised by the per-step partial reset in the 'accessors' variant (cf. make_franka), which
-    # runs the same accessor/reset workload as franka_accessors on top of the falling-humanoid dynamics.
+    # Snapshot the state exercised by the per-step partial reset in the 'accessors' variant: the same per-env
+    # accessor + reset workload seen in RL rollouts, run on top of the falling-humanoid dynamics.
     if accessors:
         qpos0 = torch.tile(init_qpos, (n_envs, 1)) if n_envs > 0 else init_qpos
         vel0 = torch.zeros((*((n_envs,) if n_envs > 0 else ()), robot.n_dofs), dtype=gs.tc_float, device=gs.device)
@@ -1083,12 +995,6 @@ def factory_logger(stream_writers):
 
 
 @pytest.fixture
-def franka_accessors(solver, n_envs, gjk):
-    _, step_fn, meta = make_franka(n_envs, solver=solver, gjk=gjk, is_collision_free=True, accessors=True)
-    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
-
-
-@pytest.fixture
 def go2(solver, n_envs, gjk):
     _, step_fn, meta = make_go2(n_envs, solver=solver, gjk=gjk)
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
@@ -1156,7 +1062,6 @@ def table_bussing(solver, n_envs, gjk):
 
 # Full benchmark suite (one instance of each, solver/gjk left at their defaults), run on the 'field' dtype.
 BENCHMARKS_FIELD = [
-    ("franka_accessors", None, None, 30000, gs.gpu),
     ("go2", None, None, 4096, gs.gpu),
     ("anymal_random", None, None, 20000, gs.gpu),
     ("g1_fall", None, None, 4096, gs.gpu),
@@ -1172,7 +1077,6 @@ BENCHMARKS_FIELD = [
 # Reduced subset, run on the 'ndarray' dtype only.
 BENCHMARKS_NDARRAY = [
     ("dex_hand", None, None, 4096, gs.gpu),
-    ("franka_accessors", None, None, 30000, gs.gpu),
     ("table_bussing", None, None, 50, gs.cpu),
 ]
 
