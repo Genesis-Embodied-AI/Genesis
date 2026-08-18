@@ -414,6 +414,30 @@ def test_inverse_kinematics_local_point(n_envs, show_viewer, tol):
     )
     assert_allclose(err, 0.0, atol=tol)
 
+    if n_envs > 0:
+        qpos_shared, err_shared = robot.inverse_kinematics(
+            link=end_effector,
+            pos=target_pos[0],
+            quat=target_quat[0],
+            local_point=local_offset,
+            pos_tol=tol,
+            rot_tol=tol,
+            max_solver_iters=100,
+            return_error=True,
+        )
+        assert_allclose(err_shared, 0.0, atol=tol)
+        qpos_expanded, _ = robot.inverse_kinematics(
+            link=end_effector,
+            pos=target_pos[0].expand(n_envs, 3),
+            quat=target_quat[0].expand(n_envs, 4),
+            local_point=local_offset,
+            pos_tol=tol,
+            rot_tol=tol,
+            max_solver_iters=100,
+            return_error=True,
+        )
+        assert_equal(qpos_shared, qpos_expanded)
+
     # Apply the solution
     robot.set_qpos(qpos)
 

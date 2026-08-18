@@ -2619,10 +2619,12 @@ class KinematicEntity(Entity):
         ----------
         link : RigidLink
             The link to be used as the end-effector.
-        pos : None | array_like, shape (3,), optional
-            The target position. If None, position error will not be considered. Defaults to None.
-        quat : None | array_like, shape (4,), optional
-            The target orientation. If None, orientation error will not be considered. Defaults to None.
+        pos : None | array_like, shape (3,) or (n_selected_envs, 3), optional
+            The target position, either shared by every selected environment or given per environment. If None,
+            position error will not be considered. Defaults to None.
+        quat : None | array_like, shape (4,) or (n_selected_envs, 4), optional
+            The target orientation, either shared by every selected environment or given per environment. If None,
+            orientation error will not be considered. Defaults to None.
         local_point : None | array_like, shape (3,), optional
             A point in the link's local frame to be positioned at `pos`. If None, the link origin is used. This is
             useful for positioning a tool center point (TCP) or fingertip that is offset from the link origin. Defaults
@@ -2669,16 +2671,6 @@ class KinematicEntity(Entity):
             Pose error for each target. The 6-vector is [err_pos_x, err_pos_y, err_pos_z, err_rot_x, err_rot_y,
             err_rot_z]. Only returned if `return_error` is True.
         """
-        if self._solver.n_envs > 0:
-            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-
-            if pos is not None:
-                if len(pos) != len(envs_idx):
-                    gs.raise_exception("First dimension of `pos` must be equal to `scene.n_envs`.")
-            if quat is not None:
-                if len(quat) != len(envs_idx):
-                    gs.raise_exception("First dimension of `quat` must be equal to `scene.n_envs`.")
-
         ret = self.inverse_kinematics_multilink(
             links=[link],
             poss=[pos] if pos is not None else [],
