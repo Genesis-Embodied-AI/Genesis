@@ -411,7 +411,7 @@ def make_anymal(n_envs, solver=None, gjk=None, control=None, with_kinematic=Fals
     return scene, step, SceneMeta(compile_time=compile_time)
 
 
-def make_g1_fall(n_envs, solver=None, gjk=None, **scene_kwargs):
+def make_g1_fall(n_envs, solver=None, gjk=None, accessors=False, **scene_kwargs):
     step_dt = 0.005
 
     scene = gs.Scene(
@@ -449,10 +449,52 @@ def make_g1_fall(n_envs, solver=None, gjk=None, **scene_kwargs):
     random_forces = torch.zeros((n_envs, robot.n_dofs), dtype=gs.tc_float, device=gs.device)
     max_force = 50.0
 
+    # Snapshot the state exercised by the per-step partial reset in the 'accessors' variant (cf. make_franka), which
+    # runs the same accessor/reset workload as franka_accessors on top of the falling-humanoid dynamics.
+    if accessors:
+        qpos0 = torch.tile(init_qpos, (n_envs, 1)) if n_envs > 0 else init_qpos
+        vel0 = torch.zeros((*((n_envs,) if n_envs > 0 else ()), robot.n_dofs), dtype=gs.tc_float, device=gs.device)
+        state_rigid_0 = scene.rigid_solver.get_state()
+
+        if n_envs > 0:
+            n_reset_envs = max(int(0.02 * n_envs), 1)
+            reset_envs_idx = torch.as_tensor(
+                np.random.permutation(n_envs)[:n_reset_envs], dtype=gs.tc_int, device=gs.device
+            )
+            reset_envs_mask = torch.isin(scene._envs_idx, reset_envs_idx)
+        else:
+            reset_envs_mask = None
+
+        dofs_stiffness = robot.get_dofs_stiffness()
+        dofs_damping = robot.get_dofs_damping()
+
+        # Per-selected-env base pose subset exercising the bool-mask zero-copy 'masked_scatter_' path
+        base_pos0 = robot.get_pos(reset_envs_mask)
+        base_quat0 = robot.get_quat(reset_envs_mask)
+
     def step():
         random_forces.uniform_(-max_force, max_force)
         robot.control_dofs_force(random_forces)
         scene.step()
+        if accessors:
+            robot.get_ang()
+            robot.get_vel()
+            robot.get_dofs_position()
+            robot.get_dofs_velocity()
+            robot.get_links_pos()
+            robot.get_links_quat()
+            robot.get_links_vel()
+            robot.get_contacts()
+
+            # TODO: Entire scene reset is still slow currently because 'partial=False' by default.
+            scene.rigid_solver.set_state(0, state_rigid_0, envs_idx=reset_envs_mask, partial=True)
+
+            robot.set_dofs_stiffness(dofs_stiffness)
+            robot.set_dofs_damping(dofs_damping)
+            robot.set_dofs_velocity(vel0, envs_idx=reset_envs_mask, skip_forward=True)
+            robot.set_qpos(qpos0, envs_idx=reset_envs_mask, zero_velocity=False, skip_forward=True)
+            robot.set_pos(base_pos0, envs_idx=reset_envs_mask, skip_forward=True)
+            robot.set_quat(base_quat0, envs_idx=reset_envs_mask, relative=False, skip_forward=True)
 
     return (
         scene,
@@ -1065,6 +1107,12 @@ def g1_fall(solver, n_envs, gjk):
 
 
 @pytest.fixture
+def g1_fall_accessors(solver, n_envs, gjk):
+    _, step_fn, meta = make_g1_fall(n_envs, solver=solver, gjk=gjk, accessors=True)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
 def double_smplx(solver, n_envs, gjk):
     _, step_fn, meta = make_double_smplx(n_envs, solver=solver, gjk=gjk)
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
@@ -1112,6 +1160,7 @@ BENCHMARKS_FIELD = [
     ("go2", None, None, 4096, gs.gpu),
     ("anymal_random", None, None, 20000, gs.gpu),
     ("g1_fall", None, None, 4096, gs.gpu),
+    ("g1_fall_accessors", None, None, 4096, gs.gpu),
     ("double_smplx", None, None, 4096, gs.gpu),
     ("dex_hand", None, None, 4096, gs.gpu),
     ("shadow_hand", None, None, 0, gs.cpu),
