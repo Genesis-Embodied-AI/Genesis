@@ -35,6 +35,35 @@ def _ellipsoid_mjcf_path(tmp_path, semi_axes):
     return str(path)
 
 
+def _resting_contact_motion(scene, entity, support, num_steps):
+    """Step the scene, returning the furthest a contact point and the body each moved in one step, in meters.
+
+    Contacts carry no identity across steps, so each is matched to the nearest contact of the previous step.
+    """
+
+    def patch():
+        contacts = entity.get_contacts(with_entity=support)
+        return contacts["position"], contacts["valid_mask"]
+
+    prev_patch, prev_valid = patch()
+    prev_pos = entity.get_pos()
+    contact_move = body_move = 0.0
+    for _ in range(num_steps):
+        scene.step()
+        cur_patch, cur_valid = patch()
+        cur_pos = entity.get_pos()
+        # A step may report no contact at all, leaving nothing to match against.
+        if cur_patch.shape[1] and prev_patch.shape[1]:
+            distance = torch.cdist(cur_patch, prev_patch).masked_fill(~prev_valid.unsqueeze(1), torch.inf)
+            nearest = distance.min(dim=-1).values[cur_valid]
+            nearest = nearest[torch.isfinite(nearest)]
+            if nearest.numel():
+                contact_move = max(contact_move, float(nearest.max()))
+        body_move = max(body_move, float((cur_pos - prev_pos).norm(dim=-1).max()))
+        prev_patch, prev_valid, prev_pos = cur_patch, cur_valid, cur_pos
+    return contact_move, body_move
+
+
 @pytest.mark.required
 @pytest.mark.mujoco_compatibility(False)
 @pytest.mark.parametrize("mode", range(9))
@@ -369,6 +398,63 @@ def test_no_drift(gjk_collision, entity_kind, entity_type, ground_type, show_vie
     # A tessellated ball settles into the basin of whichever facet it rests on, which is what this bound covers: it
     # sits a little over twice the largest displacement any entity here needs, in either precision.
     assert_allclose(pos_local[..., :2], smooth_xy_local, atol=5e-4)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("resting_on", ["end", "side"])
+@pytest.mark.parametrize("radius", [0.02, 0.03])
+def test_resting_cylinder_contact_patch_is_stable(radius, resting_on, show_viewer):
+    """A cylinder left at rest must keep its contact points where they are.
+
+    A flat circular end offers the collider no distinguished points to pick, unlike a box's corners or a sphere's
+    single tangent point, so the patch is rebuilt elsewhere on the rim every step while the body itself stays put.
+    """
+    HALF_HEIGHT = 0.025
+    PLATE_HALF_EXTENT = 0.25
+    PLATE_HEIGHT = 0.02
+    N_ENVS = 16
+    SETTLE_STEPS = 5000
+    MEASURE_STEPS = 3000
+    # Scaled, since how far a contact can jump is set by the size of the patch it is drawn from. Side-resting stays
+    # under a fifth of this and end-resting exceeds it fifteenfold, over ten placement draws.
+    MAX_CONTACT_MOVE_PER_RADIUS = 0.05
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=0.001),
+        rigid_options=gs.options.RigidOptions(constraint_solver=gs.constraint_solver.CG),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.25, 0.25, 0.2),
+            camera_lookat=(0.0, 0.0, PLATE_HEIGHT),
+            camera_fov=30.0,
+        ),
+        show_viewer=show_viewer,
+    )
+    plate = scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0.0, 0.0, 0.5 * PLATE_HEIGHT),
+            size=(2.0 * PLATE_HALF_EXTENT, 2.0 * PLATE_HALF_EXTENT, PLATE_HEIGHT),
+            fixed=True,
+        ),
+    )
+    cylinder = scene.add_entity(morph=gs.morphs.Cylinder(radius=radius, height=2.0 * HALF_HEIGHT))
+    scene.build(n_envs=N_ENVS)
+
+    # Yaw only: a freely oriented cylinder would settle onto whichever face it happened to land on.
+    roll, resting_height = (0.0, HALF_HEIGHT) if resting_on == "end" else (0.5 * np.pi, radius)
+    rpy = np.zeros((N_ENVS, 3))
+    rpy[:, 0] = roll
+    rpy[:, 2] = np.random.uniform(low=-np.pi, high=np.pi, size=N_ENVS)
+    xy = np.random.uniform(low=-0.1, high=0.1, size=(N_ENVS, 2))
+    cylinder.set_pos(np.concatenate([xy, np.full((N_ENVS, 1), PLATE_HEIGHT + resting_height)], axis=-1))
+    cylinder.set_quat(gu.xyz_to_quat(rpy, rpy=True))
+    for _ in range(SETTLE_STEPS):
+        scene.step()
+
+    contact_move, body_move = _resting_contact_motion(scene, cylinder, plate, MEASURE_STEPS)
+    assert contact_move <= MAX_CONTACT_MOVE_PER_RADIUS * radius, (
+        f"contact points moved {contact_move * 1e3:.3f} mm in one step while the cylinder moved "
+        f"{body_move * 1e6:.3f} um"
+    )
 
 
 @pytest.mark.required
