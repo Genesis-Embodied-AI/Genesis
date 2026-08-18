@@ -11,6 +11,7 @@ import genesis as gs
 from genesis.options.sensors import RasterizerCameraOptions
 from genesis.utils.misc import tensor_to_array
 from genesis.vis.keybindings import Key, KeyAction, Keybind, KeyMod, MouseButton
+from genesis.vis.viewer_plugins.plugins.mouse_interaction import GRAB_ACC
 
 from ..conftest import IS_INTERACTIVE_VIEWER_AVAILABLE, SKIP_NO_IMGUI_BUNDLE, SKIP_NO_VIEWER, is_imgui_bundle_supported
 from ..utils.assertions import assert_allclose
@@ -297,7 +298,7 @@ def test_mouse_interaction_plugin(n_envs, env_spacing, n_envs_per_row, target_en
     BOX_LENGTH = 0.2
     STEPS = 20
     DRAG_DY = 8
-    SPRING_CONST = 1000.0
+    SPRING_SLACK = 0.02
     CAM_FOV = 30
     # Probe lanes parked along y, clear of the drag: envs are spaced along x only, so a lane is one env's alone.
     DECOY_SIZE = 0.4
@@ -401,7 +402,7 @@ def test_mouse_interaction_plugin(n_envs, env_spacing, n_envs_per_row, target_en
     scene.viewer.add_plugin(
         gs.vis.viewer_plugins.MouseInteractionPlugin(
             use_force=True,
-            spring_const=SPRING_CONST,
+            spring_slack=SPRING_SLACK,
             use_visual_geom=use_visual_geom,
         )
     )
@@ -524,7 +525,7 @@ def test_mouse_interaction_plugin(n_envs, env_spacing, n_envs_per_row, target_en
     # FIXME: Use a more accurate model to predict final velocity.
     total_sim_time = STEPS * DT
     avg_mouse_velocity = total_world_displacement / total_sim_time
-    num_tau = total_sim_time * np.sqrt(SPRING_CONST / MASS)
+    num_tau = total_sim_time * np.sqrt(GRAB_ACC / SPRING_SLACK)
     velocity_fraction = 1.0 - (1.0 + num_tau) * np.exp(-num_tau)
     expected_vel_z = avg_mouse_velocity * velocity_fraction
 
