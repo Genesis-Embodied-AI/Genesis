@@ -631,16 +631,16 @@ def test_contact_pruning(gjk_collision, show_viewer):
             gravity=(-1.0, -1.0, -1.0),
         ),
         rigid_options=gs.options.RigidOptions(
+            contact_pruning_tolerance=0.02,
             # box_box_detection=True,
             use_gjk_collision=gjk_collision,
-            contact_pruning_tolerance=0.02,
+        ),
+        vis_options=gs.options.VisOptions(
+            rendered_envs_idx=(0,),
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.4, 0.3, 0.3),
             camera_lookat=(0.0, 0.0, 0.0),
-        ),
-        vis_options=gs.options.VisOptions(
-            rendered_envs_idx=(0,),
         ),
         show_viewer=show_viewer,
     )
@@ -681,12 +681,14 @@ def test_contact_pruning(gjk_collision, show_viewer):
         mesh.apply_translation((2 / 3 * sx * GEOM_HALF_SIZE, 2 / 3 * sy * GEOM_HALF_SIZE, 2 / 3 * sz * GEOM_HALF_SIZE))
         sub_meshes.append(mesh)
     box = scene.add_entity(
-        morph=gs.morphs.MeshSet(files=sub_meshes),
+        morph=gs.morphs.MeshSet(
+            files=sub_meshes,
+        ),
         surface=gs.surfaces.Default(
             smooth=False,
         ),
-        vis_mode="collision",
         visualize_contact=True,
+        vis_mode="collision",
     )
     scene.build(n_envs=2)
 
@@ -762,8 +764,8 @@ def test_contact_pruning_authored_decomp(gjk_collision, show_viewer):
 
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
-            use_gjk_collision=gjk_collision,
             max_collision_pairs=1200,
+            use_gjk_collision=gjk_collision,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.4, 0.0, 0.3),
@@ -985,10 +987,12 @@ def test_num_contact_overflow(scene_kind, max_collision_pairs, max_contacts, err
             max_collision_pairs=max_collision_pairs,
             max_contacts=max_contacts,
         ),
-        show_viewer=show_viewer,
         renderer=gs.renderers.Rasterizer(),
+        show_viewer=show_viewer,
     )
-    scene.add_entity(morph=gs.morphs.Plane())
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
     if scene_kind == "bowls":
         asset_path = get_hf_dataset(pattern="glb/orange_plastic_bowl.glb")
         for _ in range(N_BOWLS):
@@ -1254,9 +1258,9 @@ def test_gpu_simulation_determinism(prefer_decomposed_solver, contact_pruning_to
 
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
-            use_gjk_collision=True,
-            contact_pruning_tolerance=contact_pruning_tolerance,
             max_collision_pairs=1200,
+            contact_pruning_tolerance=contact_pruning_tolerance,
+            use_gjk_collision=True,
         ),
         show_viewer=show_viewer,
     )
@@ -1267,7 +1271,9 @@ def test_gpu_simulation_determinism(prefer_decomposed_solver, contact_pruning_to
             pos=(0.0, 0.0, BASE_HEIGHT / 2),
             file_meshes_are_zup=True,
         ),
-        material=gs.materials.Rigid(rho=600.0),
+        material=gs.materials.Rigid(
+            rho=600.0,
+        ),
     )
     height = BASE_HEIGHT
     for i, ring_idx in enumerate(RINGS_ORDER):
@@ -1279,7 +1285,9 @@ def test_gpu_simulation_determinism(prefer_decomposed_solver, contact_pruning_to
                 euler=(0.0, 0.0, 180 / N_WEDGES * (i % 2)),
                 file_meshes_are_zup=True,
             ),
-            material=gs.materials.Rigid(rho=600.0),
+            material=gs.materials.Rigid(
+                rho=600.0,
+            ),
         )
         height += RING_HEIGHT - 1e-4
     ball = scene.add_entity(
@@ -1288,7 +1296,9 @@ def test_gpu_simulation_determinism(prefer_decomposed_solver, contact_pruning_to
             pos=(0.0, 0.0, height + BALL_HEIGHT),
             file_meshes_are_zup=True,
         ),
-        material=gs.materials.Rigid(rho=600.0),
+        material=gs.materials.Rigid(
+            rho=600.0,
+        ),
     )
     scene.build()
     solver = scene.rigid_solver

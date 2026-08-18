@@ -17,10 +17,10 @@ def test_position_control(show_viewer):
             substeps=1,  # This is essential to be able to emulate native PD control
         ),
         rigid_options=gs.options.RigidOptions(
-            batch_links_info=True,
-            batch_dofs_info=True,
             disable_constraint=True,
             integrator=gs.integrator.approximate_implicitfast,
+            batch_links_info=True,
+            batch_dofs_info=True,
         ),
         show_viewer=show_viewer,
         show_FPS=False,
@@ -123,7 +123,11 @@ def test_reset_control(robot_path, tol):
         show_viewer=False,
         show_FPS=False,
     )
-    robot = scene.add_entity(gs.morphs.MJCF(file=robot_path))
+    robot = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file=robot_path,
+        )
+    )
     scene.build()
     qpos = np.random.rand(robot.n_dofs)
     robot.set_dofs_position(qpos)

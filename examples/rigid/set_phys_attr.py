@@ -19,17 +19,17 @@ def main():
     )
 
     scene = gs.Scene(
-        viewer_options=viewer_options,
         sim_options=gs.options.SimOptions(
             dt=0.01,
         ),
         rigid_options=gs.options.RigidOptions(
             # NOTE: Batching dofs/links info to set different physical attributes across environments (in parallel)
             #       By default, both are False as it's faster and thus only turn this on if necessary
-            batch_dofs_info=True,
-            batch_joints_info=True,
             batch_links_info=True,
+            batch_joints_info=True,
+            batch_dofs_info=True,
         ),
+        viewer_options=viewer_options,
         show_viewer=args.vis,
     )
 

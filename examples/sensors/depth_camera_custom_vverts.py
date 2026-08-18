@@ -30,7 +30,7 @@ def main():
     gs.init(backend=gs.gpu if args.gpu else gs.cpu)
 
     scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
+        sim_options=gs.options.SimOptions(
             dt=0.01,
             gravity=(0, 0, -9.81),
         ),
@@ -66,8 +66,12 @@ def main():
             fixed=True,
             enable_custom_vverts=True,
         ),
-        material=gs.materials.Kinematic(use_visual_raycasting=True),
-        surface=gs.surfaces.Default(color=(0.2, 0.8, 0.4)),
+        material=gs.materials.Kinematic(
+            use_visual_raycasting=True,
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.2, 0.8, 0.4),
+        ),
     )
 
     # 2) Static box - FK-driven, visible to both depth cameras like the sphere.
@@ -80,8 +84,12 @@ def main():
             pos=(0, 0, 0),
             fixed=True,
         ),
-        material=gs.materials.Kinematic(use_visual_raycasting=True),
-        surface=gs.surfaces.Default(color=(1.0, 0.3, 0.3)),
+        material=gs.materials.Kinematic(
+            use_visual_raycasting=True,
+        ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.3, 0.3),
+        ),
     )
 
     # Depth camera sensors - on different solvers

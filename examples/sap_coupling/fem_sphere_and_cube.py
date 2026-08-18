@@ -40,9 +40,9 @@ def main():
             radius=0.1,
         ),
         material=gs.materials.FEM.Elastic(
-            model="linear_corotated",
             E=1e5,
             nu=0.4,
+            model="linear_corotated",
         ),
     )
     asset_path = snapshot_download(

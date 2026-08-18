@@ -41,13 +41,13 @@ def main():
             dt=0.01,
             gravity=(0, 0, -9.81),
         ),
+        vis_options=gs.options.VisOptions(
+            show_world_frame=False,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.0, -2.0, 1.0),
             camera_lookat=(0.0, 0.0, 0.3),
             camera_fov=45,
-        ),
-        vis_options=gs.options.VisOptions(
-            show_world_frame=False,
         ),
         show_viewer=True,
         show_FPS=False,

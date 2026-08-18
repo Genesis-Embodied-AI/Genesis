@@ -11,17 +11,17 @@ def main():
 
     gs.init(backend=gs.cpu, precision="32")
     scene = gs.Scene(
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(3, -1, 1.5),
-            camera_lookat=(0.0, 0.0, 0.5),
-            camera_fov=30,
-            res=(960, 640),
-        ),
         sim_options=gs.options.SimOptions(
             dt=0.01,
         ),
         rigid_options=gs.options.RigidOptions(
             box_box_detection=True,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            res=(960, 640),
+            camera_pos=(3, -1, 1.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+            camera_fov=30,
         ),
         show_viewer=args.vis,
     )

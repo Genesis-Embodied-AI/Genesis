@@ -223,8 +223,8 @@ def test_ground_clearance(n_envs, show_viewer):
             ),
             material=gs.materials.Rigid(
                 rho=200.0,
-                coup_type="ipc_only",
                 coup_friction=0.0,
+                coup_type="ipc_only",
                 contact_resistance=resistance,
             ),
         )
@@ -277,8 +277,8 @@ def test_ground_sliding(n_envs, show_viewer):
     scene.add_entity(
         gs.morphs.Plane(),
         material=gs.materials.Rigid(
-            coup_type="ipc_only",
             coup_friction=0.25,
+            coup_type="ipc_only",
         ),
     )
 
@@ -290,8 +290,8 @@ def test_ground_sliding(n_envs, show_viewer):
                 size=(0.08, 0.08, 0.08),
             ),
             material=gs.materials.Rigid(
-                coup_type="ipc_only",
                 coup_friction=mu,
+                coup_type="ipc_only",
             ),
         )
         cubes.append(cube)
@@ -344,8 +344,8 @@ def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
             size=(0.05, 0.05, 0.05),
         ),
         material=gs.materials.Rigid(
-            coup_type="ipc_only",
             coup_friction=0.25,
+            coup_type="ipc_only",
             contact_resistance=9.0,
         ),
     )
@@ -355,8 +355,8 @@ def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
             size=(0.05, 0.05, 0.05),
         ),
         material=gs.materials.Rigid(
-            coup_type="ipc_only",
             coup_friction=0.64,
+            coup_type="ipc_only",
             contact_resistance=16.0,
         ),
     )
@@ -366,8 +366,8 @@ def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
             size=(0.05, 0.05, 0.05),
         ),
         material=gs.materials.Rigid(
-            coup_type="ipc_only",
             coup_friction=0.16,
+            coup_type="ipc_only",
             contact_resistance=None,
         ),
     )
@@ -445,8 +445,8 @@ def test_objects_colliding(n_envs, show_viewer):
     scene.add_entity(
         gs.morphs.Plane(),
         material=gs.materials.Rigid(
-            coup_type="ipc_only",
             coup_friction=0.5,
+            coup_type="ipc_only",
         ),
     )
 
@@ -580,8 +580,8 @@ def test_momentum_conservation(n_envs, show_viewer):
             E=1.0e5,
             nu=0.45,
             rho=1000.0,
-            model="stable_neohookean",
             friction_mu=0.0,
+            model="stable_neohookean",
         ),
     )
 
@@ -704,14 +704,14 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
             enable_collision=False,
         ),
         coupler_options=gs.options.IPCCouplerOptions(
+            newton_tolerance=1e-2,
+            newton_translation_tolerance=1e-2,
+            newton_semi_implicit_enable=False,
+            linear_system_tolerance=1e-3,
             contact_d_hat=CONTACT_MARGIN,
             constraint_strength_translation=1,
             constraint_strength_rotation=1,
             enable_rigid_rigid_contact=False,
-            newton_tolerance=1e-2,
-            newton_translation_tolerance=1e-2,
-            linear_system_tolerance=1e-3,
-            newton_semi_implicit_enable=False,
             two_way_coupling=True,
         ),
         viewer_options=gs.options.ViewerOptions(
@@ -724,8 +724,8 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
     scene.add_entity(
         gs.morphs.Plane(),
         material=gs.materials.Rigid(
-            coup_type="ipc_only",
             coup_friction=0.5,
+            coup_type="ipc_only",
         ),
     )
 
@@ -852,8 +852,13 @@ def test_apply_forces_base_link(n_envs, constraint_strength, show_viewer):
     )
 
     box = scene.add_entity(
-        gs.morphs.Box(size=(0.05, 0.05, 0.05), pos=POS),
-        material=gs.materials.Rigid(coup_type="two_way_soft_constraint"),
+        gs.morphs.Box(
+            size=(0.05, 0.05, 0.05),
+            pos=POS,
+        ),
+        material=gs.materials.Rigid(
+            coup_type="two_way_soft_constraint",
+        ),
     )
 
     scene.build(n_envs=n_envs)

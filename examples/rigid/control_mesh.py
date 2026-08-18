@@ -17,14 +17,14 @@ def main():
     )
 
     scene = gs.Scene(
-        viewer_options=viewer_options,
-        rigid_options=gs.options.RigidOptions(
+        sim_options=gs.options.SimOptions(
             dt=0.01,
             gravity=(0, 0, 0),
         ),
         vis_options=gs.options.VisOptions(
             show_link_frame=True,
         ),
+        viewer_options=viewer_options,
         show_viewer=args.vis,
     )
 

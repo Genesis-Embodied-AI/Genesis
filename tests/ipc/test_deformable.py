@@ -41,11 +41,11 @@ def test_robot_grasp_fem(coup_type, show_viewer):
             gravity=GRAVITY,
         ),
         coupler_options=gs.options.IPCCouplerOptions(
+            newton_translation_tolerance=10.0,
             constraint_strength_translation=10.0,
             constraint_strength_rotation=10.0,
-            newton_translation_tolerance=10.0,
-            enable_rigid_rigid_contact=False,
             enable_rigid_ground_contact=False,
+            enable_rigid_rigid_contact=False,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.0, 1.0, 1.0),
@@ -57,8 +57,8 @@ def test_robot_grasp_fem(coup_type, show_viewer):
     scene.add_entity(
         gs.morphs.Plane(),
         material=gs.materials.Rigid(
-            coup_type="ipc_only",
             coup_friction=0.8,
+            coup_type="ipc_only",
         ),
     )
 
@@ -186,8 +186,8 @@ def test_cloth_corner_drag(n_envs, show_viewer):
         ),
         coupler_options=gs.options.IPCCouplerOptions(
             contact_enable=True,
-            enable_rigid_rigid_contact=True,
             contact_d_hat=GAP,
+            enable_rigid_rigid_contact=True,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.0 - CLOTH_HALF, -0.5, 1.0 - CLOTH_HALF),
@@ -207,9 +207,9 @@ def test_cloth_corner_drag(n_envs, show_viewer):
             E=1e4,
             nu=0.3,
             rho=200.0,
+            friction_mu=0.8,
             thickness=0.001,
             bending_stiffness=None,
-            friction_mu=0.8,
         ),
     )
 
@@ -222,8 +222,8 @@ def test_cloth_corner_drag(n_envs, show_viewer):
                 pos=(-BOX_SIZE, z_sign * (0.5 * BOX_SIZE + GAP), -BOX_SIZE),
             ),
             material=gs.materials.Rigid(
-                coup_type="two_way_soft_constraint",
                 coup_friction=0.8,
+                coup_type="two_way_soft_constraint",
             ),
             surface=gs.surfaces.Plastic(
                 color=(1.0, 0.0, 0.0, 1.0) if z_sign > 0 else (0.0, 1.0, 0.0, 1.0),
@@ -290,8 +290,8 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
         ),
         coupler_options=gs.options.IPCCouplerOptions(
             contact_enable=True,
-            enable_rigid_rigid_contact=True,
             contact_d_hat=GAP,
+            enable_rigid_rigid_contact=True,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.0, -2.0, 1.0),
@@ -312,9 +312,9 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
             E=E,
             nu=nu,
             rho=200.0,
+            friction_mu=0.8,
             thickness=THICKNESS,
             bending_stiffness=None,
-            friction_mu=0.8,
         ),
     )
 
@@ -333,8 +333,8 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
                 ),
                 material=gs.materials.Rigid(
                     rho=200.0,
-                    coup_type="two_way_soft_constraint",
                     coup_friction=0.8,
+                    coup_type="two_way_soft_constraint",
                 ),
                 surface=gs.surfaces.Plastic(
                     color=np.random.rand(3),

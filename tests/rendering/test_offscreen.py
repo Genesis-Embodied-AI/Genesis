@@ -112,10 +112,9 @@ def test_emissive_composites_over_base_color_without_double_counting(base_plus_e
         sim_options=gs.options.SimOptions(
             dt=1e-3,
         ),
-        fem_options=gs.options.FEMOptions(),
         vis_options=gs.options.VisOptions(
-            ambient_light=(1.0, 1.0, 1.0),
             shadow=False,
+            ambient_light=(1.0, 1.0, 1.0),
         ),
         renderer=renderer,
         show_viewer=show_viewer,
@@ -136,7 +135,9 @@ def test_emissive_composites_over_base_color_without_double_counting(base_plus_e
             pos=(-1.5, 0.0, 0.0),
             fixed=True,
         ),
-        surface=gs.surfaces.BSDF(color=(0.0, 0.6, 0.0)),
+        surface=gs.surfaces.BSDF(
+            color=(0.0, 0.6, 0.0),
+        ),
     )
     emissive_green = scene.add_entity(
         morph=gs.morphs.Box(
@@ -144,7 +145,10 @@ def test_emissive_composites_over_base_color_without_double_counting(base_plus_e
             pos=(1.5, 0.0, 0.0),
             fixed=True,
         ),
-        surface=gs.surfaces.BSDF(color=(0.0, 0.0, 0.0), emissive=(0.0, 0.6, 0.0)),
+        surface=gs.surfaces.BSDF(
+            color=(0.0, 0.0, 0.0),
+            emissive=(0.0, 0.6, 0.0),
+        ),
     )
     fem_quad = scene.add_entity(
         morph=gs.morphs.Box(
@@ -152,7 +156,10 @@ def test_emissive_composites_over_base_color_without_double_counting(base_plus_e
             pos=(4.5, 0.0, 0.0),
         ),
         material=gs.materials.FEM.Elastic(),
-        surface=gs.surfaces.BSDF(color=(0.9, 0.0, 0.0), emissive=(0.0, 0.0, 0.6)),
+        surface=gs.surfaces.BSDF(
+            color=(0.9, 0.0, 0.0),
+            emissive=(0.0, 0.0, 0.6),
+        ),
     )
     camera = scene.add_camera(
         pos=(0.0, 0.0, 16.0),
@@ -202,9 +209,9 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             enable_collision=False,
         ),
         vis_options=gs.options.VisOptions(
-            env_separate_rigid=False,
             # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
             shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
+            env_separate_rigid=False,
         ),
         renderer=renderer,
         show_viewer=False,
@@ -221,7 +228,9 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             file="urdf/go2/urdf/go2.urdf",
             merge_fixed_links=False,
         ),
-        material=gs.materials.Rigid(rho=200.0),
+        material=gs.materials.Rigid(
+            rho=200.0,
+        ),
     )
     cam_debug = scene.add_camera(
         res=(640, 480),
@@ -427,10 +436,10 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
 
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
-            # rendered_envs_idx=(0, 1, 2),
-            env_separate_rigid=False,
             # When env are not separated, their world pos is different, which affects lighting
             shadow=False,
+            # rendered_envs_idx=(0, 1, 2),
+            env_separate_rigid=False,
         ),
         renderer=renderer,
         show_viewer=False,
@@ -655,11 +664,11 @@ def test_renders_heterogeneous_entities(n_envs, show_viewer, png_snapshot, rende
     IS_BATCHRENDER = renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER)
 
     scene = gs.Scene(
-        renderer=renderer,
         vis_options=gs.options.VisOptions(
-            env_separate_rigid=False,
             shadow=False,
+            env_separate_rigid=False,
         ),
+        renderer=renderer,
         show_viewer=show_viewer,
     )
     scene.add_entity(
@@ -782,12 +791,12 @@ def test_renders_heterogeneous_entities(n_envs, show_viewer, png_snapshot, rende
 @pytest.mark.parametrize("particle_mode", ["visual", "particle"])
 def test_segmentation_map(segmentation_level, particle_mode, renderer_type, renderer, show_viewer):
     scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,  # Disable many physics features to speedup compilation
+        ),
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=True,  # Implicit solver allows for larger timestep without failure on GPU backend
             n_pcg_iterations=40,  # Reduce number of iterations to speedup runtime
-        ),
-        rigid_options=gs.options.RigidOptions(
-            enable_collision=False,  # Disable many physics features to speedup compilation
         ),
         coupler_options=gs.options.LegacyCouplerOptions(
             rigid_mpm=False,
@@ -1151,16 +1160,42 @@ def test_context_isolation(renderer_type):
     # that interleaving by destroying scene B in the middle of scene A's render, and assert A renders exactly as it
     # does without the interference, rather than rendering on B's destroyed context or losing its context entirely.
     # The two scenes must own independent renderers, hence a fresh Rasterizer each rather than a shared instance.
-    scene_a = gs.Scene(renderer=gs.renderers.Rasterizer(), show_viewer=False, show_FPS=False)
-    scene_a.add_entity(gs.morphs.Box(pos=(0.0, 0.0, 0.5), size=(0.3, 0.3, 0.3)))
-    camera_a = scene_a.add_camera(res=(64, 64), pos=(1.5, 1.5, 1.0), lookat=(0.0, 0.0, 0.0))
+    scene_a = gs.Scene(
+        renderer=gs.renderers.Rasterizer(),
+        show_viewer=False,
+        show_FPS=False,
+    )
+    scene_a.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0.0, 0.0, 0.5),
+            size=(0.3, 0.3, 0.3),
+        )
+    )
+    camera_a = scene_a.add_camera(
+        res=(64, 64),
+        pos=(1.5, 1.5, 1.0),
+        lookat=(0.0, 0.0, 0.0),
+    )
     scene_a.build()
     rgb_reference = camera_a.render(rgb=True)[0]
 
     # Distinct content so that rendering A on B's context would be visibly wrong rather than coincidentally equal.
-    scene_b = gs.Scene(renderer=gs.renderers.Rasterizer(), show_viewer=False, show_FPS=False)
-    scene_b.add_entity(gs.morphs.Box(pos=(0.0, 0.0, 5.0), size=(0.3, 0.3, 0.3)))
-    camera_b = scene_b.add_camera(res=(64, 64), pos=(1.5, 1.5, 1.0), lookat=(0.0, 0.0, 0.0))
+    scene_b = gs.Scene(
+        renderer=gs.renderers.Rasterizer(),
+        show_viewer=False,
+        show_FPS=False,
+    )
+    scene_b.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0.0, 0.0, 5.0),
+            size=(0.3, 0.3, 0.3),
+        )
+    )
+    camera_b = scene_b.add_camera(
+        res=(64, 64),
+        pos=(1.5, 1.5, 1.0),
+        lookat=(0.0, 0.0, 0.0),
+    )
     scene_b.build()
     camera_b.render(rgb=True)
 
@@ -1201,8 +1236,8 @@ def test_camera_follow_entity(n_envs, renderer, show_viewer):
 
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
-            rendered_envs_idx=[max(n_envs - 1, 0)],
             segmentation_level="entity",
+            rendered_envs_idx=[max(n_envs - 1, 0)],
         ),
         renderer=renderer,
         show_viewer=False,
@@ -1282,7 +1317,10 @@ def test_camera_gimbal_lock_singularity(renderer, show_viewer):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    cam = scene.add_camera(pos=(0.0, -1.5, 5.0), lookat=(0.0, 0.0, 0.0))
+    cam = scene.add_camera(
+        pos=(0.0, -1.5, 5.0),
+        lookat=(0.0, 0.0, 0.0),
+    )
     scene.build()
 
     prev_right = None
@@ -1335,21 +1373,21 @@ def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer, force_show
 
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
-            rendered_envs_idx=RENDERED_ENVS,
-            env_separate_rigid=True,
             show_world_frame=True,
             show_link_frame=True,
             # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
             shadow=False,
+            env_separate_rigid=True,
+            rendered_envs_idx=RENDERED_ENVS,
         ),
         viewer_options=gs.options.ViewerOptions(
+            res=CAM_RES,
+            run_in_thread=False,
             # Far enough back for the whole ground to fit in frame, as every camera below requires
             camera_pos=(3.0, 0.3, 2.0),
             camera_lookat=(0.0, 0.0, 0.4),
-            res=CAM_RES,
-            run_in_thread=False,
-            enable_default_keybinds=False,
             enable_help_text=False,
+            enable_default_keybinds=False,
         ),
         renderer=renderer,
         show_viewer=force_show_viewer,
@@ -1487,8 +1525,8 @@ def test_rasterizer_sensor_env_spacing_invariance(renderer, context_mode):
         )
         scene = gs.Scene(
             vis_options=gs.options.VisOptions(
-                env_separate_rigid=True,
                 shadow=False,
+                env_separate_rigid=True,
             ),
             viewer_options=viewer_options,
             renderer=renderer,

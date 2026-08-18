@@ -20,19 +20,18 @@ def main():
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
         ),
-        rigid_options=gs.options.RigidOptions(
-            enable_joint_limit=False,
-            enable_collision=False,
-            gravity=(0, 0, -0),
-        ),
         show_viewer=args.vis,
     )
 
     plane = scene.add_entity(
         gs.morphs.Plane(),
+        material=gs.materials.Kinematic(),
     )
     robot = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
+        material=gs.materials.Kinematic(),
     )
 
     target_entity = scene.add_entity(
@@ -40,7 +39,10 @@ def main():
             file="meshes/axis.obj",
             scale=0.15,
         ),
-        surface=gs.surfaces.Default(color=(1, 0.5, 0.5, 1)),
+        material=gs.materials.Kinematic(),
+        surface=gs.surfaces.Default(
+            color=(1, 0.5, 0.5, 1),
+        ),
     )
 
     n_envs = 64
@@ -69,7 +71,7 @@ def main():
         )
 
         robot.set_qpos(q)
-        scene.step()
+        scene.visualizer.update(force=True)
 
 
 if __name__ == "__main__":

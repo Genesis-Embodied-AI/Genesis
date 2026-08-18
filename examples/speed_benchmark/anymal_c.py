@@ -7,11 +7,13 @@ gs.init(backend=gs.gpu, performance_mode=True)
 
 
 scene = gs.Scene(
-    show_viewer=False,
-    rigid_options=gs.options.RigidOptions(
+    sim_options=gs.options.SimOptions(
         dt=0.01,
+    ),
+    rigid_options=gs.options.RigidOptions(
         constraint_solver=gs.constraint_solver.Newton,
     ),
+    show_viewer=False,
 )
 
 scene.add_entity(

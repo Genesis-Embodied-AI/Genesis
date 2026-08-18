@@ -31,13 +31,13 @@ if __name__ == "__main__":
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             substeps=4,
+            gravity=(0, 0, -9.8),
         ),
         rigid_options=gs.options.RigidOptions(
-            enable_joint_limit=True,
             enable_collision=True,
-            gravity=(0, 0, -9.8),
-            box_box_detection=True,
+            enable_joint_limit=True,
             constraint_timeconst=0.01,
+            box_box_detection=True,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.5, 0.0, 0.7),
@@ -55,7 +55,9 @@ if __name__ == "__main__":
     )
 
     robot = scene.add_entity(
-        material=gs.materials.Rigid(gravity_compensation=1),
+        material=gs.materials.Rigid(
+            gravity_compensation=1,
+        ),
         morph=gs.morphs.MJCF(
             file="xml/franka_emika_panda/panda.xml",
             euler=(0, 0, 0),
@@ -63,12 +65,16 @@ if __name__ == "__main__":
     )
 
     cube = scene.add_entity(
-        material=gs.materials.Rigid(rho=300),
+        material=gs.materials.Rigid(
+            rho=300,
+        ),
         morph=gs.morphs.Box(
             pos=(0.5, 0.0, 0.07),
             size=(0.04, 0.04, 0.04),
         ),
-        surface=gs.surfaces.Default(color=(0.5, 1, 0.5)),
+        surface=gs.surfaces.Default(
+            color=(0.5, 1, 0.5),
+        ),
     )
 
     target = scene.add_entity(
@@ -77,7 +83,9 @@ if __name__ == "__main__":
             scale=0.15,
             collision=False,
         ),
-        surface=gs.surfaces.Default(color=(1, 0.5, 0.5, 1)),
+        surface=gs.surfaces.Default(
+            color=(1, 0.5, 0.5, 1),
+        ),
     )
 
     scene.build()

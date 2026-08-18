@@ -30,9 +30,16 @@ def main():
         show_viewer=args.vis,
     )
 
-    plane = scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True))
+    plane = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file="urdf/plane/plane.urdf",
+            fixed=True,
+        )
+    )
     stick = scene.add_entity(
-        material=gs.materials.Tool(friction=8.0),
+        material=gs.materials.Tool(
+            friction=8.0,
+        ),
         morph=gs.morphs.Mesh(
             file="meshes/stirrer.obj",
             scale=0.6,
@@ -44,7 +51,9 @@ def main():
         ),
     )
     obj1 = scene.add_entity(
-        material=gs.materials.MPM.Elastic(rho=500),
+        material=gs.materials.MPM.Elastic(
+            rho=500,
+        ),
         morph=gs.morphs.Box(
             lower=(0.2, 0.1, 0.05),
             upper=(0.4, 0.3, 0.15),
@@ -55,7 +64,9 @@ def main():
         vis_mode="particle",
     )
     obj2 = scene.add_entity(
-        material=gs.materials.MPM.Elastic(rho=500),
+        material=gs.materials.MPM.Elastic(
+            rho=500,
+        ),
         morph=gs.morphs.Mesh(
             file="meshes/duck.obj",
             pos=(0.4, 0.55, 0.056),

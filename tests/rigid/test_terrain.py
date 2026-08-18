@@ -59,7 +59,9 @@ def test_generation(is_named, show_viewer, tol):
         name="my_terrain" if is_named else None,
     )
     # FIXME: Collision detection is very unstable for 'stepping_stones' pattern.
-    terrain = scene.add_entity(gs.morphs.Terrain(**terrain_kwargs))
+    terrain = scene.add_entity(
+        morph=gs.morphs.Terrain(**terrain_kwargs),
+    )
     obj = scene.add_entity(
         morph=gs.morphs.Box(
             pos=(1.0, 1.0, 1.0),
@@ -100,7 +102,9 @@ def test_generation(is_named, show_viewer, tol):
     # Check if cache is being reloaded as expected
     if is_named:
         scene = gs.Scene()
-        terrain_2 = scene.add_entity(gs.morphs.Terrain(**{**terrain_kwargs, **dict(randomize=True)}))
+        terrain_2 = scene.add_entity(
+            morph=gs.morphs.Terrain(**{**terrain_kwargs, **dict(randomize=True)}),
+        )
         terrain_2_mesh = terrain_2.geoms[0].mesh
         assert_allclose(terrain_mesh.verts, terrain_2_mesh.verts, tol=tol)
 
@@ -416,7 +420,9 @@ def test_multicontact_sphere_vs_terrain(show_viewer, tol):
         ),
     )
     sphere = scene.add_entity(
-        morph=gs.morphs.Sphere(radius=SPHERE_RADIUS),
+        morph=gs.morphs.Sphere(
+            radius=SPHERE_RADIUS,
+        ),
         surface=gs.surfaces.Default(
             color=(0.95, 0.2, 0.2),
         ),

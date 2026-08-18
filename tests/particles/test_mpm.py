@@ -12,9 +12,9 @@ def test_particle_constraints(show_viewer):
             substeps=20,
         ),
         mpm_options=gs.options.MPMOptions(
+            grid_density=64,
             lower_bound=(-1.0, -1.0, 0.0),
             upper_bound=(1.0, 1.0, 1.0),
-            grid_density=64,
         ),
         show_viewer=show_viewer,
         show_FPS=False,
@@ -77,9 +77,9 @@ def test_perf_dispatch(variant, show_viewer):
             substeps=10,
         ),
         mpm_options=gs.options.MPMOptions(
+            grid_density=64,
             lower_bound=(-0.4, -0.4, -0.05),
             upper_bound=(0.4, 0.4, 0.5),
-            grid_density=64,
         ),
         show_viewer=show_viewer,
     )

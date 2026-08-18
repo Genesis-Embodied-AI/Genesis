@@ -21,10 +21,10 @@ def main():
     )
 
     scene = gs.Scene(
-        viewer_options=viewer_options,
-        rigid_options=gs.options.RigidOptions(
+        sim_options=gs.options.SimOptions(
             dt=0.01,
         ),
+        viewer_options=viewer_options,
         show_viewer=args.vis,
     )
 
@@ -32,7 +32,9 @@ def main():
         gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True),
     )
     bottle = scene.add_entity(
-        material=gs.materials.Rigid(rho=300),
+        material=gs.materials.Rigid(
+            rho=300,
+        ),
         morph=gs.morphs.URDF(
             file="urdf/3763/mobility_vhacd.urdf",
             scale=0.09,

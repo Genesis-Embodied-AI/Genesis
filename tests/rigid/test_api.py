@@ -27,9 +27,9 @@ def test_data_accessor(n_envs, batched, tol):
     # Create and build the scene
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
-            batch_dofs_info=batched,
-            batch_joints_info=batched,
             batch_links_info=batched,
+            batch_joints_info=batched,
+            batch_dofs_info=batched,
         ),
         show_viewer=False,
         show_FPS=False,
@@ -398,9 +398,7 @@ def test_getter_vs_state_post_step_consistency(enable_mujoco_compatibility):
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_extended_broadcasting():
-    scene = gs.Scene(
-        show_viewer=False,
-    )
+    scene = gs.Scene(show_viewer=False)
     for i in range(4):
         scene.add_entity(
             gs.morphs.Box(
@@ -440,7 +438,11 @@ def test_batched_info(batch_links_info, batch_joints_info, batch_dofs_info, tol)
         ),
     )
     scene.add_entity(gs.morphs.Terrain())
-    franka = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    franka = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        )
+    )
     scene.build(n_envs=2)
     gs_s = scene.rigid_solver
 
@@ -496,9 +498,9 @@ def test_batched_info(batch_links_info, batch_joints_info, batch_dofs_info, tol)
 def test_info_batching(tol):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
-            batch_dofs_info=True,
-            batch_joints_info=True,
             batch_links_info=True,
+            batch_joints_info=True,
+            batch_dofs_info=True,
         ),
         show_viewer=False,
         show_FPS=False,
@@ -770,9 +772,7 @@ def test_normalized_quat(show_viewer, tol):
 def test_mass_setters(tol):
     # Batched links info (default): entity- and link-level set_mass apply, link masses may differ per env, and a
     # wrong-length array is rejected. The heterogeneous entity gives each env a distinct starting mass.
-    scene = gs.Scene(
-        show_viewer=False,
-    )
+    scene = gs.Scene(show_viewer=False)
     het_obj = scene.add_entity(
         morph=[
             gs.morphs.Box(size=(0.01, 0.01, 0.01)),
@@ -793,10 +793,10 @@ def test_mass_setters(tol):
 
     # Non-batched links info: link mass is shared across envs, so a scalar applies uniformly and a per-env array raises.
     scene = gs.Scene(
-        show_viewer=False,
         rigid_options=gs.options.RigidOptions(
             batch_links_info=False,
         ),
+        show_viewer=False,
     )
     obj = scene.add_entity(
         morph=gs.morphs.Box(
@@ -1023,10 +1023,10 @@ def test_reset(show_viewer, friction_cone, sparse_solve, use_hibernation, enable
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_scene_saver_franka(tmp_path, show_viewer, tol):
     scene1 = gs.Scene(
-        show_viewer=show_viewer,
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
         ),
+        show_viewer=show_viewer,
     )
     franka1 = scene1.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),

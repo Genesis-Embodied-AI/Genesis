@@ -17,11 +17,6 @@ def test_muscle(n_envs, muscle_material, show_viewer):
             substeps=10,
             gravity=(0, 0, -9.8),
         ),
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(1.5, 0, 0.8),
-            camera_lookat=(0.0, 0.0, 0.0),
-            camera_fov=40,
-        ),
         mpm_options=gs.options.MPMOptions(
             lower_bound=(-1.0, -1.0, -0.2),
             upper_bound=(1.0, 1.0, 1.0),
@@ -29,6 +24,11 @@ def test_muscle(n_envs, muscle_material, show_viewer):
         vis_options=gs.options.VisOptions(
             show_world_frame=True,
             visualize_mpm_boundary=True,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.5, 0, 0.8),
+            camera_lookat=(0.0, 0.0, 0.0),
+            camera_fov=40,
         ),
         show_viewer=show_viewer,
         show_FPS=False,

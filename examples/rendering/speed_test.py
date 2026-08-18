@@ -13,13 +13,13 @@ def main():
     gs.init(backend=gs.cpu)
 
     scene = gs.Scene(
-        show_viewer=args.vis,
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+        ),
         vis_options=gs.options.VisOptions(
             plane_reflection=False,
         ),
-        rigid_options=gs.options.RigidOptions(
-            dt=0.01,
-        ),
+        show_viewer=args.vis,
     )
 
     plane = scene.add_entity(

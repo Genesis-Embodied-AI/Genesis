@@ -23,10 +23,24 @@ def test_repr_does_not_crash():
     inline_mjcf = '<mujoco model="probe"><worldbody><body><geom type="box" size="1 1 1"/></body></worldbody></mujoco>'
 
     scene = gs.Scene(show_viewer=False)
-    scene.add_entity(morph=gs.morphs.Plane())
-    scene.add_entity(morph=gs.morphs.Box(size=(0.1, 0.1, 0.1)))
-    panda = scene.add_entity(morph=gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
-    inline = scene.add_entity(morph=gs.morphs.MJCF(file=inline_mjcf))
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+        )
+    )
+    panda = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        )
+    )
+    inline = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file=inline_mjcf,
+        )
+    )
     het = scene.add_entity(
         morph=(
             gs.morphs.Box(size=(0.2, 0.2, 0.2)),
@@ -74,7 +88,9 @@ def test_repr_does_not_crash():
 @pytest.mark.required
 def test_scene_destroy_cleans_up_simulator():
     scene = gs.Scene(show_viewer=False)
-    scene.add_entity(morph=gs.morphs.Plane())
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
     scene.build()
     scene.step()
 
@@ -89,7 +105,9 @@ def test_scene_destroy_cleans_up_simulator():
 @pytest.mark.required
 def test_scene_destroy_idempotent():
     scene = gs.Scene(show_viewer=False)
-    scene.add_entity(morph=gs.morphs.Plane())
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
     scene.build()
     scene.step()
 
@@ -106,7 +124,11 @@ def test_destroy_after_aborted_camera_build(monkeypatch, raise_before_build):
     from genesis.engine.sensors.camera import RasterizerCameraSensor
 
     scene = gs.Scene(show_viewer=False)
-    camera = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
+    camera = scene.add_sensor(
+        gs.sensors.RasterizerCameraOptions(
+            res=(64, 64),
+        )
+    )
 
     # Capture the shared metadata reference now; SensorManager.destroy() drops its dict entry,
     # but the dataclass instance itself stays alive through our local reference so we can
@@ -164,28 +186,52 @@ def test_auto_and_user_names():
     scene = gs.Scene()
 
     # Auto-generated name
-    box = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1)))
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+        )
+    )
     assert box.name.startswith("box_")
 
     # Multiple identical entities should have unique names
-    box2 = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1)))
+    box2 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+        )
+    )
     assert box2.name.startswith("box_")
     assert box.name != box2.name
 
     # User-specified name
-    sphere = scene.add_entity(gs.morphs.Sphere(radius=0.1), name="my_sphere")
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=0.1,
+        ),
+        name="my_sphere",
+    )
     assert sphere.name == "my_sphere"
 
     # Duplicate name raises error
     with pytest.raises(Exception, match="already exists"):
-        scene.add_entity(gs.morphs.Cylinder(radius=0.1, height=0.2), name="my_sphere")
+        scene.add_entity(
+            gs.morphs.Cylinder(
+                radius=0.1,
+                height=0.2,
+            ),
+            name="my_sphere",
+        )
 
 
 @pytest.mark.required
 def test_get_entity_by_name():
     scene = gs.Scene()
 
-    box = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1)), name="test_box")
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+        ),
+        name="test_box",
+    )
     assert scene.get_entity(name="test_box") is box
 
     # Non-existent name raises error
@@ -197,7 +243,11 @@ def test_get_entity_by_name():
 def test_get_entity_by_uid():
     scene = gs.Scene()
 
-    box = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1)))
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+        )
+    )
 
     # Short UID lookup (7-character prefix shown in terminal)
     assert scene.get_entity(uid=box.uid.short()) is box
@@ -212,8 +262,18 @@ def test_entity_names_property():
     scene = gs.Scene()
 
     # Use "B" then "A" to confirm insertion order (not sorted)
-    scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1)), name="B")
-    scene.add_entity(gs.morphs.Sphere(radius=0.1), name="A")
+    scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+        ),
+        name="B",
+    )
+    scene.add_entity(
+        gs.morphs.Sphere(
+            radius=0.1,
+        ),
+        name="A",
+    )
     assert tuple(scene.entity_names) == ("B", "A")
 
 
@@ -222,15 +282,27 @@ def test_urdf_mjcf_names_from_file():
     scene = gs.Scene()
 
     # URDF: plane.urdf has <robot name="plane">
-    urdf_entity = scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf"))
+    urdf_entity = scene.add_entity(
+        gs.morphs.URDF(
+            file="urdf/plane/plane.urdf",
+        )
+    )
     assert urdf_entity.name.startswith("plane_")
 
     # MJCF: panda.xml has <mujoco model="panda">
-    mjcf_entity = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    mjcf_entity = scene.add_entity(
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        )
+    )
     assert mjcf_entity.name.startswith("panda_")
 
     # Multiple URDF entities should have unique names
-    urdf_entity2 = scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf"))
+    urdf_entity2 = scene.add_entity(
+        gs.morphs.URDF(
+            file="urdf/plane/plane.urdf",
+        )
+    )
     assert urdf_entity2.name.startswith("plane_")
     assert urdf_entity.name != urdf_entity2.name
 
@@ -543,13 +615,25 @@ def test_set_gravity_accepts_field_and_tensor():
         gs.init(backend=gs.cpu, seed=0)
 
         scene = gs.Scene(
+            sim_options=gs.options.SimOptions(
+                gravity=(0.0, 0.0, -9.81),
+            ),
             show_viewer=False,
-            rigid_options=gs.options.RigidOptions(gravity=(0.0, 0.0, -9.81)),
-            mpm_options=gs.options.MPMOptions(gravity=(0.0, 0.0, -9.81)),
         )
         scene.add_entity(gs.morphs.Plane())
-        scene.add_entity(gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(0.0, 0.0, 0.5)))
-        scene.add_entity(gs.morphs.Sphere(pos=(0.0, 0.0, 0.5), radius=0.1), material=gs.materials.MPM.Liquid())
+        scene.add_entity(
+            gs.morphs.Box(
+                size=(0.4, 0.4, 0.4),
+                pos=(0.0, 0.0, 0.5),
+            )
+        )
+        scene.add_entity(
+            gs.morphs.Sphere(
+                pos=(0.0, 0.0, 0.5),
+                radius=0.1,
+            ),
+            material=gs.materials.MPM.Liquid(),
+        )
         scene.build()
 
         new_gravity = [0.0, 0.0, -5.0]

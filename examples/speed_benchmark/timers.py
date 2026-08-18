@@ -33,9 +33,9 @@ def main():
         ),
         rigid_options=gs.options.RigidOptions(
             enable_self_collision=False,
+            max_collision_pairs=30,
             iterations=1,
             ls_iterations=1,
-            max_collision_pairs=30,
         ),
         show_viewer=False,
         show_FPS=True,
@@ -44,7 +44,9 @@ def main():
         gs.morphs.Plane(),
     )
     robot = scene.add_entity(
-        gs.morphs.URDF(file="urdf/go2/urdf/go2.urdf"),
+        gs.morphs.URDF(
+            file="urdf/go2/urdf/go2.urdf",
+        ),
         vis_mode="collision",
     )
     scene.build(n_envs=128)

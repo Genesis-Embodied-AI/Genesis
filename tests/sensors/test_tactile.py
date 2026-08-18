@@ -80,11 +80,11 @@ def test_surface_distance_sensor_box_sphere(show_viewer, tol, n_envs):
             entity_idx=sphere1.idx,
             probe_local_pos=SPHERE_PROBE_POS,
             probe_radius=MAX_RANGE,
-            track_link_idx=(box.base_link_idx,),
             resolution=0.001,
             bias=0.1,
             noise=0.01,
             random_walk=0.01,
+            track_link_idx=(box.base_link_idx,),
         )
     )
     scene.build(n_envs=n_envs)
@@ -184,14 +184,14 @@ def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
     box = scene.add_entity(
         gs.morphs.Box(
             size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
-            pos=(0.0, 0.0, BOX_SIZE / 2 - PENETRATION),  # box is penetrating ground plane
-            fixed=False,  # probe will not detect fixed-fixed contact
+            pos=(0.0, 0.0, BOX_SIZE / 2 - PENETRATION),  # box is penetrating ground plane,
+            fixed=False,  # probe will not detect fixed-fixed contact,
         )
     )
     sphere = scene.add_entity(
         gs.morphs.Sphere(
             radius=SPHERE_RADIUS,
-            pos=(0.0, 0.0, BOX_SIZE + SPHERE_RADIUS + 0.2),  # start with sphere above the box
+            pos=(0.0, 0.0, BOX_SIZE + SPHERE_RADIUS + 0.2),  # start with sphere above the box,
             fixed=True,
         )
     )
@@ -429,8 +429,12 @@ def test_contact_probe_hysteresis(show_viewer):
     BOX_Z_ABOVE_ENTER = 0.070  # p = 0.030 -> depth = 0.040 (> ENTER)
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=show_viewer,
     )
     scene.add_entity(gs.morphs.Plane())
@@ -521,8 +525,13 @@ def test_contact_depth_probe_hysteresis_gain_and_dead_resample(show_viewer, tol)
     BOX_Z_ON = 0.080  # p = 0.020, depth = 0.030 in steady state
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0), dt=DT),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=show_viewer,
     )
     scene.add_entity(gs.morphs.Plane())
@@ -766,8 +775,12 @@ def test_contact_depth_query_sdf_vs_raycast_parity(show_viewer):
     def build_and_read(mode):
         # Build a scene whose probe sensors all use mode, press the ball in, and return CPU-side readings.
         scene = gs.Scene(
-            sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
-            profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+            sim_options=gs.options.SimOptions(
+                gravity=(0.0, 0.0, 0.0),
+            ),
+            profiling_options=gs.options.ProfilingOptions(
+                show_FPS=False,
+            ),
             show_viewer=show_viewer,
         )
         pad = scene.add_entity(
@@ -814,11 +827,11 @@ def test_contact_depth_query_sdf_vs_raycast_parity(show_viewer):
             gs.sensors.ElastomerTaxel(
                 entity_idx=pad.idx,
                 probe_local_pos=(CENTER_PROBE,),
-                probe_local_normal=(0.0, 0.0, 1.0),
                 probe_radius=PROBE_R,
+                probe_local_normal=(0.0, 0.0, 1.0),
+                contact_depth_query=mode,
                 track_link_idx=(ball.base_link_idx,),
                 n_sample_points=200,
-                contact_depth_query=mode,
             )
         )
         scene.build(n_envs=0)
@@ -936,8 +949,12 @@ def test_kinematic_taxel_crosstalk(show_viewer):
             grid_positions[i_y, i_x] = ((i_x - 2) * SPACING, (i_y - 2) * SPACING, BOX_SIZE / 2)
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=show_viewer,
     )
     box = scene.add_entity(
@@ -1112,8 +1129,12 @@ def test_proximity_taxel_crosstalk(show_viewer):
             grid_positions[i_y, i_x] = ((i_x - 2) * SPACING, (i_y - 2) * SPACING, BOX_SIZE / 2)
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=show_viewer,
     )
     box = scene.add_entity(
@@ -1181,8 +1202,12 @@ def test_proximity_taxel_twist_torque(show_viewer, tol, n_envs):
     WZ = 4.0
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=show_viewer,
     )
     scene.add_entity(gs.morphs.Plane())
@@ -1292,9 +1317,9 @@ def test_proximity_sensor_box_on_box(show_viewer, tol, n_envs):
         gs.sensors.ProximityTaxel(
             entity_idx=taxel_box.idx,
             probe_local_pos=((0.0, 0.0, -BOX_SIZE / 2), (BOX_SIZE / 4, 0.0, -BOX_SIZE / 2)),
-            probe_local_normal=(0.0, 0.0, -1.0),
             probe_radius=0.06,
             probe_radius_noise=0.1,
+            probe_local_normal=(0.0, 0.0, -1.0),
             track_link_idx=(support.base_link_idx,),
             n_sample_points=600,
             stiffness=100.0,
@@ -1308,8 +1333,8 @@ def test_proximity_sensor_box_on_box(show_viewer, tol, n_envs):
         gs.sensors.ProximityTaxel(
             entity_idx=taxel_box.idx,
             probe_local_pos=((0.0, 0.0, -BOX_SIZE / 2), (BOX_SIZE / 4, 0.0, -BOX_SIZE / 2)),
-            probe_local_normal=(0.0, 0.0, -1.0),
             probe_radius=0.06,
+            probe_local_normal=(0.0, 0.0, -1.0),
             probe_gain=GAIN,
             track_link_idx=(support.base_link_idx,),
             n_sample_points=600,
