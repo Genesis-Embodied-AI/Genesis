@@ -1077,6 +1077,7 @@ BENCHMARKS_FIELD = [
 # Reduced subset, run on the 'ndarray' dtype only.
 BENCHMARKS_NDARRAY = [
     ("dex_hand", None, None, 4096, gs.gpu),
+    ("g1_fall_accessors", None, None, 4096, gs.gpu),
     ("table_bussing", None, None, 50, gs.cpu),
 ]
 
