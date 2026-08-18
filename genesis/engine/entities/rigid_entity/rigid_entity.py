@@ -2238,7 +2238,8 @@ class RigidEntity(KinematicEntity):
         relative : bool, optional
             Whether to report the acceleration of the user-frame origin, with the morph pose offset and inertial
             alignment stripped, rather than of the link origin used by the solver. The two differ whenever the link
-            is rotating. Defaults to True.
+            is rotating or being angularly accelerated, so a link barely turning can still read far apart between the
+            frames. Defaults to True.
 
         Returns
         -------

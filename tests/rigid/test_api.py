@@ -729,9 +729,10 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
         - torch.cross(omega, torch.cross(omega, offset_shift, dim=-1), dim=-1),
         tol=tol,
     )
-    # Neither transported term is vacuous: the angular-acceleration contribution alone exceeds the tolerance, and
-    # both frames genuinely disagree while the box rotates.
+    # Neither transported term is vacuous: each contributes more than the tolerance on its own, and both frames
+    # genuinely disagree while the box rotates.
     assert (torch.cross(alpha, offset_shift, dim=-1).abs() > tol).any()
+    assert (torch.cross(omega, torch.cross(omega, offset_shift, dim=-1), dim=-1).abs() > tol).any()
     with pytest.raises(AssertionError):
         assert_allclose(posed_box.get_vel(relative=True), posed_box.get_vel(relative=False), tol=tol)
     with pytest.raises(AssertionError):
