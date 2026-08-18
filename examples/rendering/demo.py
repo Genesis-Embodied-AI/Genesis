@@ -5,7 +5,6 @@ def main():
     gs.init(backend=gs.cpu, precision="32", logging_level="info")
 
     scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(enable_collision=False, gravity=(0, 0, 0)),
         viewer_options=gs.options.ViewerOptions(
             res=(1920, 1080),
             camera_pos=(8.5, 0.0, 4.5),
@@ -31,6 +30,7 @@ def main():
         morph=gs.morphs.Plane(
             pos=(0.0, 0.0, -0.5),
         ),
+        material=gs.materials.Kinematic(),
         surface=gs.surfaces.Aluminium(
             ior=10.0,
         ),
@@ -43,6 +43,7 @@ def main():
             scale=0.5,
             pos=(0.0, -3, 0.0),
         ),
+        material=gs.materials.Kinematic(),
         surface=gs.surfaces.Rough(
             diffuse_texture=gs.textures.ColorTexture(
                 color=(1.0, 0.5, 0.5),
@@ -56,6 +57,7 @@ def main():
             scale=0.5,
             pos=(0.0, -1.8, 0.0),
         ),
+        material=gs.materials.Kinematic(),
         surface=gs.surfaces.Rough(
             color=(1.0, 1.0, 1.0),
         ),
@@ -67,6 +69,7 @@ def main():
             scale=0.5,
             pos=(0.0, -0.6, 0.0),
         ),
+        material=gs.materials.Kinematic(),
         surface=gs.surfaces.Smooth(
             color=(0.6, 0.8, 1.0),
         ),
@@ -78,6 +81,7 @@ def main():
             scale=0.5,
             pos=(0.0, 0.6, 0.0),
         ),
+        material=gs.materials.Kinematic(),
         surface=gs.surfaces.Iron(
             color=(1.0, 1.0, 1.0),
         ),
@@ -89,6 +93,7 @@ def main():
             scale=0.5,
             pos=(0.0, 1.8, 0.0),
         ),
+        material=gs.materials.Kinematic(),
         surface=gs.surfaces.Gold(
             color=(1.0, 1.0, 1.0),
         ),
@@ -100,6 +105,7 @@ def main():
             scale=0.5,
             pos=(0.0, 3.0, 0.0),
         ),
+        material=gs.materials.Kinematic(),
         surface=gs.surfaces.Glass(
             color=(1.0, 1.0, 1.0),
         ),
@@ -111,7 +117,10 @@ def main():
             scale=0.5,
             pos=(2.0, -3, 0.0),
         ),
-        surface=gs.surfaces.Smooth(color=(1.0, 1.0, 1.0, 0.5)),
+        material=gs.materials.Kinematic(),
+        surface=gs.surfaces.Smooth(
+            color=(1.0, 1.0, 1.0, 0.5),
+        ),
     )
     # asset's own attributes
     scene.add_entity(
@@ -120,6 +129,7 @@ def main():
             scale=0.15,
             pos=(2.2, -2.3, 0.0),
         ),
+        material=gs.materials.Kinematic(),
     )
     # override asset's attributes
     scene.add_entity(
@@ -128,6 +138,7 @@ def main():
             scale=0.15,
             pos=(2.2, -1.0, 0.0),
         ),
+        material=gs.materials.Kinematic(),
         surface=gs.surfaces.Rough(
             diffuse_texture=gs.textures.ImageTexture(
                 image_path="textures/checker.png",

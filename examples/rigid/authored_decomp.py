@@ -36,12 +36,12 @@ def main():
         rigid_options=gs.options.RigidOptions(
             use_gjk_collision=args.gjk,
         ),
+        vis_options=gs.options.VisOptions(
+            show_world_frame=False,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.4, 0.0, 0.3),
             camera_lookat=(0.0, 0.0, 0.1),
-        ),
-        vis_options=gs.options.VisOptions(
-            show_world_frame=False,
         ),
         show_viewer=args.vis,
     )
@@ -71,8 +71,12 @@ def main():
                 pos=(0.0, 0.0, height + (RING_HEIGHT - 1e-4) / 2),
                 file_meshes_are_zup=True,
             ),
-            surface=gs.surfaces.Default(color=RING_COLORS[ring_idx]),
-            material=gs.materials.Rigid(rho=600.0),
+            surface=gs.surfaces.Default(
+                color=RING_COLORS[ring_idx],
+            ),
+            material=gs.materials.Rigid(
+                rho=600.0,
+            ),
             vis_mode="collision" if args.debug else "visual",
             visualize_contact=args.debug,
         )
@@ -85,7 +89,9 @@ def main():
             pos=(0.0, 0.0, height + BALL_HEIGHT),
             file_meshes_are_zup=True,
         ),
-        material=gs.materials.Rigid(rho=600.0),
+        material=gs.materials.Rigid(
+            rho=600.0,
+        ),
         vis_mode="collision" if args.debug else "visual",
         visualize_contact=False,
     )

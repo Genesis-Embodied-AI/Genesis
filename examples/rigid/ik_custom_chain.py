@@ -18,11 +18,6 @@ def main():
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
         ),
-        rigid_options=gs.options.RigidOptions(
-            gravity=(0, 0, 0),
-            enable_collision=False,
-            enable_joint_limit=False,
-        ),
         show_viewer=args.vis,
     )
 
@@ -31,7 +26,10 @@ def main():
             file="meshes/axis.obj",
             scale=0.05,
         ),
-        surface=gs.surfaces.Default(color=(1, 0.5, 0.5, 1)),
+        material=gs.materials.Kinematic(),
+        surface=gs.surfaces.Default(
+            color=(1, 0.5, 0.5, 1),
+        ),
     )
 
     robot = scene.add_entity(
@@ -39,7 +37,10 @@ def main():
             scale=1.0,
             file="urdf/shadow_hand/shadow_hand.urdf",
         ),
-        surface=gs.surfaces.Reflective(color=(0.4, 0.4, 0.4)),
+        material=gs.materials.Kinematic(),
+        surface=gs.surfaces.Reflective(
+            color=(0.4, 0.4, 0.4),
+        ),
     )
 
     scene.build()
@@ -73,7 +74,7 @@ def main():
         )
 
         robot.set_qpos(qpos)
-        scene.step()
+        scene.visualizer.update(force=True)
 
 
 if __name__ == "__main__":

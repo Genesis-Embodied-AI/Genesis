@@ -28,17 +28,23 @@ def main():
             size=(0.04, 0.04, 0.04),
             pos=(0.65, 0.0, 0.02),
         ),
-        surface=gs.surfaces.Plastic(color=(1, 0, 0)),
+        surface=gs.surfaces.Plastic(
+            color=(1, 0, 0),
+        ),
     )
     cube_2 = scene.add_entity(
         gs.morphs.Box(
             size=(0.04, 0.04, 0.04),
             pos=(0.4, 0.2, 0.02),
         ),
-        surface=gs.surfaces.Plastic(color=(0, 1, 0)),
+        surface=gs.surfaces.Plastic(
+            color=(0, 1, 0),
+        ),
     )
     franka = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
         vis_mode="collision",
     )
     scene.build()

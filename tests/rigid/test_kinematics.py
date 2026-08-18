@@ -299,12 +299,12 @@ def test_joint_get_anchor_pos_and_axis(n_envs):
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_inverse_kinematics_multilink(show_viewer, tol):
     scene = gs.Scene(
+        vis_options=gs.options.VisOptions(
+            rendered_envs_idx=(1,),
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.5, 0.0, 1.5),
             camera_lookat=(0.0, 0.0, 0.5),
-        ),
-        vis_options=gs.options.VisOptions(
-            rendered_envs_idx=(1,),
         ),
         show_viewer=show_viewer,
     )
@@ -365,7 +365,9 @@ def test_inverse_kinematics_local_point(n_envs, show_viewer, tol):
         show_viewer=show_viewer,
     )
     robot = scene.add_entity(
-        morph=gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+        morph=gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
     )
     floating = scene.add_entity(
         morph=gs.morphs.URDF(

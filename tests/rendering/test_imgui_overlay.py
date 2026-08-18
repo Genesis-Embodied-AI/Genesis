@@ -88,24 +88,24 @@ def _apply_deterministic_imgui_overrides(monkeypatch):
 
 def _build_default_scene(*, enable_gui, run_in_thread=False):
     scene = gs.Scene(
+        vis_options=gs.options.VisOptions(
+            shadow=False,
+        ),
         viewer_options=gs.options.ViewerOptions(
             # Keep ``res`` small enough to fit the virtual display area of GitHub-hosted Apple M1 macos-15 runners:
             # the on-screen capture below reads from the window framebuffer, whose size the OS clamps to the display.
             res=(640, 480),
-            camera_pos=(4.5, -1.2, 2.5),
-            camera_lookat=(0.0, -1.2, 0.5),
             # The snapshot test keeps the default ``run_in_thread=False``: its capture path calls
             # ``pyrender_viewer.on_draw`` and reads the window framebuffer directly, which can only run on the
             # thread that owns the GL context.
             run_in_thread=run_in_thread,
+            camera_pos=(4.5, -1.2, 2.5),
+            camera_lookat=(0.0, -1.2, 0.5),
             # ``_render_help_text`` rasterizes "[i]: show keyboard instructions" via Genesis's own font path,
             # which is not byte-identical across software / hardware renderers; disable it so the captured
             # frame contains only the deterministic ImGui overlay.
             enable_help_text=False,
             enable_gui=enable_gui,
-        ),
-        vis_options=gs.options.VisOptions(
-            shadow=False,
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,

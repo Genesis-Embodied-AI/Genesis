@@ -92,12 +92,12 @@ def gs_static_child(args: list[str]):
     _initialize_genesis(backend=args.backend)
 
     scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_multi_contact=args.enable_multi_contact,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1, 1, 0.5),
             camera_lookat=(0.0, 0.0, 0.0),
-        ),
-        rigid_options=gs.options.RigidOptions(
-            enable_multi_contact=args.enable_multi_contact,
         ),
         show_viewer=False,
     )
@@ -190,9 +190,7 @@ def gs_num_envs_child(args: list[str]):
 
     _initialize_genesis(backend=args.backend)
 
-    scene = gs.Scene(
-        show_viewer=False,
-    )
+    scene = gs.Scene(show_viewer=False)
     scene.add_entity(
         gs.morphs.Plane(),
     )
@@ -271,12 +269,12 @@ def change_scene(args: list[str]):
     _initialize_genesis(backend=args.backend)
 
     scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            sparse_solve=False,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1, 1, 0.5),
             camera_lookat=(0.0, 0.0, 0.0),
-        ),
-        rigid_options=gs.options.RigidOptions(
-            sparse_solve=False,
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,

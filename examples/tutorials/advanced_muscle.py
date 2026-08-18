@@ -11,11 +11,6 @@ scene = gs.Scene(
         substeps=10,
         gravity=(0, 0, 0),
     ),
-    viewer_options=gs.options.ViewerOptions(
-        camera_pos=(1.5, 0, 0.8),
-        camera_lookat=(0.0, 0.0, 0.0),
-        camera_fov=40,
-    ),
     mpm_options=gs.options.MPMOptions(
         dt=dt,
         lower_bound=(-1.0, -1.0, -0.2),
@@ -28,10 +23,17 @@ scene = gs.Scene(
     vis_options=gs.options.VisOptions(
         show_world_frame=False,
     ),
+    viewer_options=gs.options.ViewerOptions(
+        camera_pos=(1.5, 0, 0.8),
+        camera_lookat=(0.0, 0.0, 0.0),
+        camera_fov=40,
+    ),
     show_viewer=True,
 )
 
-scene.add_entity(morph=gs.morphs.Plane())
+scene.add_entity(
+    morph=gs.morphs.Plane(),
+)
 
 E, nu = 3.0e4, 0.45
 rho = 1000.0

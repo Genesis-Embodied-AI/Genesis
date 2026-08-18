@@ -209,9 +209,9 @@ def _plot_tactile_sensor(
                 normal=plot_normal,
                 scale_factor=scale_factor,
                 max_magnitude=max_magnitude,
+                subplot_titles=env_titles,
                 twist_scale_factor=twist_scale_factor,
                 twist_max_magnitude=twist_max_magnitude,
-                subplot_titles=env_titles,
             ),
         )
         return
@@ -224,11 +224,11 @@ def _plot_tactile_sensor(
     scene.start_recording(
         lambda: tuple(reduce_fn(sensor.read()[i]) for i in range(n_envs)),
         gs.recorders.MPLLinePlot(
-            title=title,
+            labels=env_titles,
             x_label="step",
             y_label=y_label,
             history_length=200,
-            labels=env_titles,
+            title=title,
         ),
     )
 
@@ -294,8 +294,8 @@ def main() -> None:
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            gravity=(0.0, 0.0, 0.0),
             substeps=4,
+            gravity=(0.0, 0.0, 0.0),
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.5, -0.2, 0.5),
@@ -376,8 +376,12 @@ def main() -> None:
                 scale=0.001,
             ),
         ],
-        surface=gs.surfaces.Default(color=(1.0, 1.0, 1.0, 1.0)),
-        material=gs.materials.Rigid(friction=0.5),
+        surface=gs.surfaces.Default(
+            color=(1.0, 1.0, 1.0, 1.0),
+        ),
+        material=gs.materials.Rigid(
+            friction=0.5,
+        ),
     )
 
     sensor = _add_tactile_sensor(

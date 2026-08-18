@@ -93,8 +93,8 @@ def test_goal_pose_optimization_converges(show_viewer):
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            requires_grad=True,
             gravity=(0, 0, -1),
+            requires_grad=True,
         ),
         rigid_options=gs.options.RigidOptions(
             enable_collision=False,

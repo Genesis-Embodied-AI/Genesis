@@ -17,8 +17,8 @@ scene = gs.Scene(
         visualize_mpm_boundary=True,
     ),
     viewer_options=gs.options.ViewerOptions(
-        camera_fov=30,
         res=(960, 640),
+        camera_fov=30,
     ),
     show_viewer=True,
 )

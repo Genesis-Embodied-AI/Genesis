@@ -442,7 +442,12 @@ def test_glb_shared_texture_not_duplicated(tmp_path):
     for i in range(n_submeshes):
         transform = np.eye(4)
         transform[:3, 3] = (2.0 * i, 0.0, 0.0)
-        tm_scene.add_geometry(mesh, node_name=f"instance_{i:02d}", geom_name="shared_mesh", transform=transform)
+        tm_scene.add_geometry(
+            mesh,
+            node_name=f"instance_{i:02d}",
+            geom_name="shared_mesh",
+            transform=transform,
+        )
     glb_path = tmp_path / "shared_texture.glb"
     tm_scene.export(glb_path)
 
@@ -670,7 +675,10 @@ def test_2_channels_luminance_alpha_textures(show_viewer):
 
 @pytest.mark.required
 def test_plane_texture_path_preservation(show_viewer):
-    scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
     plane = scene.add_entity(gs.morphs.Plane())
 
     # The texture path should be stored in metadata
@@ -686,7 +694,9 @@ def test_mjcf_parse_material(material_mjcf, tol):
             scale=1.0,
             convexify=False,
         ),
-        material=gs.materials.Rigid(rho=1000.0),
+        material=gs.materials.Rigid(
+            rho=1000.0,
+        ),
     )
     scene.build()
 
@@ -818,9 +828,7 @@ def test_mjcf_2d_texture_mapping(textured_mjcf):
 
 @pytest.mark.required
 def test_splashsurf_surface_reconstruction(show_viewer):
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
+    scene = gs.Scene(show_viewer=show_viewer)
     scene.add_entity(
         material=gs.materials.SPH.Liquid(),
         morph=gs.morphs.Box(
@@ -890,9 +898,7 @@ def test_convex_decompose_cache(monkeypatch, asset_tmp_path):
     POSES = ((0.0, 0.0, 1.0), (1.0, 0.0, 1.0), (0.0, 1.0, 1.0))
     QUATS = ((0.0, 0.0, 0.0, 1.0), (1.0, 0.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0))
     for file, scale, pos, quat in zip(files, SCALES, POSES, QUATS):
-        scene = gs.Scene(
-            show_viewer=False,
-        )
+        scene = gs.Scene(show_viewer=False)
         scene.add_entity(
             morph=gs.morphs.Mesh(
                 file=file,

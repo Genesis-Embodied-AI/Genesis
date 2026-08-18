@@ -32,13 +32,13 @@ def main():
         pbd_options=gs.options.PBDOptions(
             particle_size=0.02,
         ),
+        vis_options=gs.options.VisOptions(
+            rendered_envs_idx=[0],
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(5.5, 6.5, 3.2),
             camera_lookat=(0.5, 1.5, 1.5),
             camera_fov=35,
-        ),
-        vis_options=gs.options.VisOptions(
-            rendered_envs_idx=[0],
         ),
         show_viewer=args.vis,
     )

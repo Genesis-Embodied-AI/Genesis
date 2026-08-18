@@ -25,8 +25,8 @@ def main():
             upper_bound=(1.03, 1.03, 1.0),
         ),
         vis_options=gs.options.VisOptions(
-            visualize_sph_boundary=True,
             visualize_mpm_boundary=True,
+            visualize_sph_boundary=True,
             rendered_envs_idx=[0],
         ),
         viewer_options=gs.options.ViewerOptions(
@@ -55,7 +55,9 @@ def main():
             scale=0.07,
             euler=(90.0, 0.0, 90.0),
         ),
-        material=gs.materials.MPM.Elastic(rho=200),
+        material=gs.materials.MPM.Elastic(
+            rho=200,
+        ),
         surface=gs.surfaces.Default(
             color=(0.9, 0.8, 0.2, 1.0),
             vis_mode="particle",

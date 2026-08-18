@@ -31,8 +31,16 @@ def mpl_agg_backend():
 
 @pytest.mark.required
 def test_vector_field_plotter_subplots(mpl_agg_backend, png_snapshot):
-    scene = gs.Scene(show_viewer=False, show_FPS=False)
-    scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.5)))
+    scene = gs.Scene(
+        show_viewer=False,
+        show_FPS=False,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.5),
+        )
+    )
 
     n_probes = 9
     grid = np.stack(np.meshgrid(np.linspace(0, 1, 3), np.linspace(0, 1, 3)), -1).reshape(-1, 2)
@@ -46,19 +54,19 @@ def test_vector_field_plotter_subplots(mpl_agg_backend, png_snapshot):
         data_func=grid_data,
         rec_options=gs.recorders.MPLVectorFieldPlot(
             title="grid",
+            show_window=False,
             positions=positions,
             normal=(0.0, 0.0, 1.0),
             subplot_titles=titles,
-            show_window=False,
         ),
     )
     single_plotter = scene.start_recording(
         data_func=lambda: (positions - 0.5) * 0.1,
         rec_options=gs.recorders.MPLVectorFieldPlot(
             title="single",
+            show_window=False,
             positions=positions,
             normal=(0.0, 0.0, 1.0),
-            show_window=False,
         ),
     )
 
@@ -76,12 +84,12 @@ def test_vector_field_plotter_subplots(mpl_agg_backend, png_snapshot):
         data_func=twist_data,
         rec_options=gs.recorders.MPLVectorFieldPlot(
             title="twist",
+            show_window=False,
             positions=positions,
             normal=(0.0, 0.0, 1.0),
             subplot_titles=titles,
             twist_scale_factor=1.0,
             twist_max_magnitude=0.5,
-            show_window=False,
         ),
     )
 
@@ -123,13 +131,20 @@ def test_plotter(tmp_path, monkeypatch, mpl_agg_backend, png_snapshot):
     monkeypatch.setattr("genesis.recorders.file_writers.VideoFileWriter.process", process)
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=DT),
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+        ),
         show_viewer=False,
         show_FPS=False,
     )
     scene.add_entity(
-        morph=gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.5)),
-        material=gs.materials.Rigid(rho=1000.0),
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.5),
+        ),
+        material=gs.materials.Rigid(
+            rho=1000.0,
+        ),
     )
 
     call_count = 0
@@ -146,10 +161,10 @@ def test_plotter(tmp_path, monkeypatch, mpl_agg_backend, png_snapshot):
         data_func=dummy_data_func,
         rec_options=gs.recorders.MPLLinePlot(
             labels={"a": ("x", "y", "z"), "b": ("u", "v")},
-            title="Test MPLPlotter",
             history_length=HISTORY_LENGTH,
-            window_size=(400, 300),
             hz=1.0 / DT / 2,  # half of the simulation frequency, so every other step
+            title="Test MPLPlotter",
+            window_size=(400, 300),
             save_to_filename=tmp_path / "video.mp4",
             show_window=False,
         ),
@@ -186,7 +201,9 @@ def test_file_writers(tmp_path):
         show_FPS=False,
     )
 
-    scene.add_entity(morph=gs.morphs.Plane())
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
 
     box = scene.add_entity(
         morph=gs.morphs.Box(
@@ -239,7 +256,9 @@ def test_video_writer(tmp_path):
         show_viewer=False,
         show_FPS=False,
     )
-    scene.add_entity(morph=gs.morphs.Plane())
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
     scene.add_entity(
         morph=gs.morphs.Box(
             size=(0.1, 0.1, 0.1),

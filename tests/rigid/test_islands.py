@@ -44,9 +44,9 @@ def test_constraint_capacity_covers_friction_rows(show_viewer):
     # the constraint solver, including the extra torsional and rolling rows per contact.
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
-            use_contact_island=True,
             enable_torsional_friction=True,
             enable_rolling_friction=True,
+            use_contact_island=True,
         ),
         show_viewer=show_viewer,
     )
@@ -286,8 +286,8 @@ def test_solve_correctness(show_viewer, noslip_iterations, n_envs):
     for use_contact_island in (False, True):
         scene = gs.Scene(
             rigid_options=gs.options.RigidOptions(
-                use_contact_island=use_contact_island,
                 noslip_iterations=noslip_iterations,
+                use_contact_island=use_contact_island,
             ),
             viewer_options=gs.options.ViewerOptions(
                 camera_pos=(1.0, -4.0, 2.5),
@@ -452,9 +452,9 @@ def test_hibernation_with_pruning(show_viewer, n_envs):
             dt=1.0 / 100.0,
         ),
         rigid_options=gs.options.RigidOptions(
+            contact_pruning_tolerance=0.02,
             use_contact_island=True,
             use_hibernation=True,
-            contact_pruning_tolerance=0.02,
         ),
         show_viewer=show_viewer,
     )
@@ -578,8 +578,8 @@ def test_sparsity(show_viewer, n_envs):
     # O(nonzeros)). On GPU the dense tiled path wins, so sparse is dropped and islands stand alone.
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
-            use_contact_island=True,
             sparse_solve=True,
+            use_contact_island=True,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.5, -4.0, 2.5),

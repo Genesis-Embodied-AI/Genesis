@@ -54,7 +54,9 @@ def run_worker(args: argparse.Namespace) -> None:
     )
     scene.add_entity(gs.morphs.Plane())
     scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
         visualize_contact=True,
     )
     scene.build(n_envs=args.num_envs)

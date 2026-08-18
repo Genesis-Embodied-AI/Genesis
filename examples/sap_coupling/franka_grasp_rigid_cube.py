@@ -25,9 +25,9 @@ def main():
             enable_self_collision=False,
         ),
         coupler_options=gs.options.SAPCouplerOptions(
-            pcg_threshold=1e-10,
             sap_convergence_atol=1e-10,
             sap_convergence_rtol=1e-10,
+            pcg_threshold=1e-10,
             linesearch_ftol=1e-10,
         ),
         viewer_options=gs.options.ViewerOptions(
@@ -38,10 +38,12 @@ def main():
     )
 
     franka = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
         material=gs.materials.Rigid(
-            coup_friction=1.0,
             friction=1.0,
+            coup_friction=1.0,
         ),
     )
     cube = scene.add_entity(
@@ -50,8 +52,8 @@ def main():
             pos=(0.65, 0.0, 0.02),
         ),
         material=gs.materials.Rigid(
-            coup_friction=1.0,
             friction=1.0,
+            coup_friction=1.0,
         ),
     )
 

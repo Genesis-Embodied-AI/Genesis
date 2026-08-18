@@ -25,10 +25,20 @@ def test_needs_coup():
         coupler_options=gs.options.IPCCouplerOptions(),
         show_viewer=False,
     )
-    scene.add_entity(gs.morphs.Plane(), material=gs.materials.Rigid(needs_coup=False))
     scene.add_entity(
-        morph=gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0, 0, 0.5)),
-        material=gs.materials.Rigid(needs_coup=False),
+        gs.morphs.Plane(),
+        material=gs.materials.Rigid(
+            needs_coup=False,
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0, 0, 0.5),
+        ),
+        material=gs.materials.Rigid(
+            needs_coup=False,
+        ),
     )
     scene.build()
     assert scene.sim.coupler._coup_type_by_entity == {}
@@ -126,14 +136,19 @@ def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
     from genesis.engine.couplers.ipc_coupler.utils import find_target_link_for_fixed_merge
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=0.01, gravity=(0, 0, -9.8)),
-        rigid_options=gs.options.RigidOptions(enable_collision=False),
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+            gravity=(0, 0, -9.8),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
         coupler_options=gs.options.IPCCouplerOptions(
+            newton_tolerance=1e-2,
+            newton_translation_tolerance=1e-2,
             constraint_strength_translation=1,
             constraint_strength_rotation=1,
             enable_rigid_rigid_contact=False,
-            newton_tolerance=1e-2,
-            newton_translation_tolerance=1e-2,
             two_way_coupling=True,
         ),
         show_viewer=show_viewer,
@@ -141,7 +156,10 @@ def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
 
     scene.add_entity(
         gs.morphs.Plane(),
-        material=gs.materials.Rigid(coup_type="ipc_only", coup_friction=0.5),
+        material=gs.materials.Rigid(
+            coup_friction=0.5,
+            coup_type="ipc_only",
+        ),
     )
 
     robot = scene.add_entity(
@@ -151,7 +169,9 @@ def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
             fixed=True,
             merge_fixed_links=merge_fixed_links,
         ),
-        material=gs.materials.Rigid(coup_type=coup_type),
+        material=gs.materials.Rigid(
+            coup_type=coup_type,
+        ),
     )
 
     scene.build()
@@ -207,7 +227,9 @@ def test_collision_delegation_ipc_vs_rigid(coup_type, enable_rigid_ground_contac
             size=(0.05, 0.05, 0.05),
             pos=(1.0, 0.0, 0.2),
         ),
-        material=gs.materials.Rigid(needs_coup=False),
+        material=gs.materials.Rigid(
+            needs_coup=False,
+        ),
     )
 
     if coup_type == "two_way_soft_constraint":

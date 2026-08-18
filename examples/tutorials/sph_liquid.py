@@ -12,9 +12,9 @@ scene = gs.Scene(
         substeps=10,
     ),
     sph_options=gs.options.SPHOptions(
+        particle_size=0.01,
         lower_bound=(-0.5, -0.5, 0.0),
         upper_bound=(0.5, 0.5, 1),
-        particle_size=0.01,
     ),
     vis_options=gs.options.VisOptions(
         visualize_sph_boundary=True,

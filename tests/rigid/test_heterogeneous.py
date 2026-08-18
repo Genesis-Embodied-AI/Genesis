@@ -119,9 +119,7 @@ def test_variant_inertia_matches_standalone(undefined_inertia, implicit_inertial
 @pytest.mark.required
 def test_fewer_envs_than_variants():
     # With n_envs < n_variants, environment i gets variant i and the variants beyond n_envs stay unused.
-    scene = gs.Scene(
-        show_viewer=False,
-    )
+    scene = gs.Scene(show_viewer=False)
     scene.add_entity(gs.morphs.Plane())
 
     # 4 variants with different positions but only 2 environments
@@ -131,7 +129,9 @@ def test_fewer_envs_than_variants():
         gs.morphs.Box(size=(0.02, 0.02, 0.02), pos=(0.2, 0.0, 0.2)),
         gs.morphs.Sphere(radius=0.02, pos=(0.3, 0.0, 0.25)),
     ]
-    het_obj = scene.add_entity(morph=morphs_heterogeneous)
+    het_obj = scene.add_entity(
+        morph=morphs_heterogeneous,
+    )
 
     # Building with only 2 environments should work - each env gets a unique variant
     scene.build(n_envs=2)
@@ -154,7 +154,9 @@ def test_aabb(tol):
         gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, 0.1)),
         gs.morphs.Sphere(radius=0.01, pos=(0.1, 0.0, 0.15)),
     )
-    het_obj = scene.add_entity(morph=morphs_heterogeneous)
+    het_obj = scene.add_entity(
+        morph=morphs_heterogeneous,
+    )
     # 4 envs: envs 0-1 get box, envs 2-3 get sphere
     scene.build(n_envs=4)
 
@@ -205,7 +207,11 @@ def test_aabb(tol):
 def test_pick_heterogenous_objects(show_viewer):
     scene = gs.Scene(show_viewer=show_viewer)
     scene.add_entity(gs.morphs.Plane())
-    franka = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    franka = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        )
+    )
 
     # 4 geometry variants: env i -> variant i
     # Sizes: box0=0.04, box1=0.02, sphere0=0.03, sphere1=0.025 (radius for spheres)
@@ -299,9 +305,7 @@ def test_invalid_variant_specification_raises():
         '<mujoco><worldbody><body><joint type="free"/><geom type="sphere" size="0.1"/></body></worldbody></mujoco>'
     )
 
-    scene = gs.Scene(
-        show_viewer=False,
-    )
+    scene = gs.Scene(show_viewer=False)
 
     morphs_heterogeneous = (
         gs.morphs.Box(size=(1.0, 1.0, 1.0)),
@@ -334,13 +338,17 @@ def test_morph_property_raises():
     scene = gs.Scene(show_viewer=False)
 
     single_morph = gs.morphs.Box(size=(0.1, 0.1, 0.1))
-    single_obj = scene.add_entity(morph=single_morph)
+    single_obj = scene.add_entity(
+        morph=single_morph,
+    )
 
     rigid_morphs_heterogeneous = (
         gs.morphs.Box(size=(0.1, 0.1, 0.1)),
         gs.morphs.Cylinder(radius=0.05, height=0.2),
     )
-    rigid_obj = scene.add_entity(morph=rigid_morphs_heterogeneous)
+    rigid_obj = scene.add_entity(
+        morph=rigid_morphs_heterogeneous,
+    )
     kinematic_morphs_heterogeneous = (
         gs.morphs.Box(size=(0.2, 0.2, 0.2)),
         gs.morphs.Sphere(radius=0.1),
@@ -350,7 +358,9 @@ def test_morph_property_raises():
         material=gs.materials.Kinematic(),
     )
     tool = scene.add_entity(
-        morph=gs.morphs.Box(size=(0.05, 0.05, 0.05)),
+        morph=gs.morphs.Box(
+            size=(0.05, 0.05, 0.05),
+        ),
     )
 
     assert single_obj.morph is single_morph

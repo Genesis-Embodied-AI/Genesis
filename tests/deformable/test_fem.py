@@ -19,9 +19,7 @@ def test_interior_tetrahedralized_vertex(cube_verts_and_faces, box_obj_path, sho
     # simulated vertices through the visual geom's sim_verts_idx.
     verts, faces = cube_verts_and_faces
 
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
+    scene = gs.Scene(show_viewer=show_viewer)
     fem = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=box_obj_path,
@@ -99,9 +97,7 @@ def test_interior_tetrahedralized_vertex(cube_verts_and_faces, box_obj_path, sho
 def test_multi_submesh_render_decoupling(n_envs, show_viewer):
     # Cloth material keeps the entity out of the tetrahedralization path, exercising the welded surface as
     # simulation elements. The GLB asset holds 2 sub-meshes (bag and channel) with distinct materials.
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
+    scene = gs.Scene(show_viewer=show_viewer)
     fem = scene.add_entity(
         morph=gs.morphs.Mesh(
             file="meshes/trashbag_rope.glb",
@@ -130,9 +126,7 @@ def test_multi_submesh_render_decoupling(n_envs, show_viewer):
 
 @pytest.mark.required
 def test_maxvolume(box_obj_path, show_viewer):
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
+    scene = gs.Scene(show_viewer=show_viewer)
 
     # Mesh without any maximum-element-volume constraint
     fem1 = scene.add_entity(
@@ -166,9 +160,7 @@ def test_offset_pos(box_obj_path, show_viewer):
     POS = (0.2, -0.1, 0.3)
     OFFSET_POS = (0.05, 0.0, 0.1)
 
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
+    scene = gs.Scene(show_viewer=show_viewer)
     box = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=box_obj_path,
@@ -306,8 +298,8 @@ def test_hard_constraint(use_implicit_solver, show_viewer):
             gravity=(0.0, 0.0, -9.81),
         ),
         fem_options=gs.options.FEMOptions(
-            enable_vertex_constraints=True,
             use_implicit_solver=use_implicit_solver,
+            enable_vertex_constraints=True,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.6, 0.6, HEIGHT + 0.5),
@@ -461,8 +453,8 @@ def test_explicit_legacy_coupler_soft_constraint_box(show_viewer):
             gravity=(0.0, 0.0, 0.0),
         ),
         fem_options=gs.options.FEMOptions(
-            enable_vertex_constraints=True,
             use_implicit_solver=False,
+            enable_vertex_constraints=True,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.6, 0.6, 0.5),
@@ -588,8 +580,8 @@ def test_implicit_sap_coupler_hard_constraint_and_collision(show_viewer):
             gravity=(0.0, 0.0, -9.81),
         ),
         fem_options=gs.options.FEMOptions(
-            enable_vertex_constraints=True,
             use_implicit_solver=True,
+            enable_vertex_constraints=True,
         ),
         coupler_options=gs.options.SAPCouplerOptions(),
         viewer_options=gs.options.ViewerOptions(

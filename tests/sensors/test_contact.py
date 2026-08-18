@@ -19,8 +19,8 @@ def test_gravity_force(n_envs, show_viewer, tol):
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            gravity=(0.0, 0.0, GRAVITY),
             dt=DT,
+            gravity=(0.0, 0.0, GRAVITY),
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
@@ -28,7 +28,9 @@ def test_gravity_force(n_envs, show_viewer, tol):
         show_viewer=show_viewer,
     )
 
-    floor = scene.add_entity(morph=gs.morphs.Plane())
+    floor = scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
 
     # Add duck (with convex decomposition enabled) to offset geom index vs link index
     scene.add_entity(
@@ -176,10 +178,14 @@ def test_filter_link_idx(show_viewer, tol):
         sim_options=gs.options.SimOptions(
             gravity=(0.0, 0.0, -10.0),
         ),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=show_viewer,
     )
-    floor = scene.add_entity(morph=gs.morphs.Plane())
+    floor = scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
     box_on_floor = scene.add_entity(
         morph=gs.morphs.Box(
             size=(0.2, 0.2, 0.2),

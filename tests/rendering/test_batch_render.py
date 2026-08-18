@@ -29,8 +29,15 @@ def _batch_render_scene(
         if use_batch_texture
         else None
     )
-    scene.add_entity(gs.morphs.Plane(), surface=surface)
-    scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+        surface=surface,
+    )
+    scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
+    )
 
     # cameras
     cam = scene.add_camera(

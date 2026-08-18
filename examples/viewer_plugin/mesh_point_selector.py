@@ -243,13 +243,13 @@ if __name__ == "__main__":
         sim_options=gs.options.SimOptions(
             gravity=(0.0, 0.0, 0.0),
         ),
+        vis_options=gs.options.VisOptions(
+            show_world_frame=True,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.6, 0.6, 0.6),
             camera_lookat=(0.0, 0.0, 0.2),
             camera_fov=40,
-        ),
-        vis_options=gs.options.VisOptions(
-            show_world_frame=True,
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,

@@ -39,17 +39,19 @@ class Go2Env:
             ),
             rigid_options=gs.options.RigidOptions(
                 enable_self_collision=False,
-                tolerance=1e-5,
                 # For this locomotion policy, there are usually no more than 20 collision pairs. Setting a low value
                 # can save memory. Violating this condition will raise an exception.
                 max_collision_pairs=20,
+                tolerance=1e-5,
+            ),
+            vis_options=gs.options.VisOptions(
+                rendered_envs_idx=[0],
             ),
             viewer_options=gs.options.ViewerOptions(
                 camera_pos=(2.0, 0.0, 2.5),
                 camera_lookat=(0.0, 0.0, 0.5),
                 camera_fov=40,
             ),
-            vis_options=gs.options.VisOptions(rendered_envs_idx=[0]),
             show_viewer=show_viewer,
         )
 

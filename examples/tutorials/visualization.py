@@ -5,12 +5,6 @@ import genesis as gs
 gs.init(backend=gs.cpu)
 
 scene = gs.Scene(
-    viewer_options=gs.options.ViewerOptions(
-        res=(1280, 960) if "PYTEST_VERSION" not in os.environ else (64, 64),
-        camera_pos=(3.5, 0.0, 2.5),
-        camera_lookat=(0.0, 0.0, 0.5),
-        camera_fov=40,
-    ),
     vis_options=gs.options.VisOptions(
         show_world_frame=True,
         world_frame_size=1.0,
@@ -18,6 +12,12 @@ scene = gs.Scene(
         show_cameras=False,
         plane_reflection=True,
         ambient_light=(0.1, 0.1, 0.1),
+    ),
+    viewer_options=gs.options.ViewerOptions(
+        res=(1280, 960) if "PYTEST_VERSION" not in os.environ else (64, 64),
+        camera_pos=(3.5, 0.0, 2.5),
+        camera_lookat=(0.0, 0.0, 0.5),
+        camera_fov=40,
     ),
     renderer=gs.renderers.Rasterizer(),
     show_viewer=True,

@@ -217,19 +217,24 @@ def get_file_morph_options(**kwargs):
 
 def make_go2(n_envs, solver=None, gjk=None, **scene_kwargs):
     scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=STEP_DT,
+        ),
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
                 dt=STEP_DT,
                 **(dict(constraint_solver=solver) if solver is not None else {}),
                 **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
-            )
+            ),
         ),
         **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
     )
 
     scene.add_entity(gs.morphs.Plane())
     robot = scene.add_entity(
-        gs.morphs.URDF(file="urdf/go2/urdf/go2.urdf"),
+        gs.morphs.URDF(
+            file="urdf/go2/urdf/go2.urdf",
+        ),
         vis_mode="collision",
     )
     time_start = time.time()
@@ -262,12 +267,15 @@ def make_go2(n_envs, solver=None, gjk=None, **scene_kwargs):
 
 def make_anymal(n_envs, solver=None, gjk=None, control=None, with_kinematic=False, **scene_kwargs):
     scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=STEP_DT,
+        ),
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
                 dt=STEP_DT,
                 **(dict(constraint_solver=solver) if solver is not None else {}),
                 **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
-            )
+            ),
         ),
         **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
     )
@@ -284,7 +292,10 @@ def make_anymal(n_envs, solver=None, gjk=None, control=None, with_kinematic=Fals
     ghost = None
     if with_kinematic:
         ghost = scene.add_entity(
-            gs.morphs.URDF(file="urdf/anymal_c/urdf/anymal_c.urdf", pos=(0, -0.5, 0.8)),
+            gs.morphs.URDF(
+                file="urdf/anymal_c/urdf/anymal_c.urdf",
+                pos=(0, -0.5, 0.8),
+            ),
             material=gs.materials.Kinematic(),
         )
     time_start = time.time()
@@ -316,13 +327,16 @@ def make_franka(
     n_envs, solver=None, gjk=None, is_collision_free=False, is_randomized=False, accessors=False, **scene_kwargs
 ):
     scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=STEP_DT,
+        ),
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
                 dt=STEP_DT,
                 enable_neutral_collision=True,
                 **(dict(constraint_solver=solver) if solver is not None else {}),
                 **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
-            )
+            ),
         ),
         **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
     )
@@ -450,13 +464,16 @@ def make_duck_in_box(n_envs, solver=None, gjk=None, hard=False, **scene_kwargs):
 
 def make_box_pyramid(n_envs, solver=None, gjk=None, n_cubes=3, **scene_kwargs):
     scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=STEP_DT,
+        ),
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
                 dt=STEP_DT,
                 tolerance=1e-5,
                 **(dict(constraint_solver=solver) if solver is not None else {}),
                 **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
-            )
+            ),
         ),
         **{
             "viewer_options": gs.options.ViewerOptions(
@@ -623,6 +640,7 @@ def make_shadow_hand_cubes(n_envs, solver=None, gjk=None, sparse_solve=False, **
             substeps=4,
         ),
         rigid_options=gs.options.RigidOptions(
+            dt=STEP_DT,
             noslip_iterations=2,
             max_collision_pairs=256,
             sparse_solve=sparse_solve,
@@ -664,7 +682,9 @@ def make_shadow_hand_cubes(n_envs, solver=None, gjk=None, sparse_solve=False, **
         x = -0.10 + 0.05 * (i % 5)
         y = -0.05 + 0.05 * (i // 5)
         scene.add_entity(
-            material=gs.materials.Rigid(friction=0.8),
+            material=gs.materials.Rigid(
+                friction=0.8,
+            ),
             morph=gs.morphs.Box(
                 pos=(x, y, TABLE_Z + 0.01),
                 size=(0.02, 0.02, 0.02),
@@ -745,6 +765,7 @@ def make_dex_hand(n_envs, solver=None, gjk=None, **scene_kwargs):
             substeps=25,
         ),
         rigid_options=gs.options.RigidOptions(
+            dt=STEP_DT,
             max_collision_pairs=200,
             **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
         ),
@@ -755,7 +776,11 @@ def make_dex_hand(n_envs, solver=None, gjk=None, **scene_kwargs):
     for cfg in hand_configs:
         urdf_path = str(shadow_hand_path / "shadow_hand" / cfg["urdf"])
         hand = scene.add_entity(
-            gs.morphs.URDF(file=urdf_path, pos=cfg["pos"], quat=cfg["quat"]),
+            gs.morphs.URDF(
+                file=urdf_path,
+                pos=cfg["pos"],
+                quat=cfg["quat"],
+            ),
         )
         hands.append(hand)
 

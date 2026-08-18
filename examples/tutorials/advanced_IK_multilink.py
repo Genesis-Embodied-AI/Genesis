@@ -6,14 +6,14 @@ import genesis.utils.geom as gu
 gs.init(backend=gs.cpu, precision="32", logging_level="info")
 
 scene = gs.Scene(
+    rigid_options=gs.options.RigidOptions(
+        enable_collision=False,
+        enable_joint_limit=False,
+    ),
     viewer_options=gs.options.ViewerOptions(
         camera_pos=(2.0, -2, 1.5),
         camera_lookat=(0.0, 0.0, 0.0),
         camera_fov=40,
-    ),
-    rigid_options=gs.options.RigidOptions(
-        enable_joint_limit=False,
-        enable_collision=False,
     ),
     show_viewer=True,
 )

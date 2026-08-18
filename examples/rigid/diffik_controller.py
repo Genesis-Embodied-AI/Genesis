@@ -26,23 +26,22 @@ def main():
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
         ),
-        rigid_options=gs.options.RigidOptions(
-            enable_joint_limit=False,
-            enable_collision=False,
-            gravity=(0, 0, -0),
-        ),
         show_viewer=args.vis,
         show_FPS=False,
     )
 
     plane = scene.add_entity(
         gs.morphs.Plane(),
+        material=gs.materials.Kinematic(),
     )
 
     robot_config = config[args.robot]
     mjcf_file = robot_config["mjcf_file"]
     robot = scene.add_entity(
-        gs.morphs.MJCF(file=mjcf_file),
+        gs.morphs.MJCF(
+            file=mjcf_file,
+        ),
+        material=gs.materials.Kinematic(),
     )
 
     print("links=", robot.links)
@@ -52,7 +51,10 @@ def main():
             file="meshes/axis.obj",
             scale=0.10,
         ),
-        surface=gs.surfaces.Default(color=(1, 0.5, 0.5, 1)),
+        material=gs.materials.Kinematic(),
+        surface=gs.surfaces.Default(
+            color=(1, 0.5, 0.5, 1),
+        ),
     )
     scene.build()
 
@@ -84,8 +86,8 @@ def main():
         dq = jac.T @ np.linalg.solve(jac @ jac.T + diag, error)
         q = robot.get_qpos().cpu().numpy() + dq
 
-        robot.control_dofs_position(q)
-        scene.step()
+        robot.set_qpos(q)
+        scene.visualizer.update(force=True)
 
 
 if __name__ == "__main__":

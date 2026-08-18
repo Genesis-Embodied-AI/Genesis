@@ -48,16 +48,19 @@ class GraspEnv:
         self.rgb_image_shape = (3, self.image_height, self.image_width)
 
         self.scene = gs.Scene(
-            sim_options=gs.options.SimOptions(dt=self.ctrl_dt, substeps=2),
+            sim_options=gs.options.SimOptions(
+                dt=self.ctrl_dt,
+                substeps=2,
+            ),
             rigid_options=gs.options.RigidOptions(
                 dt=self.ctrl_dt,
-                constraint_solver=gs.constraint_solver.Newton,
                 enable_collision=True,
                 enable_joint_limit=True,
+                constraint_solver=gs.constraint_solver.Newton,
             ),
             vis_options=gs.options.VisOptions(
-                rendered_envs_idx=list(range(min(10, self.num_envs))),
                 env_separate_rigid=True,
+                rendered_envs_idx=list(range(min(10, self.num_envs))),
             ),
             viewer_options=gs.options.ViewerOptions(
                 res=(1280, 960),
@@ -65,7 +68,9 @@ class GraspEnv:
                 camera_lookat=(0.5, -0.3, 0.1),
                 camera_fov=55,
             ),
-            profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+            profiling_options=gs.options.ProfilingOptions(
+                show_FPS=False,
+            ),
             show_viewer=show_viewer,
         )
 
@@ -398,7 +403,10 @@ class Manipulator:
             pos=(0.0, 0.0, 0.0),
             quat=(1.0, 0.0, 0.0, 0.0),
         )
-        self._robot_entity: gs.Entity = scene.add_entity(material=material, morph=morph)
+        self._robot_entity: gs.Entity = scene.add_entity(
+            morph=morph,
+            material=material,
+        )
 
         self._gripper_open_dof = 0.04
         self._gripper_close_dof = 0.00

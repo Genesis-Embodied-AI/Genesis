@@ -274,7 +274,12 @@ def test_pipeline_contract(tol):
     DELAY_STEPS = 2
     DEEP_DELAY_STEPS = 3
     HISTORY_LEN = 3
-    scene = gs.Scene(sim_options=gs.options.SimOptions(dt=DT), show_viewer=False)
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+        ),
+        show_viewer=False,
+    )
     scene.add_entity(gs.morphs.Plane())  # minimum scene; the sensors do not depend on any physics.
     sensor = scene.add_sensor(
         FakeOptions(
@@ -417,7 +422,12 @@ def test_pipeline_contract_uint8_delay(tol):
 
     DT = 1e-2
     DELAY_STEPS = 2
-    scene = gs.Scene(sim_options=gs.options.SimOptions(dt=DT), show_viewer=False)
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+        ),
+        show_viewer=False,
+    )
     scene.add_entity(gs.morphs.Plane())
     sensor = scene.add_sensor(FakeQuantizedOptions(delay=DELAY_STEPS * DT))
     scene.build()
@@ -440,9 +450,7 @@ def test_pipeline_contract_uint8_delay(tol):
 def test_add_and_read_all_registered_sensors():
     from genesis.engine.sensors.sensor_manager import SensorManager
 
-    scene = gs.Scene(
-        show_viewer=False,
-    )
+    scene = gs.Scene(show_viewer=False)
     scene.add_entity(gs.morphs.Plane())
     box = scene.add_entity(
         gs.morphs.Box(
@@ -508,7 +516,9 @@ def test_sensor_history_length_contact_and_imu(show_viewer, tol, n_envs):
             dt=DT,
             gravity=(0.0, 0.0, GRAVITY),
         ),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=show_viewer,
     )
     scene.add_entity(gs.morphs.Plane())
@@ -581,7 +591,12 @@ def test_shared_context(show_viewer):
 
     scene = gs.Scene(show_viewer=show_viewer)
     scene.add_entity(gs.morphs.Plane())
-    box = scene.add_entity(gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(0.0, 0.0, 1.0)))
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.4, 0.4, 0.4),
+            pos=(0.0, 0.0, 1.0),
+        )
+    )
 
     raycaster = scene.add_sensor(
         gs.sensors.Raycaster(
