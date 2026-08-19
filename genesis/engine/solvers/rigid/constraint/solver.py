@@ -7688,59 +7688,22 @@ def func_solve_iter_post_linesearch(
     )
 
 
-# warmup=1 / active=1 is too noisy a sample budget to reliably pick
-# between variants whose runtimes are within a small constant factor
-# of each other -- the single-sample picker flips between candidates
-# from run to run on cold-cache first launches. Bump to warmup=3 /
-# active=5 so each variant gets 5 timing samples on a warm cache
-# before the picker decides, which is sufficient to lock in the
-# faster variant deterministically. Cost is a few extra solver
-# invocations per variant during the first dispatch evaluation;
-# amortized to nothing by `repeat_after_seconds=5`.
-@qd.perf_dispatch(
-    get_geometry_hash=lambda *args, **kwargs: (*args, frozendict(kwargs)),
-    warmup=3,
-    active=5,
-    repeat_after_seconds=5,
-)
-def func_solve_body(
+@qd.kernel(fastcache=True)
+def _kernel_solve_monolith(
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
     _n_iterations: int,
-) -> None: ...
-
-
-@func_solve_body.register(is_compatible=lambda *args, **kwargs: True)
-@qd.kernel(
-    fastcache=True,
-    # Tell the AMDGPU backend that 1 wave / SIMD occupancy is acceptable
-    # so it can lift the VGPR-per-wave cap and hold this monolith's
-    # large live-range graph in registers instead of spilling to scratch
-    # (which then has to be reloaded from HBM on every use). The total
-    # wavefront count from this kernel is small enough that the lower
-    # occupancy doesn't cost us anything in parallelism.
-)
-def func_solve_body_monolith(
-    entities_info: array_class.EntitiesInfo,
-    dofs_state: array_class.DofsState,
-    constraint_state: array_class.ConstraintState,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    rigid_config: qd.template(),
-    _n_iterations: int,
 ):
-    _B = static_rigid_sim_config.n_envs
+    _B = constraint_state.grad.shape[1]
+    n_dofs = constraint_state.qacc.shape[0]
 
-    # block_dim=32 was tuned for CUDA wave32 hardware; on AMDGPU (wave64) a 32-thread
-    # workgroup leaves 32 of 64 lanes EXEC-masked off, capping VALU lane utilization at 50%.
-    # Counter measurements on MI300X showed VALUUtilization pinned at 49.9% from this alone.
-    qd.loop_config(
-        serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL,
-        block_dim=64 if gs.backend == gs.amdgpu else 32,
-    )
+    # The monolith arm solves each env whole (32 envs packed per warp); islands change only the per-env factor's block
+    # structure, handled inside func_solve_iter, not the iteration scheme. Per-island parallelism is the decomposed
+    # arm's job, so there is no separate island body here - ON and OFF run the identical packed-env solve.
+    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         # A fully-asleep env has no awake DOF to move, so its Newton solve is a no-op. Skip the whole iteration loop
         # so step time tracks the awake set, not the total body count.
@@ -7774,6 +7737,31 @@ def func_solve_body_monolith(
                 func_solve_iter(i_b, it, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
         else:
             constraint_state.improved[i_b] = False
+
+
+# warmup=1 / active=1 is too noisy a sample budget to reliably pick
+# between variants whose runtimes are within a small constant factor
+# of each other -- the single-sample picker flips between candidates
+# from run to run on cold-cache first launches. Bump to warmup=3 /
+# active=5 so each variant gets 5 timing samples on a warm cache
+# before the picker decides, which is sufficient to lock in the
+# faster variant deterministically. Cost is a few extra solver
+# invocations per variant during the first dispatch evaluation;
+# amortized to nothing by `repeat_after_seconds=5`.
+@qd.perf_dispatch(
+    get_geometry_hash=lambda *args, **kwargs: (*args, frozendict(kwargs)),
+    warmup=3,
+    active=5,
+    repeat_after_seconds=5,
+)
+def func_solve_body(
+    dyn_state: array_class.DynState,
+    constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+    _n_iterations: int,
+) -> None: ...
 
 
 @func_solve_body.register(
