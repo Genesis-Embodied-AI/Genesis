@@ -736,7 +736,9 @@ class Viewer(pyglet.window.Window):
         env_separate_rigid=None,
     ):
         if not self.is_active:
-            gs.raise_exception("Viewer already closed.")
+            # A viewer in its own thread stores what ended it rather than raising it where nobody waits, so the call
+            # that finds the viewer gone is where that exception surfaces.
+            gs.raise_exception_from("Viewer already closed.", self._exception)
 
         if rgb and seg:
             gs.raise_exception("RGB and segmentation map cannot be rendered in the same forward pass.")
