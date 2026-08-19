@@ -66,7 +66,7 @@ from genesis.engine.solvers.rigid.constraint import solver
 # ---------------------------------------------------------------------------
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def _kernel_linesearch_amdgpu(
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
@@ -98,7 +98,7 @@ def _kernel_linesearch_amdgpu(
             constraint_state.improved[i_b] = False
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def _kernel_solve_iter_post_linesearch_amdgpu(
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
@@ -156,7 +156,7 @@ def func_solve_body_split_amdgpu(
 # ---------------------------------------------------------------------------
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def _kernel_solve_one_iter_amdgpu(
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
@@ -228,7 +228,7 @@ def func_solve_body_lifted_loop_amdgpu(
 # separately.
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def _kernel_linesearch_amdgpu_decomposed(
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
@@ -255,7 +255,7 @@ def _kernel_linesearch_amdgpu_decomposed(
             constraint_state.improved[i_b] = False
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def _kernel_cg_save_prev_grad_amdgpu_decomposed(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
@@ -274,7 +274,7 @@ def _kernel_cg_save_prev_grad_amdgpu_decomposed(
             )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def _kernel_update_constraint_forces_amdgpu_decomposed(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
@@ -317,7 +317,7 @@ def _kernel_update_constraint_forces_amdgpu_decomposed(
             )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def _kernel_update_constraint_qfrc_amdgpu_decomposed(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
@@ -346,7 +346,7 @@ def _kernel_update_constraint_qfrc_amdgpu_decomposed(
             constraint_state.qfrc_constraint[i_d, i_b] = qfrc
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def _kernel_update_constraint_cost_amdgpu_decomposed(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
@@ -407,7 +407,7 @@ def _kernel_update_constraint_cost_amdgpu_decomposed(
             constraint_state.cost[i_b] = cost_i
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def _kernel_update_gradient_amdgpu_decomposed(
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
@@ -432,7 +432,7 @@ def _kernel_update_gradient_amdgpu_decomposed(
             )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def _kernel_update_search_direction_amdgpu_decomposed(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -1269,7 +1269,7 @@ def func_linesearch_batch_wavecoop(
 
 
 @qd.kernel(
-    fastcache=gs.use_fastcache,
+    fastcache=True,
     # Same occupancy hint as func_solve_init / monolith ("2,4"): avoid the
     # over-aggressive (8,10) target which forces VGPR count below ~64 and
     # causes scratch spilling (-> 2x scratch vs monolith, with each spill
@@ -2472,7 +2472,7 @@ def func_linesearch_batch_tiled_wc(
     return res_alpha
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def _kernel_solve_body_tiled_wc_amdgpu(
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,

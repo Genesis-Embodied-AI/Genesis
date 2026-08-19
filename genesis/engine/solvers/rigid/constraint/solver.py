@@ -7715,7 +7715,7 @@ def func_solve_body(
 
 @func_solve_body.register(is_compatible=lambda *args, **kwargs: True)
 @qd.kernel(
-    fastcache=gs.use_fastcache,
+    fastcache=True,
     # Tell the AMDGPU backend that 1 wave / SIMD occupancy is acceptable
     # so it can lift the VGPR-per-wave cap and hold this monolith's
     # large live-range graph in registers instead of spilling to scratch
