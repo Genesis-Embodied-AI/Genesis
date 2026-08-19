@@ -3507,6 +3507,7 @@ class RigidEntity(KinematicEntity):
         ref: gs.link_ref_frame, optional
             The reference point used to express the velocity of each link: its origin ('link_origin') or its center of
             mass ('link_COM'). Defaults to 'link_origin'.
+
         Returns
         -------
         vel : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
