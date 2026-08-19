@@ -4264,10 +4264,9 @@ class RigidEntity(KinematicEntity):
         exclude_self_contact: bool
             Exclude the self collision from the returning contacts. Defaults to False.
         is_padded: bool
-            Return fixed-capacity tensors padded to the collider's contact capacity instead of trimming to the
-            across-env contact count. This avoids a per-step device-to-host synchronization, at the cost of larger
-            tensors; the returned 'valid_mask' already excludes the padded slots. Only applies to parallelized
-            scenes. Defaults to False.
+            Return fixed-capacity padded tensors instead of trimming to the across-env contact count, avoiding a
+            per-step device-to-host sync. 'valid_mask' still excludes the padded slots. Batched scenes only.
+            Defaults to False.
 
         Returns
         -------
@@ -4275,7 +4274,7 @@ class RigidEntity(KinematicEntity):
             The contact information.
         """
         contact_data = self._solver.collider.get_contacts(as_tensor=True, to_torch=True, is_padded=is_padded)
-        # Present only for the padded (sync-free) layout: live per-env contact counts used to mask stale slots.
+        # Per-env live counts, present only for the padded layout, to mask stale slots on-device.
         n_contacts = contact_data.pop("n_contacts", None)
 
         logical_operation = torch.logical_xor if exclude_self_contact else torch.logical_or
@@ -4302,8 +4301,8 @@ class RigidEntity(KinematicEntity):
             )
 
         if n_contacts is not None:
-            # Padded layout keeps the full contact capacity, so exclude the slots past each env's live count. This
-            # relies only on the on-device count (no host sync), unlike trimming to 'n_contacts.max()'.
+            # Padded layout keeps full capacity: drop slots past each env's live count using the on-device count
+            # (no host sync, unlike trimming to 'n_contacts.max()').
             slots = torch.arange(valid_mask.shape[-1], device=valid_mask.device)
             valid_mask = torch.logical_and(valid_mask, slots[None, :] < n_contacts[:, None])
 

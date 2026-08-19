@@ -1007,10 +1007,9 @@ class Collider:
         )
         if gs.use_zerocopy and self._contact_data is not None:
             n_contacts = qd_to_torch(self._collider_state.n_contacts, copy=False)
-            # 'is_padded' returns fixed-capacity tensors instead of trimming to the across-env contact count, which
-            # avoids the 'n_contacts.max().item()' device->host sync that otherwise serializes the whole step. Stale
-            # slots past each env's live count are not cleared here; the per-env 'n_contacts' is returned so the
-            # caller can mask them on-device. Only meaningful for the batched layout (as_tensor and n_envs > 0).
+            # Padded layout skips the 'n_contacts.max().item()' device->host sync (which serializes the step):
+            # return fixed-capacity tensors plus per-env 'n_contacts' for on-device masking, instead of trimming.
+            # Batched layout only.
             padded = is_padded and as_tensor and n_envs > 0
             if (as_tensor or n_envs == 0) and not padded:
                 n_contacts_max = (n_contacts if n_envs == 0 else n_contacts.max()).item()
@@ -1023,9 +1022,9 @@ class Collider:
                     n_contacts_max = n_contacts.max().item()
                 sort_idx_view = qd_to_torch(self._collider_state.contact_sort_idx, transpose=True, copy=False)
                 if padded:
-                    # Gather over the full candidate-contact capacity so no host-side trim (hence no sync) is needed.
-                    # Sort indices past the live range may be stale; clamp (out-of-place, so the zero-copy view is
-                    # not mutated) keeps them in-bounds, and their gathered payload is masked out downstream.
+                    # Gather the full capacity so no host-side trim (sync) is needed. Sort indices past the live
+                    # range may be stale; clamp (out-of-place, preserving the zero-copy view) keeps them in-bounds
+                    # and their payload is masked out downstream.
                     gather_idx_flat = sort_idx_view.clamp(0, sort_idx_view.shape[1] - 1)
                 else:
                     gather_idx_flat = sort_idx_view[:, :n_contacts_max]
@@ -1069,7 +1068,7 @@ class Collider:
                 contact_data[key] = data
 
             if padded:
-                # Live per-env contact counts let padded consumers mask stale slots without a host sync.
+                # Per-env counts let padded consumers mask stale slots without a host sync.
                 contact_data["n_contacts"] = n_contacts
 
             return contact_data.copy()
