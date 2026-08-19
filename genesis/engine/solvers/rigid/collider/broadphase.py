@@ -405,25 +405,48 @@ def _func_broad_phase_all_vs_all(
     Iterates over pre-filtered valid geom pairs in parallel across pairs and batches, checking 3D AABB overlap.
     Passing pairs are appended to the output buffer via atomic add.
     """
-    # NOTE: must use `n_geoms_` (always populated to max(1, n_geoms)) and not `n_geoms`
-    # (only populated when requires_grad=True; defaults to -1 otherwise). With the bare
-    # `n_geoms` check, non-grad runs evaluated `-1 <= MAX_GEOMS_IN_LDS` as True and
-    # selected the LDS path even when the actual geom count exceeded MAX_GEOMS_IN_LDS,
-    # producing OOB LDS reads/writes whose garbage `i_g` values then OOB'd into
-    # geoms_state.aabb_min and triggered an HSA aperture violation on AMD at scale.
-    if qd.static(static_rigid_sim_config.n_geoms_ <= MAX_GEOMS_IN_LDS and static_rigid_sim_config.backend != gs.cpu):
-        func_broad_phase_lds(
-            links_state,
-            links_info,
-            geoms_state,
-            geoms_info,
-            rigid_global_info,
-            static_rigid_sim_config,
-            constraint_state,
-            collider_state,
-            equalities_info,
-            collider_info,
-            errno,
+
+    func_collision_clear(dyn_state, collider_state, dyn_info, rigid_config)
+
+    _B = collider_state.n_contacts.shape[0]
+    qd.loop_config(name="init_broad_pairs", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(_B):
+        collider_state.n_broad_pairs[i_b] = 0
+
+    n_valid_pairs = collider_info.n_valid_pairs[None]
+    qd.loop_config(name="traverse_valid")
+    for i_vp, i_b in qd.ndrange(n_valid_pairs, _B):
+        pair = collider_info.valid_collision_pairs[i_vp]
+        i_ga = pair[0]
+        i_gb = pair[1]
+
+        if not func_check_collision_valid(
+            i_ga, i_gb, i_b, dyn_state, constraint_state, dyn_info, rigid_info, collider_info, rigid_config
+        ):
+            continue
+
+        if not func_is_geom_aabbs_overlap(i_ga, i_gb, i_b, dyn_state):
+            if qd.static(not rigid_config.enable_mujoco_compatibility):
+                i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
+                collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                collider_state.contact_cache.penetration[i_pair, i_b] = 0.0
+            continue
+
+        n_broad = qd.atomic_add(collider_state.n_broad_pairs[i_b], 1)
+        if n_broad < collider_info.max_collision_pairs_broad[None]:
+            collider_state.broad_collision_pairs[n_broad, i_b][0] = i_ga
+            collider_state.broad_collision_pairs[n_broad, i_b][1] = i_gb
+        else:
+            errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_CANDIDATE_CONTACTS
+
+
+def func_broad_phase(
+    dyn_state, dyn_info, rigid_info, rigid_config, constraint_state, collider_state, collider_info, errno
+):
+    """Dispatch to the appropriate broad-phase kernel based on config."""
+    if rigid_config.broadphase_traversal == gs.broadphase_traversal.ALL_VS_ALL:
+        _func_broad_phase_all_vs_all(
+            dyn_state, collider_state, constraint_state, dyn_info, rigid_info, collider_info, rigid_config, errno
         )
     else:
         _func_broad_phase_sap(
