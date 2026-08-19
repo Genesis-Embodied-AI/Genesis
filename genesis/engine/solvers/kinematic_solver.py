@@ -614,12 +614,7 @@ class KinematicSolver(Solver):
         pass
 
     def substep_post_coupling(self, f):
-        if not self._is_forward_pos_updated or not self._is_forward_vel_updated:
-            kernel_forward_kinematics(
-                self.scene._envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
-            )
-            self._is_forward_pos_updated = True
-            self._is_forward_vel_updated = True
+        self.update_forward_pos()
 
     def substep_post_coupling_grad(self, f):
         pass
@@ -721,6 +716,7 @@ class KinematicSolver(Solver):
         if not self.is_active:
             return
 
+        is_all_envs = envs_idx is None
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
 
         kernel_set_kinematic_state(
@@ -736,8 +732,9 @@ class KinematicSolver(Solver):
         )
         if not partial:
             kernel_forward_kinematics(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
-            self._is_forward_pos_updated = True
-            self._is_forward_vel_updated = True
+            # A subset refresh is globally fresh only if all untouched environments were already fresh.
+            self._is_forward_pos_updated = is_all_envs or self._is_forward_pos_updated
+            self._is_forward_vel_updated = False
         else:
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
@@ -810,6 +807,7 @@ class KinematicSolver(Solver):
 
     @mutates(StateChange.GEOMETRY, links="links_idx")
     def set_base_links_pos(self, pos, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False):
+        is_all_envs = envs_idx is None
         if links_idx is None:
             links_idx = self._base_links_idx
         # Without any pose offset, the user and world frames coincide, so a relative set is just an absolute one.
@@ -836,8 +834,8 @@ class KinematicSolver(Solver):
 
         if not skip_forward:
             kernel_forward_kinematics(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
-            self._is_forward_pos_updated = True
-            self._is_forward_vel_updated = True
+            self._is_forward_pos_updated = is_all_envs or self._is_forward_pos_updated
+            self._is_forward_vel_updated = False
         else:
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
@@ -866,6 +864,7 @@ class KinematicSolver(Solver):
 
     @mutates(StateChange.GEOMETRY, links="links_idx")
     def set_base_links_quat(self, quat, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False):
+        is_all_envs = envs_idx is None
         if links_idx is None:
             links_idx = self._base_links_idx
         # Without any pose offset, the user and world frames coincide, so a relative set is just an absolute one.
@@ -902,8 +901,8 @@ class KinematicSolver(Solver):
 
         if not skip_forward:
             kernel_forward_kinematics(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
-            self._is_forward_pos_updated = True
-            self._is_forward_vel_updated = True
+            self._is_forward_pos_updated = is_all_envs or self._is_forward_pos_updated
+            self._is_forward_vel_updated = False
         else:
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
@@ -934,6 +933,7 @@ class KinematicSolver(Solver):
 
     @mutates(StateChange.GEOMETRY, links=MutatedLinks.ARTICULATED)
     def set_qpos(self, qpos, qs_idx=None, envs_idx=None, *, skip_forward=False):
+        is_all_envs = envs_idx is None
         if gs.use_zerocopy:
             data = qd_to_torch(self.rigid_info.qpos, transpose=True, copy=False)
             qs_mask = indices_to_mask(qs_idx)
@@ -972,14 +972,15 @@ class KinematicSolver(Solver):
             else:
                 fn = kernel_forward_kinematics
             fn(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
-            self._is_forward_pos_updated = True
-            self._is_forward_vel_updated = True
+            self._is_forward_pos_updated = is_all_envs or self._is_forward_pos_updated
+            self._is_forward_vel_updated = False
         else:
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
 
     @mutates(StateChange.DYNAMICS, links=MutatedLinks.ARTICULATED)
     def set_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None, *, skip_forward=False):
+        is_all_envs = envs_idx is None
         if gs.use_zerocopy:
             vel = qd_to_torch(self.dyn_state.dofs.vel, transpose=True, copy=False)
             dofs_mask = indices_to_mask(dofs_idx)
@@ -1028,12 +1029,13 @@ class KinematicSolver(Solver):
                 kernel_set_dofs_velocity(dofs_idx, envs_idx, velocity, self.dyn_state, self.rigid_config)
 
         if not skip_forward:
+            self.update_forward_pos()
             if envs_idx.dtype == torch.bool:
                 fn = kernel_masked_forward_velocity
             else:
                 fn = kernel_forward_velocity
             fn(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, is_backward=False)
-            self._is_forward_vel_updated = True
+            self._is_forward_vel_updated = is_all_envs or self._is_forward_vel_updated
         else:
             self._is_forward_vel_updated = False
 
@@ -1055,6 +1057,7 @@ class KinematicSolver(Solver):
 
     @mutates(StateChange.GEOMETRY, links=MutatedLinks.ARTICULATED)
     def set_dofs_position(self, position, dofs_idx=None, envs_idx=None):
+        is_all_envs = envs_idx is None
         position, dofs_idx, envs_idx = self._sanitize_io_variables(
             position, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
         )
@@ -1065,8 +1068,8 @@ class KinematicSolver(Solver):
         )
 
         kernel_forward_kinematics(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
-        self._is_forward_pos_updated = True
-        self._is_forward_vel_updated = True
+        self._is_forward_pos_updated = is_all_envs or self._is_forward_pos_updated
+        self._is_forward_vel_updated = False
 
     def get_terrain_height(self, positions, link_idx, envs_idx=None):
         terrain = self._links[link_idx].entity
@@ -1144,6 +1147,7 @@ class KinematicSolver(Solver):
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_vel(self, links_idx=None, envs_idx=None):
+        self._ensure_forward_vel_updated()
         if gs.use_zerocopy:
             mask = (0, *indices_to_mask(links_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, links_idx)
             cd_vel = qd_to_torch(self.dyn_state.links.cd_vel, transpose=True)
@@ -1164,6 +1168,7 @@ class KinematicSolver(Solver):
         return _tensor
 
     def get_links_ang(self, links_idx=None, envs_idx=None):
+        self._ensure_forward_vel_updated()
         tensor = qd_to_torch(self.dyn_state.links.cd_ang, envs_idx, links_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
@@ -1210,6 +1215,21 @@ class KinematicSolver(Solver):
             self.scene._envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
         )
         self._is_forward_pos_updated = True
+        self._is_forward_vel_updated = False
+
+    def _ensure_forward_vel_updated(self):
+        if self._is_forward_vel_updated:
+            return
+        self.update_forward_pos()
+        kernel_forward_velocity(
+            self.scene._envs_idx,
+            self.dyn_state,
+            self.dyn_info,
+            self.rigid_info,
+            self.rigid_config,
+            is_backward=False,
+        )
+        self._is_forward_vel_updated = True
 
     def update_vverts_for_vgeoms(self, vgeoms_idx):
         """Refresh the vverts_state.pos slice for the requested vgeoms by re-running FK.

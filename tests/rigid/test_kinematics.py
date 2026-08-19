@@ -827,6 +827,56 @@ def test_setters(show_viewer, tol):
     ghost_robot.set_qpos([1.0, 2.0, 3.0, 1.0, 1.0, 0.0, 0.0, 1.0])
     assert_allclose(ghost_robot.get_vAABB(), ((0.95, 1.95, 2.95), (2.15, 2.05, 3.05)), tol=tol)
 
+    dofs_velocity = torch.tensor(
+        (
+            (0.0, 0.0, 0.0, 0.3, -0.2, 0.4, 0.5),
+            (0.0, 0.0, 0.0, -0.4, 0.2, 0.3, -0.6),
+        ),
+        dtype=gs.tc_float,
+        device=gs.device,
+    )
+    ghost_robot.set_dofs_velocity(dofs_velocity)
+    ghost_robot.set_quat((np.sqrt(0.5), 0.0, np.sqrt(0.5), 0.0), zero_velocity=False)
+    links_vel = ghost_robot.get_links_vel()
+    ghost_robot.set_dofs_velocity(dofs_velocity)
+    assert_allclose(links_vel, ghost_robot.get_links_vel(), tol=tol)
+
+    qpos = torch.tensor(
+        (
+            (1.0, 2.0, 3.0, np.sqrt(0.5), np.sqrt(0.5), 0.0, 0.0, 0.1),
+            (1.0, 2.0, 3.0, np.sqrt(0.5), 0.0, np.sqrt(0.5), 0.0, -0.1),
+        ),
+        dtype=gs.tc_float,
+        device=gs.device,
+    )
+    envs_mask = torch.ones(scene.n_envs, dtype=torch.bool, device=gs.device)
+    ghost_robot.set_qpos(qpos, envs_idx=envs_mask, zero_velocity=False)
+    links_ang = ghost_robot.get_links_ang()
+    ghost_robot.set_dofs_velocity(dofs_velocity)
+    assert_allclose(links_ang, ghost_robot.get_links_ang(), tol=tol)
+
+    ghost_robot.set_quat((np.sqrt(0.5), 0.0, 0.0, np.sqrt(0.5)), envs_idx=[1], zero_velocity=False)
+    ghost_robot.set_dofs_velocity(dofs_velocity[0], envs_idx=[0])
+    links_vel = ghost_robot.get_links_vel()
+    ghost_robot.set_dofs_velocity(dofs_velocity)
+    assert_allclose(links_vel, ghost_robot.get_links_vel(), tol=tol)
+
+    deferred_velocity = -dofs_velocity
+    ghost_robot.set_dofs_velocity(deferred_velocity, skip_forward=True)
+    scene.step()
+    links_ang = ghost_robot.get_links_ang()
+    ghost_robot.set_dofs_velocity(deferred_velocity)
+    assert_allclose(links_ang, ghost_robot.get_links_ang(), tol=tol)
+
+    state = scene.get_state()
+    links_vel = ghost_robot.get_links_vel()
+    links_ang = ghost_robot.get_links_ang()
+    ghost_robot.set_qpos(qpos[0], envs_idx=[1], zero_velocity=False)
+    ghost_robot.set_dofs_velocity(dofs_velocity[0], envs_idx=[1])
+    scene.reset(state, envs_idx=[1])
+    assert_allclose(ghost_robot.get_links_vel(envs_idx=[1]), links_vel[1], tol=tol)
+    assert_allclose(ghost_robot.get_links_ang(envs_idx=[1]), links_ang[1], tol=tol)
+
     frozen_vaabb = [tensor_to_array(entity.get_vAABB()) for entity in scene.entities]
     for _ in range(5):
         scene.step()
