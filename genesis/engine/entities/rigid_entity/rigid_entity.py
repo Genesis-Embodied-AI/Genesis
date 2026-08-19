@@ -4301,8 +4301,6 @@ class RigidEntity(KinematicEntity):
             )
 
         if n_contacts is not None:
-            # Padded layout keeps full capacity: drop slots past each env's live count using the on-device count
-            # (no host sync, unlike trimming to 'n_contacts.max()').
             slots = torch.arange(valid_mask.shape[-1], device=valid_mask.device)
             valid_mask = torch.logical_and(valid_mask, slots[None, :] < n_contacts[:, None])
 
