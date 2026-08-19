@@ -4274,7 +4274,7 @@ class RigidEntity(KinematicEntity):
             The contact information.
         """
         contact_data = self._solver.collider.get_contacts(as_tensor=True, to_torch=True, is_padded=is_padded)
-        # Per-env live counts, present only for the padded layout, to mask stale slots on-device.
+        # Per-env live counts, present only for the padded layout.
         n_contacts = contact_data.pop("n_contacts", None)
 
         logical_operation = torch.logical_xor if exclude_self_contact else torch.logical_or
