@@ -396,7 +396,9 @@ def make_g1_fall(n_envs, solver=None, gjk=None, accessors=False, **scene_kwargs)
             robot.get_links_pos()
             robot.get_links_quat()
             robot.get_links_vel()
-            robot.get_contacts()
+            # 'is_padded' returns fixed-capacity contact tensors, avoiding the per-step device-to-host sync that
+            # 'n_contacts.max().item()' would otherwise force (which dominates this accessor workload's cost).
+            robot.get_contacts(is_padded=True)
 
             # TODO: Entire scene reset is still slow currently because 'partial=False' by default.
             scene.rigid_solver.set_state(0, state_rigid_0, envs_idx=reset_envs_mask, partial=True)

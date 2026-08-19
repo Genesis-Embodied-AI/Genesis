@@ -4231,7 +4231,7 @@ class RigidEntity(KinematicEntity):
         return collision_pairs
 
     @gs.assert_built
-    def get_contacts(self, with_entity=None, exclude_self_contact=False):
+    def get_contacts(self, with_entity=None, exclude_self_contact=False, is_padded=False):
         """
         Returns contact information computed during the most recent `scene.step()`.
         If `with_entity` is provided, only returns contact information involving the caller and the specified entity.
@@ -4263,13 +4263,20 @@ class RigidEntity(KinematicEntity):
             The entity to check contact with. Defaults to None.
         exclude_self_contact: bool
             Exclude the self collision from the returning contacts. Defaults to False.
+        is_padded: bool
+            Return fixed-capacity tensors padded to the collider's contact capacity instead of trimming to the
+            across-env contact count. This avoids a per-step device-to-host synchronization, at the cost of larger
+            tensors; the returned 'valid_mask' already excludes the padded slots. Only applies to parallelized
+            scenes. Defaults to False.
 
         Returns
         -------
         contact_info : dict
             The contact information.
         """
-        contact_data = self._solver.collider.get_contacts(as_tensor=True, to_torch=True)
+        contact_data = self._solver.collider.get_contacts(as_tensor=True, to_torch=True, is_padded=is_padded)
+        # Present only for the padded (sync-free) layout: live per-env contact counts used to mask stale slots.
+        n_contacts = contact_data.pop("n_contacts", None)
 
         logical_operation = torch.logical_xor if exclude_self_contact else torch.logical_or
         if with_entity is not None and self.idx == with_entity.idx:
@@ -4293,6 +4300,12 @@ class RigidEntity(KinematicEntity):
                     ),
                 ),
             )
+
+        if n_contacts is not None:
+            # Padded layout keeps the full contact capacity, so exclude the slots past each env's live count. This
+            # relies only on the on-device count (no host sync), unlike trimming to 'n_contacts.max()'.
+            slots = torch.arange(valid_mask.shape[-1], device=valid_mask.device)
+            valid_mask = torch.logical_and(valid_mask, slots[None, :] < n_contacts[:, None])
 
         if self._solver.n_envs == 0:
             contact_data = {key: value[valid_mask] for key, value in contact_data.items()}
