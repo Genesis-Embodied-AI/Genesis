@@ -601,7 +601,7 @@ def kernel_get_equality_constraints(
 def constraint_solver_kernel_reset(
     envs_idx: qd.types.ndarray(), constraint_state: array_class.ConstraintState, rigid_config: qd.template()
 ):
-    n_dofs = static_rigid_sim_config.n_dofs_
+    n_dofs = constraint_state.qacc_ws.shape[0]
 
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b_ in range(envs_idx.shape[0]):
@@ -638,7 +638,7 @@ def constraint_solver_kernel_clear(
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
-    n_dofs = static_rigid_sim_config.n_dofs_
+    n_dofs = constraint_state.qacc_ws.shape[0]
     len_constraints = constraint_state.jac.shape[0]
 
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
@@ -654,7 +654,7 @@ def constraint_solver_kernel_masked_clear(
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
-    n_dofs = static_rigid_sim_config.n_dofs_
+    n_dofs = constraint_state.qacc_ws.shape[0]
     len_constraints = constraint_state.jac.shape[0]
 
     for i_b in range(envs_mask.shape[0]):
@@ -678,9 +678,52 @@ def _func_contact_row_direction(
 ):
     """Direction of collision row i_friction, as a translational part n and an angular part n_ang.
 
-    _B = static_rigid_sim_config.n_envs
-    n_dofs = static_rigid_sim_config.n_dofs_
-    max_contact_pairs = collider_state.contact_data.link_a.shape[0]
+    Elliptic rows [normal, t1, t2(, spin)(, roll1, roll2)] follow the contact frame unmixed (the cone couples them in
+    the solver; the spin and rolling rows' friction strength lives in their regularization, see the diag computation
+    in _add_friction_constraint). Pyramidal rows are 2 opposing friction-mixed edges per tangent axis, then the
+    torsional and rolling pairs mixing the spin and tangent axes through the angular jacobian.
+    """
+    n = -normal
+    n_ang = qd.Vector.zero(gs.qd_float, 3)
+    if qd.static(rigid_config.enable_elliptic_friction):
+        if i_friction == 1:
+            n = d1
+        elif i_friction == 2:
+            n = d2
+        if qd.static(rigid_config.enable_torsional_friction):
+            # The spin axis opposes the contact normal like the normal row. A zero coefficient must zero the whole
+            # row: the cone never bounds a zero-weighted axis, so its regularization alone would leak a spurious
+            # viscous torque.
+            if i_friction == 3:
+                n = qd.Vector.zero(gs.qd_float, 3)
+                if friction_torsional > 0.0:
+                    n_ang = -normal
+        if qd.static(rigid_config.enable_rolling_friction):
+            # The rolling axes follow the tangent rows' frame; a zero coefficient zeroes them like the spin row.
+            if i_friction >= 4:
+                n = qd.Vector.zero(gs.qd_float, 3)
+                if friction_rolling > 0.0:
+                    n_ang = d1 if i_friction == 4 else d2
+    else:
+        d = (2 * (i_friction % 2) - 1) * (d1 if i_friction < 2 else d2)
+        n = d * friction - normal
+        if qd.static(rigid_config.enable_torsional_friction):
+            # A zero coefficient zeroes the pair (aref alongside, see _add_friction_constraint): the rows would
+            # otherwise degenerate to two extra pure-normal rows that stiffen the normal response and report phantom
+            # contact force.
+            if i_friction >= 4 and i_friction < 6:
+                n = qd.Vector.zero(gs.qd_float, 3)
+                if friction_torsional > 0.0:
+                    n = -normal
+                    n_ang = ((2 * (i_friction % 2) - 1) * friction_torsional) * normal
+        if qd.static(rigid_config.enable_rolling_friction):
+            # The rolling pairs mix the tangent axes; a zero coefficient zeroes them like the torsional pair.
+            if i_friction >= 6:
+                n = qd.Vector.zero(gs.qd_float, 3)
+                if friction_rolling > 0.0:
+                    n = -normal
+                    n_ang = ((2 * (i_friction % 2) - 1) * friction_rolling) * (d1 if i_friction < 8 else d2)
+    return n, n_ang
 
 
 @qd.func
@@ -5085,6 +5128,118 @@ def func_ls_point_fn_opt(
 
 
 @qd.func
+def _func_linesearch_eval_constraints_at_n_alphas_serial(
+    i_b, alphas, constraint_state: array_class.ConstraintState, rigid_config: qd.template(), n_alphas: qd.template()
+):
+    """Reduce the quadratic-coefficient triplets (const, linear, quad) for up to ``n_alphas`` candidate alphas (passed
+    as a ``qd.Vector(3)`` ``alphas``; only the first ``n_alphas`` slots are read) in a single pass over all friction +
+    contact constraints. Returns 3 ``qd.Vector(3)``s ``(t0, t1, t2)`` where ``tk`` is alpha-slot ``k``'s
+    ``[const, linear, quad]``. Slots beyond ``n_alphas`` hold the equality-only seed and should be ignored by the
+    caller.
+
+    Costs follow the shifted linesearch convention, cost(alpha) - cost(0) (see quad_gauss in array_class.py): the
+    const slot carries only the per-constraint residual against the alpha=0 activation state, formed as a same-value
+    difference that cancels exactly whenever the activation state is unchanged.
+
+    Equality constraints are skipped via ``quad_gauss + eq_sum`` (pre-computed during init). Quad coefficients are
+    recomputed on the fly from Jaref, jv, efc_D rather than read from a precomputed quad array, costing 3 loads per
+    contact (vs 5) and 5 per friction (vs 7), a 40%/29% bandwidth reduction. The ~8 FLOPs of recomputation per
+    constraint are almost free. With ``n_alphas == 3``, each constraint's loaded data is reused for all 3 alpha
+    evaluations.
+    """
+    ne = constraint_state.n_constraints_equality[i_b]
+    nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+    ncone = nef
+    if qd.static(rigid_config.enable_elliptic_friction):
+        ncone = ncone + constraint_state.n_constraints_cone[i_b]
+    n_con = constraint_state.n_constraints[i_b]
+
+    # Start from quad_gauss + eq_sum (skips equality; the elliptic cone is evaluated exactly per-alpha below)
+    base_1 = constraint_state.quad_gauss[0, i_b] + constraint_state.eq_sum[0, i_b]
+    base_2 = constraint_state.quad_gauss[1, i_b] + constraint_state.eq_sum[1, i_b]
+
+    t_0 = [gs.qd_float(0.0), gs.qd_float(0.0), gs.qd_float(0.0)]
+    t_1 = [base_1, base_1, base_1]
+    t_2 = [base_2, base_2, base_2]
+
+    # Friction constraints [ne, nef): 5 loads (Jaref, jv, D, f, diag) + recompute quad, eval n_alphas
+    for i_c in range(ne, nef):
+        Jaref_c = constraint_state.Jaref[i_c, i_b]
+        jv_c = constraint_state.jv[i_c, i_b]
+        D = constraint_state.efc_D[i_c, i_b]
+        f = constraint_state.efc_frictionloss[i_c, i_b]
+        r = constraint_state.diag[i_c, i_b]
+        qf_0 = D * (0.5 * Jaref_c * Jaref_c)
+        qf_1 = D * (jv_c * Jaref_c)
+        qf_2 = D * (0.5 * jv_c * jv_c)
+        rf = r * f
+        # Huber cost at alpha=0, zone-classified at Jaref_c; subtracted from each candidate's const so the const
+        # slot cancels exactly when the zone is unchanged
+        ln0 = Jaref_c <= -rf
+        lp0 = Jaref_c >= rf
+        cost0 = qf_0
+        if ln0 or lp0:
+            cost0 = ln0 * f * (-0.5 * rf - Jaref_c) + lp0 * f * (-0.5 * rf + Jaref_c)
+        for k in qd.static(range(n_alphas)):
+            alpha_k = alphas[k]
+            x = Jaref_c + alpha_k * jv_c
+            ln = x <= -rf
+            lp = x >= rf
+            ak_qf_0, ak_qf_1, ak_qf_2 = qf_0, qf_1, qf_2
+            if ln or lp:
+                ak_qf_0 = ln * f * (-0.5 * rf - Jaref_c) + lp * f * (-0.5 * rf + Jaref_c)
+                ak_qf_1 = ln * (-f * jv_c) + lp * (f * jv_c)
+                ak_qf_2 = 0.0
+            t_0[k] = t_0[k] + ak_qf_0 - cost0
+            t_1[k] = t_1[k] + ak_qf_1
+            t_2[k] = t_2[k] + ak_qf_2
+
+    # Contact / joint-limit constraints [ncone, n_con): 3 loads (Jaref, jv, D) + recompute quad, eval n_alphas.
+    # Elliptic cone rows [nef, ncone) are evaluated exactly per-alpha in the cone loop below; for the pyramidal
+    # cone ncone == nef so this covers the whole collision segment unchanged.
+    for i_c in range(ncone, n_con):
+        Jaref_c = constraint_state.Jaref[i_c, i_b]
+        jv_c = constraint_state.jv[i_c, i_b]
+        D = constraint_state.efc_D[i_c, i_b]
+        qf_0 = D * (0.5 * Jaref_c * Jaref_c)
+        qf_1 = D * (jv_c * Jaref_c)
+        qf_2 = D * (0.5 * jv_c * jv_c)
+        act0 = gs.qd_bool(Jaref_c < 0)
+        for k in qd.static(range(n_alphas)):
+            alpha_k = alphas[k]
+            x = Jaref_c + alpha_k * jv_c
+            act = gs.qd_bool(x < 0)
+            t_0[k] = t_0[k] + qf_0 * act - qf_0 * act0
+            t_1[k] = t_1[k] + qf_1 * act
+            t_2[k] = t_2[k] + qf_2 * act
+
+    # Elliptic cone rows [nef, ncone): evaluate the exact cone cost delta along alpha per candidate (matching
+    # MuJoCo's elliptic cone) and pack its value/gradient/curvature as a local quadratic centered at alpha_k, so the
+    # reconstruction cost(alpha_k) = c + l*alpha_k + q*alpha_k^2 reproduces the exact cone cost delta/grad/hess there.
+    if qd.static(rigid_config.enable_elliptic_friction):
+        n_rows = qd.static(rigid_config.rows_per_contact)
+        for i_cone in range((ncone - nef) // n_rows):
+            i_head = nef + i_cone * n_rows
+            rows_efc_D, rows_friction, con_mu, rows_jaref = _func_cone_head_load(
+                i_head, i_b, constraint_state, rigid_config
+            )
+            rows_jv = qd.Vector.zero(gs.qd_float, n_rows)
+            for i_r in qd.static(range(n_rows)):
+                rows_jv[i_r] = constraint_state.jv[i_head + i_r, i_b]
+            for k in qd.static(range(n_alphas)):
+                alpha_k = alphas[k]
+                cost_diff_c, grad_c, hess_c = _func_cone_cost_diff_along_alpha(
+                    rows_jaref, rows_jv, alpha_k, rows_efc_D, con_mu, rows_friction, rigid_config
+                )
+                t_0[k] = t_0[k] + cost_diff_c - grad_c * alpha_k + 0.5 * hess_c * alpha_k * alpha_k
+                t_1[k] = t_1[k] + grad_c - hess_c * alpha_k
+                t_2[k] = t_2[k] + 0.5 * hess_c
+
+    t0 = qd.Vector([t_0[0], t_1[0], t_2[0]])
+    t1 = qd.Vector([t_0[1], t_1[1], t_2[1]])
+    t2 = qd.Vector([t_0[2], t_1[2], t_2[2]])
+    return t0, t1, t2
+@qd.func
 def _func_linesearch_eval_quadratic_at_alpha(
     i_b,
     tid,
@@ -5105,21 +5260,17 @@ def _func_linesearch_eval_quadratic_at_alpha(
     if hess <= 0.0:
         hess = rigid_info.EPS[None]
 
-    ls_it = ls_it + 1
+    if qd.static(not coop) or tid == 0:
+        constraint_state.ls_it[i_b] = constraint_state.ls_it[i_b] + 1
 
-    return alpha, cost, grad, hess, ls_it
+    return alpha, cost, grad, hess
 
 
 @qd.func
 def _func_linesearch_eval_at_alpha(
     i_b,
-    alpha_0,
-    alpha_1,
-    alpha_2,
-    base_0,
-    base_1,
-    base_2,
-    ls_it,
+    tid,
+    alpha,
     constraint_state: array_class.ConstraintState,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
@@ -5129,8 +5280,21 @@ def _func_linesearch_eval_at_alpha(
     lane id as ``tid``); ``coop=False`` runs serially and the caller is responsible for ensuring only one thread per
     env enters this function (typically by gating on ``tid == 0`` upstream).
 
-    Batches three candidate step sizes into one loop, amortizing per-constraint loads (Jaref, jv, efc_D, etc.) across
-    all three evaluations. Equality constraints are skipped via base_{0,1,2} = quad_gauss + eq_sum.
+    Note: the reducer call and the post-reduction call live inside the same ``qd.static(coop)`` branch and end with
+    ``return``, because Quadrants' AST transformer doesn't propagate locals across ``if qd.static`` branches; naming
+    a variable in the unified ``return`` statement raises ``Name "t0" is not defined`` even when one branch is
+    DCE'd. Self-contained per-branch returns sidestep this."""
+    alphas = qd.Vector([alpha, alpha, alpha])
+    if qd.static(coop):
+        t0, _u1, _u2 = _func_linesearch_eval_constraints_at_n_alphas_coop(
+            i_b, tid, alphas, constraint_state, rigid_config, 1
+        )
+        return _func_linesearch_eval_quadratic_at_alpha(i_b, tid, alpha, t0, constraint_state, rigid_info, coop=True)
+    else:
+        t0, _u1, _u2 = _func_linesearch_eval_constraints_at_n_alphas_serial(
+            i_b, alphas, constraint_state, rigid_config, 1
+        )
+        return _func_linesearch_eval_quadratic_at_alpha(i_b, tid, alpha, t0, constraint_state, rigid_info, coop=False)
 
 
 @qd.func
@@ -5155,9 +5319,18 @@ def _func_linesearch_eval_constraints_at_n_alphas_coop(
         ncone = ncone + constraint_state.n_constraints_cone[i_b]
     n_con = constraint_state.n_constraints[i_b]
 
-    t0_0, t0_1, t0_2 = base_0, base_1, base_2
-    t1_0, t1_1, t1_2 = base_0, base_1, base_2
-    t2_0, t2_1, t2_2 = base_0, base_1, base_2
+    # Start from quad_gauss + eq_sum (skips ne equality constraints); only lane 0 holds the seed,
+    # the warp-tree reduction at the end implicitly broadcasts it back to all lanes. The const slot starts at 0
+    # (shifted convention, see the serial inner).
+    base_1 = gs.qd_float(0.0)
+    base_2 = gs.qd_float(0.0)
+    if tid == 0:
+        base_1 = constraint_state.quad_gauss[0, i_b] + constraint_state.eq_sum[0, i_b]
+        base_2 = constraint_state.quad_gauss[1, i_b] + constraint_state.eq_sum[1, i_b]
+
+    t_0 = [gs.qd_float(0.0), gs.qd_float(0.0), gs.qd_float(0.0)]
+    t_1 = [base_1, base_1, base_1]
+    t_2 = [base_2, base_2, base_2]
 
     # Friction constraints [ne, nef): 5 loads (Jaref, jv, D, f, diag) + recompute quad, eval n_alphas;
     # constraint loop strided by 32 across the warp.
@@ -5289,12 +5462,13 @@ def _func_linesearch_eval_quadratic_at_3_alphas(
     if hess_2 <= 0.0:
         hess_2 = EPS
 
-    ls_it = ls_it + 3
+    if qd.static(not coop) or tid == 0:
+        constraint_state.ls_it[i_b] = constraint_state.ls_it[i_b] + 3
 
     costs = qd.Vector([cost_0, cost_1, cost_2])
     grads = qd.Vector([grad_0, grad_1, grad_2])
     hess = qd.Vector([hess_0, hess_1, hess_2])
-    return costs, grads, hess, ls_it
+    return costs, grads, hess
 
 
 @qd.func
@@ -5330,9 +5504,6 @@ def _func_linesearch_eval_at_3_alphas(
         return _func_linesearch_eval_quadratic_at_3_alphas(
             i_b, tid, alphas, t0, t1, t2, constraint_state, rigid_info, coop=False
         )
-
-
-@qd.func
 def update_bracket_no_eval_local(p_alpha, p_cost, p_grad, p_hess, alphas, costs, grads, hess):
     """Bracket update using local candidate values. No global memory access or _func_linesearch_eval_at_alpha call.
 

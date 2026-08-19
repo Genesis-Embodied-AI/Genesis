@@ -22,9 +22,44 @@ def _func_decomp_linesearch_p0(
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
-    _B = static_rigid_sim_config.n_envs
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
-    for i_b in range(_B):
+    """Decomposed constraint solver P0 kernel: fused mv + jv + snorm + quad_gauss + eq_sum.
+
+    Decomposed solver algorithm overview
+    -------------------------------------
+    A block of K=32 threads cooperates on each env for setup and apply; the linesearch refinement runs serially on
+    thread 0 using func_linesearch_refine (shared with the monolith path).
+
+    P0 kernel (this function):
+        Phase 0a: Compute mv = M @ search (cooperative over DOFs, 32 threads).
+        Phase 0b: Compute jv = J @ search (cooperative over constraints, 32 threads).
+        Phase 1: Fused snorm + quad_gauss parallel reduction over n_dofs.
+        Phase 2: Parallel reduction over n_constraints for eq_sum. Also computes alpha_newton.
+
+    Eval kernel (_kernel_parallel_linesearch_eval):
+        a) Serial refinement (thread 0): re-evaluate the Newton step via func_linesearch_refine.
+        b) Apply: Update qacc, Ma, Jaref with the chosen alpha (cooperative over DOFs).
+
+    Post-linesearch: Separate kernels for constraint force update, gradient update, Hessian update (Newton only), and
+    search direction update. These reuse the batch-level functions from solver.py.
+    """
+    # Block size for shared-memory reductions.
+    _T = qd.static(32)
+
+    _B = constraint_state.grad.shape[1]
+
+    qd.loop_config(name="parallel_linesearch_p0", block_dim=_T)
+    for i_flat in range(_B * _T):
+        tid = i_flat % _T
+        i_b = i_flat // _T
+
+        # 6 shared arrays for parallel reductions (reused across phases)
+        sh_snorm_sq = qd.simt.block.SharedArray((_T,), gs.qd_float)
+        sh_grad_sqnorm = qd.simt.block.SharedArray((_T,), gs.qd_float)
+        sh_qg_grad = qd.simt.block.SharedArray((_T,), gs.qd_float)
+        sh_qg_hess = qd.simt.block.SharedArray((_T,), gs.qd_float)
+        sh_constraint_grad = qd.simt.block.SharedArray((_T,), gs.qd_float)
+        sh_constraint_hess = qd.simt.block.SharedArray((_T,), gs.qd_float)
+
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             n_dofs = constraint_state.search.shape[0]
             n_con = constraint_state.n_constraints[i_b]
@@ -434,13 +469,11 @@ def _func_decomp_linesearch_refine_and_apply(
 @qd.func
 def _func_cg_only_save_prev_grad(constraint_state: array_class.ConstraintState, rigid_config: qd.template()):
     """Save prev_grad and prev_Mgrad (CG only)"""
-    _B = static_rigid_sim_config.n_envs
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+    _B = constraint_state.grad.shape[1]
+    qd.loop_config(name="cg_only_save_prev_grad", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            solver.func_save_prev_grad(
-                i_b, constraint_state=constraint_state, static_rigid_sim_config=static_rigid_sim_config
-            )
+            solver.func_save_prev_grad(i_b, constraint_state)
 
 
 @qd.func
@@ -495,7 +528,7 @@ def _func_update_constraint_forces(constraint_state: array_class.ConstraintState
       - layout True  (canonical [i_c, i_b], physical [i_b, i_c]):  ndrange(_B, len_constraints)
     """
     len_constraints = constraint_state.active.shape[0]
-    _B = static_rigid_sim_config.n_envs
+    _B = constraint_state.grad.shape[1]
 
     # Snapshot prev_active in its own parallel pass so every row is captured before any active recompute: the cone head
     # thread rewrites its two tangent rows' active, which would otherwise race the tangent threads capturing
@@ -529,7 +562,7 @@ def _func_update_qfrc_constraint_per_dof(constraint_state: array_class.Constrain
     qfrc_constraint write coalesces under the flipped DOF-vec layout.
     """
     n_dofs = constraint_state.qfrc_constraint.shape[0]
-    _B = static_rigid_sim_config.n_envs
+    _B = constraint_state.grad.shape[1]
 
     qd.loop_config(name="update_constraint_qfrc")
     for i_d, i_b in qd.ndrange(
@@ -558,8 +591,7 @@ def _func_update_qfrc_constraint_per_dof(constraint_state: array_class.Constrain
 def _func_build_changed_and_decide_hessian_mode(
     constraint_state: array_class.ConstraintState, rigid_config: qd.template()
 ):
-    """Compute gauss and cost (reductions over dofs and constraints). One thread per env."""
-    _B = static_rigid_sim_config.n_envs
+    """Build changed-constraint lists and set per-env use_full_hessian flag.
 
     Adaptive policy: use full rebuild if more than half the constraints changed, otherwise patch. Init (iter 0) always
     does full rebuild via func_solve_init.
@@ -591,21 +623,80 @@ def _func_build_changed_and_decide_hessian_mode(
 def _func_patch_hessian_delta(
     constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
 ):
-    """Step 4: Newton Hessian update (Newton only)"""
-    solver.func_hessian_direct_tiled(
-        constraint_state=constraint_state,
-        rigid_global_info=rigid_global_info,
-        static_rigid_sim_config=static_rigid_sim_config,
-    )
-    if ti.static(static_rigid_sim_config.enable_tiled_cholesky_hessian):
-        solver.func_cholesky_factor_direct_tiled(
-            constraint_state=constraint_state,
-            rigid_global_info=rigid_global_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-        )
-    else:
-        _B = static_rigid_sim_config.n_envs
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+    """Incrementally update H with delta contributions from changed constraints.
+
+    Adds or subtracts each changed constraint's J^T D J contribution depending on whether it became active or inactive.
+    Only runs on envs where use_full_hessian == 0 (others get a full rebuild instead).
+    """
+    _B = constraint_state.grad.shape[1]
+    n_dofs = constraint_state.nt_H.shape[1]
+    n_lower_tri = n_dofs * (n_dofs + 1) // 2
+
+    BLOCK_DIM = qd.static(128)
+
+    qd.loop_config(name="patch_hessian_delta", block_dim=BLOCK_DIM)
+    for i in range(_B * BLOCK_DIM):
+        tid = i % BLOCK_DIM
+        i_b = i // BLOCK_DIM
+        if i_b >= _B:
+            continue
+        if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
+            continue
+        if constraint_state.use_full_hessian[i_b] != 0:
+            continue
+
+        n_changed = constraint_state.incr_n_changed[i_b]
+        if n_changed == 0:
+            continue
+
+        elem = tid
+        while elem < n_lower_tri:
+            i_d1, i_d2 = solver.linear_to_lower_tri(elem)
+
+            delta = gs.qd_float(0.0)
+            for idx in range(n_changed):
+                i_c = constraint_state.incr_changed_idx[idx, i_b]
+                Ji = constraint_state.jac[i_c, i_d1, i_b]
+                if Ji != 0.0:
+                    Jj = constraint_state.jac[i_c, i_d2, i_b]
+                    if Jj != 0.0:
+                        D = constraint_state.efc_D[i_c, i_b]
+                        if constraint_state.active[i_c, i_b]:
+                            delta = delta + D * Ji * Jj
+                        else:
+                            delta = delta - D * Ji * Jj
+
+            if delta != 0.0:
+                # The maintained H lives in scaled coordinates; the delta rides the stored scale (see nt_jacobi in
+                # array_class.py).
+                if qd.static(rigid_config.enable_jacobi_equilibration):
+                    delta = delta * constraint_state.nt_jacobi[i_d1, i_b] * constraint_state.nt_jacobi[i_d2, i_b]
+                constraint_state.nt_H[i_b, i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2] + delta
+            elem = elem + BLOCK_DIM
+
+
+@qd.func
+def _func_newton_only_nt_hessian(
+    constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
+):
+    """Full tiled Hessian rebuild for envs with use_full_hessian == 1 (skips others)."""
+    solver.func_hessian_direct_tiled(constraint_state, rigid_info, rigid_config, check_full_hessian=True)
+
+
+@qd.func
+def _func_wrap_cone_hessian(
+    constraint_state: array_class.ConstraintState, rigid_config: qd.template(), is_removal: qd.template()
+):
+    """Add (is_removal=False) or remove (is_removal=True) the coupled elliptic-cone Hessian block across all improved envs.
+
+    Bracketing a non-destructive factor+solve (whole-env fused or per-island tiled) with add then remove lets the cone ride
+    the incrementally maintained nt_H without a per-iteration full rebuild: the current cone block is present while
+    the factor reads nt_H, then removed so the next iteration patches a cone-free Hessian. A no-op unless the elliptic
+    cone is active.
+    """
+    if qd.static(rigid_config.enable_elliptic_friction):
+        _B = constraint_state.jac.shape[2]
+        qd.loop_config(name="wrap_cone_hessian", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
         for i_b in range(_B):
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
                 solver.func_add_cone_hessian_block(
@@ -661,8 +752,8 @@ def _func_update_gradient(
     rigid_config: qd.template(),
 ):
     """Step 5: Update gradient"""
-    _B = static_rigid_sim_config.n_envs
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+    _B = constraint_state.grad.shape[1]
+    qd.loop_config(name="update_gradient", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             solver.func_update_gradient_batch(i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
@@ -676,25 +767,11 @@ def _func_update_search_direction(
     rigid_config: qd.template(),
 ):
     """Step 6: Check convergence and update search direction"""
-    _B = static_rigid_sim_config.n_envs
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+    _B = constraint_state.grad.shape[1]
+    qd.loop_config(name="update_search_direction", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            # The decomposed CUDA path splits cost-update (Step 4) and the
-            # convergence check (Step 6) into separate kernels, so prev_cost
-            # has to be carried via constraint_state.prev_cost (written in
-            # _kernel_update_constraint_cost). Read it once and pass as a
-            # local arg to match func_terminate_or_update_descent_batch's
-            # new signature, where the inlined paths thread it as a local
-            # to avoid the field round-trip entirely.
-            prev_cost = constraint_state.prev_cost[i_b]
-            solver.func_terminate_or_update_descent_batch(
-                i_b,
-                prev_cost,
-                rigid_global_info=rigid_global_info,
-                constraint_state=constraint_state,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
+            solver.func_terminate_or_update_descent_batch(i_b, constraint_state, rigid_info, rigid_config)
 
 
 @qd.func
