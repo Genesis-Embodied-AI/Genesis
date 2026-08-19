@@ -1023,8 +1023,7 @@ class Collider:
                 sort_idx_view = qd_to_torch(self._collider_state.contact_sort_idx, transpose=True, copy=False)
                 if padded:
                     # Gather the full capacity so no host-side trim (sync) is needed. Sort indices past the live
-                    # range may be stale; clamp (out-of-place, preserving the zero-copy view) keeps them in-bounds
-                    # and their payload is masked out downstream.
+                    # range may be stale; clamp (out-of-place, preserving the zero-copy view) keeps them in-bounds.
                     gather_idx_flat = sort_idx_view.clamp(0, sort_idx_view.shape[1] - 1)
                 else:
                     gather_idx_flat = sort_idx_view[:, :n_contacts_max]
