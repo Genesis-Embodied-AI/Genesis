@@ -633,7 +633,9 @@ def test_momentum_conservation(n_envs, show_viewer):
     dist_min = np.array(float("inf"))
     fem_positions_prev = None  # FEM initial velocity is zero
     for step in range(int(DURATION / DT)):
-        cube_vel = tensor_to_array(rigid_cube.get_links_vel(links_idx_local=0, ref="link_com")[..., 0, :])
+        cube_vel = tensor_to_array(
+            rigid_cube.get_links_vel(links_idx_local=0, ref=gs.link_ref_frame.link_COM)[..., 0, :]
+        )
         rigid_linear_momentum = cube_mass * cube_vel
 
         fem_proc_geo = get_ipc_merged_geometry(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0)

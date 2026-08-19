@@ -21,25 +21,43 @@ if TYPE_CHECKING:
 
 
 MIN_PICKABLE_MASS = 1e-3  # kg - links below this threshold are skipped to avoid numerical instability
+GRAB_ACC = 10.0  # m/s^2 - acceleration a grab pulls with at one 'spring_slack' from the cursor
 
 
 class MouseInteractionPlugin(RaycasterViewerPlugin):
     """
-    Basic interactive viewer plugin that enables using mouse to apply spring force on rigid entities.
+    Drag rigid entities around with the mouse, by a spring attached where the cursor grabbed them.
 
-    See RaycasterViewerPlugin for `use_visual_geom`.
+    Parameters
+    ----------
+    use_force : bool, optional
+        Drag the grabbed link with a spring force, leaving the solver to resolve it against gravity, contacts and the
+        rest of the kinematic tree, so the drag never breaks the physics. False instead moves the link onto the cursor
+        outright, which tracks exactly but drives it through anything in the way and jolts whatever it is attached to.
+        Default is True.
+    spring_slack : float, optional
+        How far below the cursor a grabbed link hangs once it settles, in meters. The stiffness of the spring follows
+        from this and the mass of the link, so heavy and light entities are equally responsive. Lower it for a grab
+        that tracks the cursor closely, at the cost of pushing entities through whatever they touch on the way; raise
+        it to let contacts win instead, at the cost of trailing behind a fast cursor. The distance is quoted at
+        standard gravity; a weaker-gravity scene holds its links closer still. Only used when `use_force` is True.
+        Default is 0.02.
+    color : tuple of float, optional
+        RGBA color of the line, handle and drag plane drawn while an entity is held. Default is (0.2, 0.8, 0.8, 0.6).
+    use_visual_geom : bool, optional
+        See `RaycasterViewerPlugin`. Default is False.
     """
 
     def __init__(
         self,
         use_force: bool = True,
-        spring_const: float = 1000.0,
+        spring_slack: float = 0.02,
         color: tuple[float, float, float, float] = (0.2, 0.8, 0.8, 0.6),
         use_visual_geom: bool = False,
     ) -> None:
         super().__init__(use_visual_geom)
         self.use_force = bool(use_force)
-        self.spring_const = float(spring_const)
+        self.spring_slack = float(spring_slack)
         self.color = tuple(color)
 
         self._lock: Lock = Lock()
@@ -352,10 +370,16 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
         inv_inertia_world = np.linalg.inv(inertia_world)
 
         pos_err_v = control_point_env_local - held_point_env_local
-        inv_mass = 1.0 / float(self._held_link.get_mass())
+        mass = float(self._held_link.get_mass())
+        inv_mass = 1.0 / mass
+
+        # A link at rest hangs below its center of mass with the spring carrying its whole weight, so the slack alone
+        # fixes the natural frequency. The correction offsets the step of free fall the softened solve settles short.
+        nominal_freq = np.sqrt(GRAB_ACC / self.spring_slack)
+        natural_freq = nominal_freq / max(1.0 - dt * nominal_freq, gs.EPS)
+        spring_const = mass * natural_freq**2
 
         total_impulse = np.zeros(3, dtype=gs.np_float)
-        total_torque_impulse = np.zeros(3, dtype=gs.np_float)
 
         # Approximate spring-damper in each axis
         for i in range(3):
@@ -363,7 +387,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
             vel_err_v = -body_point_vel
 
             direction = np.zeros(3, dtype=gs.np_float)
-            direction[i % 3] = 1.0
+            direction[i] = 1.0
 
             pos_err = np.dot(direction, pos_err_v)
             vel_err = np.dot(direction, vel_err_v)
@@ -374,28 +398,28 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
             virtual_mass = 1.0 / (inv_mass + rot_mass + gs.EPS)
 
             # Critical damping
-            damping_coeff = 2.0 * np.sqrt(self.spring_const * virtual_mass)
-            # Impulse: J = F*dt = k*x*dt + c*v*dt
-            impulse = (self.spring_const * pos_err + damping_coeff * vel_err) * dt
+            damping_coeff = 2.0 * np.sqrt(spring_const * virtual_mass)
+            # Solving for the impulse that lands the end-of-step velocity on the spring-damper response holds that
+            # damping ratio at any stiffness; a held force would only do so while dt stays below 1 / frequency.
+            softness = 1.0 / (dt * (damping_coeff + dt * spring_const))
+            bias_rate = spring_const / (damping_coeff + dt * spring_const)
+            impulse = (vel_err + bias_rate * pos_err) / (inv_mass + rot_mass + softness)
 
             lin_vel += direction * impulse * inv_mass
             ang_vel += inv_inertia_world @ (arm_x_dir * impulse)
 
-            total_impulse[i % 3] += impulse
-            total_torque_impulse += arm_x_dir * impulse
+            total_impulse[i] = impulse
 
-        # Apply the new force
-        self._held_link.solver.apply_links_external_force(
-            total_impulse / dt,
-            (self._held_link.idx,),
-            envs_idx=envs_idx,
-            ref="link_com",
-            local=False,
-        )
-        self._held_link.solver.apply_links_external_torque(
-            total_torque_impulse / dt,
-            (self._held_link.idx,),
-            envs_idx=envs_idx,
-            ref="link_com",
-            local=False,
-        )
+        # A rotation about the grabbed point leaves that point where it is, so the spring-damper above is blind to the
+        # pendulum swinging under the cursor. Twice its frequency damps it critically at worst, never under, and the
+        # cap keeps a grab near the center of mass, where the pendulum degenerates, from freezing rotation outright.
+        arm_length = np.linalg.norm(arm_in_world)
+        swing_freq = min(2.0 * np.sqrt(GRAB_ACC / (arm_length + gs.EPS)), natural_freq)
+        # That swing pivots about the grabbed point, hence the inertia about it, and solving for the end-of-step
+        # angular velocity keeps the decay from overshooting when the two inertias differ widely.
+        swing_inertia = inertia_world + mass * (arm_length**2 * np.eye(3) - np.outer(arm_in_world, arm_in_world))
+        ang_vel_next = np.linalg.solve(inertia_world + dt * swing_freq * swing_inertia, inertia_world @ ang_vel)
+        torque = -swing_freq * (swing_inertia @ ang_vel_next)
+
+        # The force acts at the grabbed point, so its moment about the center of mass swings the body to the cursor.
+        self._held_link.apply_external_wrench(total_impulse / dt, torque, envs_idx=envs_idx, pos=held_point_env_local)

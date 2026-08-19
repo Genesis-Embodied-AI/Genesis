@@ -1,111 +1,110 @@
 import math
 import os
 import sys
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
-import quadrants as qd
 import numpy as np
 import torch
+
+import quadrants as qd
 
 import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
+from genesis.constants import link_ref_frame
 from genesis.engine.entities import DroneEntity, RigidEntity
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.states import QueriedStates, RigidSolverState
 from genesis.options.solvers import RigidOptions
 from genesis.utils.misc import (
     DeprecationError,
-    qd_to_torch,
-    qd_to_numpy,
-    qd_zero_grad,
-    indices_to_mask,
-    broadcast_tensor,
-    sanitize_indexed_tensor,
     assign_indexed_tensor,
-    get_gpu_core_count,
+    broadcast_tensor,
     fits_in_gpu_shared_memory,
+    get_gpu_core_count,
+    indices_to_mask,
+    qd_to_numpy,
+    qd_to_torch,
+    qd_zero_grad,
+    sanitize_indexed_tensor,
 )
 from genesis.utils.sdf import SDF
 
 from ..base_solver import MutatedLinks, Solver, StateChange, mutates
-from ..kinematic_solver import KinematicSolver, _select_links_offset, _offset_world_shift, _fill_base_link_geom_offsets
+from ..kinematic_solver import KinematicSolver, _fill_base_link_geom_offsets, _offset_world_shift, _select_links_offset
 from .collider import Collider
 from .constraint import ConstraintSolver
 from .constraint.backward import (
-    kernel_manual_add_collision_constraints_bw,
-    kernel_manual_add_frictionloss_constraints_bw,
-    kernel_manual_add_equality_constraints_bw,
     kernel_accumulate_constraint_solver_grads,
     kernel_load_dL_dqacc_from_acc_grad,
+    kernel_manual_add_collision_constraints_bw,
+    kernel_manual_add_equality_constraints_bw,
+    kernel_manual_add_frictionloss_constraints_bw,
     kernel_manual_add_joint_limit_constraints_bw,
 )
 from .abd.misc import (
     func_add_safe_backward,
     func_apply_coupling_force,
-    func_apply_link_external_force,
-    func_apply_external_torque,
-    func_apply_link_external_torque,
     func_atomic_add_if,
     func_check_index_range,
     func_clear_external_force,
     func_read_field_if,
-    func_write_field_if,
     func_write_and_read_field_if,
-    kernel_init_invweight,
-    kernel_init_meaninertia,
-    kernel_wakeup_coupled_links,
+    func_write_field_if,
+    kernel_apply_links_external_wrench,
+    kernel_apply_links_external_wrench_at_pos,
+    kernel_bit_reduction,
+    kernel_clear_external_force,
     kernel_init_dof_fields,
-    kernel_reset_hibernation,
-    kernel_init_link_fields,
-    kernel_update_heterogeneous_link_info,
-    kernel_init_joint_fields,
-    kernel_init_vert_fields,
-    kernel_init_vvert_fields,
-    kernel_init_geom_fields,
-    kernel_init_vgeom_fields,
     kernel_init_entity_fields,
     kernel_init_equality_fields,
-    kernel_apply_links_external_force,
-    kernel_apply_links_external_torque,
-    kernel_update_geoms_render_T,
-    kernel_update_vgeoms_render_T,
-    kernel_bit_reduction,
+    kernel_init_geom_fields,
+    kernel_init_invweight,
+    kernel_init_joint_fields,
+    kernel_init_link_fields,
+    kernel_init_meaninertia,
+    kernel_init_vert_fields,
+    kernel_init_vgeom_fields,
+    kernel_init_vvert_fields,
+    kernel_reset_hibernation,
     kernel_set_zero,
-    kernel_clear_external_force,
+    kernel_update_geoms_render_T,
+    kernel_update_heterogeneous_link_info,
+    kernel_update_vgeoms_render_T,
+    kernel_wakeup_coupled_links,
 )
 from .abd.forward_kinematics import (
     func_aggregate_awake_entities,
     func_COM_links,
     func_COM_links_entity,
-    func_forward_kinematics_entity,
     func_forward_kinematics_batch,
-    func_forward_velocity_entity,
-    func_forward_velocity_batch,
+    func_forward_kinematics_entity,
     func_forward_velocity,
+    func_forward_velocity_batch,
+    func_forward_velocity_entity,
     func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer,
-    func_update_geoms_entity,
-    func_update_geoms_batch,
     func_update_all_verts,
     func_update_cartesian_space,
-    func_update_cartesian_space_entity,
     func_update_cartesian_space_batch,
+    func_update_cartesian_space_entity,
     func_update_geoms,
+    func_update_geoms_batch,
+    func_update_geoms_entity,
     func_update_verts_for_geom,
-    kernel_forward_kinematics_links_geoms,
-    kernel_masked_forward_kinematics_links_geoms,
-    kernel_forward_velocity,
-    kernel_masked_forward_velocity,
-    kernel_forward_kinematics_entity,
-    kernel_update_geoms,
-    kernel_update_verts_for_geoms,
-    kernel_update_all_verts,
-    kernel_update_geom_aabbs,
-    kernel_update_vgeoms,
     kernel_COM_links_replay,
-    kernel_update_cartesian_space,
+    kernel_forward_kinematics_entity,
+    kernel_forward_kinematics_links_geoms,
     kernel_forward_kinematics_replay,
+    kernel_forward_velocity,
+    kernel_masked_forward_kinematics_links_geoms,
+    kernel_masked_forward_velocity,
+    kernel_update_all_verts,
+    kernel_update_cartesian_space,
+    kernel_update_geom_aabbs,
+    kernel_update_geoms,
     kernel_update_geoms_replay,
+    kernel_update_verts_for_geoms,
+    kernel_update_vgeoms,
 )
 from .abd.forward_dynamics import (
     func_actuation,
@@ -114,69 +113,69 @@ from .abd.forward_dynamics import (
     func_compute_qacc,
     func_factor_mass,
     func_forward_dynamics,
-    func_solve_mass_entity,
-    func_solve_mass_batch,
+    func_implicit_damping,
+    func_integrate,
     func_solve_mass,
+    func_solve_mass_batch,
+    func_solve_mass_entity,
     func_torque_and_passive_force,
     func_update_acc,
     func_update_force,
-    func_integrate,
-    func_implicit_damping,
     func_vel_at_point,
     kernel_compute_mass_matrix,
     kernel_forward_dynamics,
-    kernel_update_acc,
     kernel_forward_dynamics_without_qacc,
+    kernel_update_acc,
     update_qacc_from_qvel_delta,
     update_qvel,
 )
 from .abd.accessor import (
     ConstraintType,
+    kernel_adjust_link_inertia,
+    kernel_control_dofs_force,
+    kernel_control_dofs_position,
+    kernel_control_dofs_position_velocity,
+    kernel_control_dofs_velocity,
+    kernel_get_dofs_control_force,
+    kernel_get_links_acc,
+    kernel_get_links_vel,
     kernel_get_state,
-    kernel_set_state,
-    kernel_set_links_pos,
-    kernel_set_links_quat,
-    kernel_set_links_mass_shift,
-    kernel_set_links_COM_shift,
-    kernel_set_links_inertial_mass,
-    kernel_wake_up_entities_by_links,
-    kernel_wake_up_entities_by_dofs,
-    kernel_wake_up_entities_by_qs,
-    kernel_wake_up_entities_on_new_contact,
-    kernel_set_geoms_friction_ratio,
-    kernel_set_qpos,
-    kernel_set_global_sol_params,
-    kernel_set_sol_params,
-    kernel_set_dofs_kp,
-    kernel_set_dofs_kv,
-    kernel_set_dofs_act_gain,
     kernel_set_dofs_act_bias,
-    kernel_set_dofs_force_range,
-    kernel_set_dofs_stiffness,
+    kernel_set_dofs_act_gain,
     kernel_set_dofs_armature,
     kernel_set_dofs_damping,
+    kernel_set_dofs_force_range,
     kernel_set_dofs_frictionloss,
+    kernel_set_dofs_kp,
+    kernel_set_dofs_kv,
     kernel_set_dofs_limit,
+    kernel_set_dofs_position,
+    kernel_set_dofs_stiffness,
     kernel_set_dofs_velocity,
     kernel_set_dofs_velocity_grad,
     kernel_set_dofs_zero_velocity,
-    kernel_set_dofs_position,
-    kernel_control_dofs_force,
-    kernel_control_dofs_velocity,
-    kernel_control_dofs_position,
-    kernel_control_dofs_position_velocity,
-    kernel_get_links_vel,
-    kernel_get_links_acc,
-    kernel_get_dofs_control_force,
     kernel_set_drone_rpm,
-    kernel_update_drone_propeller_vgeoms,
     kernel_set_geom_friction,
     kernel_set_geom_friction_rolling,
     kernel_set_geom_friction_torsional,
     kernel_set_geoms_friction,
+    kernel_set_geoms_friction_ratio,
     kernel_set_geoms_friction_rolling,
     kernel_set_geoms_friction_torsional,
-    kernel_adjust_link_inertia,
+    kernel_set_global_sol_params,
+    kernel_set_links_COM_shift,
+    kernel_set_links_inertial_mass,
+    kernel_set_links_mass_shift,
+    kernel_set_links_pos,
+    kernel_set_links_quat,
+    kernel_set_qpos,
+    kernel_set_sol_params,
+    kernel_set_state,
+    kernel_update_drone_propeller_vgeoms,
+    kernel_wake_up_entities_by_dofs,
+    kernel_wake_up_entities_by_links,
+    kernel_wake_up_entities_by_qs,
+    kernel_wake_up_entities_on_new_contact,
 )
 from .abd.diff import (
     func_copy_cartesian_space,
@@ -186,11 +185,11 @@ from .abd.diff import (
     func_is_grad_valid,
     func_load_adjoint_cache,
     func_save_adjoint_cache,
-    kernel_save_adjoint_cache,
-    kernel_prepare_backward_substep,
     kernel_begin_backward_substep,
     kernel_copy_acc,
     kernel_copy_next_to_curr_no_check,
+    kernel_prepare_backward_substep,
+    kernel_save_adjoint_cache,
 )
 from .abd.manual_bw import (
     kernel_manual_compute_qacc_bw,
@@ -1599,100 +1598,67 @@ class RigidSolver(KinematicSolver):
             envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, force_update_fixed_geoms
         )
 
-    def apply_links_external_force(
+    def apply_links_external_wrench(
         self,
-        force,
+        force=None,
+        torque=None,
         links_idx=None,
         envs_idx=None,
         *,
-        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
+        pos=None,
+        ref: link_ref_frame = link_ref_frame.link_origin,
         local: bool = False,
     ):
         """
-        Apply some external linear force on a set of links.
+        Apply an external wrench over one simulation step on a set of links.
 
         Parameters
         ----------
-        force : array_like
-            The force to apply.
+        force : None | array_like, optional
+            The linear force to apply. None for a pure torque. Defaults to None.
+        torque : None | array_like, optional
+            The torque to apply, on top of the moment induced by the linear force. Defaults to None.
         links_idx : None | array_like, optional
-            The indices of the links on which to apply force. None to specify all links. Default to None.
+            The indices of the links on which to apply the wrench. None to specify all links. Default to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
-        ref: "link_origin" | "link_com" | "root_com", optional
-            The reference frame on which the linear force will be applied. "link_origin" refers to the origin of the
-            link, "link_com" refers to the center of mass of the link, and "root_com" refers to the center of mass of
-            the entire kinematic tree to which a link belong (see `get_links_root_COM` for details).
+        pos : None | array_like, optional
+            Where the linear force is applied, which sets the moment arm of the induced torque. With `local=True`, an
+            offset from the origin of the `ref` frame, so the point follows each link as it moves; otherwise a world
+            position. None applies the force at the origin of the `ref` frame. Defaults to None.
+        ref: gs.link_ref_frame, optional
+            The reference frame: the origin of each link ('link_origin'), or its center of mass ('link_COM'). It fixes
+            where the linear force acts when `pos` is None, and the axes of the input coordinates when `local=True`.
+            Defaults to 'link_origin'.
         local: bool, optional
-            Whether the force is expressed in the local coordinates associated with the reference frame instead of
-            world frame. Only supported for `ref="link_origin"` or `ref="link_com"`.
+            Whether `force`, `torque` and `pos` are expressed in the coordinates of the `ref` frame rather than the
+            world frame. Defaults to False.
         """
-        force, links_idx, envs_idx = self._sanitize_io_variables(
+        if force is None and torque is None:
+            gs.raise_exception("Either 'force' or 'torque' must be specified.")
+        if force is None and pos is not None:
+            gs.raise_exception("'pos' requires 'force', as a torque acts the same wherever it is applied.")
+        ref_frame = self._sanitize_ref_frame(ref, has_root_COM=False)
+
+        if pos is not None:
+            pos, _, _ = self._sanitize_io_variables(
+                pos, links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
+            )
+        # An absent wrench component contributes nothing, which the kernel spells out as zeros.
+        force = 0.0 if force is None else force
+        torque = 0.0 if torque is None else torque
+        force, _, _ = self._sanitize_io_variables(
             force, links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
         )
-        if self.n_envs == 0:
-            force = force[None]
-
-        if ref == "root_com" and local:
-            raise ValueError("'local=True' not compatible with ref='root_com'.")
-        ref_idx = self._convert_ref_to_idx(ref)
-
-        # A force on a sleeping body must revive it, otherwise the input is silently dropped.
-        if self._use_hibernation:
-            kernel_wake_up_entities_by_links(
-                links_idx,
-                envs_idx,
-                self.dyn_state,
-                self.constraint_solver.constraint_state,
-                self.dyn_info,
-                self.rigid_info,
-                self.rigid_config,
-            )
-
-        kernel_apply_links_external_force(
-            links_idx, envs_idx, force, self.dyn_state, self.rigid_config, ref_idx, 1 if local else 0
-        )
-
-    def apply_links_external_torque(
-        self,
-        torque,
-        links_idx=None,
-        envs_idx=None,
-        *,
-        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
-        local: bool = False,
-    ):
-        """
-        Apply some external torque on a set of links.
-
-        Parameters
-        ----------
-        torque : array_like
-            The torque to apply.
-        links_idx : None | array_like, optional
-            The indices of the links on which to apply torque. None to specify all links. Default to None.
-        envs_idx : None | array_like, optional
-            The indices of the environments. If None, all environments will be considered. Defaults to None.
-        ref: "link_origin" | "link_com" | "root_com", optional
-            The reference frame on which the torque will be applied. "link_origin" refers to the origin of the link,
-            "link_com" refers to the center of mass of the link, and "root_com" refers to the center of mass of
-            the entire kinematic tree to which a link belong (see `get_links_root_COM` for details). Note that this
-            argument has no effect unless `local=True`.
-        local: bool, optional
-            Whether the torque is expressed in the local coordinates associated with the reference frame instead of
-            world frame. Only supported for `ref="link_origin"` or `ref="link_com"`.
-        """
         torque, links_idx, envs_idx = self._sanitize_io_variables(
             torque, links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
         )
         if self.n_envs == 0:
-            torque = torque[None]
+            force, torque = force[None], torque[None]
+            if pos is not None:
+                pos = pos[None]
 
-        if ref == "root_com" and local:
-            raise ValueError("'local=True' not compatible with ref='root_com'.")
-        ref_idx = self._convert_ref_to_idx(ref)
-
-        # A torque on a sleeping body must revive it, otherwise the input is silently dropped.
+        # A wrench on a sleeping body must revive it, otherwise the input is silently dropped.
         if self._use_hibernation:
             kernel_wake_up_entities_by_links(
                 links_idx,
@@ -1704,9 +1670,14 @@ class RigidSolver(KinematicSolver):
                 self.rigid_config,
             )
 
-        kernel_apply_links_external_torque(
-            links_idx, envs_idx, torque, self.dyn_state, self.rigid_config, ref_idx, 1 if local else 0
-        )
+        if pos is None:
+            kernel_apply_links_external_wrench(
+                links_idx, envs_idx, force, torque, self.dyn_state, self.rigid_config, ref_frame, local
+            )
+        else:
+            kernel_apply_links_external_wrench_at_pos(
+                links_idx, envs_idx, pos, force, torque, self.dyn_state, self.rigid_config, ref_frame, local
+            )
 
     def substep_pre_coupling(self, f):
         if self.is_active:
@@ -2881,22 +2852,24 @@ class RigidSolver(KinematicSolver):
         return tensor
 
     @staticmethod
-    def _convert_ref_to_idx(ref: Literal["link_origin", "link_com", "root_com"]):
-        if ref == "root_com":
-            return 0
-        elif ref == "link_com":
-            return 1
-        elif ref == "link_origin":
-            return 2
-        else:
-            gs.raise_exception("'ref' must be either 'link_origin', 'link_com', or 'root_com'.")
+    def _sanitize_ref_frame(ref: link_ref_frame, *, has_root_COM: bool = True) -> int:
+        """Check that a reference frame is supported and return it as a plain int.
+
+        The value is returned as a plain int rather than the enum member itself because quadrants' fastcache holds a
+        weak reference to template arguments, which enum members do not support.
+        """
+        frames = tuple(link_ref_frame) if has_root_COM else (link_ref_frame.link_origin, link_ref_frame.link_COM)
+        if not isinstance(ref, link_ref_frame) or ref not in frames:
+            refs = ", ".join(f"'gs.link_ref_frame.{frame.name}'" for frame in frames)
+            gs.raise_exception(f"'ref' must be one of {refs}.")
+        return int(ref)
 
     def get_links_pos(
         self,
         links_idx=None,
         envs_idx=None,
         *,
-        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
+        ref: link_ref_frame = link_ref_frame.link_origin,
         relative=False,
     ):
         if not gs.use_zerocopy:
@@ -2904,20 +2877,18 @@ class RigidSolver(KinematicSolver):
                 None, links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
             )
 
-        ref_idx = self._convert_ref_to_idx(ref)
-        if ref_idx == 0:
+        ref_frame = self._sanitize_ref_frame(ref)
+        if ref_frame == link_ref_frame.root_COM:
             tensor = qd_to_torch(self.dyn_state.links.root_COM, envs_idx, links_idx, transpose=True, copy=True)
-        elif ref_idx == 1:
+        elif ref_frame == link_ref_frame.link_COM:
             i_pos = qd_to_torch(self.dyn_state.links.i_pos, envs_idx, links_idx, transpose=True)
             root_COM = qd_to_torch(self.dyn_state.links.root_COM, envs_idx, links_idx, transpose=True)
             tensor = i_pos + root_COM
-        elif ref_idx == 2:
-            tensor = qd_to_torch(self.dyn_state.links.pos, envs_idx, links_idx, transpose=True, copy=True)
         else:
-            gs.raise_exception("'ref' must be either 'link_origin', 'link_com', or 'root_com'.")
+            tensor = qd_to_torch(self.dyn_state.links.pos, envs_idx, links_idx, transpose=True, copy=True)
 
         # The pose offset is defined on the link origin, so it is only stripped for the 'link_origin' reference.
-        if relative and ref_idx == 2 and self._links_offset_pos is not None:
+        if relative and ref_frame == link_ref_frame.link_origin and self._links_offset_pos is not None:
             quat = qd_to_torch(self.dyn_state.links.quat, envs_idx, links_idx, transpose=True, copy=True)
             offset_pos = _select_links_offset(self._links_offset_pos, links_idx, envs_idx)
             offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
@@ -2925,16 +2896,13 @@ class RigidSolver(KinematicSolver):
 
         return tensor[0] if self.n_envs == 0 else tensor
 
-    def get_links_vel(
-        self, links_idx=None, envs_idx=None, *, ref: Literal["link_origin", "link_com", "root_com"] = "link_origin"
-    ):
+    def get_links_vel(self, links_idx=None, envs_idx=None, *, ref: link_ref_frame = link_ref_frame.link_origin):
+        ref_frame = self._sanitize_ref_frame(ref, has_root_COM=False)
         if gs.use_zerocopy:
             mask = (0, *indices_to_mask(links_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, links_idx)
             cd_vel = qd_to_torch(self.dyn_state.links.cd_vel, transpose=True)
-            if ref == "root_com":
-                return cd_vel[mask]
             cd_ang = qd_to_torch(self.dyn_state.links.cd_ang, transpose=True)
-            if ref == "link_com":
+            if ref_frame == link_ref_frame.link_COM:
                 i_pos = qd_to_torch(self.dyn_state.links.i_pos, transpose=True)
                 delta = i_pos[mask]
             else:
@@ -2948,8 +2916,7 @@ class RigidSolver(KinematicSolver):
         )
         assert _tensor is not None
         tensor = _tensor[None] if self.n_envs == 0 else _tensor
-        ref_idx = self._convert_ref_to_idx(ref)
-        kernel_get_links_vel(links_idx, envs_idx, tensor, self.dyn_state, self.rigid_config, ref_idx)
+        kernel_get_links_vel(links_idx, envs_idx, tensor, self.dyn_state, self.rigid_config, ref_frame)
         return _tensor
 
     def get_links_acc(self, links_idx=None, envs_idx=None):
@@ -3235,7 +3202,7 @@ class RigidSolver(KinematicSolver):
         potential_energy : torch.Tensor, shape () or (n_envs,)
         """
         gravity = self.get_gravity(envs_idx=envs_idx)  # (3,) or (n_envs, 3)
-        links_pos = self.get_links_pos(links_idx, envs_idx, ref="link_com")  # (..., n_links, 3)
+        links_pos = self.get_links_pos(links_idx, envs_idx, ref=link_ref_frame.link_COM)  # (..., n_links, 3)
         # `get_links_inertial_mass` only accepts `envs_idx` when links info is batched, since all the environments
         # share the very same link masses otherwise.
         links_mass = self.get_links_inertial_mass(links_idx, envs_idx if self._options.batch_links_info else None)

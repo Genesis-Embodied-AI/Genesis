@@ -90,7 +90,9 @@ def main():
         rigid_solver = scene.sim.rigid_solver
 
         # Rigid body linear momentum.
-        cube_vel = tensor_to_array(rigid_cube.get_links_vel(links_idx_local=0, ref="link_com")[..., 0, :])
+        cube_vel = tensor_to_array(
+            rigid_cube.get_links_vel(links_idx_local=0, ref=gs.link_ref_frame.link_COM)[..., 0, :]
+        )
         rigid_linear_momentum = cube_mass * cube_vel
 
         # FEM body linear momentum.

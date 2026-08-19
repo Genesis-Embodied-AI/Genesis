@@ -1133,13 +1133,8 @@ class IPCCoupler(RBC):
                 "the simulation timestep."
             )
 
-        self.rigid_solver.apply_links_external_force(
+        self.rigid_solver.apply_links_external_wrench(
             self._coupling_data.out_forces if self.sim.n_envs > 0 else self._coupling_data.out_forces[0],
-            links_idx=self._coupling_data.links_idx,
-            local=False,
-        )
-        self.rigid_solver.apply_links_external_torque(
             self._coupling_data.out_torques if self.sim.n_envs > 0 else self._coupling_data.out_torques[0],
             links_idx=self._coupling_data.links_idx,
-            local=False,
         )

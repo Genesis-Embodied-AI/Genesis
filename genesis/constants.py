@@ -146,6 +146,22 @@ class broadphase_traversal(IntEnum):
     ALL_VS_ALL = 1
 
 
+class link_ref_frame(IntEnum):
+    """
+    Reference frame at which a per-link quantity is expressed.
+
+    Each member fixes an origin, about which spatial quantities are translated, together with an orientation, by which
+    quantities given in local coordinates are rotated. 'root_COM' is the center of mass of the whole kinematic tree the
+    link belongs to, with world-aligned axes; the solver stores link velocities and generalized forces there natively,
+    so it is the only frame reached without a moment arm. 'link_COM' is the center of mass of the link, with the axes of
+    its inertial frame. 'link_origin' is the origin of the link, with the axes of the link frame.
+    """
+
+    root_COM = 0
+    link_COM = 1
+    link_origin = 2
+
+
 # backend
 class backend(IntEnum):
     cpu = 0

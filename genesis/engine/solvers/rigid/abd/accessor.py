@@ -17,7 +17,7 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 
-from .misc import func_apply_link_external_force, func_apply_link_external_torque, func_wakeup_island
+from .misc import func_apply_link_external_wrench, func_wakeup_island
 
 
 class ConstraintType(IntEnum):
@@ -1010,11 +1010,11 @@ def kernel_get_links_vel(
         vel = dyn_state.links.cd_vel[links_idx[i_l_], envs_idx[i_b_]]  # entity's CoM
 
         # Translate to get the velocity expressed at a different position if necessary link-position
-        if qd.static(ref == 1):  # link's CoM
+        if qd.static(ref == gs.link_ref_frame.link_COM):
             vel = vel + dyn_state.links.cd_ang[links_idx[i_l_], envs_idx[i_b_]].cross(
                 dyn_state.links.i_pos[links_idx[i_l_], envs_idx[i_b_]]
             )
-        if qd.static(ref == 2):  # link's origin
+        if qd.static(ref == gs.link_ref_frame.link_origin):
             vel = vel + dyn_state.links.cd_ang[links_idx[i_l_], envs_idx[i_b_]].cross(
                 dyn_state.links.pos[links_idx[i_l_], envs_idx[i_b_]]
                 - dyn_state.links.root_COM[links_idx[i_l_], envs_idx[i_b_]]
@@ -1168,8 +1168,17 @@ def kernel_set_drone_rpm(
             if invert:
                 torque = -torque
 
-            func_apply_link_external_force(i_l, i_b, force, dyn_state, 1, 1)
-            func_apply_link_external_torque(i_l, i_b, torque, dyn_state, 1, 1)
+            func_apply_link_external_wrench(
+                i_l,
+                i_b,
+                qd.Vector.zero(gs.qd_float, 3),
+                force,
+                torque,
+                dyn_state,
+                ref=gs.link_ref_frame.link_COM,
+                local=True,
+                has_pos=False,
+            )
 
 
 @qd.kernel(fastcache=True)

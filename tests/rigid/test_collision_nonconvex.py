@@ -661,7 +661,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
     scene.build()
 
     if show_viewer:
-        obj_com = obj.get_links_pos(ref="link_com")[0]
+        obj_com = obj.get_links_pos(ref=gs.link_ref_frame.link_COM)[0]
         scene.draw_debug_sphere(pos=obj_com, radius=0.003, color=(1, 1, 1, 1))
         scene.visualizer.update(force=True)
 
@@ -778,7 +778,7 @@ def test_convexify(euler, show_viewer, gjk_collision):
         scene.step()
         # cam.render()
         if i > N_SETTLE:
-            vel_lin_all.append(gs_sim.rigid_solver.get_links_vel(ref="link_com"))
+            vel_lin_all.append(gs_sim.rigid_solver.get_links_vel(ref=gs.link_ref_frame.link_COM))
             vel_ang_all.append(gs_sim.rigid_solver.get_links_ang())
     # cam.stop_recording(save_to_filename="video.mp4", fps=60)
     # FIXME: There is spurious residual motion on both paths that prevents the objects from truly settling
@@ -911,7 +911,7 @@ def test_many_objects_collision(convexify, show_viewer, tol):
         scene.step()
         energy_trace.append(tensor_to_array(scene.rigid_solver.get_total_energy()))
         if show_viewer:
-            vmax_trace.append(scene.rigid_solver.get_links_vel(ref="link_com").norm(dim=-1).max())
+            vmax_trace.append(scene.rigid_solver.get_links_vel(ref=gs.link_ref_frame.link_COM).norm(dim=-1).max())
             wmax_trace.append(scene.rigid_solver.get_links_ang().norm(dim=-1).max())
 
     # The pile has settled at rest, fully contained in the tank (no ground/tank penetration, no ejection)
@@ -937,8 +937,8 @@ def test_many_objects_collision(convexify, show_viewer, tol):
     contact_energy = {}
     for i in range(100):
         scene.step()
-        com_pos = scene.rigid_solver.get_links_pos(ref="link_com")
-        com_vel = scene.rigid_solver.get_links_vel(ref="link_com")
+        com_pos = scene.rigid_solver.get_links_pos(ref=gs.link_ref_frame.link_COM)
+        com_vel = scene.rigid_solver.get_links_vel(ref=gs.link_ref_frame.link_COM)
         ang = scene.rigid_solver.get_links_ang()
         vel_lin_all.append(com_vel.norm(dim=-1))
         vel_ang_all.append(ang.norm(dim=-1))

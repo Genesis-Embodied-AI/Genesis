@@ -5,6 +5,7 @@ import numpy as np
 import torch
 
 import genesis as gs
+from genesis.constants import link_ref_frame
 from genesis.engine.mesh import InertialProperties
 from genesis.repr_base import RBC
 from genesis.typing import LaxPositiveFArrayType, Matrix3x3Type, UnitVec4FType, Vec3FType
@@ -984,6 +985,62 @@ class RigidLink(KinematicLink):
 
         verts = self.get_verts()
         return torch.stack((verts.min(dim=-2).values, verts.max(dim=-2).values), dim=-2)
+
+    @gs.assert_built
+    def apply_external_wrench(
+        self,
+        force=None,
+        torque=None,
+        envs_idx=None,
+        *,
+        pos=None,
+        ref: link_ref_frame = link_ref_frame.link_origin,
+        local: bool = False,
+    ):
+        """
+        Apply an external wrench over one simulation step on the link.
+
+        Parameters
+        ----------
+        force : None | array_like, optional
+            The linear force to apply. None for a pure torque. Defaults to None.
+        torque : None | array_like, optional
+            The torque to apply, on top of the moment induced by the linear force. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        pos : None | array_like, optional
+            Where the linear force is applied, which sets the moment arm of the induced torque. With `local=True`, an
+            offset from the origin of the `ref` frame, so the point follows the link as it moves; otherwise a world
+            position. None applies the force at the origin of the `ref` frame. Defaults to None.
+        ref: gs.link_ref_frame, optional
+            The reference frame: the origin of the link ('link_origin'), or its center of mass ('link_COM'). It fixes
+            where the linear force acts when `pos` is None, and the axes of the input coordinates when `local=True`.
+            Defaults to 'link_origin'.
+        local: bool, optional
+            Whether `force`, `torque` and `pos` are expressed in the coordinates of the `ref` frame rather than the
+            world frame. Defaults to False.
+        """
+        self._solver.apply_links_external_wrench(force, torque, self._idx, envs_idx, pos=pos, ref=ref, local=local)
+
+    def apply_external_force(
+        self, force, envs_idx=None, *, pos=None, ref: link_ref_frame = link_ref_frame.link_origin, local: bool = False
+    ):
+        """
+        Apply an external linear force over one simulation step on the link.
+
+        Refer to `RigidLink.apply_external_wrench` for details.
+        """
+        self.apply_external_wrench(force, envs_idx=envs_idx, pos=pos, ref=ref, local=local)
+
+    def apply_external_torque(
+        self, torque, envs_idx=None, *, ref: link_ref_frame = link_ref_frame.link_origin, local: bool = False
+    ):
+        """
+        Apply an external torque over one simulation step on the link.
+
+        Refer to `RigidLink.apply_external_wrench` for details.
+        """
+        self.apply_external_wrench(torque=torque, envs_idx=envs_idx, ref=ref, local=local)
 
     @gs.assert_built
     def set_mass(self, mass: LaxPositiveFArrayType):

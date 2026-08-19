@@ -744,25 +744,10 @@ def kernel_init_equality_fields(
 
 
 @qd.kernel(fastcache=True)
-def kernel_apply_links_external_force(
+def kernel_apply_links_external_wrench(
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     force: qd.types.ndarray(),
-    dyn_state: array_class.DynState,
-    rigid_config: qd.template(),
-    ref: qd.template(),
-    local: qd.template(),
-):
-    qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
-    for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
-        force_i = qd.Vector([force[i_b_, i_l_, 0], force[i_b_, i_l_, 1], force[i_b_, i_l_, 2]], dt=gs.qd_float)
-        func_apply_link_external_force(links_idx[i_l_], envs_idx[i_b_], force_i, dyn_state, ref, local)
-
-
-@qd.kernel(fastcache=True)
-def kernel_apply_links_external_torque(
-    links_idx: qd.types.ndarray(),
-    envs_idx: qd.types.ndarray(),
     torque: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
@@ -771,8 +756,41 @@ def kernel_apply_links_external_torque(
 ):
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+        force_i = qd.Vector([force[i_b_, i_l_, 0], force[i_b_, i_l_, 1], force[i_b_, i_l_, 2]], dt=gs.qd_float)
         torque_i = qd.Vector([torque[i_b_, i_l_, 0], torque[i_b_, i_l_, 1], torque[i_b_, i_l_, 2]], dt=gs.qd_float)
-        func_apply_link_external_torque(links_idx[i_l_], envs_idx[i_b_], torque_i, dyn_state, ref, local)
+        func_apply_link_external_wrench(
+            links_idx[i_l_],
+            envs_idx[i_b_],
+            qd.Vector.zero(gs.qd_float, 3),
+            force_i,
+            torque_i,
+            dyn_state,
+            ref,
+            local,
+            has_pos=False,
+        )
+
+
+@qd.kernel(fastcache=True)
+def kernel_apply_links_external_wrench_at_pos(
+    links_idx: qd.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
+    pos: qd.types.ndarray(),
+    force: qd.types.ndarray(),
+    torque: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    rigid_config: qd.template(),
+    ref: qd.template(),
+    local: qd.template(),
+):
+    qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
+    for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+        pos_i = qd.Vector([pos[i_b_, i_l_, 0], pos[i_b_, i_l_, 1], pos[i_b_, i_l_, 2]], dt=gs.qd_float)
+        force_i = qd.Vector([force[i_b_, i_l_, 0], force[i_b_, i_l_, 1], force[i_b_, i_l_, 2]], dt=gs.qd_float)
+        torque_i = qd.Vector([torque[i_b_, i_l_, 0], torque[i_b_, i_l_, 1], torque[i_b_, i_l_, 2]], dt=gs.qd_float)
+        func_apply_link_external_wrench(
+            links_idx[i_l_], envs_idx[i_b_], pos_i, force_i, torque_i, dyn_state, ref, local, has_pos=True
+        )
 
 
 @qd.func
@@ -816,38 +834,46 @@ def kernel_wakeup_coupled_links(
 
 
 @qd.func
-def func_apply_link_external_force(
-    link_idx, env_idx, force, dyn_state: array_class.DynState, ref: qd.template(), local: qd.template()
+def func_apply_link_external_wrench(
+    link_idx,
+    env_idx,
+    pos,
+    force,
+    torque,
+    dyn_state: array_class.DynState,
+    ref: qd.template(),
+    local: qd.template(),
+    has_pos: qd.template(),
 ):
-    torque = qd.Vector.zero(gs.qd_float, 3)
-    if qd.static(ref == 1):  # link's CoM
+    # The generalized force is expressed about the root COM, so a linear force adds the moment of the arm going from
+    # the root COM to its application point, while a torque is a free couple.
+    arm = qd.Vector.zero(gs.qd_float, 3)
+    if qd.static(ref == gs.link_ref_frame.link_COM):
         if qd.static(local):
-            force = gu.qd_transform_by_quat(force, dyn_state.links.i_quat[link_idx, env_idx])
-        torque = dyn_state.links.i_pos[link_idx, env_idx].cross(force)
-    if qd.static(ref == 2):  # link's origin
+            i_quat = dyn_state.links.i_quat[link_idx, env_idx]
+            force = gu.qd_transform_by_quat(force, i_quat)
+            torque = gu.qd_transform_by_quat(torque, i_quat)
+            if qd.static(has_pos):
+                pos = gu.qd_transform_by_quat(pos, i_quat)
+        arm = dyn_state.links.i_pos[link_idx, env_idx]
+    if qd.static(ref == gs.link_ref_frame.link_origin):
         if qd.static(local):
-            force = gu.qd_transform_by_quat(force, dyn_state.links.i_quat[link_idx, env_idx])
-        torque = (dyn_state.links.pos[link_idx, env_idx] - dyn_state.links.root_COM[link_idx, env_idx]).cross(force)
+            quat = dyn_state.links.quat[link_idx, env_idx]
+            force = gu.qd_transform_by_quat(force, quat)
+            torque = gu.qd_transform_by_quat(torque, quat)
+            if qd.static(has_pos):
+                pos = gu.qd_transform_by_quat(pos, quat)
+        arm = dyn_state.links.pos[link_idx, env_idx] - dyn_state.links.root_COM[link_idx, env_idx]
+    if qd.static(has_pos):
+        # A local point is an offset from the reference frame origin, whose own arm has just been computed, while a
+        # world point already locates the application point and makes the reference frame irrelevant.
+        if qd.static(local):
+            arm = arm + pos
+        else:
+            arm = pos - dyn_state.links.root_COM[link_idx, env_idx]
 
     dyn_state.links.cfrc_applied_vel[link_idx, env_idx] -= force
-    dyn_state.links.cfrc_applied_ang[link_idx, env_idx] -= torque
-
-
-@qd.func
-def func_apply_external_torque(self, link_idx, env_idx, torque):
-    self.dyn_state.links.cfrc_applied_ang[link_idx, env_idx] -= torque
-
-
-@qd.func
-def func_apply_link_external_torque(
-    link_idx, env_idx, torque, dyn_state: array_class.DynState, ref: qd.template(), local: qd.template()
-):
-    if qd.static(ref == 1 and local == 1):  # link's CoM
-        torque = gu.qd_transform_by_quat(torque, dyn_state.links.i_quat[link_idx, env_idx])
-    if qd.static(ref == 2 and local == 1):  # link's origin
-        torque = gu.qd_transform_by_quat(torque, dyn_state.links.quat[link_idx, env_idx])
-
-    dyn_state.links.cfrc_applied_ang[link_idx, env_idx] -= torque
+    dyn_state.links.cfrc_applied_ang[link_idx, env_idx] -= torque + arm.cross(force)
 
 
 @qd.func
