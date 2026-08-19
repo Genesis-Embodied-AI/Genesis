@@ -149,6 +149,10 @@ class RigidInfo:
     EPS: qd.Tensor
 
 
+# Solver kernels use this name; keep alias for the upstream rename.
+RigidGlobalInfo = RigidInfo
+
+
 def get_rigid_info(solver, kinematic_only):
     _B = solver._B
 
