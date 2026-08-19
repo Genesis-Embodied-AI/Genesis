@@ -694,6 +694,8 @@ class KinematicSolver(Solver):
             if s_global in self._queried_states:
                 return self._queried_states[s_global][0]
 
+            # Keep captured link poses consistent with the generalized coordinates stored alongside them
+            self.update_forward_pos()
             state = KinematicSolverState(self._scene, s_global)
 
             kernel_get_kinematic_state(
@@ -732,7 +734,7 @@ class KinematicSolver(Solver):
         )
         if not partial:
             kernel_forward_kinematics(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
-            # A subset refresh is globally fresh only if all untouched environments were already fresh.
+            # A subset refresh is globally fresh only if all untouched environments were already fresh
             self._is_forward_pos_updated = is_all_envs or self._is_forward_pos_updated
             self._is_forward_vel_updated = False
         else:
@@ -1147,7 +1149,7 @@ class KinematicSolver(Solver):
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_vel(self, links_idx=None, envs_idx=None):
-        self._ensure_forward_vel_updated()
+        self.update_forward_vel()
         if gs.use_zerocopy:
             mask = (0, *indices_to_mask(links_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, links_idx)
             cd_vel = qd_to_torch(self.dyn_state.links.cd_vel, transpose=True)
@@ -1168,7 +1170,7 @@ class KinematicSolver(Solver):
         return _tensor
 
     def get_links_ang(self, links_idx=None, envs_idx=None):
-        self._ensure_forward_vel_updated()
+        self.update_forward_vel()
         tensor = qd_to_torch(self.dyn_state.links.cd_ang, envs_idx, links_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
@@ -1217,7 +1219,8 @@ class KinematicSolver(Solver):
         self._is_forward_pos_updated = True
         self._is_forward_vel_updated = False
 
-    def _ensure_forward_vel_updated(self):
+    def update_forward_vel(self):
+        """Propagate link velocities if they are not current for the pose and dof velocities."""
         if self._is_forward_vel_updated:
             return
         self.update_forward_pos()

@@ -7,6 +7,7 @@ import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.engine.states.solvers import KinematicSolverState
 from genesis.utils.misc import tensor_to_array
 
 from ..utils.assertions import assert_allclose, assert_equal
@@ -827,7 +828,7 @@ def test_setters(show_viewer, tol):
     ghost_robot.set_qpos([1.0, 2.0, 3.0, 1.0, 1.0, 0.0, 0.0, 1.0])
     assert_allclose(ghost_robot.get_vAABB(), ((0.95, 1.95, 2.95), (2.15, 2.05, 3.05)), tol=tol)
 
-    dofs_velocity = torch.tensor(
+    DOFS_VELOCITY = torch.tensor(
         (
             (0.0, 0.0, 0.0, 0.3, -0.2, 0.4, 0.5),
             (0.0, 0.0, 0.0, -0.4, 0.2, 0.3, -0.6),
@@ -835,33 +836,58 @@ def test_setters(show_viewer, tol):
         dtype=gs.tc_float,
         device=gs.device,
     )
-    ghost_robot.set_dofs_velocity(dofs_velocity)
-    ghost_robot.set_quat((np.sqrt(0.5), 0.0, np.sqrt(0.5), 0.0), zero_velocity=False)
+    QPOS_QUAT = gu.xyz_to_quat(
+        torch.tensor(((90.0, 0.0, 0.0), (0.0, 90.0, 0.0)), dtype=gs.tc_float, device=gs.device),
+        degrees=True,
+    )
+    QPOS = torch.cat(
+        (
+            torch.tensor(((1.0, 2.0, 3.0), (1.0, 2.0, 3.0)), dtype=gs.tc_float, device=gs.device),
+            QPOS_QUAT,
+            torch.tensor(((0.1,), (-0.1,)), dtype=gs.tc_float, device=gs.device),
+        ),
+        dim=-1,
+    )
+
+    ghost_robot.set_qpos(QPOS, skip_forward=True)
+    kinematic_state = next(s for s in scene.get_state().solvers_state if isinstance(s, KinematicSolverState))
+    ghost_robot.set_qpos(QPOS)
+    link_slice = slice(ghost_robot.link_start, ghost_robot.link_end)
+    assert_allclose(kinematic_state.links_pos[:, link_slice], ghost_robot.get_links_pos(relative=False), tol=tol)
+    assert_allclose(kinematic_state.links_quat[:, link_slice], ghost_robot.get_links_quat(relative=False), tol=tol)
+
+    # Link velocities are derived from the pose, so a deferred update must return what an eager one would
+    ghost_robot.set_dofs_velocity(DOFS_VELOCITY)
+    ghost_robot.set_quat(
+        gu.xyz_to_quat(torch.tensor((0.0, 90.0, 0.0), dtype=gs.tc_float, device=gs.device), degrees=True)
+    )
     links_vel = ghost_robot.get_links_vel()
-    ghost_robot.set_dofs_velocity(dofs_velocity)
+    ghost_robot.set_dofs_velocity(DOFS_VELOCITY)
     assert_allclose(links_vel, ghost_robot.get_links_vel(), tol=tol)
 
-    qpos = torch.tensor(
-        (
-            (1.0, 2.0, 3.0, np.sqrt(0.5), np.sqrt(0.5), 0.0, 0.0, 0.1),
-            (1.0, 2.0, 3.0, np.sqrt(0.5), 0.0, np.sqrt(0.5), 0.0, -0.1),
-        ),
-        dtype=gs.tc_float,
-        device=gs.device,
-    )
-    envs_mask = torch.ones(scene.n_envs, dtype=torch.bool, device=gs.device)
-    ghost_robot.set_qpos(qpos, envs_idx=envs_mask, zero_velocity=False)
+    ENVS_MASK = torch.tensor((True, False), dtype=torch.bool, device=gs.device)
+    qpos_env_1 = ghost_robot.get_qpos(envs_idx=[1])
+    dofs_velocity_env_1 = ghost_robot.get_dofs_velocity(envs_idx=[1])
+    links_vel_env_1 = ghost_robot.get_links_vel(envs_idx=[1])
+    ghost_robot.set_qpos(QPOS[:1], envs_idx=ENVS_MASK)
+    ghost_robot.set_dofs_velocity(DOFS_VELOCITY[:1], envs_idx=ENVS_MASK)
     links_ang = ghost_robot.get_links_ang()
-    ghost_robot.set_dofs_velocity(dofs_velocity)
+    assert_equal(ghost_robot.get_qpos(envs_idx=[1]), qpos_env_1)
+    assert_equal(ghost_robot.get_dofs_velocity(envs_idx=[1]), dofs_velocity_env_1)
+    assert_allclose(ghost_robot.get_links_vel(envs_idx=[1]), links_vel_env_1, tol=tol)
+    ghost_robot.set_dofs_velocity(DOFS_VELOCITY)
     assert_allclose(links_ang, ghost_robot.get_links_ang(), tol=tol)
 
-    ghost_robot.set_quat((np.sqrt(0.5), 0.0, 0.0, np.sqrt(0.5)), envs_idx=[1], zero_velocity=False)
-    ghost_robot.set_dofs_velocity(dofs_velocity[0], envs_idx=[0])
+    ghost_robot.set_quat(
+        gu.xyz_to_quat(torch.tensor((0.0, 0.0, 90.0), dtype=gs.tc_float, device=gs.device), degrees=True),
+        envs_idx=[1],
+    )
+    ghost_robot.set_dofs_velocity(DOFS_VELOCITY[0], envs_idx=[0])
     links_vel = ghost_robot.get_links_vel()
-    ghost_robot.set_dofs_velocity(dofs_velocity)
+    ghost_robot.set_dofs_velocity(DOFS_VELOCITY)
     assert_allclose(links_vel, ghost_robot.get_links_vel(), tol=tol)
 
-    deferred_velocity = -dofs_velocity
+    deferred_velocity = -DOFS_VELOCITY
     ghost_robot.set_dofs_velocity(deferred_velocity, skip_forward=True)
     scene.step()
     links_ang = ghost_robot.get_links_ang()
@@ -869,13 +895,13 @@ def test_setters(show_viewer, tol):
     assert_allclose(links_ang, ghost_robot.get_links_ang(), tol=tol)
 
     state = scene.get_state()
-    links_vel = ghost_robot.get_links_vel()
-    links_ang = ghost_robot.get_links_ang()
-    ghost_robot.set_qpos(qpos[0], envs_idx=[1], zero_velocity=False)
-    ghost_robot.set_dofs_velocity(dofs_velocity[0], envs_idx=[1])
+    links_vel = ghost_robot.get_links_vel(envs_idx=[1])
+    links_ang = ghost_robot.get_links_ang(envs_idx=[1])
+    ghost_robot.set_qpos(QPOS[0], envs_idx=[1])
+    ghost_robot.set_dofs_velocity(DOFS_VELOCITY[0], envs_idx=[1])
     scene.reset(state, envs_idx=[1])
-    assert_allclose(ghost_robot.get_links_vel(envs_idx=[1]), links_vel[1], tol=tol)
-    assert_allclose(ghost_robot.get_links_ang(envs_idx=[1]), links_ang[1], tol=tol)
+    assert_allclose(ghost_robot.get_links_vel(envs_idx=[1]), links_vel, tol=tol)
+    assert_allclose(ghost_robot.get_links_ang(envs_idx=[1]), links_ang, tol=tol)
 
     frozen_vaabb = [tensor_to_array(entity.get_vAABB()) for entity in scene.entities]
     for _ in range(5):
@@ -1007,6 +1033,16 @@ def test_kinematics_queries_span_entities_and_solvers(n_envs, show_viewer, tol):
 
         entity.set_qpos(qpos)
         assert_allclose(end_effector.get_pos(), target_pos, tol=tol)
+
+    DOFS_VELOCITY = torch.linspace(-0.2, 0.2, ghost.n_dofs, dtype=gs.tc_float, device=gs.device)
+    expected_shape = (ghost.n_links, 3) if n_envs == 0 else (n_envs, ghost.n_links, 3)
+    for getter in (ghost.get_links_vel, ghost.get_links_ang):
+        ghost.set_dofs_velocity(DOFS_VELOCITY)
+        ghost.set_dofs_position(ghost.get_dofs_position() + 0.05)
+        links_velocity = getter()
+        assert links_velocity.shape == expected_shape
+        ghost.set_dofs_velocity(DOFS_VELOCITY)
+        assert_allclose(links_velocity, getter(), tol=tol)
 
     # Carrying more targets than the error buffer is sized for is refused, rather than written past.
     n_tgts = franka.solver._options.IK_max_targets
