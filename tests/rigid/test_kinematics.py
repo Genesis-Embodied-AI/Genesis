@@ -425,7 +425,7 @@ def test_inverse_kinematics_local_point(n_envs, show_viewer, tol):
 
     qpos = qpos_solutions[0]
     if n_envs > 0:
-        assert_equal(qpos_solutions[1], qpos_solutions[1][0].expand_as(qpos_solutions[1]))
+        assert_equal(qpos_solutions[1], qpos_solutions[1][0])
         assert_allclose(qpos_solutions[1][0], qpos[0], tol=tol)
 
     # Apply the solution
