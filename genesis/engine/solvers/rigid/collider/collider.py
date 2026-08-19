@@ -1008,8 +1008,7 @@ class Collider:
         if gs.use_zerocopy and self._contact_data is not None:
             n_contacts = qd_to_torch(self._collider_state.n_contacts, copy=False)
             # Padded layout skips the 'n_contacts.max().item()' device->host sync (which serializes the step):
-            # return fixed-capacity tensors plus per-env 'n_contacts' for on-device masking, instead of trimming.
-            # Batched layout only.
+            # return fixed-capacity tensors plus per-env 'n_contacts' for on-device masking. Batched layout only.
             padded = is_padded and as_tensor and n_envs > 0
             if (as_tensor or n_envs == 0) and not padded:
                 n_contacts_max = (n_contacts if n_envs == 0 else n_contacts.max()).item()
