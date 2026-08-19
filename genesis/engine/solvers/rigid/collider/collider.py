@@ -1066,8 +1066,9 @@ class Collider:
                 contact_data[key] = data
 
             if padded:
-                # Per-env counts let padded consumers mask stale slots without a host sync.
-                contact_data["n_contacts"] = n_contacts
+                # Per-env counts let padded consumers mask stale slots without a host sync. Match the 'to_torch'
+                # dtype of the other fields so the result is not a mixed torch/numpy dict.
+                contact_data["n_contacts"] = n_contacts if to_torch else tensor_to_array(n_contacts)
 
             return contact_data.copy()
 

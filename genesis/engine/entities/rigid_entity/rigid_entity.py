@@ -4265,8 +4265,9 @@ class RigidEntity(KinematicEntity):
             Exclude the self collision from the returning contacts. Defaults to False.
         is_padded: bool
             Return fixed-capacity padded tensors instead of trimming to the across-env contact count, avoiding a
-            per-step device-to-host sync. 'valid_mask' still excludes the padded slots. Batched scenes only.
-            Defaults to False.
+            per-step device-to-host sync. 'valid_mask' still excludes the padded slots. Best-effort hint honored
+            only on the zero-copy batched path; otherwise it is a no-op and the standard trimmed result is
+            returned ('valid_mask' still holds either way). Defaults to False.
 
         Returns
         -------
