@@ -57,8 +57,7 @@ def test_link_velocity(gs_sim, tol):
             0.0,
         ]
     )
-    link_COM0 = gs_sim.rigid_solver.get_links_pos(ref=gs.link_ref_frame.link_COM)[0]
-    link_COM1 = gs_sim.rigid_solver.get_links_pos(ref=gs.link_ref_frame.link_COM)[1]
+    link_COM0, link_COM1 = gs_sim.rigid_solver.get_links_pos(ref=gs.link_ref_frame.link_COM)
 
     assert_allclose(link_COM0, COM_0, tol=tol)
     assert_allclose(link_COM1, COM_1, tol=tol)

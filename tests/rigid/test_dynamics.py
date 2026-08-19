@@ -281,15 +281,16 @@ def test_apply_external_wrench(xml_path, show_viewer):
     # A local force and a local application point are both expressed in the frame that 'ref' designates, which only
     # shows on a link whose inertial frame is rotated with respect to its own frame.
     base_link = robot.get_link("base")
-    assert not np.allclose(base_link.inertial_quat, (1.0, 0.0, 0.0, 0.0))
-    base_link_pos = tensor_to_array(rigid_solver.get_links_pos(base_link.idx)[0])
-    base_link_quat = tensor_to_array(rigid_solver.get_links_quat(base_link.idx)[0])
-    base_link_com = tensor_to_array(rigid_solver.get_links_pos(base_link.idx, ref=gs.link_ref_frame.link_COM)[0])
-    base_root_COM = tensor_to_array(rigid_solver.get_links_root_COM(base_link.idx)[0])
+    assert not np.allclose(base_link.inertial_quat, gu.identity_quat())
+    base_inertial_quat = torch.as_tensor(base_link.inertial_quat, device=gs.device)
+    base_link_pos = rigid_solver.get_links_pos(base_link.idx)
+    base_link_quat = rigid_solver.get_links_quat(base_link.idx)
+    base_link_COM = rigid_solver.get_links_pos(base_link.idx, ref=gs.link_ref_frame.link_COM)
+    base_root_COM = rigid_solver.get_links_root_COM(base_link.idx)
     base_link_R = gu.quat_to_R(base_link_quat)
-    base_inertial_R = gu.quat_to_R(gu.transform_quat_by_quat(base_link.inertial_quat, base_link_quat))
-    lever_arm = (0.0, 0.0, 0.1)
-    force_local = (0.0, 1.0, 0.0)
+    base_inertial_R = gu.quat_to_R(gu.transform_quat_by_quat(base_inertial_quat, base_link_quat))
+    lever_arm = torch.tensor((0.0, 0.0, 0.1), dtype=gs.tc_float, device=gs.device)
+    force_local = torch.tensor((0.0, 1.0, 0.0), dtype=gs.tc_float, device=gs.device)
 
     rigid_solver.clear_external_force()
     rigid_solver.apply_links_external_wrench(
@@ -300,7 +301,7 @@ def test_apply_external_wrench(xml_path, show_viewer):
     assert_allclose(rigid_solver.dyn_state.links.cfrc_applied_vel[base_link.idx, 0], -force_world, tol=gs.EPS)
     assert_allclose(
         rigid_solver.dyn_state.links.cfrc_applied_ang[base_link.idx, 0],
-        -np.cross(point_world - base_root_COM, force_world),
+        -torch.linalg.cross(point_world - base_root_COM, force_world),
         tol=gs.EPS,
     )
 
@@ -310,7 +311,7 @@ def test_apply_external_wrench(xml_path, show_viewer):
     assert_allclose(rigid_solver.dyn_state.links.cfrc_applied_vel[base_link.idx, 0], -force_world, tol=gs.EPS)
     assert_allclose(
         rigid_solver.dyn_state.links.cfrc_applied_ang[base_link.idx, 0],
-        -np.cross(point_world - base_root_COM, force_world),
+        -torch.linalg.cross(point_world - base_root_COM, force_world),
         tol=gs.EPS,
     )
 
@@ -318,12 +319,12 @@ def test_apply_external_wrench(xml_path, show_viewer):
     rigid_solver.apply_links_external_wrench(
         force=force_local, links_idx=base_link.idx, pos=lever_arm, ref=gs.link_ref_frame.link_COM, local=True
     )
-    assert_allclose(
-        rigid_solver.dyn_state.links.cfrc_applied_vel[base_link.idx, 0], -base_inertial_R @ force_local, tol=gs.EPS
-    )
+    force_world = base_inertial_R @ force_local
+    point_world = base_link_COM + base_inertial_R @ lever_arm
+    assert_allclose(rigid_solver.dyn_state.links.cfrc_applied_vel[base_link.idx, 0], -force_world, tol=gs.EPS)
     assert_allclose(
         rigid_solver.dyn_state.links.cfrc_applied_ang[base_link.idx, 0],
-        -np.cross(base_link_com + base_inertial_R @ lever_arm - base_root_COM, base_inertial_R @ force_local),
+        -torch.linalg.cross(point_world - base_root_COM, force_world),
         tol=gs.EPS,
     )
 
