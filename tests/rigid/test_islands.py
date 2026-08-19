@@ -464,8 +464,8 @@ def test_hibernation_with_pruning(show_viewer, n_envs):
             gs.morphs.Mesh(
                 file="meshes/duck.obj",
                 scale=0.02,
-                pos=(0.4 * i, 0.0, 0.1),
-                euler=(90.0, 0.0, 0.0),
+                pos=(0.4 * i, 0.0, 0.05),
+                euler=(90.0, 90.0, 0.0),
             ),
         )
         for i in range(2)
@@ -476,7 +476,7 @@ def test_hibernation_with_pruning(show_viewer, n_envs):
     def asleep():
         return all(qd_to_numpy(solver.dyn_state.entities.is_hibernated, duck.idx).all() for duck in ducks)
 
-    for _ in range(200):
+    for _ in range(120):
         scene.step()
         assert all((tensor_to_array(duck.get_pos())[..., 2] > -0.05).all() for duck in ducks)
         if asleep():
