@@ -22,7 +22,7 @@ from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
-from genesis.utils.misc import DeprecationError, broadcast_tensor, qd_to_numpy, qd_to_torch, tensor_to_array
+from genesis.utils.misc import DeprecationError, broadcast_tensor, qd_to_torch, tensor_to_array
 
 from ..base_entity import Entity
 from .rigid_equality import RigidEquality
@@ -3563,6 +3563,25 @@ class RigidEntity(KinematicEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
+    def get_links_mass(self, links_idx_local=None, envs_idx=None):
+        """
+        Get the mass of the links in kg, ie their inertial mass plus their mass shift (see `set_mass_shift`).
+
+        Parameters
+        ----------
+        links_idx_local : None | array_like, optional
+            The indices of the links. If None, all links will be considered. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        mass : torch.Tensor, shape (n_links,) or (n_envs, n_links)
+        """
+        links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        return self._solver.get_links_mass(links_idx, envs_idx)
+
+    @gs.assert_built
     def get_links_inertial_mass(self, links_idx_local=None, envs_idx=None):
         links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         return self._solver.get_links_inertial_mass(links_idx, envs_idx)
@@ -4421,12 +4440,13 @@ class RigidEntity(KinematicEntity):
 
     def set_mass_shift(self, mass_shift, links_idx_local=None, envs_idx=None):
         """
-        Set the mass shift of specified links.
+        Set the mass shift of specified links, ie a per-environment offset added to their inertial mass. The mass the
+        links are simulated with, offset included, is reported by `get_links_mass` and `get_mass`.
 
         Parameters
         ----------
-        mass : torch.Tensor, shape (n_envs, n_links)
-            The mass shift
+        mass_shift : torch.Tensor, shape (n_envs, n_links)
+            The mass shift.
         links_idx_local : array_like
             The indices of the links to set mass shift.
         envs_idx : None | array_like, optional
@@ -4441,8 +4461,8 @@ class RigidEntity(KinematicEntity):
 
         Parameters
         ----------
-        com : torch.Tensor, shape (n_envs, n_links, 3)
-            The COM shift
+        com_shift : torch.Tensor, shape (n_envs, n_links, 3)
+            The COM shift.
         links_idx_local : array_like
             The indices of the links to set COM shift.
         envs_idx : None | array_like, optional
@@ -4467,41 +4487,35 @@ class RigidEntity(KinematicEntity):
     @gs.assert_built
     def set_mass(self, mass):
         """
-        Set the mass of the entity.
+        Set the total inertial mass of the entity, distributed over its links in proportion to their current inertial
+        mass. Any mass shift already applied stays on top of it (see `set_mass_shift`).
 
         Parameters
         ----------
         mass : float
             The mass to set.
         """
-        ratio = float(mass) / self.get_mass()
-        for link in self.links:
-            link.set_mass(link.get_mass() * ratio)
+        links_inertial_mass = tensor_to_array(self.get_links_inertial_mass())
+        ratio = float(mass) / links_inertial_mass.sum(axis=-1)
+        for i_l, link in enumerate(self.links):
+            link.set_mass(ratio * links_inertial_mass[..., i_l])
 
     @gs.assert_built
-    def get_mass(self):
+    def get_mass(self, envs_idx=None):
         """
-        Get the total mass of the entity in kg.
+        Get the total mass of the entity in kg, ie the sum over its links of their inertial mass plus their mass shift
+        (see `set_mass_shift`).
 
-        For heterogeneous entities, returns an array of masses for each environment.
-        For non-heterogeneous entities, returns a scalar mass.
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
 
         Returns
         -------
-        mass : float | np.ndarray
-            The total mass of the entity in kg. For heterogeneous entities, returns
-            an array of shape (n_envs,) with per-environment masses.
+        mass : torch.Tensor, shape () or (n_envs,)
         """
-        if self._enable_heterogeneous:
-            links_idx = slice(self.link_start, self.link_end)
-            links_mass = qd_to_numpy(self._solver.dyn_info.links.inertial_mass, None, links_idx, transpose=True)
-            return links_mass.sum(axis=1)
-
-        # Original behavior: sum link masses to scalar
-        mass = 0.0
-        for link in self.links:
-            mass += link.get_mass()
-        return mass
+        return self.get_links_mass(envs_idx=envs_idx).sum(dim=-1)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

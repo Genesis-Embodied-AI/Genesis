@@ -128,7 +128,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
             if ray_hit.geom is not None and isinstance(ray_hit.geom.link, RigidLink) and not ray_hit.geom.link.is_fixed:
                 link = ray_hit.geom.link
                 hit_env_idx = ray_hit.env_idx
-                mass = float(link.get_mass())
+                mass = float(link.get_mass(envs_idx=hit_env_idx))
 
                 # Validate mass is not too small to prevent numerical instability
                 if mass < MIN_PICKABLE_MASS:
@@ -276,7 +276,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
                 self._sim_running
                 and isinstance(link, RigidLink)
                 and not link.is_fixed
-                and float(link.get_mass()) >= MIN_PICKABLE_MASS
+                and float(link.get_mass(envs_idx=closest_hit.env_idx)) >= MIN_PICKABLE_MASS
             )
             if is_pickable:
                 arrow_T = gu.trans_R_to_T(closest_hit.position, gu.z_up_to_R(closest_hit.normal))
@@ -370,7 +370,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
         inv_inertia_world = np.linalg.inv(inertia_world)
 
         pos_err_v = control_point_env_local - held_point_env_local
-        mass = float(self._held_link.get_mass())
+        mass = float(self._held_link.get_mass(envs_idx=envs_idx))
         inv_mass = 1.0 / mass
 
         # A link at rest hangs below its center of mass with the spring carrying its whole weight, so the slack alone

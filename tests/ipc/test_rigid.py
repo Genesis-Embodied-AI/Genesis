@@ -614,7 +614,7 @@ def test_momentum_conservation(n_envs, show_viewer):
     assert rigid_link.idx in ipc_links_idx
     assert rigid_link in coupler._abd_slots_by_link
 
-    cube_mass = rigid_cube.get_mass()
+    cube_mass = float(rigid_cube.get_mass(envs_idx=[0]))
 
     # Read actual FEM mass from IPC geometry (mesh mass != analytical sphere mass due to tet discretization).
     blob_radius = blob.morph.radius

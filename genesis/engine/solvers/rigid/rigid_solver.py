@@ -2369,6 +2369,11 @@ class RigidSolver(KinematicSolver):
         if self.n_envs == 0:
             mass = mass[None]
         kernel_set_links_mass_shift(links_idx, envs_idx, mass, self.dyn_state, self.rigid_config)
+        # The composite inertia the mass matrix is assembled from is a by-product of the Cartesian-space update, which
+        # a step skips when it is already up to date for the current pose. Invalidating it is what carries a mass or
+        # inertia change into the dynamics of the next step instead of leaving the previous composite in place.
+        self._is_forward_pos_updated = False
+        self._is_forward_vel_updated = False
 
     def set_links_COM_shift(self, com, links_idx=None, envs_idx=None):
         com, links_idx, envs_idx = self._sanitize_io_variables(
@@ -2377,6 +2382,9 @@ class RigidSolver(KinematicSolver):
         if self.n_envs == 0:
             com = com[None]
         kernel_set_links_COM_shift(links_idx, envs_idx, com, self.dyn_state, self.rigid_config)
+        # See 'set_links_mass_shift' for why the Cartesian-space update must be invalidated.
+        self._is_forward_pos_updated = False
+        self._is_forward_vel_updated = False
 
     def set_links_inertial_mass(self, mass, links_idx=None, envs_idx=None):
         mass, links_idx, envs_idx = self._sanitize_io_variables(
@@ -2391,8 +2399,15 @@ class RigidSolver(KinematicSolver):
         if self.n_envs == 0 and self._options.batch_links_info:
             mass = mass[None]
         kernel_set_links_inertial_mass(links_idx, envs_idx, mass, self.dyn_info, self.rigid_config)
+        # See 'set_links_mass_shift' for why the Cartesian-space update must be invalidated.
+        self._is_forward_pos_updated = False
+        self._is_forward_vel_updated = False
 
     def set_links_inertia(self, ratio, links_idx=None, envs_idx=None):
+        # See 'set_links_mass_shift' for why the Cartesian-space update must be invalidated.
+        self._is_forward_pos_updated = False
+        self._is_forward_vel_updated = False
+
         if gs.use_zerocopy:
             mass_data = qd_to_torch(self.dyn_info.links.inertial_mass, transpose=True, copy=False)
             inertial_i_data = qd_to_torch(self.dyn_info.links.inertial_i, transpose=True, copy=False)
@@ -2949,6 +2964,17 @@ class RigidSolver(KinematicSolver):
         tensor = qd_to_torch(self.dyn_state.links.i_pos_shift, envs_idx, links_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
+    def get_links_mass(self, links_idx=None, envs_idx=None):
+        """
+        Returns the mass that the links are simulated with, ie their inertial mass plus their mass shift.
+        """
+        mass_shift = qd_to_torch(self.dyn_state.links.mass_shift, envs_idx, links_idx, transpose=True)
+        # `get_links_inertial_mass` only accepts `envs_idx` when links info is batched, since all the environments
+        # share the very same link masses otherwise.
+        inertial_mass = self.get_links_inertial_mass(links_idx, envs_idx if self._options.batch_links_info else None)
+        tensor = inertial_mass + mass_shift
+        return tensor[0] if self.n_envs == 0 else tensor
+
     def get_links_inertial_mass(self, links_idx=None, envs_idx=None):
         if not self._options.batch_links_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched links info.")
@@ -3203,9 +3229,7 @@ class RigidSolver(KinematicSolver):
         """
         gravity = self.get_gravity(envs_idx=envs_idx)  # (3,) or (n_envs, 3)
         links_pos = self.get_links_pos(links_idx, envs_idx, ref=link_ref_frame.link_COM)  # (..., n_links, 3)
-        # `get_links_inertial_mass` only accepts `envs_idx` when links info is batched, since all the environments
-        # share the very same link masses otherwise.
-        links_mass = self.get_links_inertial_mass(links_idx, envs_idx if self._options.batch_links_info else None)
+        links_mass = self.get_links_mass(links_idx, envs_idx)
 
         # PE_i = m_i * g^T * p_i => PE = sum_i(m_i * (g . p_i))
         # g is (..., 3), links_pos is (..., n_links, 3) -> broadcast g to (..., 1, 3)

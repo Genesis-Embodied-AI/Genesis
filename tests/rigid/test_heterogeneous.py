@@ -77,7 +77,8 @@ def test_physics_parity(show_viewer, tol):
     # heterogeneous entity through a different arithmetic than its own reference.
     assert_allclose(ref_pos - het_obj.get_pos(), REFERENCE_OFFSETS, tol=1e-5)
     assert_allclose(het_obj.get_vel(), ref_vel, tol=2e-4)
-    assert_allclose(het_obj.get_mass(), [ref_obj.get_mass() for ref_obj in ref_objs], tol=tol)
+    ref_mass = torch.cat([ref_obj.get_mass(envs_idx=[i_env]) for i_env, ref_obj in enumerate(ref_objs)])
+    assert_allclose(het_obj.get_mass(), ref_mass, tol=tol)
 
     # The variants are genuinely distinct: their masses are not all equal.
     with pytest.raises(AssertionError):
@@ -113,7 +114,8 @@ def test_variant_inertia_matches_standalone(undefined_inertia, implicit_inertial
     )
     scene.build(n_envs=len(files))
 
-    assert_allclose(het_obj.get_mass(), [reference.get_mass() for reference in references], tol=tol)
+    ref_mass = torch.cat([reference.get_mass(envs_idx=[i_env]) for i_env, reference in enumerate(references)])
+    assert_allclose(het_obj.get_mass(), ref_mass, tol=tol)
 
 
 @pytest.mark.required

@@ -1045,7 +1045,8 @@ class RigidLink(KinematicLink):
     @gs.assert_built
     def set_mass(self, mass: LaxPositiveFArrayType):
         """
-        Set the mass of the link.
+        Set the inertial mass of the link, scaling its inertia matrix accordingly. Any mass shift already applied stays
+        on top of it (see `RigidEntity.set_mass_shift`).
 
         Parameters
         ----------
@@ -1065,18 +1066,37 @@ class RigidLink(KinematicLink):
                 "'RigidOptions.batch_links_info=True'."
             )
 
+        # The solver holds the inertial mass the link is simulated with, which the authored value no longer matches
+        # once a variant or an earlier setter has moved it, so the solver-side ratio is quoted on the solver value.
+        # The cached inertia and invweight below are the authored ones, hence scale with the authored mass.
+        inertial_mass = tensor_to_array(self._solver.get_links_inertial_mass(self._idx))[..., 0]
+        if mass.shape not in ((), inertial_mass.shape):
+            gs.raise_exception(
+                f"Attempt to set mass of link '{self.name}' from an array of shape {mass.shape}. Expected a scalar "
+                f"or an array of shape {inertial_mass.shape}."
+            )
+        self._solver.set_links_inertia(mass / inertial_mass, [self.idx])
+
         ratio = mass / self._inertial_mass
-        self._solver.set_links_inertia(ratio, [self.idx])
         self._inertial_mass = mass
         self._inertial_i = self._inertial_i * ratio[..., None, None]
         self._invweight = self._invweight / ratio[..., None]
 
     @gs.assert_built
-    def get_mass(self):
+    def get_mass(self, envs_idx=None):
         """
-        Get the mass of the link.
+        Get the mass of the link in kg, ie its inertial mass plus its mass shift (see `RigidEntity.set_mass_shift`).
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        mass : torch.Tensor, shape () or (n_envs,)
         """
-        return self._inertial_mass
+        return self._solver.get_links_mass(self._idx, envs_idx)[..., 0]
 
     def set_friction(self, friction):
         """

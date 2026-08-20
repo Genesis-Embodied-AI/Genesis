@@ -1407,7 +1407,8 @@ def test_align_heterogeneous_inertial(show_viewer, tol):
     assert mass.shape == (scene.n_envs,)
     assert_allclose(mass[0], mass[1], tol=tol)
     assert_allclose(mass[2], mass[3], tol=tol)
-    assert not np.allclose(mass[0], mass[2], atol=tol, rtol=tol), "Variant A and B masses should differ"
+    with pytest.raises(AssertionError):
+        assert_allclose(mass[0], mass[2], tol=tol)
     # Variant B total mass should match the explicit URDF inertial values
     assert_allclose(mass[0], sphere_base_mass + sphere_moving_mass, tol=tol)
 

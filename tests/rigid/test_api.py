@@ -148,6 +148,7 @@ def test_data_accessor(n_envs, batched, tol):
         (gs_s.n_links, n_envs, gs_s.get_links_root_COM, None, gs_s.dyn_state.links.root_COM),
         (gs_s.n_links, n_envs, gs_s.get_links_mass_shift, gs_s.set_links_mass_shift, gs_s.dyn_state.links.mass_shift),
         (gs_s.n_links, n_envs, gs_s.get_links_COM_shift, gs_s.set_links_COM_shift, gs_s.dyn_state.links.i_pos_shift),
+        (gs_s.n_links, n_envs, gs_s.get_links_mass, None, None),
         (
             gs_s.n_links,
             -1,
@@ -213,14 +214,14 @@ def test_data_accessor(n_envs, batched, tol):
         (-1, n_envs, gs_robot.get_links_net_contact_force, None, None),
         (-1, n_envs, gs_robot.get_pos, gs_robot.set_pos, None),
         (-1, n_envs, gs_robot.get_quat, gs_robot.set_quat, None),
-        (-1, -1, gs_robot.get_mass, gs_robot.set_mass, None),
+        (-1, n_envs, gs_robot.get_mass, None, None),
         (-1, -1, gs_robot.get_verts, None, None),
         (-1, -1, gs_robot.get_AABB, None, None),
         (-1, -1, gs_robot.get_vAABB, None, None),
         # LINK
         (-1, -1, gs_link.get_pos, None, None),
         (-1, -1, gs_link.get_quat, None, None),
-        (-1, -1, gs_link.get_mass, gs_link.set_mass, None),
+        (-1, n_envs, gs_link.get_mass, None, None),
         (-1, -1, gs_link.get_verts, None, None),
         (-1, -1, gs_link.get_AABB, None, None),
         (-1, -1, gs_link.get_vAABB, None, None),
@@ -769,7 +770,7 @@ def test_normalized_quat(show_viewer, tol):
 
 
 @pytest.mark.required
-def test_mass_setters(tol):
+def test_mass_accessors(show_viewer, tol):
     # Batched links info (default): entity- and link-level set_mass apply, link masses may differ per env, and a
     # wrong-length array is rejected. The heterogeneous entity gives each env a distinct starting mass.
     scene = gs.Scene(show_viewer=False)
@@ -791,12 +792,36 @@ def test_mass_setters(tol):
     link.set_mass(target_mass)
     assert_allclose(link.get_mass(), target_mass, tol=tol)
 
-    # Non-batched links info: link mass is shared across envs, so a scalar applies uniformly and a per-env array raises.
+    # The mass shift is an offset on top of the inertial mass: the reported mass follows it while the inertial mass
+    # keeps whatever the setters gave it.
+    mass_shift = torch.tensor((0.05, -0.1, 0.3, -0.2), dtype=gs.tc_float, device=gs.device)
+    mass_before = het_obj.get_mass()
+    het_obj.set_mass_shift(mass_shift, links_idx_local=[link.idx_local])
+    inertial_mass = het_obj.get_links_inertial_mass(links_idx_local=[link.idx_local])[..., 0]
+    assert_allclose(inertial_mass, target_mass, tol=tol)
+    assert_allclose(link.get_mass(), inertial_mass + mass_shift, tol=tol)
+    assert_allclose(het_obj.get_mass(), mass_before + mass_shift, tol=tol)
+
+    # Non-batched links info: link mass is shared across envs, so a scalar applies uniformly and a per-env array
+    # raises. The shift stays per-env even then, and it is the mass the solver integrates: a known force applied to a
+    # free box mid-simulation accelerates each env by force / mass on top of gravity.
+    DT = 0.01
+    GRAVITY = 9.81
+    FORCE = 5.0
+
     scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+            gravity=(0.0, 0.0, -GRAVITY),
+        ),
         rigid_options=gs.options.RigidOptions(
             batch_links_info=False,
         ),
-        show_viewer=False,
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.8, 0.0, 0.2),
+            camera_lookat=(0.0, 0.0, -0.1),
+        ),
+        show_viewer=show_viewer,
     )
     obj = scene.add_entity(
         morph=gs.morphs.Box(
@@ -809,6 +834,14 @@ def test_mass_setters(tol):
     assert_allclose(link.get_mass(), 2.0, tol=tol)
     with pytest.raises(gs.GenesisException):
         link.set_mass((1.0, 2.0, 3.0, 4.0))
+
+    scene.step()
+    obj.set_mass_shift((0.0, 1.0, 2.0, 3.0), links_idx_local=[link.idx_local])
+    vel_z = obj.get_dofs_velocity()[..., 2]
+    obj.control_dofs_force(FORCE, dofs_idx_local=2)
+    scene.step()
+    accel = (obj.get_dofs_velocity()[..., 2] - vel_z) / DT
+    assert_allclose(accel, FORCE / obj.get_mass() - GRAVITY, tol=tol)
 
 
 @pytest.mark.slow  # ~250s

@@ -229,7 +229,7 @@ def test_apply_external_wrench(xml_path, show_viewer):
     end_effector_link_idx = robot.links[-1].idx
     end_effector_link_idx_local = robot.links[-1].idx_local
     duck_link_idx = duck.links[0].idx
-    duck_mass = duck.get_mass()
+    duck_mass = float(duck.get_mass())
     duck_init_link_pos, duck_init_link_R = duck.base_link.pos, gu.quat_to_R(duck.base_link.quat)
     # The duck is held at rest by cancelling gravity, but the cancelling force is applied away from its center of mass
     # so that the moment arm of 'pos' is exercised: the spurious torque it generates is undone by an opposite torque

@@ -417,7 +417,7 @@ def test_static_hold_unaffected_by_press_on_separate_body(show_viewer):
         scene.step()
     hold_z = held_box.get_pos()[..., 2]
 
-    press_mass = presser.get_mass()
+    press_mass = float(presser.get_mass(envs_idx=[0]))
     presser.set_dofs_kp(PRESS_KP * press_mass, dofs_idx_local=[2])
     presser.set_dofs_kv(0.1 * PRESS_KP * press_mass, dofs_idx_local=[2])
     presser.control_dofs_position([[0.5 * PRESS_SIZE], [0.5 * PRESS_SIZE - PRESS_DEPTH]], dofs_idx_local=[2])
@@ -483,7 +483,7 @@ def test_elliptic_cone_coulomb_isotropy(sparse_solve, use_contact_island, show_v
         ),
     )
     scene.build(n_envs=N_ENVS)
-    mass = box.get_mass()
+    mass = float(box.get_mass(envs_idx=[0]))
     normal_force = MU * mass * (-GRAVITY)
 
     yaw = 2.0 * torch.pi * torch.rand(N_ENVS, device=gs.device)
@@ -848,7 +848,7 @@ def test_elliptic_cone_push_isotropy(contact_resolution, is_box_mesh, scale, pre
     # Quoted per unit mass, the linear gains are accelerations per unit error, fixed so the pusher tracks the same
     # path at any scale; the angular ones act on the inertia, two powers of length ahead of the mass, and carry that
     # difference.
-    pusher_mass = float(pusher.get_mass())
+    pusher_mass = float(pusher.get_mass(envs_idx=[0]))
     pusher.set_dofs_kp(2000.0 * pusher_mass, dofs_idx_local=[0, 1])
     pusher.set_dofs_kv(200.0 * pusher_mass, dofs_idx_local=[0, 1])
     pusher.set_dofs_kp(5000.0 * pusher_mass * scale**2, dofs_idx_local=[5])
@@ -1081,7 +1081,8 @@ def test_kinetic_friction(n_envs, show_viewer):
     # The height above measures this through the geometry; the contact force states it directly. A sliding contact
     # carries the weight and nothing more, however much tangential force the slide is asking of it.
     normal_force = torch.stack([box.get_links_net_contact_force().sum(dim=-2)[..., 2] for box in boxes])
-    assert_allclose(normal_force[is_sliding], boxes[0].get_mass() * GRAVITY, rtol=0.01)
+    weight = (boxes[0].get_mass() * GRAVITY).expand_as(height_0)
+    assert_allclose(normal_force[is_sliding], weight[is_sliding], rtol=0.01)
 
     # Each box decelerates at its own mu * g, independently of how fast it was launched.
     deceleration = (speed_0 - speed_1) / (N_SLIDE * scene.sim.dt)
