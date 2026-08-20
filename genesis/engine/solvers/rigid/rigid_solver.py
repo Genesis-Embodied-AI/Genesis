@@ -1380,7 +1380,7 @@ class RigidSolver(KinematicSolver):
         )
         self._is_forward_pos_updated = True
 
-    def invalidate_cartesian_space(self):
+    def _invalidate_cartesian_space(self):
         """Mark the Cartesian-space data as stale, so that the next step recomputes it.
 
         A step skips that update when it is already current for the pose, so a change to any of its inputs - link mass
@@ -2378,8 +2378,21 @@ class RigidSolver(KinematicSolver):
         )
         if self.n_envs == 0:
             mass = mass[None]
+
+        # A link whose inertial mass and shift sum to zero or below has no solvable dynamics, and the step would only
+        # fail later on with a non-finite force. Checking before the write leaves the state untouched on failure. See
+        # 'get_links_mass' for the 'envs_idx' gate below.
+        inertial_mass = self.get_links_inertial_mass(links_idx, envs_idx if self._options.batch_links_info else None)
+        links_mass = inertial_mass + mass
+        if (links_mass < gs.EPS).any():
+            i_l = int(links_mass.min(dim=0).values.argmin())
+            gs.raise_exception(
+                f"Mass shift leaves link '{self.links[int(links_idx[i_l])].name}' with a mass of "
+                f"{links_mass.min():.3g} kg. The mass of a link must be strictly positive."
+            )
+
         kernel_set_links_mass_shift(links_idx, envs_idx, mass, self.dyn_state, self.rigid_config)
-        self.invalidate_cartesian_space()
+        self._invalidate_cartesian_space()
 
     def set_links_COM_shift(self, com, links_idx=None, envs_idx=None):
         com, links_idx, envs_idx = self._sanitize_io_variables(
@@ -2388,7 +2401,7 @@ class RigidSolver(KinematicSolver):
         if self.n_envs == 0:
             com = com[None]
         kernel_set_links_COM_shift(links_idx, envs_idx, com, self.dyn_state, self.rigid_config)
-        self.invalidate_cartesian_space()
+        self._invalidate_cartesian_space()
 
     def set_links_inertial_mass(self, mass, links_idx=None, envs_idx=None):
         mass, links_idx, envs_idx = self._sanitize_io_variables(
@@ -2403,10 +2416,10 @@ class RigidSolver(KinematicSolver):
         if self.n_envs == 0 and self._options.batch_links_info:
             mass = mass[None]
         kernel_set_links_inertial_mass(links_idx, envs_idx, mass, self.dyn_info, self.rigid_config)
-        self.invalidate_cartesian_space()
+        self._invalidate_cartesian_space()
 
     def set_links_inertia(self, ratio, links_idx=None, envs_idx=None):
-        self.invalidate_cartesian_space()
+        self._invalidate_cartesian_space()
 
         if gs.use_zerocopy:
             mass_data = qd_to_torch(self.dyn_info.links.inertial_mass, transpose=True, copy=False)
@@ -2969,8 +2982,7 @@ class RigidSolver(KinematicSolver):
         Returns the mass that the links are simulated with, ie their inertial mass plus their mass shift.
         """
         mass_shift = qd_to_torch(self.dyn_state.links.mass_shift, envs_idx, links_idx, transpose=True)
-        # `get_links_inertial_mass` only accepts `envs_idx` when links info is batched, since all the environments
-        # share the very same link masses otherwise.
+        # All the environments share the very same link masses unless links info is batched, hence the `envs_idx` gate.
         inertial_mass = self.get_links_inertial_mass(links_idx, envs_idx if self._options.batch_links_info else None)
         tensor = inertial_mass + mass_shift
         return tensor[0] if self.n_envs == 0 else tensor

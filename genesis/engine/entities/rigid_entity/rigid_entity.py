@@ -4445,7 +4445,9 @@ class RigidEntity(KinematicEntity):
         Parameters
         ----------
         mass_shift : torch.Tensor, shape (n_envs, n_links)
-            The mass shift in kg.
+            The mass shift in kg, added to the link's inertial mass. Negative values are allowed as long as every link
+            keeps a strictly positive total: a link left at zero or below has no solvable dynamics, and the step ends
+            with a non-finite force or acceleration.
         links_idx_local : array_like
             The indices of the links to set mass shift.
         envs_idx : None | array_like, optional
@@ -4461,7 +4463,8 @@ class RigidEntity(KinematicEntity):
         Parameters
         ----------
         com_shift : torch.Tensor, shape (n_envs, n_links, 3)
-            The COM shift in meters, expressed in the link frame.
+            The COM shift in meters, added to the link's inertial position in the link frame. That frame is the one the
+            solver holds, so a morph pose offset ('offset_pos' / 'offset_quat') rotates the shift along with it.
         links_idx_local : array_like
             The indices of the links to set COM shift.
         envs_idx : None | array_like, optional
@@ -4487,7 +4490,8 @@ class RigidEntity(KinematicEntity):
     def set_mass(self, mass):
         """
         Set the total inertial mass of the entity, distributed over its links in proportion to their current inertial
-        mass. This does not affect the mass shift set from `set_mass_shift`.
+        mass. Every environment reaches that same total, a heterogeneous entity whose variants start from different
+        masses included. This does not affect the mass shift set from `set_mass_shift`.
 
         Parameters
         ----------

@@ -792,8 +792,7 @@ def test_mass_accessors(show_viewer, tol):
     link.set_mass(target_mass)
     assert_allclose(link.get_mass(), target_mass, tol=tol)
 
-    # The mass shift is an offset on top of the inertial mass: the reported mass follows it while the inertial mass
-    # keeps whatever the setters gave it.
+    # The reported mass follows the shift applied on top of it, the inertial mass keeps what the setters gave it.
     mass_shift = torch.tensor((0.05, -0.1, 0.3, -0.2), dtype=gs.tc_float, device=gs.device)
     mass_before = het_obj.get_mass()
     het_obj.set_mass_shift(mass_shift, links_idx_local=[link.idx_local])
@@ -802,9 +801,13 @@ def test_mass_accessors(show_viewer, tol):
     assert_allclose(link.get_mass(), inertial_mass + mass_shift, tol=tol)
     assert_allclose(het_obj.get_mass(), mass_before + mass_shift, tol=tol)
 
-    # Non-batched links info: link mass is shared across envs, so a scalar applies uniformly and a per-env array
-    # raises. The shift stays per-env even then, and it is the mass the solver integrates: a known force applied to a
-    # free box mid-simulation accelerates each env by force / mass on top of gravity.
+    # A shift that would leave a link without a positive mass is rejected, and rejected before it lands.
+    with pytest.raises(gs.GenesisException):
+        het_obj.set_mass_shift(-inertial_mass, links_idx_local=[link.idx_local])
+    assert_allclose(link.get_mass(), inertial_mass + mass_shift, tol=tol)
+
+    # Non-batched links info: a scalar mass applies to every env and a per-env array raises, while the shift stays
+    # per-env and is what the solver integrates, so a known force accelerates each env by force / mass plus gravity.
     DT = 0.01
     GRAVITY = 9.81
     FORCE = 5.0

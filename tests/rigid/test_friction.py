@@ -417,7 +417,7 @@ def test_static_hold_unaffected_by_press_on_separate_body(show_viewer):
         scene.step()
     hold_z = held_box.get_pos()[..., 2]
 
-    press_mass = float(presser.get_mass(envs_idx=[0]))
+    press_mass = presser.get_mass(envs_idx=[0])
     presser.set_dofs_kp(PRESS_KP * press_mass, dofs_idx_local=[2])
     presser.set_dofs_kv(0.1 * PRESS_KP * press_mass, dofs_idx_local=[2])
     presser.control_dofs_position([[0.5 * PRESS_SIZE], [0.5 * PRESS_SIZE - PRESS_DEPTH]], dofs_idx_local=[2])
@@ -483,7 +483,7 @@ def test_elliptic_cone_coulomb_isotropy(sparse_solve, use_contact_island, show_v
         ),
     )
     scene.build(n_envs=N_ENVS)
-    mass = float(box.get_mass(envs_idx=[0]))
+    mass = box.get_mass(envs_idx=[0])
     normal_force = MU * mass * (-GRAVITY)
 
     yaw = 2.0 * torch.pi * torch.rand(N_ENVS, device=gs.device)
@@ -848,7 +848,7 @@ def test_elliptic_cone_push_isotropy(contact_resolution, is_box_mesh, scale, pre
     # Quoted per unit mass, the linear gains are accelerations per unit error, fixed so the pusher tracks the same
     # path at any scale; the angular ones act on the inertia, two powers of length ahead of the mass, and carry that
     # difference.
-    pusher_mass = float(pusher.get_mass(envs_idx=[0]))
+    pusher_mass = pusher.get_mass(envs_idx=[0])
     pusher.set_dofs_kp(2000.0 * pusher_mass, dofs_idx_local=[0, 1])
     pusher.set_dofs_kv(200.0 * pusher_mass, dofs_idx_local=[0, 1])
     pusher.set_dofs_kp(5000.0 * pusher_mass * scale**2, dofs_idx_local=[5])

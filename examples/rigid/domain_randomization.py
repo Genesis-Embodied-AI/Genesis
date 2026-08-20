@@ -50,8 +50,10 @@ def main():
     link.set_mass(1)
     print("diff mass", robot.get_links_inertial_mass() - ori_mass)
 
+    # Quoted as a fraction of each link's own mass, so the lightest link stays positive whatever the draw.
+    mass_ratio = -0.2 + 0.4 * torch.rand(scene.n_envs, robot.n_links, device=gs.device)
     robot.set_mass_shift(
-        mass_shift=-0.5 + torch.rand(scene.n_envs, robot.n_links),
+        mass_shift=mass_ratio * robot.get_links_mass(),
         links_idx_local=np.arange(0, robot.n_links),
     )
     robot.set_COM_shift(
