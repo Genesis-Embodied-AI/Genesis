@@ -40,7 +40,7 @@ def test_draw_debug(renderer, show_viewer):
     rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
     assert_allclose(np.std(rgb_array.reshape((-1, 3)), axis=0), 0.0, tol=gs.EPS)
 
-    scene.draw_debug_arrow(
+    arrow_obj = scene.draw_debug_arrow(
         pos=(0, 0.4, 0.1),
         vec=(0, 0.3, 0.8),
         color=(1, 0, 0),
@@ -76,10 +76,13 @@ def test_draw_debug(renderer, show_viewer):
     assert (np.std(rgb_array_flat, axis=0) > 10.0).any()
     rgb_array_prev = rgb_array_flat
 
+    # An arrow drawn for every environment at once holds one shared instance while a frame and a sphere hold one
+    # per environment, so placing all three again is what says an object keeps the instances it was drawn with.
     poses = gu.trans_to_T(np.zeros((2, 2, 3)))
     for i in range(2):
         poses[:, i] = gu.trans_quat_to_T(2.0 * (np.random.rand(2, 3) - 0.5), np.random.rand(2, 4))
-        scene.update_debug_objects([frame_obj, sphere_obj], poses)
+        arrow_pose = gu.trans_quat_to_T(2.0 * (np.random.rand(3) - 0.5), np.random.rand(4))
+        scene.update_debug_objects([frame_obj, sphere_obj, arrow_obj], [*poses, arrow_pose])
         scene.visualizer.update()
         rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
         rgb_array_flat = rgb_array.reshape((-1, 3)).astype(np.int32)
