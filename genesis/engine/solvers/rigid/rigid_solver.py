@@ -1380,6 +1380,16 @@ class RigidSolver(KinematicSolver):
         )
         self._is_forward_pos_updated = True
 
+    def invalidate_cartesian_space(self):
+        """Mark the Cartesian-space data as stale, so that the next step recomputes it.
+
+        A step skips that update when it is already current for the pose, so a change to any of its inputs - link mass
+        and inertia, and the shifts applied on top of them - only reaches the dynamics through this invalidation. The
+        composite inertia the mass matrix is assembled from is one of its by-products.
+        """
+        self._is_forward_pos_updated = False
+        self._is_forward_vel_updated = False
+
     def substep(self, f):
         # from genesis.utils.tools import create_timer
         from genesis.engine.couplers import SAPCoupler
@@ -2369,11 +2379,7 @@ class RigidSolver(KinematicSolver):
         if self.n_envs == 0:
             mass = mass[None]
         kernel_set_links_mass_shift(links_idx, envs_idx, mass, self.dyn_state, self.rigid_config)
-        # The composite inertia the mass matrix is assembled from is a by-product of the Cartesian-space update, which
-        # a step skips when it is already up to date for the current pose. Invalidating it is what carries a mass or
-        # inertia change into the dynamics of the next step instead of leaving the previous composite in place.
-        self._is_forward_pos_updated = False
-        self._is_forward_vel_updated = False
+        self.invalidate_cartesian_space()
 
     def set_links_COM_shift(self, com, links_idx=None, envs_idx=None):
         com, links_idx, envs_idx = self._sanitize_io_variables(
@@ -2382,9 +2388,7 @@ class RigidSolver(KinematicSolver):
         if self.n_envs == 0:
             com = com[None]
         kernel_set_links_COM_shift(links_idx, envs_idx, com, self.dyn_state, self.rigid_config)
-        # See 'set_links_mass_shift' for why the Cartesian-space update must be invalidated.
-        self._is_forward_pos_updated = False
-        self._is_forward_vel_updated = False
+        self.invalidate_cartesian_space()
 
     def set_links_inertial_mass(self, mass, links_idx=None, envs_idx=None):
         mass, links_idx, envs_idx = self._sanitize_io_variables(
@@ -2399,14 +2403,10 @@ class RigidSolver(KinematicSolver):
         if self.n_envs == 0 and self._options.batch_links_info:
             mass = mass[None]
         kernel_set_links_inertial_mass(links_idx, envs_idx, mass, self.dyn_info, self.rigid_config)
-        # See 'set_links_mass_shift' for why the Cartesian-space update must be invalidated.
-        self._is_forward_pos_updated = False
-        self._is_forward_vel_updated = False
+        self.invalidate_cartesian_space()
 
     def set_links_inertia(self, ratio, links_idx=None, envs_idx=None):
-        # See 'set_links_mass_shift' for why the Cartesian-space update must be invalidated.
-        self._is_forward_pos_updated = False
-        self._is_forward_vel_updated = False
+        self.invalidate_cartesian_space()
 
         if gs.use_zerocopy:
             mass_data = qd_to_torch(self.dyn_info.links.inertial_mass, transpose=True, copy=False)

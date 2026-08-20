@@ -1045,13 +1045,13 @@ class RigidLink(KinematicLink):
     @gs.assert_built
     def set_mass(self, mass: LaxPositiveFArrayType):
         """
-        Set the inertial mass of the link, scaling its inertia matrix accordingly. Any mass shift already applied stays
-        on top of it (see `RigidEntity.set_mass_shift`).
+        Set the inertial mass of the link, scaling its inertia matrix accordingly. This does not affect the mass shift
+        set from `RigidEntity.set_mass_shift`.
 
         Parameters
         ----------
         mass : float | array_like, shape (n_envs,)
-            The mass to set.
+            The mass to set in kg.
         """
         if self.is_fixed:
             gs.logger.warning("Updating the mass of a link that is fixed wrt world has no effect, skipping.")
@@ -1085,7 +1085,7 @@ class RigidLink(KinematicLink):
     @gs.assert_built
     def get_mass(self, envs_idx=None):
         """
-        Get the mass of the link in kg, ie its inertial mass plus its mass shift (see `RigidEntity.set_mass_shift`).
+        Get the mass of the link in kg, ie its inertial mass plus its mass shift.
 
         Parameters
         ----------

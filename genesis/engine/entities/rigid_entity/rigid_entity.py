@@ -3565,7 +3565,7 @@ class RigidEntity(KinematicEntity):
     @gs.assert_built
     def get_links_mass(self, links_idx_local=None, envs_idx=None):
         """
-        Get the mass of the links in kg, ie their inertial mass plus their mass shift (see `set_mass_shift`).
+        Get the mass of the links in kg, ie their inertial mass plus their mass shift.
 
         Parameters
         ----------
@@ -4440,13 +4440,12 @@ class RigidEntity(KinematicEntity):
 
     def set_mass_shift(self, mass_shift, links_idx_local=None, envs_idx=None):
         """
-        Set the mass shift of specified links, ie a per-environment offset added to their inertial mass. The mass the
-        links are simulated with, offset included, is reported by `get_links_mass` and `get_mass`.
+        Set the mass shift of specified links, ie a per-environment offset added to their inertial mass.
 
         Parameters
         ----------
         mass_shift : torch.Tensor, shape (n_envs, n_links)
-            The mass shift.
+            The mass shift in kg.
         links_idx_local : array_like
             The indices of the links to set mass shift.
         envs_idx : None | array_like, optional
@@ -4462,7 +4461,7 @@ class RigidEntity(KinematicEntity):
         Parameters
         ----------
         com_shift : torch.Tensor, shape (n_envs, n_links, 3)
-            The COM shift.
+            The COM shift in meters, expressed in the link frame.
         links_idx_local : array_like
             The indices of the links to set COM shift.
         envs_idx : None | array_like, optional
@@ -4488,12 +4487,12 @@ class RigidEntity(KinematicEntity):
     def set_mass(self, mass):
         """
         Set the total inertial mass of the entity, distributed over its links in proportion to their current inertial
-        mass. Any mass shift already applied stays on top of it (see `set_mass_shift`).
+        mass. This does not affect the mass shift set from `set_mass_shift`.
 
         Parameters
         ----------
         mass : float
-            The mass to set.
+            The mass to set in kg.
         """
         links_inertial_mass = tensor_to_array(self.get_links_inertial_mass())
         ratio = float(mass) / links_inertial_mass.sum(axis=-1)
@@ -4503,8 +4502,7 @@ class RigidEntity(KinematicEntity):
     @gs.assert_built
     def get_mass(self, envs_idx=None):
         """
-        Get the total mass of the entity in kg, ie the sum over its links of their inertial mass plus their mass shift
-        (see `set_mass_shift`).
+        Get the total mass of the entity in kg, ie the sum over its links of their inertial mass plus their mass shift.
 
         Parameters
         ----------
