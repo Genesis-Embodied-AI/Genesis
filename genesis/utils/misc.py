@@ -617,6 +617,11 @@ def indices_to_mask(
 ) -> tuple[slice | int | torch.Tensor, ...]:
     """Converts a sequence of slice-like objects into a multi-dimensional mask corresponding to their cross-product.
 
+    Out-of-bound access is not asserted at runtime: checking it would require reading the indices back from the GPU,
+    which stalls the GPU and dramatically impedes performance, in exchange for catching a mistake that should never
+    happen in production. On the contrary, an index outside the valid range selects nothing instead of raising an
+    error, and so does a range or slice counted from the end whose start lies past its stop.
+
     Args:
         keepdim (bool): Whether to keep all dimensions even if masks are integers. Defaults to True.
         to_torch (bool): Whether to force casting collections to torch.Tensor.
@@ -644,7 +649,9 @@ def indices_to_mask(
                 arg = slice(arg.start, arg.stop, arg.step)
             elif arg_type is int:
                 if keepdim:
-                    arg = slice(arg, arg + 1)
+                    # The last row has no next index to stop at, so its slice runs to the end: `slice(-1, 0)` would
+                    # name nothing at all.
+                    arg = slice(arg, arg + 1 if arg != -1 else None)
             else:  # np.ndarray, torch.tensor, list, tuple, np.int32...
                 try:
                     is_torch_, is_numpy_ = False, False
@@ -659,14 +666,18 @@ def indices_to_mask(
                     else:
                         is_scalar_ = len(arg) == 1
                     if is_scalar_:
-                        arg = slice(idx := arg.item() if is_torch_ or is_numpy_ else arg[0], idx + 1)
+                        idx = arg.item() if is_torch_ or is_numpy_ else arg[0]
+                        arg = slice(idx, idx + 1 if idx != -1 else None)
                     else:
                         if raise_if_fancy:
                             gs.raise_exception("This mask requires advanced indexing but 'raise_if_fancy=True'.")
                         if not is_torch_ and to_torch:
                             # Must convert masks to torch if not slice or int since torch will do it anyway.
                             # Note that being contiguous is not required and does not affect performance.
-                            arg = torch.tensor(arg, dtype=gs.tc_int, device=gs.device)
+                            # int64 is what torch indexes with: a narrower index is widened on every use, and the
+                            # in-place fills these masks feed take no other width. A caller that goes on to hand its
+                            # mask to a kernel pays for a second instantiation of it, this width beside the solver's.
+                            arg = torch.tensor(arg, dtype=torch.int64, device=gs.device)
                         is_tensor[i] = True
                         num_tensors += 1
                 except TypeError:
@@ -674,7 +685,7 @@ def indices_to_mask(
                     # Dealing with this fairly unusual use-case in try-except to avoid slowing down the hot path.
                     arg = int(arg)
                     if keepdim:
-                        arg = slice(arg, arg + 1)
+                        arg = slice(arg, arg + 1 if arg != -1 else None)
         mask.insert(0, arg)
 
     if num_tensors > 1:
@@ -1114,6 +1125,26 @@ def assign_indexed_tensor(
 ) -> None:
     if isinstance(tensor, np.ndarray):
         value = torch.as_tensor(value)
+    # A single value written over a selection of one axis has faster forms than advanced indexing, which stages an
+    # index tensor and a scatter that dominate a write this small: the buffer is filled whole when every axis is taken
+    # whole, a boolean mask fills through the mask itself, and a selection of rows fills through the rows.
+    elif isinstance(value, (int, float)):
+        axes = [axis for axis, index in enumerate(indices) if not (isinstance(index, slice) and index == slice(None))]
+        if not axes:
+            tensor.fill_(value)
+            return
+        if len(axes) == 1:
+            axis = axes[0]
+            index = indices[axis]
+            if isinstance(index, torch.Tensor):
+                if index.dtype == torch.bool:
+                    spread = [1] * tensor.ndim
+                    spread[axis] = -1
+                    tensor.masked_fill_(index.view(spread), value)
+                    return
+                if index.ndim == 1 and index.dtype == torch.int64:
+                    tensor.index_fill_(axis, index, value)
+                    return
     try:
         tensor[indices] = value
     except (TypeError, RuntimeError):

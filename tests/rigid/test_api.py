@@ -495,22 +495,22 @@ def test_batched_info(batch_links_info, batch_joints_info, batch_dofs_info, tol)
         assert links_invweight.shape == (2, 12, 2)
         assert_allclose(links_mass[1], INERTIA_RATIO * links_mass[0], tol=tol)
         assert_allclose(INERTIA_RATIO * links_invweight[1], links_invweight[0], tol=tol)
-        assert_allclose(gs_s.get_links_inertial_mass(envs_idx=[1]), links_mass[1], tol=gs.EPS)
-        assert_allclose(gs_s.get_links_invweight(envs_idx=[1]), links_invweight[1], tol=gs.EPS)
+        assert_allclose(gs_s.get_links_inertial_mass(envs_idx=1), links_mass[1], tol=gs.EPS)
+        assert_allclose(gs_s.get_links_invweight(envs_idx=1), links_invweight[1], tol=gs.EPS)
     else:
         assert gs_s.get_links_inertial_mass().shape == (12,)
         assert gs_s.get_links_invweight().shape == (12, 2)
         with pytest.raises(gs.GenesisException):
             gs_s.get_links_inertial_mass(envs_idx=[1])
         with pytest.raises(gs.GenesisException):
-            gs_s.get_links_invweight(envs_idx=[1])
+            gs_s.get_links_invweight(envs_idx=1)
 
     # Energy getters select environments through the dynamic state, so they accept `envs_idx` in both batching modes.
     for get_energy in (gs_s.get_total_energy, franka.get_potential_energy, franka.get_total_energy):
         energy = get_energy()
         with np.testing.assert_raises(AssertionError):
             assert_allclose(energy[0], energy[1], tol=gs.EPS)
-        assert_allclose(get_energy(envs_idx=[1]), energy[1], tol=gs.EPS)
+        assert_allclose(get_energy(envs_idx=1), energy[1], tol=gs.EPS)
 
 
 @pytest.mark.slow  # ~200s
@@ -667,7 +667,7 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
         if show_viewer:
             scene.visualizer.update()
     cube.set_pos(pos_delta[[0]] + (0.0, 0.0, 0.16), envs_idx=[0], relative=False)
-    cube.set_pos(pos_delta[[1]] + (0.0, 0.0, 0.11), envs_idx=[1], relative=False)
+    cube.set_pos(pos_delta[[1]] + (0.0, 0.0, 0.11), envs_idx=1, relative=False)
     sphere.set_pos(np.tile(pos_delta[[0]], (2, 1)) + 1.0, relative=False)
     quat_delta = np.random.rand(2, 4)
     with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
