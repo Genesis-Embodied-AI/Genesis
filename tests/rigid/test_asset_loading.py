@@ -222,7 +222,13 @@ def test_urdf_parsing(show_viewer, tol):
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_urdf_parsing_inertia_defaults(
-    undefined_inertia, implicit_inertial_origin, implicit_inertial_origin_chain, show_viewer, tol, caplog
+    undefined_inertia,
+    implicit_inertial_origin,
+    zero_inertia_urdf,
+    implicit_inertial_origin_chain,
+    show_viewer,
+    tol,
+    caplog,
 ):
     GEOM_POS = (0.0, 0.0, 0.09)
     INERTIA = (
@@ -254,6 +260,15 @@ def test_urdf_parsing_inertia_defaults(
             file=implicit_inertial_origin,
             pos=(0.0, 0.0, 0.1),
             align=False,
+        ),
+    )
+    # Left unmerged, the fixed root link keeps no inertial element of its own, which is what bounds the stated zero.
+    entity_with_zero_inertia = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=zero_inertia_urdf,
+            pos=(0.3, 0.0, 0.1),
+            align=False,
+            merge_fixed_links=False,
         ),
     )
     entity_chain_unmerged = scene.add_entity(
@@ -288,6 +303,15 @@ def test_urdf_parsing_inertia_defaults(
         tol=tol,
     )
 
+    mass_ratio = 2.5 / entity_without_inertia.base_link.inertial_mass
+    assert_allclose(entity_with_zero_inertia.base_link.inertial_pos, GEOM_POS, tol=tol)
+    assert_allclose(entity_with_zero_inertia.base_link.inertial_mass, 2.5, tol=gs.EPS)
+    assert_allclose(
+        np.linalg.eigvalsh(entity_with_zero_inertia.base_link.inertial_i),
+        np.linalg.eigvalsh(entity_without_inertia.base_link.inertial_i) * mass_ratio,
+        tol=tol,
+    )
+
     # Resolving the center of mass to the link frame can place it outside the geometry, which stays worth reporting.
     # Only the link whose geometry is offset qualifies; a geometry-derived center of mass never does.
     dubious_com_records = [record for record in caplog.records if "dubious center of mass" in record.getMessage()]
@@ -307,6 +331,7 @@ def test_urdf_parsing_inertia_defaults(
         scene.step()
     assert_allclose(entity_without_inertia.get_pos(), (-0.3, 0.0, -0.03), tol=1e-3)
     assert_allclose(entity_with_implicit_origin.get_pos(), (0.0, 0.0, -0.03), tol=1e-3)
+    assert_allclose(entity_with_zero_inertia.get_pos(), (0.3, 0.0, -0.03), tol=1e-3)
 
 
 @pytest.mark.slow  # ~200s

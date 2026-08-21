@@ -454,6 +454,18 @@ def implicit_inertial_origin():
 
 
 @pytest.fixture(scope="session")
+def zero_inertia_urdf():
+    """Generate a URDF stating a zero inertia, on a link fixed to a root link carrying no inertial element."""
+    urdf = ET.Element("robot", name="zero_inertia")
+    ET.SubElement(urdf, "link", name="world")
+    _add_sphere_link(urdf, "base_link", "0.0 0.0 0.09", mass=2.5, inertia=(0.0,) * 6)
+    joint = ET.SubElement(urdf, "joint", name="weld", type="fixed")
+    ET.SubElement(joint, "parent", link="world")
+    ET.SubElement(joint, "child", link="base_link")
+    return ET.tostring(urdf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
 def implicit_inertial_origin_chain():
     """Generate a URDF with two fixed-jointed links, each authoring an inertia whose origin is omitted."""
     urdf = ET.Element("robot", name="implicit_inertial_origin_chain")

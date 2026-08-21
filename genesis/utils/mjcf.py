@@ -229,13 +229,18 @@ def build_model(
 
             # Special treatment for URDF
             if is_urdf_file:
-                # Discard placeholder inertias that were used to avoid parsing failure
+                # Discard the 'boundmass' / 'boundinertia' placeholder, so a zero or missing inertial stays undefined.
                 for link in robot.links:
-                    if link.inertial is None:
-                        body = mj.body(link.name)
+                    inertial = link.inertial
+                    mass = (inertial.mass or 0.0) if inertial is not None else 0.0
+                    is_inertia_valid = inertial is not None and (np.diag(inertial.inertia) > 0.0).all()
+                    if mass > 0.0 and is_inertia_valid:
+                        continue
+                    body = mj.body(link.name)
+                    body.mass[:] = mass
+                    if not is_inertia_valid:
                         body.inertia[:] = 0.0
-                        body.mass[:] = 0.0
-                        body.invweight0[:] = 0.0
+                    body.invweight0[:] = 0.0
 
                 # Set default constraint solver time constant
                 mj.jnt_solref[:, 0] = MIN_TIMECONST
