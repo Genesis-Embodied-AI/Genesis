@@ -1072,6 +1072,7 @@ BENCHMARKS_FIELD = [
     ("convexify", None, None, 0, gs.cpu),
     ("nonconvex_spacecraft", None, None, 64, gs.cpu),
     ("table_bussing", None, None, 50, gs.cpu),
+    ("table_bussing", None, None, 50, gs.gpu),
 ]
 
 # Reduced subset, run on the 'ndarray' dtype only.
