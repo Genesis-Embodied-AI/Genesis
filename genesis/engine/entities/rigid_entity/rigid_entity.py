@@ -4264,10 +4264,9 @@ class RigidEntity(KinematicEntity):
         exclude_self_contact: bool
             Exclude the self collision from the returning contacts. Defaults to False.
         is_padded: bool
-            Return fixed-capacity padded tensors instead of trimming to the across-env contact count, avoiding a
-            per-step device-to-host sync. 'valid_mask' still excludes the padded slots. Best-effort hint honored
-            only on the zero-copy batched path; otherwise it is a no-op and the standard trimmed result is
-            returned ('valid_mask' still holds either way). Defaults to False.
+            Return tensors padded to a fixed capacity along the contact axis instead of trimmed to the live
+            contact count, with 'valid_mask' flagging the real contacts. This avoids a per-step device-to-host
+            synchronization; the values are otherwise identical on every backend. Defaults to False.
 
         Returns
         -------
@@ -4275,8 +4274,9 @@ class RigidEntity(KinematicEntity):
             The contact information.
         """
         contact_data = self._solver.collider.get_contacts(as_tensor=True, to_torch=True, is_padded=is_padded)
-        # Per-env live counts, present only for the padded layout.
-        n_contacts = contact_data.pop("n_contacts", None)
+        n_contacts = contact_data["n_contacts"] if is_padded else None
+        if is_padded:
+            del contact_data["n_contacts"]
 
         logical_operation = torch.logical_xor if exclude_self_contact else torch.logical_or
         if with_entity is not None and self.idx == with_entity.idx:
@@ -4303,9 +4303,12 @@ class RigidEntity(KinematicEntity):
 
         if n_contacts is not None:
             slots = torch.arange(valid_mask.shape[-1], device=valid_mask.device)
-            valid_mask = torch.logical_and(valid_mask, slots[None, :] < n_contacts[:, None])
+            if self._solver.n_envs == 0:
+                valid_mask = torch.logical_and(valid_mask, slots < n_contacts.reshape(()))
+            else:
+                valid_mask = torch.logical_and(valid_mask, slots[None, :] < n_contacts[:, None])
 
-        if self._solver.n_envs == 0:
+        if self._solver.n_envs == 0 and not is_padded:
             contact_data = {key: value[valid_mask] for key, value in contact_data.items()}
         else:
             contact_data["valid_mask"] = valid_mask
