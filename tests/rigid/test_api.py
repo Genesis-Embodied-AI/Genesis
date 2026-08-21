@@ -91,6 +91,26 @@ def test_data_accessor(n_envs, batched, tol):
             break
     else:
         assert False
+
+    # 'is_padded' returns a fixed capacity (independent of the live contact count) plus per-env 'n_contacts',
+    # with the live prefix identical to the trimmed result, for every (as_tensor, to_torch) and batching.
+    capacity = max(gs_s.collider._collider_info.max_candidate_contacts[None], 1)
+    for as_tensor in (False, True):
+        for to_torch in (False, True):
+            trimmed = gs_s.collider.get_contacts(as_tensor, to_torch, is_padded=False)
+            padded = gs_s.collider.get_contacts(as_tensor, to_torch, is_padded=True)
+            assert "n_contacts" not in trimmed
+            padded_counts = padded.pop("n_contacts")
+            assert isinstance(padded_counts, torch.Tensor if to_torch else np.ndarray)
+            assert_equal(padded_counts, gs_n_contacts)
+            for key in trimmed:
+                for i_b in range(max(n_envs, 1)):
+                    n_contacts = gs_n_contacts[i_b]
+                    pad_i = padded[key] if n_envs == 0 else padded[key][i_b]
+                    trim_i = trimmed[key] if n_envs == 0 else trimmed[key][i_b]
+                    assert len(pad_i) == capacity
+                    assert_equal(pad_i[:n_contacts], trim_i[:n_contacts])
+
     gs_s._func_forward_dynamics()
     gs_s._func_constraint_force()
 
