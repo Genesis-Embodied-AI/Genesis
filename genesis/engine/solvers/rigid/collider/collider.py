@@ -1169,7 +1169,9 @@ class Collider:
         )
 
         if padded:
-            contact_data["n_contacts"] = torch.as_tensor(n_contacts_arr, device=gs.device) if to_torch else n_contacts_arr
+            contact_data["n_contacts"] = (
+                torch.as_tensor(n_contacts_arr, device=gs.device) if to_torch else n_contacts_arr
+            )
 
         return contact_data.copy()
 
