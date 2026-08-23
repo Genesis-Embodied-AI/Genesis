@@ -838,6 +838,15 @@ def test_setters(show_viewer, tol):
 
     ghost_box.set_dofs_position(torch.zeros(ghost_box.n_dofs, device=gs.device))
     ghost_robot.set_dofs_position(torch.zeros(n_dofs, device=gs.device))
+    ghost_robot.set_dofs_position(
+        0.1,
+        dofs_idx_local=-1,
+        envs_idx=torch.tensor((False, True), dtype=torch.bool, device=gs.device),
+    )
+    assert_allclose(ghost_robot.get_vAABB()[0], ((-0.05, -0.05, -0.05), (0.15, 0.05, 0.05)), tol=tol)
+    assert_allclose(ghost_robot.get_vAABB()[1], ((-0.05, -0.05, -0.05), (0.25, 0.05, 0.05)), tol=tol)
+
+    ghost_robot.set_dofs_position(torch.zeros(n_dofs, device=gs.device))
     ghost_robot.set_dofs_position([0.1, -0.1], dofs_idx_local=-1)
     assert_allclose(ghost_robot.get_vAABB()[0], ((-0.05, -0.05, -0.05), (0.25, 0.05, 0.05)), tol=tol)
     assert_allclose(ghost_robot.get_vAABB()[1], ((-0.05, -0.05, -0.05), (0.05, 0.05, 0.05)), tol=tol)

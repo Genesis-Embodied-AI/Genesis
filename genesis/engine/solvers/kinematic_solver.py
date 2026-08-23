@@ -32,7 +32,7 @@ from .rigid.abd.accessor import (
     kernel_get_state_grad,
     kernel_get_terrain_height,
     kernel_set_dofs_force_grad,
-    kernel_set_dofs_position,
+    kernel_set_dofs_position_forward_kinematics,
     kernel_set_dofs_velocity,
     kernel_set_dofs_velocity_grad,
     kernel_set_dofs_zero_velocity,
@@ -736,7 +736,7 @@ class KinematicSolver(Solver):
             kernel_forward_kinematics(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
             # A subset refresh is globally fresh only if all untouched environments were already fresh
             self._is_forward_pos_updated = is_all_envs or self._is_forward_pos_updated
-            self._is_forward_vel_updated = False
+            self._is_forward_vel_updated = is_all_envs or self._is_forward_vel_updated
         else:
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
@@ -837,7 +837,7 @@ class KinematicSolver(Solver):
         if not skip_forward:
             kernel_forward_kinematics(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
             self._is_forward_pos_updated = is_all_envs or self._is_forward_pos_updated
-            self._is_forward_vel_updated = False
+            self._is_forward_vel_updated = is_all_envs or self._is_forward_vel_updated
         else:
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
@@ -904,7 +904,7 @@ class KinematicSolver(Solver):
         if not skip_forward:
             kernel_forward_kinematics(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
             self._is_forward_pos_updated = is_all_envs or self._is_forward_pos_updated
-            self._is_forward_vel_updated = False
+            self._is_forward_vel_updated = is_all_envs or self._is_forward_vel_updated
         else:
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
@@ -975,7 +975,7 @@ class KinematicSolver(Solver):
                 fn = kernel_forward_kinematics
             fn(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
             self._is_forward_pos_updated = is_all_envs or self._is_forward_pos_updated
-            self._is_forward_vel_updated = False
+            self._is_forward_vel_updated = is_all_envs or self._is_forward_vel_updated
         else:
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
@@ -1031,7 +1031,6 @@ class KinematicSolver(Solver):
                 kernel_set_dofs_velocity(dofs_idx, envs_idx, velocity, self.dyn_state, self.rigid_config)
 
         if not skip_forward:
-            self.update_forward_pos()
             if envs_idx.dtype == torch.bool:
                 fn = kernel_masked_forward_velocity
             else:
@@ -1065,11 +1064,9 @@ class KinematicSolver(Solver):
         )
         if self.n_envs == 0:
             position = position[None]
-        kernel_set_dofs_position(
+        kernel_set_dofs_position_forward_kinematics(
             dofs_idx, envs_idx, position, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
         )
-
-        kernel_forward_kinematics(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
         self._is_forward_pos_updated = is_all_envs or self._is_forward_pos_updated
         self._is_forward_vel_updated = False
 
@@ -1217,13 +1214,17 @@ class KinematicSolver(Solver):
             self.scene._envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
         )
         self._is_forward_pos_updated = True
-        self._is_forward_vel_updated = False
+        # kernel_forward_kinematics propagates link velocities with the pose
+        self._is_forward_vel_updated = True
 
     def update_forward_vel(self):
         """Propagate link velocities if they are not current for the pose and dof velocities."""
         if self._is_forward_vel_updated:
             return
         self.update_forward_pos()
+        # update_forward_pos may have satisfied the velocity refresh
+        if self._is_forward_vel_updated:
+            return
         kernel_forward_velocity(
             self.scene._envs_idx,
             self.dyn_state,

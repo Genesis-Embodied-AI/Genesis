@@ -68,6 +68,7 @@ def kernel_forward_kinematics(
         i_b = qd.cast(envs_idx[i_b_], qd.i32)
         func_forward_kinematics_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
         func_COM_links(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
+        func_forward_velocity_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
 
 
 @qd.kernel(fastcache=True)
@@ -82,6 +83,7 @@ def kernel_masked_forward_kinematics(
         if envs_mask[i_b]:
             func_forward_kinematics_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
             func_COM_links(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
+            func_forward_velocity_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
 
 
 @qd.kernel(fastcache=True)
