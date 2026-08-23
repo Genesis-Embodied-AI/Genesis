@@ -1,7 +1,6 @@
 import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from itertools import chain
 from bisect import bisect_right
 
 # Note the importing mujoco with env var `MUJOCO_GL=EGL` forcibly defines `PYOPENGL_PLATFORM=egl`
@@ -17,7 +16,6 @@ from genesis.ext import urdfpy
 
 from . import geom as gu
 from . import urdf as uu
-from .collision import solve_contype_conaffinity
 from .misc import get_assets_dir, redirect_libc_stderr
 
 
@@ -273,7 +271,7 @@ def parse_xml(morph, surface, rigid_options=None):
     #     gs.logger.warning("(MJCF) Tendon not supported")
 
     # Parse all geometries grouped by parent joint (or world)
-    links_g_infos = parse_geoms(mj, morph.scale, surface, morph.file)
+    links_g_infos, excluded_links_name = parse_geoms(mj, morph.scale, surface, morph.file)
 
     # Parse all bodies (links and joints)
     l_infos, links_j_infos = parse_links(mj, morph.scale)
@@ -305,7 +303,7 @@ def parse_xml(morph, surface, rigid_options=None):
                 "'enable_rolling_friction' to honor the parsed coefficients."
             )
 
-    return l_infos, links_j_infos, links_g_infos, eqs_info
+    return l_infos, links_j_infos, links_g_infos, eqs_info, excluded_links_name
 
 
 def parse_link(mj, i_l, scale):
@@ -770,55 +768,18 @@ def parse_geoms(mj, scale, surface, xml_path):
         link_idx = mj.geom_bodyid[i_g]
         links_g_info[link_idx].append(g_info)
 
-    # Update contype and conaffinity to take into account any additional list of explicitly excluded collision pairs
-    if mj.nexclude:
-        # Extract the list of collision geometries
-        cg_infos = []
-        for g_info in chain.from_iterable(links_g_info):
-            if g_info["contype"] or g_info["conaffinity"]:
-                cg_infos.append(g_info)
-
-        # Compute the original of all the excluded collision pairs
-        invalid_set = set()
-        for i, g_info_1 in enumerate(cg_infos):
-            for j, g_info_2 in enumerate(cg_infos):
-                if i >= j:
-                    continue
-                if g_info_1["contype"] & g_info_2["conaffinity"]:
-                    continue
-                if g_info_2["contype"] & g_info_1["conaffinity"]:
-                    continue
-                invalid_set.add(frozenset((i, j)))
-
-        # Append all the explicitly excluded collision pairs
-        for exclude_signature in mj.exclude_signature:
-            body_1 = (exclude_signature >> 16) & 0xFFFF
-            body_2 = exclude_signature & 0xFFFF
-
-            geoms_1, geoms_2 = [], []
-            for body_idx, geoms_idx in ((body_1, geoms_1), (body_2, geoms_2)):
-                for g_info in links_g_info[body_idx]:
-                    for geom_idx, cg_info in enumerate(cg_infos):
-                        if g_info is cg_info:
-                            geoms_idx.append(geom_idx)
-                            break
-
-            for geom_1 in geoms_1:
-                for geom_2 in geoms_2:
-                    invalid_set.add(frozenset((geom_1, geom_2)))
-
-        # Compute updated contype and conaffinity from the complete list of invalid collision pairs
-        masks = solve_contype_conaffinity(len(cg_infos), invalid_set)
-        if masks is None:
-            gs.logger.warning(
-                "Compatible collision geometries cannot be described using bitmasks 'contype' and 'conaffinity'. "
-                "Using default values..."
-            )
-            for g_info in cg_infos:
-                g_info["contype"], g_info["conaffinity"] = 1, 1
-        else:
-            for g_info, (contype, conaffinity) in zip(cg_infos, masks):
-                g_info["contype"], g_info["conaffinity"] = contype, conaffinity
+    # MJCF states forbidden pairs two ways: the contype / conaffinity masks, and '<contact><exclude>'. Carry the
+    # second one out as link-name pairs and leave the masks as the file wrote them, so they keep meaning the same
+    # thing in every entity. The collider applies the pairs in '_compute_collision_pair_idx'.
+    excluded_links_name: list[tuple[str, str]] = []
+    for exclude_signature in mj.exclude_signature:
+        idx_1 = (exclude_signature >> 16) & 0xFFFF
+        idx_2 = exclude_signature & 0xFFFF
+        name_1 = mujoco.mj_id2name(mj, mujoco.mjtObj.mjOBJ_BODY, idx_1)
+        name_2 = mujoco.mj_id2name(mj, mujoco.mjtObj.mjOBJ_BODY, idx_2)
+        if not name_1 or not name_2:
+            gs.raise_exception(f"(MJCF) '<contact><exclude>' names an unnamed link (indices {idx_1}, {idx_2}).")
+        excluded_links_name.append((name_1, name_2))
 
     # Inform the user that collision geometries are not displayed by default
     if is_any_col and surface.vis_mode != "collision":
@@ -847,7 +808,7 @@ def parse_geoms(mj, scale, surface, xml_path):
                 g_info = {**g_info, "vmesh": vmesh, "contype": 0, "conaffinity": 0}
                 link_g_info.append(g_info)
 
-    return links_g_info
+    return links_g_info, excluded_links_name
 
 
 def parse_equalities(mj, scale):

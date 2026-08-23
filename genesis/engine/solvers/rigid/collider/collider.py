@@ -412,12 +412,21 @@ class Collider:
         if not self._solver._enable_self_collision:
             valid &= ~same_root
 
-        # Weld constraint filtering
-        if weld_pairs:
+        # Link pairs the model forbids outright: welded together, or named by an MJCF '<contact><exclude>'. Both are
+        # stated per link rather than per geom, so both are filtered here instead of through the masks tested above,
+        # which stay the ones the model file wrote (see 'excluded_links_name' in genesis/utils/mjcf.py).
+        forbidden_link_pairs = set(weld_pairs)
+        for entity in self._solver.entities:
+            for name_1, name_2 in entity.excluded_links_name:
+                idx_1, idx_2 = entity.get_link(name=name_1).idx, entity.get_link(name=name_2).idx
+                forbidden_link_pairs.add((min(idx_1, idx_2), max(idx_1, idx_2)))
+        if forbidden_link_pairs:
             link_min = np.minimum(link_a, link_b)
             link_max = np.maximum(link_a, link_b)
-            is_weld = np.array([(link_min[i], link_max[i]) in weld_pairs for i in range(len(row))], dtype=bool)
-            valid &= ~is_weld
+            is_forbidden = np.array(
+                [(link_min[i], link_max[i]) in forbidden_link_pairs for i in range(len(row))], dtype=bool
+            )
+            valid &= ~is_forbidden
 
         # --- Self-collision: adjacent and neutral overlap checks (Python loop, only same-root pairs) ---
         # These checks only apply when self_collision is enabled and the pair passed all vectorized filters

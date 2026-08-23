@@ -1407,3 +1407,115 @@ def test_neutral_self_collision_masks_across_merged_entities(merged_overlapping_
     palm_geom = hand.get_link("palm").geoms[0].idx
     assert_equal(collision_pair_idx[a2_geom, palm_geom], -1)
     assert_equal(collision_pair_idx[palm_geom, a2_geom], -1)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_mjcf_authored_masks_and_contact_exclude(n_envs, show_viewer):
+    # An MJCF states forbidden collision pairs two ways, and the two are independent: the per-geom contype /
+    # conaffinity masks, and '<contact><exclude>'. The masks have to survive import unchanged, because a mask is
+    # compared against the masks of every other entity in the scene and only the model file knows what its bits
+    # mean; the exclusions have to be honored without touching them. Both probes are paired with a control so a
+    # filter that blocks everything fails: 'lander' beside 'floater' on the masks, 'armC' beside 'armB' on the
+    # exclusion. Gravity is off and every sphere starts overlapping what it is meant to touch, so the contacts are
+    # geometry rather than a settling transient.
+    GROUND_MASK = 1
+    PROBES = (
+        ("lander", "0.0 -0.3 0.05", "1", "1"),
+        ("floater", "0.0 0.3 0.05", "2", "2"),
+        ("armA", "0.5 0.0 1.0", "1", "1"),
+        ("armB", "0.62 0.0 1.0", "1", "1"),
+        ("armC", "0.38 0.0 1.0", "1", "1"),
+    )
+
+    mjcf = ET.Element("mujoco", model="exclude_probe")
+    ET.SubElement(mjcf, "compiler", angle="radian", autolimits="true")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    # A pair of geoms both fixed with respect to the world is dropped before any mask is read, so the probes hang
+    # off a free root.
+    carrier = ET.SubElement(worldbody, "body", name="carrier", pos="0.0 0.0 0.0")
+    ET.SubElement(carrier, "freejoint", name="carrier_free")
+    ET.SubElement(
+        carrier,
+        "geom",
+        name="carrier_geom",
+        type="sphere",
+        size="0.05",
+        pos="0.0 0.0 1.0",
+        contype="1",
+        conaffinity="1",
+    )
+    for name, pos, contype, conaffinity in PROBES:
+        # One link per probe: a jointless body is welded into its parent and stops being its own link, which would
+        # leave the exclusion naming one link twice, and a contact can only be attributed by the link it sits on.
+        body = ET.SubElement(carrier, "body", name=name, pos=pos)
+        ET.SubElement(body, "joint", name=f"{name}_hinge", type="hinge", axis="0.0 0.0 1.0", range="0.0 0.0")
+        ET.SubElement(
+            body,
+            "geom",
+            name=f"{name}_geom",
+            type="sphere",
+            size="0.1",
+            contype=contype,
+            conaffinity=conaffinity,
+        )
+    ET.SubElement(ET.SubElement(mjcf, "contact"), "exclude", body1="armA", body2="armB")
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_self_collision=True,
+            # The arm probes overlap at qpos0 on purpose, which the collider otherwise drops as a
+            # convex-decomposition artifact.
+            enable_neutral_collision=True,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.6, -1.6, 1.2),
+            camera_lookat=(0.3, 0.0, 0.5),
+            camera_fov=40,
+        ),
+        show_viewer=show_viewer,
+    )
+    # A primitive's masks default to 0xFFFF, which shares a bit with every probe and would make the mask checks
+    # vacuous. 1 / 1 is what a MuJoCo ground carries.
+    plane = scene.add_entity(
+        gs.morphs.Plane(
+            contype=GROUND_MASK,
+            conaffinity=GROUND_MASK,
+        )
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(
+            file=ET.tostring(mjcf, encoding="unicode"),
+        )
+    )
+    scene.build(n_envs=n_envs)
+
+    for name, _, contype, conaffinity in PROBES:
+        for geom in robot.get_link(name=name).geoms:
+            assert_equal((geom.contype, geom.conaffinity), (int(contype), int(conaffinity)))
+
+    for _ in range(3):
+        scene.step()
+
+    contacts = scene.rigid_solver.collider.get_contacts(as_tensor=True, to_torch=False)
+    links_idx = np.array([geom.link.idx for geom in scene.rigid_solver.geoms])
+    pairs = np.stack(
+        [
+            np.minimum(links_idx[np.atleast_2d(contacts["geom_a"])], links_idx[np.atleast_2d(contacts["geom_b"])]),
+            np.maximum(links_idx[np.atleast_2d(contacts["geom_a"])], links_idx[np.atleast_2d(contacts["geom_b"])]),
+        ],
+        axis=-1,
+    )
+    ground_idx = plane.base_link.idx
+
+    def is_touching(name_1, idx_2):
+        idx_1 = robot.get_link(name=name_1).idx
+        return (pairs == (min(idx_1, idx_2), max(idx_1, idx_2))).all(axis=-1).any(axis=-1)
+
+    assert is_touching("lander", ground_idx).all()
+    assert not is_touching("floater", ground_idx).any()
+    assert not is_touching("armA", robot.get_link(name="armB").idx).any()
+    assert is_touching("armA", robot.get_link(name="armC").idx).all()

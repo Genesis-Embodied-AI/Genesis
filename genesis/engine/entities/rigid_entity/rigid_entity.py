@@ -160,6 +160,9 @@ class KinematicEntity(Entity):
         self.terrain_scale: np.ndarray | None = None
         self._terrain_height_field: torch.Tensor | None = None
 
+        # Set before '_load_model' so a morph whose parser produces none still answers.
+        self._excluded_links_name: list[tuple[str, str]] = []
+
         self._load_model()
 
         # Initialize target variables and checkpoint
@@ -635,7 +638,10 @@ class KinematicEntity(Entity):
         # initialized undetermined physics parameters.
         if isinstance(morph, gs.morphs.MJCF):
             # Mujoco's unified MJCF+URDF parser systematically for MJCF files
-            l_infos, links_j_infos, links_g_infos, eqs_info = mju.parse_xml(morph, surface, self._solver._options)
+            l_infos, links_j_infos, links_g_infos, eqs_info, excluded_links_name = mju.parse_xml(
+                morph, surface, self._solver._options
+            )
+            self._excluded_links_name = excluded_links_name
         elif isinstance(morph, (gs.morphs.URDF, gs.morphs.Drone)):
             # Custom "legacy" URDF parser for loading geometries (visual and collision) and equality constraints.
             # This is necessary because Mujoco cannot parse visual geometries (meshes) reliably for URDF.
@@ -646,7 +652,7 @@ class KinematicEntity(Entity):
             try:
                 # Mujoco's unified MJCF+URDF parser for URDF files.
                 # Note that Mujoco URDF parser completely ignores equality constraints.
-                l_infos_mj, links_j_infos_mj, links_g_infos_mj, _ = mju.parse_xml(morph_, surface)
+                l_infos_mj, links_j_infos_mj, links_g_infos_mj, _, _ = mju.parse_xml(morph_, surface)
 
                 # Unset link inertial properties that are actually undefined to force recomputation by genesis
                 if not morph._enable_mujoco_compatibility:
@@ -3056,11 +3062,12 @@ class RigidEntity(KinematicEntity):
 
     def _load_model(self):
         self._equalities = gs.List()
-        # MJCF and USD express in-model collision filtering (MJCF '<contact><exclude>', USD CollisionGroup /
-        # FilteredPairsAPI) through synthesized contype/conaffinity bitmasks. Those masks are only consistent within
-        # the entity: applied across entities, they would spuriously disable collision against geoms whose default
-        # masks happen not to overlap (e.g. the ground plane).
-        self._is_local_collision_mask = isinstance(self._morph, (gs.morphs.MJCF, gs.morphs.USD))
+        # USD expresses in-model collision filtering (CollisionGroup / FilteredPairsAPI) through synthesized
+        # contype/conaffinity bitmasks, which are only consistent within the entity they were solved over: applied
+        # across entities they would spuriously disable collision against geoms whose masks happen not to overlap
+        # (e.g. the ground plane). MJCF masks are the ones the model file wrote, so they mean the same thing
+        # everywhere; its own '<contact><exclude>' travels separately as 'excluded_links_name'.
+        self._is_local_collision_mask = isinstance(self._morph, gs.morphs.USD)
 
         super()._load_model()
 
@@ -4628,3 +4635,8 @@ class RigidEntity(KinematicEntity):
     def is_local_collision_mask(self):
         """Whether the contype and conaffinity bitmasks of this entity only applies to self-collision."""
         return self._is_local_collision_mask
+
+    @property
+    def excluded_links_name(self):
+        """Link-name pairs that must never collide, as stated by an MJCF '<contact><exclude>'."""
+        return self._excluded_links_name
