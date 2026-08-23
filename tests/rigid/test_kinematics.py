@@ -90,6 +90,23 @@ def test_link_velocity(gs_sim, tol):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("model_name", ["two_aligned_hinges"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+def test_rigid_links_ang_respects_skip_forward(gs_sim, tol):
+    (robot,) = gs_sim.entities
+
+    robot.set_dofs_velocity([0.3, -0.2])
+    links_pos = robot.get_links_pos().clone()
+    links_ang = robot.get_links_ang().clone()
+
+    robot.set_qpos([0.7, -0.4], skip_forward=True)
+
+    assert_allclose(robot.get_links_ang(), links_ang, tol=tol)
+    assert_allclose(robot.get_links_pos(), links_pos, tol=tol)
+
+
+@pytest.mark.required
 @pytest.mark.merge_fixed_links(False)
 @pytest.mark.parametrize("model_name", ["pendulum"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])

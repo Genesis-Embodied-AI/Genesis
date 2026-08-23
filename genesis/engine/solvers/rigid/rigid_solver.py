@@ -2919,6 +2919,11 @@ class RigidSolver(KinematicSolver):
         kernel_get_links_vel(links_idx, envs_idx, tensor, self.dyn_state, self.rigid_config, ref_frame)
         return _tensor
 
+    # Rigid stepping owns link-velocity propagation, so this getter reads its state directly
+    def get_links_ang(self, links_idx=None, envs_idx=None):
+        tensor = qd_to_torch(self.dyn_state.links.cd_ang, envs_idx, links_idx, transpose=True, copy=True)
+        return tensor[0] if self.n_envs == 0 else tensor
+
     def get_links_acc(self, links_idx=None, envs_idx=None):
         _tensor, links_idx, envs_idx = self._sanitize_io_variables(
             None, links_idx, self.n_links, "links_idx", envs_idx, (3,)
