@@ -342,7 +342,11 @@ def _build_multi_pendulum(n, joint_damping, joint_friction):
         ET.SubElement(joint, "parent", link=parent_link)
         ET.SubElement(joint, "child", link=f"PendulumArm_{i}")
         ET.SubElement(joint, "limit", effort=str(100.0 * (n - i)), velocity="30.0")
-        ET.SubElement(joint, "dynamics", damping=str(joint_damping), friction=str(joint_friction))
+        dynamics = ET.SubElement(joint, "dynamics")
+        if joint_damping is not None:
+            dynamics.set("damping", str(joint_damping))
+        if joint_friction is not None:
+            dynamics.set("friction", str(joint_friction))
 
         # Arm link
         arm = ET.SubElement(urdf, "link", name=f"PendulumArm_{i}")
@@ -409,6 +413,27 @@ def _add_sphere_link(urdf, link_name, geom_pos, mass=None, inertia=None):
         geom_prop = ET.SubElement(link, tag)
         ET.SubElement(geom_prop, "origin", xyz=geom_pos, rpy="0.0 0.0 0.0")
         ET.SubElement(ET.SubElement(geom_prop, "geometry"), "sphere", radius="0.06")
+
+
+@pytest.fixture
+def joint_with_partial_dynamics(joint_damping, joint_friction):
+    # Inertia is deliberately left undefined: recomputing it from geometry is the path along which an unset
+    # <dynamics> attribute reaches the solver instead of being replaced beforehand.
+    urdf = ET.Element("robot", name="joint_with_partial_dynamics")
+    _add_sphere_link(urdf, "base_link", "0.0 0.0 0.0")
+    _add_sphere_link(urdf, "PendulumArm_0", "0.0 0.0 0.09")
+    joint = ET.SubElement(urdf, "joint", name="PendulumJoint_0", type="continuous")
+    ET.SubElement(joint, "origin", xyz="0.0 0.0 0.0", rpy="0.0 0.0 0.0")
+    ET.SubElement(joint, "axis", xyz="1 0 0")
+    ET.SubElement(joint, "parent", link="base_link")
+    ET.SubElement(joint, "child", link="PendulumArm_0")
+    ET.SubElement(joint, "limit", effort="100.0", velocity="30.0")
+    dynamics = ET.SubElement(joint, "dynamics")
+    if joint_damping is not None:
+        dynamics.set("damping", str(joint_damping))
+    if joint_friction is not None:
+        dynamics.set("friction", str(joint_friction))
+    return urdf
 
 
 @pytest.fixture(scope="session")

@@ -373,7 +373,10 @@ def parse_urdf(morph, surface):
 
         joint_friction, joint_damping = 0.0, 0.0
         if joint.dynamics is not None:
-            joint_friction, joint_damping = joint.dynamics.friction, joint.dynamics.damping
+            if joint.dynamics.friction is not None:
+                joint_friction = joint.dynamics.friction
+            if joint.dynamics.damping is not None:
+                joint_damping = joint.dynamics.damping
         j_info["dofs_frictionloss"] = np.full(j_info["n_dofs"], joint_friction)
         j_info["dofs_damping"] = np.full(j_info["n_dofs"], joint_damping)
         j_info["dofs_armature"] = np.zeros(j_info["n_dofs"])
