@@ -132,7 +132,7 @@ class CSVFileWriter(BaseFileWriter):
                 if isinstance(data, dict):
                     for key, val in data.items():
                         if hasattr(val, "__len__"):
-                            header.extend([f"{key}_{i}" for i in range(len(val))])
+                            header.extend([f"{key}_{i}" for i in range(len(self._sanitize_to_list(val)))])
                         else:
                             header.append(key)
                 else:
