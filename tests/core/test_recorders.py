@@ -218,6 +218,12 @@ def test_file_writers(tmp_path):
     csv_writer = gs.recorders.CSVFile(filename=csv_file, header=("in_contact",))
     contact_sensor.start_recording(csv_writer)
 
+    csv_array_file = tmp_path / "array_data.csv"
+    scene.start_recording(
+        data_func=lambda: {"batch": np.arange(6).reshape(2, 3)},
+        rec_options=gs.recorders.CSVFile(filename=csv_array_file),
+    )
+
     npz_file = tmp_path / "scene_data.npz"
     scene.start_recording(
         data_func=lambda: {"box_pos": box.get_pos(), "dummy": 1},
@@ -239,6 +245,14 @@ def test_file_writers(tmp_path):
         assert len(rows) == STEPS + 1  # header + data rows
         assert rows[1][1] in ("False", "0")  # not in contact initially
         assert rows[-1][1] in ("True", "1")  # in contact after falling
+
+    assert csv_array_file.exists()
+    with open(csv_array_file, "r") as f:
+        reader = csv.reader(f)
+        rows = list(reader)
+
+        assert rows[0] == ["timestamp", "batch_0", "batch_1", "batch_2", "batch_3", "batch_4", "batch_5"]
+        assert rows[1][1:] == ["0", "1", "2", "3", "4", "5"]
 
     assert npz_file.exists()
     data = np.load(npz_file)
