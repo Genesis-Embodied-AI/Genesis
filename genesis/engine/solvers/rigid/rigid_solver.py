@@ -1379,6 +1379,8 @@ class RigidSolver(KinematicSolver):
             self.scene._envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
         )
         self._is_forward_pos_updated = True
+        # kernel_forward_kinematics_links_geoms propagates link velocities with the pose
+        self._is_forward_vel_updated = True
 
     def substep(self, f):
         # from genesis.utils.tools import create_timer

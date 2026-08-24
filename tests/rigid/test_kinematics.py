@@ -6,8 +6,8 @@ import pytest
 import torch
 
 import genesis as gs
-from genesis.engine.states.solvers import KinematicSolverState
 import genesis.utils.geom as gu
+from genesis.engine.states.solvers import KinematicSolverState
 from genesis.utils.misc import tensor_to_array
 
 from ..utils.assertions import assert_allclose, assert_equal
