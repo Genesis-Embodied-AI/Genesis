@@ -858,18 +858,6 @@ def kernel_set_dofs_zero_velocity(
 
 
 @qd.func
-def func_set_dof_position(
-    i_d_,
-    i_b_,
-    dofs_idx: qd.types.ndarray(),
-    envs_idx: qd.types.ndarray(),
-    position: qd.types.ndarray(),
-    dyn_state: array_class.DynState,
-):
-    dyn_state.dofs.pos[dofs_idx[i_d_], envs_idx[i_b_]] = position[i_b_, i_d_]
-
-
-@qd.func
 def func_sync_dofs_position_to_qpos(
     i_e,
     i_b,
@@ -942,7 +930,7 @@ def kernel_set_dofs_position(
 
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_d_, i_b_ in qd.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
-        func_set_dof_position(i_d_, i_b_, dofs_idx, envs_idx, position, dyn_state)
+        dyn_state.dofs.pos[dofs_idx[i_d_], envs_idx[i_b_]] = position[i_b_, i_d_]
 
     # Note that qpos must be updated, as dofs_state.pos is not used for actual IK.
     # TODO: Make this more efficient by only taking care of releavant qs/dofs.
@@ -962,12 +950,11 @@ def kernel_set_dofs_position_forward_kinematics(
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
-    """Set DOF positions and refresh link poses/COMs in one kinematic-only kernel call."""
     n_entities = dyn_info.entities.link_start.shape[0]
 
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_d_, i_b_ in qd.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
-        func_set_dof_position(i_d_, i_b_, dofs_idx, envs_idx, position, dyn_state)
+        dyn_state.dofs.pos[dofs_idx[i_d_], envs_idx[i_b_]] = position[i_b_, i_d_]
 
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_e, i_b_ in qd.ndrange(n_entities, envs_idx.shape[0]):

@@ -6,8 +6,8 @@ import pytest
 import torch
 
 import genesis as gs
-import genesis.utils.geom as gu
 from genesis.engine.states.solvers import KinematicSolverState
+import genesis.utils.geom as gu
 from genesis.utils.misc import tensor_to_array
 
 from ..utils.assertions import assert_allclose, assert_equal
@@ -88,22 +88,22 @@ def test_link_velocity(gs_sim, tol):
     )
     assert_allclose(civel_1, civel_1_, tol=tol)
 
+    gs_robot.set_dofs_velocity([0.3, -0.2])
+    links_pos = gs_robot.get_links_pos().clone()
+    links_ang = gs_robot.get_links_ang().clone()
+    gs_robot.set_qpos([0.7, -0.4], skip_forward=True)
+    assert_allclose(gs_robot.get_links_ang(), links_ang, tol=tol)
+    assert_allclose(gs_robot.get_links_pos(), links_pos, tol=tol)
 
-@pytest.mark.required
-@pytest.mark.parametrize("model_name", ["two_aligned_hinges"])
-@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
-@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
-def test_rigid_links_ang_respects_skip_forward(gs_sim, tol):
-    (robot,) = gs_sim.entities
-
-    robot.set_dofs_velocity([0.3, -0.2])
-    links_pos = robot.get_links_pos().clone()
-    links_ang = robot.get_links_ang().clone()
-
-    robot.set_qpos([0.7, -0.4], skip_forward=True)
-
-    assert_allclose(robot.get_links_ang(), links_ang, tol=tol)
-    assert_allclose(robot.get_links_pos(), links_pos, tol=tol)
+    gs_robot.set_dofs_velocity([0.3, -0.2])
+    deferred_links_pos = gs_robot.get_links_pos().clone()
+    deferred_links_vel = gs_robot.get_links_vel().clone()
+    deferred_links_ang = gs_robot.get_links_ang().clone()
+    gs_robot.set_qpos([0.7, -0.4])
+    gs_robot.set_dofs_velocity([0.3, -0.2])
+    assert_allclose(deferred_links_pos, gs_robot.get_links_pos(), tol=tol)
+    assert_allclose(deferred_links_vel, gs_robot.get_links_vel(), tol=tol)
+    assert_allclose(deferred_links_ang, gs_robot.get_links_ang(), tol=tol)
 
 
 @pytest.mark.required
@@ -890,6 +890,17 @@ def test_setters(show_viewer, tol):
     links_vel = ghost_robot.get_links_vel()
     ghost_robot.set_dofs_velocity(DOFS_VELOCITY)
     assert_allclose(links_vel, ghost_robot.get_links_vel(), tol=tol)
+
+    qpos_deferred = QPOS.flip(0)
+    ghost_robot.set_qpos(QPOS)
+    ghost_robot.set_qpos(qpos_deferred, skip_forward=True)
+    ghost_robot.set_dofs_velocity(DOFS_VELOCITY)
+    deferred_links_vel = ghost_robot.get_links_vel()
+    deferred_links_ang = ghost_robot.get_links_ang()
+    ghost_robot.set_qpos(qpos_deferred)
+    ghost_robot.set_dofs_velocity(DOFS_VELOCITY)
+    assert_allclose(deferred_links_vel, ghost_robot.get_links_vel(), tol=tol)
+    assert_allclose(deferred_links_ang, ghost_robot.get_links_ang(), tol=tol)
 
     ENVS_MASK = torch.tensor((True, False), dtype=torch.bool, device=gs.device)
     qpos_env_1 = ghost_robot.get_qpos(envs_idx=[1])

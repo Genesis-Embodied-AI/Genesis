@@ -1031,12 +1031,17 @@ class KinematicSolver(Solver):
                 kernel_set_dofs_velocity(dofs_idx, envs_idx, velocity, self.dyn_state, self.rigid_config)
 
         if not skip_forward:
-            if envs_idx.dtype == torch.bool:
-                fn = kernel_masked_forward_velocity
+            if not self._is_forward_pos_updated:
+                # Let subclasses decide whether their pose refresh also updates velocities
+                self._is_forward_vel_updated = False
+                self.update_forward_vel()
             else:
-                fn = kernel_forward_velocity
-            fn(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, is_backward=False)
-            self._is_forward_vel_updated = is_all_envs or self._is_forward_vel_updated
+                if envs_idx.dtype == torch.bool:
+                    fn = kernel_masked_forward_velocity
+                else:
+                    fn = kernel_forward_velocity
+                fn(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, is_backward=False)
+                self._is_forward_vel_updated = is_all_envs or self._is_forward_vel_updated
         else:
             self._is_forward_vel_updated = False
 
