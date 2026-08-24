@@ -1007,12 +1007,6 @@ def anymal_random(solver, n_envs, gjk):
 
 
 @pytest.fixture
-def anymal_uniform_kinematic(solver, n_envs, gjk):
-    _, step_fn, meta = make_anymal(n_envs, solver=solver, gjk=gjk, control="uniform", with_kinematic=True)
-    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
-
-
-@pytest.fixture
 def g1_fall(solver, n_envs, gjk):
     _, step_fn, meta = make_g1_fall(n_envs, solver=solver, gjk=gjk)
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
@@ -1070,7 +1064,6 @@ def table_bussing(solver, n_envs, gjk):
 BENCHMARKS_FIELD = [
     ("go2", None, None, 4096, gs.gpu),
     ("anymal_random", None, None, 20000, gs.gpu),
-    ("anymal_uniform_kinematic", None, None, 20000, gs.gpu),
     ("g1_fall", None, None, 4096, gs.gpu),
     ("g1_fall_accessors", None, None, 4096, gs.gpu),
     ("double_smplx", None, None, 4096, gs.gpu),
