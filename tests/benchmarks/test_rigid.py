@@ -323,6 +323,37 @@ def make_anymal(n_envs, solver=None, gjk=None, control=None, with_kinematic=Fals
     return scene, step, SceneMeta(compile_time=compile_time)
 
 
+def make_anymal_kinematic(n_envs, is_velocity_requested=False, **scene_kwargs):
+    scene = gs.Scene(**{"show_viewer": False, "show_FPS": False, **scene_kwargs})
+
+    robot = scene.add_entity(
+        gs.morphs.URDF(
+            file="urdf/anymal_c/urdf/anymal_c.urdf",
+            pos=(0, 0, 0.8),
+        ),
+        material=gs.materials.Kinematic(),
+    )
+    time_start = time.time()
+    scene.build(n_envs=n_envs)
+    compile_time = time.time() - time_start
+
+    motors_dof_idx = slice(6, None)
+    dofs_position = torch.linspace(
+        start=-0.05,
+        end=0.05,
+        steps=robot.n_dofs - 6,
+        dtype=gs.tc_float,
+        device=gs.device,
+    )
+
+    def step():
+        robot.set_dofs_position(dofs_position, motors_dof_idx)
+        if is_velocity_requested:
+            robot.get_links_vel()
+
+    return scene, step, SceneMeta(compile_time=compile_time, step_dt=0.0)
+
+
 def make_g1_fall(n_envs, solver=None, gjk=None, accessors=False, **scene_kwargs):
     step_dt = 0.005
 
@@ -1007,8 +1038,14 @@ def anymal_random(solver, n_envs, gjk):
 
 
 @pytest.fixture
-def anymal_uniform_kinematic(solver, n_envs, gjk):
-    _, step_fn, meta = make_anymal(n_envs, solver=solver, gjk=gjk, control="uniform", with_kinematic=True)
+def anymal_kinematic_position(n_envs):
+    _, step_fn, meta = make_anymal_kinematic(n_envs)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
+def anymal_kinematic_position_velocity(n_envs):
+    _, step_fn, meta = make_anymal_kinematic(n_envs, is_velocity_requested=True)
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
@@ -1070,7 +1107,8 @@ def table_bussing(solver, n_envs, gjk):
 BENCHMARKS_FIELD = [
     ("go2", None, None, 4096, gs.gpu),
     ("anymal_random", None, None, 20000, gs.gpu),
-    ("anymal_uniform_kinematic", None, None, 20000, gs.gpu),
+    ("anymal_kinematic_position", None, None, 20000, gs.gpu),
+    ("anymal_kinematic_position_velocity", None, None, 20000, gs.gpu),
     ("g1_fall", None, None, 4096, gs.gpu),
     ("g1_fall_accessors", None, None, 4096, gs.gpu),
     ("double_smplx", None, None, 4096, gs.gpu),
