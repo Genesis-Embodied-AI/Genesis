@@ -400,12 +400,14 @@ def double_pendulum():
     return _build_multi_pendulum(n=2, joint_damping=0.0, joint_friction=0.0)
 
 
-def _add_sphere_link(urdf, link_name, geom_pos, mass=None, inertia=None):
+def _add_sphere_link(urdf, link_name, geom_pos, mass=None, inertia=None, inertial_pos=None):
     """Append a link carrying a single sphere geometry offset by 'geom_pos' from the link frame, optionally authoring
-    an inertial element whose origin is left omitted."""
+    an inertial element, whose origin is left omitted unless 'inertial_pos' is given."""
     link = ET.SubElement(urdf, "link", name=link_name)
     if mass is not None:
         inertial = ET.SubElement(link, "inertial")
+        if inertial_pos is not None:
+            ET.SubElement(inertial, "origin", xyz=inertial_pos, rpy="0.0 0.0 0.0")
         ET.SubElement(inertial, "mass", value=str(mass))
         ixx, ixy, ixz, iyy, iyz, izz = (str(value) for value in inertia)
         ET.SubElement(inertial, "inertia", ixx=ixx, ixy=ixy, ixz=ixz, iyy=iyy, iyz=iyz, izz=izz)
@@ -455,13 +457,28 @@ def implicit_inertial_origin():
 
 @pytest.fixture(scope="session")
 def zero_inertia_urdf():
-    """Generate a URDF stating a zero inertia, on a link fixed to a root link carrying no inertial element."""
+    """Generate a URDF stating a zero inertia next to an authored center of mass, on a link fixed to a root link
+    carrying no inertial element."""
     urdf = ET.Element("robot", name="zero_inertia")
     ET.SubElement(urdf, "link", name="world")
-    _add_sphere_link(urdf, "base_link", "0.0 0.0 0.09", mass=2.5, inertia=(0.0,) * 6)
+    _add_sphere_link(urdf, "base_link", "0.0 0.0 0.09", mass=2.5, inertia=(0.0,) * 6, inertial_pos="0.0 0.0 0.11")
     joint = ET.SubElement(urdf, "joint", name="weld", type="fixed")
     ET.SubElement(joint, "parent", link="world")
     ET.SubElement(joint, "child", link="base_link")
+    return ET.tostring(urdf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
+def zero_inertia_fixed_child_urdf():
+    """Generate a URDF stating a zero inertia on a fixed child far lighter than 'MASS_EPS'. The non-identity joint
+    origin keeps the root from being dropped, so the child stays a fixed-jointed link."""
+    urdf = ET.Element("robot", name="zero_inertia_fixed_child")
+    ET.SubElement(urdf, "link", name="base_link")
+    _add_sphere_link(urdf, "tip_link", "0.0 0.0 0.0", mass=1e-5, inertia=(0.0,) * 6)
+    joint = ET.SubElement(urdf, "joint", name="weld", type="fixed")
+    ET.SubElement(joint, "parent", link="base_link")
+    ET.SubElement(joint, "child", link="tip_link")
+    ET.SubElement(joint, "origin", xyz="0.0 0.0 0.3", rpy="0.0 0.0 0.0")
     return ET.tostring(urdf, encoding="unicode")
 
 

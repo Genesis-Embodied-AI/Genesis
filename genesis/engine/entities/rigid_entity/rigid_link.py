@@ -196,23 +196,26 @@ def finalize_inertial(
     """Resolve a link's local inertial from its parsed explicit values and a geometry-derived estimate (hint).
 
     Explicit values are used when given; otherwise the geometry estimate is used, and an explicit mass rescales a
-    geometry-derived inertia. An omitted center of mass defaults to the link-frame origin when an explicit inertia
-    matrix is provided. The hint comes from the load-time inertial info ('compose_inertial_from_g_infos' over the
-    parsed geom infos, feeding both 'RigidLink._build' and the align anchor) - the single resolution path keeps the
-    rigid dynamics inertia and the align anchor in lockstep.
+    geometry-derived inertia to it. An omitted center of mass defaults to the link-frame origin when an explicit
+    inertia matrix is provided, and to the geometry estimate otherwise. The hint comes from the load-time inertial
+    info ('compose_inertial_from_g_infos' over the parsed geom infos, feeding both 'RigidLink._build' and the align
+    anchor) - the single resolution path keeps the rigid dynamics inertia and the align anchor in lockstep.
 
     With ``clamp_min_mass`` the resolved mass is floored at ``gs.EPS`` so a geometry-less moving link stays
     non-singular in the dynamics; the align stash passes ``False`` so a genuinely massless link keeps its ``0.0``
     mass and is excluded from the fixed-subtree composite (it must not inflate the composite by ``gs.EPS``).
     """
     mass, com, quat, inertia = explicit_mass, explicit_com, explicit_quat, explicit_inertia
-    if (mass or hint_mass) > MASS_EPS and hint_mass > gs.EPS and mass is not None:
+    if mass is not None and hint_mass > gs.EPS:
         hint_inertia = hint_inertia * (mass / hint_mass)
         hint_mass = mass
     if mass is None:
         mass = hint_mass
     if inertia is None:
-        com, inertia, quat = hint_com, hint_inertia, gu.identity_quat()
+        # The geometry only describes how the mass is laid out, so an authored center of mass still places it.
+        if com is None:
+            com = hint_com
+        inertia, quat = hint_inertia, gu.identity_quat()
     elif com is None:
         # Falling back to the geometry estimate here would discard an otherwise complete authored inertia.
         com = gu.zero_pos()
@@ -836,10 +839,6 @@ class RigidLink(KinematicLink):
                 gs.logger.info(
                     f"Mass is not specified and collision geoms can not be found for link '{self.name}'. "
                     f"Using visual geoms to compute inertial properties."
-                )
-            if self._inertial_pos is not None and self._inertial_i is None:
-                gs.logger.warning(
-                    f"Ignoring center of mass of link '{self.name}' because inertia matrix is not specified."
                 )
             self._invweight = None
 

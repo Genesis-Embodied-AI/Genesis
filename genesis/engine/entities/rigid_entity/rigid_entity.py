@@ -832,8 +832,9 @@ class KinematicEntity(Entity):
         for i, (l_info, link_g_infos, link_j_infos, has_link_subtree_mass) in enumerate(
             zip(l_infos, links_g_infos, links_j_infos, has_links_subtree_mass)
         ):
-            # Fixed links are subsumed into their parent's composite; only moving links need a well-defined inertia.
-            if all(j_info["type"] == gs.JOINT_TYPE.FIXED for j_info in link_j_infos):
+            # A fixed link is subsumed into its parent's composite, which its own inertia contributes to, so it is
+            # recovered as well whenever it has geometry to derive one from.
+            if not link_g_infos and all(j_info["type"] == gs.JOINT_TYPE.FIXED for j_info in link_j_infos):
                 continue
             if not (
                 (l_info.get("inertial_mass") is None or l_info["inertial_mass"] <= 0.0)

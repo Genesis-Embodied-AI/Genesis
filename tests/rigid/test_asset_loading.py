@@ -225,12 +225,15 @@ def test_urdf_parsing_inertia_defaults(
     undefined_inertia,
     implicit_inertial_origin,
     zero_inertia_urdf,
+    zero_inertia_fixed_child_urdf,
     implicit_inertial_origin_chain,
     show_viewer,
     tol,
     caplog,
 ):
     GEOM_POS = (0.0, 0.0, 0.09)
+    INERTIAL_POS = (0.0, 0.0, 0.11)
+    TIP_MASS = 1e-5
     INERTIA = (
         (0.11, 0.01, 0.02),
         (0.01, 0.22, 0.03),
@@ -271,6 +274,13 @@ def test_urdf_parsing_inertia_defaults(
             merge_fixed_links=False,
         ),
     )
+    entity_with_zero_inertia_child = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=zero_inertia_fixed_child_urdf,
+            pos=(2.4, 0.0, 0.5),
+            merge_fixed_links=False,
+        ),
+    )
     entity_chain_unmerged = scene.add_entity(
         morph=gs.morphs.URDF(
             file=implicit_inertial_origin_chain,
@@ -303,13 +313,17 @@ def test_urdf_parsing_inertia_defaults(
         tol=tol,
     )
 
-    mass_ratio = 2.5 / entity_without_inertia.base_link.inertial_mass
-    assert_allclose(entity_with_zero_inertia.base_link.inertial_pos, GEOM_POS, tol=tol)
+    estimate_link = entity_without_inertia.base_link
+    estimate_per_mass = np.linalg.eigvalsh(estimate_link.inertial_i) / estimate_link.inertial_mass
+    assert_allclose(entity_with_zero_inertia.base_link.inertial_pos, INERTIAL_POS, tol=gs.EPS)
     assert_allclose(entity_with_zero_inertia.base_link.inertial_mass, 2.5, tol=gs.EPS)
+    assert_allclose(np.linalg.eigvalsh(entity_with_zero_inertia.base_link.inertial_i) / 2.5, estimate_per_mass, tol=tol)
+
+    # A fixed child's own inertia is what its parent's composite is made of, so a zero stated there is recovered too,
+    # however far its stated mass sits from what its geometry alone would weigh.
+    assert_allclose(entity_with_zero_inertia_child.get_mass(), TIP_MASS, rtol=1e-9)
     assert_allclose(
-        np.linalg.eigvalsh(entity_with_zero_inertia.base_link.inertial_i),
-        np.linalg.eigvalsh(entity_without_inertia.base_link.inertial_i) * mass_ratio,
-        tol=tol,
+        np.linalg.eigvalsh(entity_with_zero_inertia_child.base_link.inertial_i) / TIP_MASS, estimate_per_mass, tol=tol
     )
 
     # Resolving the center of mass to the link frame can place it outside the geometry, which stays worth reporting.
