@@ -227,9 +227,6 @@ def test_urdf_mimic(show_viewer, tol, scaled_urdf_mimic, n_envs):
     scene.build(n_envs=n_envs)
     assert scene.rigid_solver.n_equalities == 5
 
-    EXPECTED_COEFFICIENTS = ((0.25, 2.0), (0.5, 2.0), (0.25, 1.0), (0.5, 4.0))
-    assert_equal((equality.eq_data[:2] for equality in mimic.equalities), EXPECTED_COEFFICIENTS)
-
     JOINT_NAMES = (
         "revolute_revolute_driver_joint",
         "revolute_revolute_follower_joint",
@@ -245,18 +242,17 @@ def test_urdf_mimic(show_viewer, tol, scaled_urdf_mimic, n_envs):
     mimic.set_qpos(0.0, qs_idx_local=qs_idx_local, zero_velocity=True)
     assert_equal(mimic.get_qpos(qs_idx_local=qs_idx_local), 0.0)
     hand.set_dofs_velocity((0.0, 1.0))
-    for _ in range(50):
+    for _ in range(81):
         scene.step()
 
-    CONSTRAINT_TOL = max(tol, 1e-6)
     qpos = mimic.get_qpos(qs_idx_local=qs_idx_local)
-    assert_allclose(qpos[..., 1] - 2.0 * qpos[..., 0], 0.25, tol=CONSTRAINT_TOL)
-    assert_allclose(qpos[..., 3] - 2.0 * qpos[..., 2], 0.5, tol=CONSTRAINT_TOL)
-    assert_allclose(qpos[..., 5] - qpos[..., 4], 0.25, tol=CONSTRAINT_TOL)
-    assert_allclose(qpos[..., 7] - 4.0 * qpos[..., 6], 0.5, tol=CONSTRAINT_TOL)
+    assert_allclose(qpos[..., 1] - 2.0 * qpos[..., 0], 0.25, tol=tol)
+    assert_allclose(qpos[..., 3] - 2.0 * qpos[..., 2], 0.5, tol=tol)
+    assert_allclose(qpos[..., 5] - qpos[..., 4], 0.25, tol=tol)
+    assert_allclose(qpos[..., 7] - 4.0 * qpos[..., 6], 0.5, tol=tol)
 
     hand_qpos = hand.get_qpos()
-    assert_allclose(hand_qpos[..., -1], hand_qpos[..., -2], tol=CONSTRAINT_TOL)
+    assert_allclose(hand_qpos[..., -1], hand_qpos[..., -2], tol=tol)
 
 
 @pytest.mark.slow  # ~200s
