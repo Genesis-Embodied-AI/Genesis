@@ -437,6 +437,25 @@ def joint_with_partial_dynamics(joint_damping, joint_friction):
 
 
 @pytest.fixture(scope="session")
+def authored_geom_density_mjcf():
+    """Generate an MJCF whose three identical boxes take their density from the geom, a default class, and nothing."""
+    mjcf = ET.Element("mujoco", model="authored_geom_density")
+    default = ET.SubElement(mjcf, "default")
+    ET.SubElement(ET.SubElement(default, "default", {"class": "light"}), "geom", density="100")
+
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    for name, attrib in (
+        ("on_geom", dict(density="250")),
+        ("on_class", {"class": "light"}),
+        ("unstated", {}),
+    ):
+        body = ET.SubElement(worldbody, "body", name=name, pos="0.0 0.0 1.0")
+        ET.SubElement(body, "freejoint")
+        ET.SubElement(body, "geom", type="box", size="0.1 0.1 0.1", **attrib)
+    return ET.tostring(mjcf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
 def undefined_inertia():
     """Generate a URDF with a single link that has no inertial element."""
     urdf = ET.Element("robot", name="undefined_inertia")

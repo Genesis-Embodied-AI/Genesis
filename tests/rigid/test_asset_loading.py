@@ -219,6 +219,35 @@ def test_urdf_parsing(show_viewer, tol):
     _check_entity_positions(POS_OFFSET, tol=2e-3)
 
 
+@pytest.mark.required
+def test_mjcf_authored_geom_density(authored_geom_density_mjcf, show_viewer):
+    # An authored density, on the geom or inherited from a default class, is what a recomputed inertial must weigh.
+    HALF_EXTENT = 0.1
+    VOLUME = (2.0 * HALF_EXTENT) ** 3
+
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.5, -1.5, 1.5),
+            camera_lookat=(0.0, 0.0, 1.0),
+        ),
+        show_viewer=show_viewer,
+    )
+    entity = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file=authored_geom_density_mjcf,
+            recompute_inertia=True,
+            align=False,
+        ),
+    )
+    scene.build()
+
+    masses = {link.name: link.inertial_mass for link in entity.links}
+    assert_allclose(masses["on_geom"], 250.0 * VOLUME, tol=gs.EPS)
+    assert_allclose(masses["on_class"], 100.0 * VOLUME, tol=gs.EPS)
+    # The geom stating nothing takes the density Genesis resolves for the entity, which the authored ones displace.
+    assert masses["unstated"] not in (masses["on_geom"], masses["on_class"])
+
+
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_urdf_parsing_inertia_defaults(
