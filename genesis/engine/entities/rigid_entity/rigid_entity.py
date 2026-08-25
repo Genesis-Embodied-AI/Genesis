@@ -1238,6 +1238,7 @@ class KinematicEntity(Entity):
         if isinstance(self.material, gs.materials.Rigid) and self.material.rho is not None:
             for g_info in g_infos:
                 g_info.pop("density", None)
+                g_info.pop("mass", None)
 
         cg_infos, vg_infos = [], []
         for g_info in g_infos:
@@ -1333,7 +1334,9 @@ class KinematicEntity(Entity):
         else:
             # A geom the asset weighs is anchored at that weight, and one it does not is anchored at the default the
             # dynamics falls back on too, so any link the asset weighs at all anchors at its own dynamics mass.
-            is_mass_explicit = any(g_info.get("density") is not None for g_info in cg_infos)
+            is_mass_explicit = any(
+                g_info.get("density") is not None or g_info.get("mass") is not None for g_info in cg_infos
+            )
 
         dynamics_hint = None
         if isinstance(self.material, gs.materials.Rigid):
@@ -1341,6 +1344,10 @@ class KinematicEntity(Entity):
             hint_g_infos = cg_infos if cg_infos else vg_infos
             if hint_g_infos:
                 dynamics_hint = compose_inertial_from_g_infos(hint_g_infos, rho)
+                # Collision geoms stating a zero mass leave nothing to weigh, so the visual geoms stand in as they
+                # do for a link carrying no collision geometry at all.
+                if dynamics_hint.mass <= gs.EPS and hint_g_infos is not vg_infos and vg_infos:
+                    dynamics_hint = compose_inertial_from_g_infos(vg_infos, rho)
             else:
                 dynamics_hint = InertialProperties(
                     0.0, np.zeros(3, dtype=gs.np_float), np.zeros((3, 3), dtype=gs.np_float)

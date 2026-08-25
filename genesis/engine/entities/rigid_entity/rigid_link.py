@@ -146,20 +146,28 @@ def compose_inertial_from_g_infos(g_infos: Sequence[dict], rho: float) -> Inerti
     g_infos : list[dict]
         Parsed geom infos to compute inertial from.
     rho : float
-        Material density (kg/m^3), used for every geom info without its own authored density.
+        Material density (kg/m^3), used for every geom info that states neither a mass nor a density of its own.
     """
-    geoms_inertial_info = tuple(
-        GeomInertialInfo(
-            get_local_inertial_from_geom_info(
-                {"type": gs.GEOM_TYPE.MESH, "mesh": g_info["vmesh"]} if "vmesh" in g_info else g_info,
-                rho if g_info.get("density") is None else g_info["density"],
-            ),
-            np.asarray(g_info.get("pos", gu.zero_pos()), dtype=gs.np_float),
-            np.asarray(g_info.get("quat", gu.identity_quat()), dtype=gs.np_float),
+    geoms_inertial_info = []
+    for g_info in g_infos:
+        info = {"type": gs.GEOM_TYPE.MESH, "mesh": g_info["vmesh"]} if "vmesh" in g_info else g_info
+        geom_mass = g_info.get("mass")
+        if geom_mass is None:
+            props = get_local_inertial_from_geom_info(info, rho if g_info.get("density") is None else g_info["density"])
+        else:
+            # Unit density yields the volume as the mass, and both scale linearly with it, so a stated mass rescales
+            # them exactly. A volume-less geom (a plane) weighs nothing whatever it states.
+            props = get_local_inertial_from_geom_info(info, 1.0)
+            if props.mass > gs.EPS:
+                props = InertialProperties(geom_mass, props.com, props.i * (geom_mass / props.mass))
+        geoms_inertial_info.append(
+            GeomInertialInfo(
+                props,
+                np.asarray(g_info.get("pos", gu.zero_pos()), dtype=gs.np_float),
+                np.asarray(g_info.get("quat", gu.identity_quat()), dtype=gs.np_float),
+            )
         )
-        for g_info in g_infos
-    )
-    return compose_inertial_properties(geoms_inertial_info)
+    return compose_inertial_properties(tuple(geoms_inertial_info))
 
 
 class LinkInertial(NamedTuple):

@@ -237,6 +237,16 @@ def test_mjcf_authored_geom_density(authored_geom_density_mjcf, show_viewer):
             file=authored_geom_density_mjcf,
             recompute_inertia=True,
             align=True,
+            convexify=False,
+        ),
+    )
+    # Fusion needs the convex path off, while splitting a stated mass across hulls needs it on, so the decomposed
+    # body is loaded a second time under it.
+    entity_decomposed = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file=authored_geom_density_mjcf,
+            recompute_inertia=True,
+            align=True,
         ),
     )
     scene.build()
@@ -244,10 +254,18 @@ def test_mjcf_authored_geom_density(authored_geom_density_mjcf, show_viewer):
     masses = {link.name: link.inertial_mass for link in entity.links}
     assert_allclose(masses["on_geom"], 250.0 * VOLUME, tol=gs.EPS)
     assert_allclose(masses["on_class"], 100.0 * VOLUME, tol=gs.EPS)
+    assert_allclose(masses["on_mass"], 5.0, tol=gs.EPS)
     # The geom stating nothing takes the density Genesis resolves for a non-robot entity, which pins that an
     # unauthored geom keeps falling back rather than picking up Mujoco's own default of 1000.
     assert_allclose(masses["unstated"], 600.0 * VOLUME, tol=gs.EPS)
     assert_allclose(masses["mixed"], (250.0 + 600.0) * VOLUME, tol=gs.EPS)
+    # A stated mass is extensive: fusing the two boxes would weigh the body at one of them.
+    assert_allclose(masses["fused"], 10.0, tol=gs.EPS)
+    assert_allclose(masses["weightless"], 600.0 * VOLUME, tol=gs.EPS)
+    # Every hull takes a share of the one stated mass, so together they still weigh exactly it.
+    decomposed_link = entity_decomposed.get_link("decomposed")
+    assert len(decomposed_link.geoms) > 1
+    assert_allclose(decomposed_link.inertial_mass, 5.0, tol=1e-6)
 
     # Anchoring a free root puts its frame on the composite center of mass, so the geoms of the mixed body must sit
     # at first moments that cancel. They only do if the stated geom is weighed apart from the unstated one.
