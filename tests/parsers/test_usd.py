@@ -218,6 +218,58 @@ def test_massapi_invalid_defaults_mjcf_vs_usd(asset_tmp_path, scale):
 
 
 @pytest.mark.required
+def test_massapi_authored_com_keeps_placement(asset_tmp_path):
+    # An authored 'centerOfMass' beside a 'diagonalInertia' left at its (0, 0, 0) sentinel places the center of mass,
+    # since the geometry describes how the mass is laid out rather than where it sits. The body is welded so that
+    # anchoring a free root on its own center of mass does not erase the frame under test.
+    MASS = 64.0
+    HALF_EXTENT = 0.2
+    COM = (0.1, 0.0, 0.0)
+
+    usd_file = str(asset_tmp_path / "massapi_authored_com.usda")
+
+    stage = Usd.Stage.CreateNew(usd_file)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+
+    root_prim = stage.DefinePrim("/worldbody", "Xform")
+    stage.SetDefaultPrim(root_prim)
+
+    floor = UsdGeom.Plane.Define(stage, "/worldbody/floor")
+    floor.GetAxisAttr().Set("Z")
+    floor.AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, 0.0))
+    floor.GetWidthAttr().Set(80.0)
+    floor.GetLengthAttr().Set(80.0)
+    UsdPhysics.CollisionAPI.Apply(floor.GetPrim())
+
+    box = UsdGeom.Cube.Define(stage, "/worldbody/com_box")
+    box.AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, 0.3))
+    box.GetSizeAttr().Set(2.0 * HALF_EXTENT)
+
+    box_joint = UsdPhysics.Joint.Define(stage, "/worldbody/com_box_joint")
+    box_joint.CreateBody0Rel().SetTargets([root_prim.GetPath()])
+    box_joint.CreateBody1Rel().SetTargets([box.GetPrim().GetPath()])
+    box_joint.CreateLocalPos0Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
+    box_joint.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
+
+    UsdPhysics.CollisionAPI.Apply(box.GetPrim())
+    UsdPhysics.RigidBodyAPI.Apply(box.GetPrim()).GetKinematicEnabledAttr().Set(False)
+
+    mass_api = UsdPhysics.MassAPI.Apply(box.GetPrim())
+    mass_api.CreateMassAttr(MASS)
+    mass_api.CreateCenterOfMassAttr(Gf.Vec3f(*COM))
+
+    stage.Save()
+
+    usd_scene = build_usd_scene(usd_file, scale=1.0, fixed=True)
+    link = next(link for entity in usd_scene.entities for link in entity.links if link.name.endswith("com_box"))
+
+    # The attribute is authored as a USD 'Vec3f', so the tolerance is bounded by single-precision storage.
+    assert_allclose(link.inertial_pos, COM, tol=1e-6)
+    assert_allclose(link.inertial_mass, MASS, tol=gs.EPS)
+
+
+@pytest.mark.required
 def test_uv_size_mismatch_no_crash(asset_tmp_path):
     # Nvidia Omniverse tolerates USD meshes with mismatched UV sizes, so the parser must too.
     usd_file = str(asset_tmp_path / "uv_mismatch.usda")
