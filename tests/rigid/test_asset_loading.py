@@ -236,7 +236,6 @@ def test_mjcf_authored_geom_density(authored_geom_density_mjcf, show_viewer):
         morph=gs.morphs.MJCF(
             file=authored_geom_density_mjcf,
             recompute_inertia=True,
-            align=False,
         ),
     )
     scene.build()
@@ -244,8 +243,9 @@ def test_mjcf_authored_geom_density(authored_geom_density_mjcf, show_viewer):
     masses = {link.name: link.inertial_mass for link in entity.links}
     assert_allclose(masses["on_geom"], 250.0 * VOLUME, tol=gs.EPS)
     assert_allclose(masses["on_class"], 100.0 * VOLUME, tol=gs.EPS)
-    # The geom stating nothing takes the density Genesis resolves for the entity, which the authored ones displace.
-    assert masses["unstated"] not in (masses["on_geom"], masses["on_class"])
+    # The geom stating nothing takes the density Genesis resolves for a non-robot entity, which pins that an
+    # unauthored geom keeps falling back rather than picking up Mujoco's own default of 1000.
+    assert_allclose(masses["unstated"], 600.0 * VOLUME, tol=gs.EPS)
 
 
 @pytest.mark.slow  # ~200s

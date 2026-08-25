@@ -761,7 +761,7 @@ def parse_geom(mj, i_g, geom_density, scale, surface, xml_path):
         "friction_rolling": mj_geom.friction[2] if mj_geom.condim[0] >= 6 else 0.0,
         "sol_params": np.concatenate((mj_geom.solref, mj_geom.solimp)),
     }
-    # Consumers read an absent key as 'no authored density', so an unauthored geom must not carry the key at all.
+    # Fusion grouping diffs the key against a nan default when it is absent, so a None would raise instead.
     if geom_density is not None:
         info["density"] = geom_density
     if is_col:
