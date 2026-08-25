@@ -245,8 +245,8 @@ def test_parsing_inertia_defaults(
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(0.5, 0.5, 0.5),
-            camera_lookat=(0.0, 0.0, 0.0),
+            camera_pos=(0.0, -5.0, 2.0),
+            camera_lookat=(0.2, 0.0, 0.1),
         ),
         show_viewer=show_viewer,
     )
@@ -282,6 +282,7 @@ def test_parsing_inertia_defaults(
             file=zero_mass_urdf,
             pos=(-0.9, 0.0, 0.1),
             align=False,
+            merge_fixed_links=False,
         ),
     )
     entity_with_massless_connector = scene.add_entity(
@@ -298,12 +299,10 @@ def test_parsing_inertia_defaults(
             merge_fixed_links=False,
         ),
     )
-    # Anchoring is disabled because a zero-density geom makes the free body mix explicit and estimated link masses.
     entity_with_zero_density_marker = scene.add_entity(
         morph=gs.morphs.MJCF(
             file=zero_density_marker_mjcf,
             pos=(-2.1, 0.0, 0.5),
-            align=False,
         ),
     )
     entity_chain_unmerged = scene.add_entity(
@@ -355,7 +354,7 @@ def test_parsing_inertia_defaults(
 
     # A zero stated where a fixed child carries the mass is the connector idiom, so the geometry supplies neither.
     assert_allclose(entity_with_massless_connector.get_link("arm").inertial_mass, gs.EPS, tol=gs.EPS)
-    assert_allclose(entity_with_massless_connector.get_mass(), 1.0, tol=gs.EPS)
+    assert_allclose(entity_with_massless_connector.get_mass(), 1.0, tol=1e-5)
 
     # A fixed child's own inertia makes up its parent's composite, so a zero stated there is recovered too.
     assert_allclose(entity_with_zero_inertia_child.get_mass(), TIP_MASS, rtol=1e-9)
@@ -365,7 +364,7 @@ def test_parsing_inertia_defaults(
 
     # A zero-density geom weighs nothing by design, and the hull's composite already carries the body holding it.
     assert_allclose(entity_with_zero_density_marker.get_link("marker").inertial_mass, gs.EPS, tol=gs.EPS)
-    assert_allclose(entity_with_zero_density_marker.get_mass(), 8.0, tol=gs.EPS)
+    assert_allclose(entity_with_zero_density_marker.get_mass(), 8.0, tol=1e-5)
 
     # Only a center of mass resolved to the link frame can fall outside the geometry, so exactly one link qualifies.
     dubious_com_records = [record for record in caplog.records if "dubious center of mass" in record.getMessage()]

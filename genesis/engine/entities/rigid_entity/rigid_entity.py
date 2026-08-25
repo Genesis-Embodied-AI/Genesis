@@ -831,8 +831,8 @@ class KinematicEntity(Entity):
                 has_links_subtree_mass[parent_idx] |= has_links_subtree_mass[i]
                 has_links_fixed_child_mass[parent_idx] |= has_links_subtree_mass[i]
 
-        for i, (l_info, link_g_infos, link_j_infos, has_link_subtree_mass, has_link_fixed_child_mass) in enumerate(
-            zip(l_infos, links_g_infos, links_j_infos, has_links_subtree_mass, has_links_fixed_child_mass)
+        for l_info, link_g_infos, link_j_infos, has_link_subtree_mass, has_link_fixed_child_mass in zip(
+            l_infos, links_g_infos, links_j_infos, has_links_subtree_mass, has_links_fixed_child_mass
         ):
             # A fixed link contributes its own inertia to its parent's composite, so recover it when it has geometry.
             is_fixed_link = all(j_info["type"] == gs.JOINT_TYPE.FIXED for j_info in link_j_infos)
@@ -864,8 +864,17 @@ class KinematicEntity(Entity):
             # A zero mass stands unless it would leave the link singular, which only a moving link with no mass
             # anywhere in its rigidly-attached (fixed-joint) subtree is: any other link is carried by a composite.
             if is_mass_degenerate and not is_fixed_link and not has_link_fixed_child_mass:
+                # Substituting the mass also silences the 'dubious mass' check, which compares against the parsed
+                # value, so the size of the correction must be reported here or it goes unmentioned entirely.
+                if link_g_infos:
+                    gs.logger.warning(
+                        f"Moving link '{l_info['name']}' states no mass and nothing rigidly attached provides any. "
+                        "Recomputing it based on geometry."
+                    )
                 l_info["inertial_mass"] = None
-            l_info["inertial_i"] = None
+            # An authored inertia stands on its own unless the mass it was sized for is being replaced too.
+            if is_inertia_degenerate or l_info.get("inertial_mass") is None:
+                l_info["inertial_i"] = None
         if is_inertia_invalid:
             for l_info, link_j_infos in zip(l_infos, links_j_infos):
                 l_info["invweight"] = np.full((2,), fill_value=-1.0)

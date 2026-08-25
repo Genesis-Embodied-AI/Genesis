@@ -470,9 +470,15 @@ def zero_inertia_urdf():
 
 @pytest.fixture(scope="session")
 def zero_mass_urdf():
-    """Generate a URDF stating a zero mass next to a well-defined inertia."""
+    """Generate a URDF stating a zero mass next to a well-defined inertia, beside a link carrying no inertial
+    element at all, which is what makes the parser bound the stated zero rather than pass it through."""
     urdf = ET.Element("robot", name="zero_mass")
     _add_sphere_link(urdf, "base_link", "0.0 0.0 0.09", mass=0.0, inertia=(0.11, 0.01, 0.02, 0.22, 0.03, 0.30))
+    ET.SubElement(urdf, "link", name="bare")
+    joint = ET.SubElement(urdf, "joint", name="weld", type="fixed")
+    ET.SubElement(joint, "parent", link="base_link")
+    ET.SubElement(joint, "child", link="bare")
+    ET.SubElement(joint, "origin", xyz="0.0 0.0 0.3", rpy="0.0 0.0 0.0")
     return ET.tostring(urdf, encoding="unicode")
 
 
@@ -497,8 +503,7 @@ def massless_connector_urdf():
 
 @pytest.fixture(scope="session")
 def zero_inertia_fixed_child_urdf():
-    """Generate a URDF stating a zero inertia on a fixed child far lighter than 'MASS_EPS'. The non-identity joint
-    origin keeps the root from being dropped, so the child stays a fixed-jointed link."""
+    """Generate a URDF stating a zero inertia on a fixed child far lighter than 'MASS_EPS'."""
     urdf = ET.Element("robot", name="zero_inertia_fixed_child")
     ET.SubElement(urdf, "link", name="base_link")
     _add_sphere_link(urdf, "tip_link", "0.0 0.0 0.0", mass=1e-5, inertia=(0.0,) * 6)
