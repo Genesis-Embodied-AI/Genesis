@@ -133,13 +133,31 @@ def compose_inertial_properties(geoms_inertial_info: Sequence[GeomInertialInfo])
     return InertialProperties(global_mass, global_com, global_inertia)
 
 
+def select_mass_bearing_g_infos(
+    cg_infos: Sequence[dict], vg_infos: Sequence[dict], is_from_visual: bool
+) -> Sequence[dict]:
+    """The geoms of a link that carry its mass, among its collision and visual ones.
+
+    The two lists are alternative descriptions of one body, so composing both would count its volume twice. Visual
+    geometry is the faithful description and collision geometry a deliberate simplification, so the visual set wins
+    where the asset provides one; a link described only one way is composed from whichever it has.
+
+    A density authored on a collision geom states what that geom weighs, which is a stronger claim about the body than
+    any shape estimate, and formats attach it to the collision geoms alone. Such a link therefore keeps composing from
+    them, so the authored value is honored rather than silently replaced by the material density.
+    """
+    if is_from_visual and vg_infos and all(g_info.get("density") is None for g_info in cg_infos):
+        return vg_infos
+    return cg_infos if cg_infos else vg_infos
+
+
 def compose_inertial_from_g_infos(g_infos: Sequence[dict], rho: float) -> InertialProperties:
     """
     Compose inertial properties (mass, center of mass, inertia tensor) from parsed geom infos.
 
-    Handles all primitive collision geometry types analytically (SPHERE, ELLIPSOID, CYLINDER, CAPSULE, BOX) and defers
-    to the mesh's cached unit-density mass properties for MESH type. Visual-only infos are treated as their visual
-    mesh.
+    Handles all primitive geometry types analytically (SPHERE, ELLIPSOID, CYLINDER, CAPSULE, BOX) and defers to the
+    mesh's cached unit-density mass properties for MESH type. A visual-only info contributes its visual mesh, keeping
+    its own type so a visual primitive stays analytic rather than being integrated over its tessellation.
 
     Parameters
     ----------
@@ -151,7 +169,9 @@ def compose_inertial_from_g_infos(g_infos: Sequence[dict], rho: float) -> Inerti
     geoms_inertial_info = tuple(
         GeomInertialInfo(
             get_local_inertial_from_geom_info(
-                {"type": gs.GEOM_TYPE.MESH, "mesh": g_info["vmesh"]} if "vmesh" in g_info else g_info,
+                # A visual info that names no type is a mesh; one that names a primitive keeps it, so a visual sphere
+                # or box stays analytic instead of being integrated over its tessellation.
+                {"type": gs.GEOM_TYPE.MESH, **g_info, "mesh": g_info["vmesh"]} if "vmesh" in g_info else g_info,
                 rho if g_info.get("density") is None else g_info["density"],
             ),
             np.asarray(g_info.get("pos", gu.zero_pos()), dtype=gs.np_float),
@@ -776,7 +796,8 @@ class RigidLink(KinematicLink):
                 0
             ].hint
 
-            # Compute the bounding box of the links using both visual and collision geometries to be conservative
+            # Bound the link with both its visual and collision geometry, so the box encloses the body however it is
+            # described and whichever description the estimate was composed from
             for geoms, is_visual in zip((self._geoms, self._vgeoms), (False, True)):
                 for geom in geoms:
                     verts = geom.init_vverts if is_visual else geom.init_verts
@@ -836,8 +857,8 @@ class RigidLink(KinematicLink):
         if self._inertial_mass is None or self._inertial_i is None:
             if not self._is_fixed and self._vgeoms and not self._geoms:
                 gs.logger.info(
-                    f"Mass is not specified and collision geoms can not be found for link '{self.name}'. "
-                    f"Using visual geoms to compute inertial properties."
+                    f"Inertia is not specified and collision geoms can not be found for link '{self.name}'. "
+                    f"Estimating the inertial properties from its visual geoms."
                 )
             self._invweight = None
 
