@@ -237,7 +237,20 @@ class KinematicEntity(Entity):
             if isinstance(morph, (gs.morphs.URDF, gs.morphs.MJCF)):
                 # Parse variant scene file
                 morph._enable_mujoco_compatibility = self._morph._enable_mujoco_compatibility
-                v_l_infos, v_links_j_infos, v_links_g_infos, _ = self._parse_scene(morph, self._surface)
+                v_l_infos, v_links_j_infos, v_links_g_infos, _, v_excluded_links_name = self._parse_scene(
+                    morph, self._surface
+                )
+
+                # The '<contact><exclude>' pairs are filtered per link and the variants share the primary's links,
+                # so a per-variant exclusion cannot be represented; require the lists to agree like the joint
+                # structure below.
+                if {frozenset(pair) for pair in v_excluded_links_name} != {
+                    frozenset(pair) for pair in self._excluded_links_name
+                }:
+                    gs.raise_exception(
+                        f"Heterogeneous variant declares contact exclusions {v_excluded_links_name}, but primary "
+                        f"declares {self._excluded_links_name}. All variants must declare the same exclusions."
+                    )
 
                 # Validate that the variant has the same joint structure as the primary
                 if len(v_l_infos) != n_links:
@@ -636,12 +649,12 @@ class KinematicEntity(Entity):
         # First, it would happen when loading visual meshes having supported format (i.e. Collada files '.dae').
         # Second, it does not take into account URDF 'mimic' joint constraints. However, it does a better job at
         # initialized undetermined physics parameters.
+        excluded_links_name: list[tuple[str, str]] = []
         if isinstance(morph, gs.morphs.MJCF):
             # Mujoco's unified MJCF+URDF parser systematically for MJCF files
             l_infos, links_j_infos, links_g_infos, eqs_info, excluded_links_name = mju.parse_xml(
                 morph, surface, self._solver._options
             )
-            self._excluded_links_name = excluded_links_name
         elif isinstance(morph, (gs.morphs.URDF, gs.morphs.Drone)):
             # Custom "legacy" URDF parser for loading geometries (visual and collision) and equality constraints.
             # This is necessary because Mujoco cannot parse visual geometries (meshes) reliably for URDF.
@@ -926,10 +939,10 @@ class KinematicEntity(Entity):
         # Exclude joints with 0 dofs to align with Mujoco
         links_j_infos = [[j_info for j_info in link_j_infos if j_info["n_dofs"] > 0] for link_j_infos in links_j_infos]
 
-        return l_infos, links_j_infos, links_g_infos, eqs_info
+        return l_infos, links_j_infos, links_g_infos, eqs_info, excluded_links_name
 
     def _load_scene(self, morph, surface):
-        l_infos, links_j_infos, links_g_infos, _eqs_info = self._parse_scene(morph, surface)
+        l_infos, links_j_infos, links_g_infos, _eqs_info, self._excluded_links_name = self._parse_scene(morph, surface)
 
         # Add (link, joints, geoms) tuples sequentially
         for l_info, link_j_infos, link_g_infos in zip(l_infos, links_j_infos, links_g_infos):
@@ -3074,7 +3087,7 @@ class RigidEntity(KinematicEntity):
     def _load_scene(self, morph, surface):
         from genesis.engine.couplers import IPCCoupler
 
-        l_infos, links_j_infos, links_g_infos, eqs_info = self._parse_scene(morph, surface)
+        l_infos, links_j_infos, links_g_infos, eqs_info, self._excluded_links_name = self._parse_scene(morph, surface)
 
         # Make sure that the entity is not object
         if (

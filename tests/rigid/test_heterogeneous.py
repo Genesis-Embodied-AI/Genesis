@@ -395,3 +395,27 @@ def test_articulated_structure_mismatch():
                 gs.morphs.URDF(file="urdf/simple/two_link_arm.urdf", pos=(0, 0, 0.1)),
             ]
         )
+
+    # The '<contact><exclude>' pairs are filtered per link and the variants share the primary's links, so a variant
+    # cannot carry its own exclusions; the lists must agree like the joint structure above.
+    MJCF_HINGED = (
+        '<mujoco><worldbody><body name="base"><joint type="free"/><geom type="sphere" size="0.1"/>'
+        '<body name="jaw" pos="0.3 0 0"><joint name="jaw_hinge" type="hinge" range="0 0"/>'
+        '<geom type="sphere" size="0.1"/></body></body></worldbody>{contact}</mujoco>'
+    )
+    EXCLUDE = '<contact><exclude body1="base" body2="jaw"/></contact>'
+    EXCLUDE_REVERSED = '<contact><exclude body1="jaw" body2="base"/></contact>'
+    with pytest.raises(gs.GenesisException, match="same exclusions"):
+        scene.add_entity(
+            morph=[
+                gs.morphs.MJCF(file=MJCF_HINGED.format(contact=EXCLUDE), pos=(0, 0, 0.5)),
+                gs.morphs.MJCF(file=MJCF_HINGED.format(contact=""), pos=(0, 0, 0.5)),
+            ]
+        )
+    # The same pair declared in the opposite order is the same exclusion, so this must be accepted.
+    scene.add_entity(
+        morph=[
+            gs.morphs.MJCF(file=MJCF_HINGED.format(contact=EXCLUDE), pos=(0, 0, 0.5)),
+            gs.morphs.MJCF(file=MJCF_HINGED.format(contact=EXCLUDE_REVERSED), pos=(0, 0, 0.5)),
+        ]
+    )
