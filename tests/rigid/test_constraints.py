@@ -199,26 +199,64 @@ def test_dynamic_weld_scene_reset():
 
 
 @pytest.mark.required
-def test_urdf_mimic(show_viewer, tol):
-    # create and build the scene
-    scene = gs.Scene(show_viewer=show_viewer)
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_urdf_mimic(show_viewer, tol, scaled_urdf_mimic, n_envs):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.0, -1.0, 0.5),
+            camera_lookat=(0.0, 0.0, 0.0),
+        ),
+        show_viewer=show_viewer,
+    )
     hand = scene.add_entity(
         gs.morphs.URDF(
             file="urdf/panda_bullet/hand.urdf",
             fixed=True,
         ),
     )
-    scene.build()
-    assert scene.rigid_solver.n_equalities == 1
+    mimic = scene.add_entity(
+        gs.morphs.URDF(
+            file=scaled_urdf_mimic,
+            scale=2.0,
+            fixed=True,
+        ),
+    )
+    scene.build(n_envs=n_envs)
+    assert scene.rigid_solver.n_equalities == 5
 
-    qvel = scene.rigid_solver.dyn_state.dofs.vel.to_numpy()
-    qvel[-1] = 1
-    scene.rigid_solver.dyn_state.dofs.vel.from_numpy(qvel)
-    for i in range(200):
+    EXPECTED_COEFFICIENTS = ((0.25, 2.0), (0.5, 2.0), (0.25, 1.0), (0.5, 4.0))
+    assert_equal((equality.eq_data[:2] for equality in mimic.equalities), EXPECTED_COEFFICIENTS)
+
+    JOINT_NAMES = (
+        "revolute_revolute_driver_joint",
+        "revolute_revolute_follower_joint",
+        "prismatic_prismatic_driver_joint",
+        "prismatic_prismatic_follower_joint",
+        "revolute_prismatic_driver_joint",
+        "revolute_prismatic_follower_joint",
+        "prismatic_revolute_driver_joint",
+        "prismatic_revolute_follower_joint",
+    )
+    qs_idx_local = [mimic.get_joint(name).q_start - mimic.q_start for name in JOINT_NAMES]
+    # Start every follower away from its non-zero mimic offset so the stepped assertions require active enforcement.
+    mimic.set_qpos(0.0, qs_idx_local=qs_idx_local, zero_velocity=True)
+    assert_equal(mimic.get_qpos(qs_idx_local=qs_idx_local), 0.0)
+    hand.set_dofs_velocity((0.0, 1.0))
+    for _ in range(50):
         scene.step()
 
-    gs_qpos = scene.rigid_solver.qpos.to_numpy()[:, 0]
-    assert_allclose(gs_qpos[-1], gs_qpos[-2], tol=tol)
+    CONSTRAINT_TOL = max(tol, 1e-6)
+    qpos = mimic.get_qpos(qs_idx_local=qs_idx_local)
+    assert_allclose(qpos[..., 1] - 2.0 * qpos[..., 0], 0.25, tol=CONSTRAINT_TOL)
+    assert_allclose(qpos[..., 3] - 2.0 * qpos[..., 2], 0.5, tol=CONSTRAINT_TOL)
+    assert_allclose(qpos[..., 5] - qpos[..., 4], 0.25, tol=CONSTRAINT_TOL)
+    assert_allclose(qpos[..., 7] - 4.0 * qpos[..., 6], 0.5, tol=CONSTRAINT_TOL)
+
+    hand_qpos = hand.get_qpos()
+    assert_allclose(hand_qpos[..., -1], hand_qpos[..., -2], tol=CONSTRAINT_TOL)
 
 
 @pytest.mark.slow  # ~200s

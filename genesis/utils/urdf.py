@@ -446,10 +446,16 @@ def parse_equalities(robot, morph):
                 f"Joint '{joint.name}' mimics '{joint.mimic.joint}' with multiplier {joint.mimic.multiplier} and offset {joint.mimic.offset}"
             )
 
+            mimic_joint = robot.joint_map[joint.mimic.joint]
+            follower_scale = morph.scale if joint.joint_type == "prismatic" else 1.0
+            driver_scale = morph.scale if mimic_joint.joint_type == "prismatic" else 1.0
+
+            # eq_data[0:5] stores a0..a4 in q_follower - q_follower0 = sum(a_k * (q_driver - q_driver0)^k).
+            # A model scale transforms a_k to s_f * a_k / s_d**k, where s_f and s_d are morph.scale for
+            # prismatic coordinates and 1.0 for revolute coordinates.
             eq_data = np.zeros([11])
-            eq_data[0] = joint.mimic.offset
-            eq_data[1] = joint.mimic.multiplier
-            eq_data[:6] *= morph.scale
+            eq_data[0] = follower_scale * joint.mimic.offset
+            eq_data[1] = follower_scale / driver_scale * joint.mimic.multiplier
 
             eq_descs.append(
                 EqualityDescription(
