@@ -221,11 +221,14 @@ def test_urdf_parsing(show_viewer, tol):
 
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
-def test_urdf_parsing_inertia_defaults(
+def test_parsing_inertia_defaults(
     undefined_inertia,
     implicit_inertial_origin,
     zero_inertia_urdf,
+    zero_mass_urdf,
+    massless_connector_urdf,
     zero_inertia_fixed_child_urdf,
+    zero_density_marker_mjcf,
     implicit_inertial_origin_chain,
     show_viewer,
     tol,
@@ -274,11 +277,33 @@ def test_urdf_parsing_inertia_defaults(
             merge_fixed_links=False,
         ),
     )
+    entity_with_zero_mass = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=zero_mass_urdf,
+            pos=(-0.9, 0.0, 0.1),
+            align=False,
+        ),
+    )
+    entity_with_massless_connector = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=massless_connector_urdf,
+            pos=(-1.5, 0.0, 0.5),
+            merge_fixed_links=False,
+        ),
+    )
     entity_with_zero_inertia_child = scene.add_entity(
         morph=gs.morphs.URDF(
             file=zero_inertia_fixed_child_urdf,
             pos=(2.4, 0.0, 0.5),
             merge_fixed_links=False,
+        ),
+    )
+    # Anchoring is disabled because a zero-density geom makes the free body mix explicit and estimated link masses.
+    entity_with_zero_density_marker = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file=zero_density_marker_mjcf,
+            pos=(-2.1, 0.0, 0.5),
+            align=False,
         ),
     )
     entity_chain_unmerged = scene.add_entity(
@@ -319,15 +344,30 @@ def test_urdf_parsing_inertia_defaults(
     assert_allclose(entity_with_zero_inertia.base_link.inertial_mass, 2.5, tol=gs.EPS)
     assert_allclose(np.linalg.eigvalsh(entity_with_zero_inertia.base_link.inertial_i) / 2.5, estimate_per_mass, tol=tol)
 
-    # A fixed child's own inertia is what its parent's composite is made of, so a zero stated there is recovered too,
-    # however far its stated mass sits from what its geometry alone would weigh.
+    # A stated zero mass is as undefined as a stated zero inertia, so the geometry supplies both.
+    assert_allclose(entity_with_zero_mass.base_link.inertial_mass, estimate_link.inertial_mass, tol=gs.EPS)
+    assert_allclose(entity_with_zero_mass.base_link.inertial_pos, GEOM_POS, tol=tol)
+    assert_allclose(
+        np.linalg.eigvalsh(entity_with_zero_mass.base_link.inertial_i),
+        np.linalg.eigvalsh(estimate_link.inertial_i),
+        tol=tol,
+    )
+
+    # A zero stated where a fixed child carries the mass is the connector idiom, so the geometry supplies neither.
+    assert_allclose(entity_with_massless_connector.get_link("arm").inertial_mass, gs.EPS, tol=gs.EPS)
+    assert_allclose(entity_with_massless_connector.get_mass(), 1.0, tol=gs.EPS)
+
+    # A fixed child's own inertia makes up its parent's composite, so a zero stated there is recovered too.
     assert_allclose(entity_with_zero_inertia_child.get_mass(), TIP_MASS, rtol=1e-9)
     assert_allclose(
         np.linalg.eigvalsh(entity_with_zero_inertia_child.base_link.inertial_i) / TIP_MASS, estimate_per_mass, tol=tol
     )
 
-    # Resolving the center of mass to the link frame can place it outside the geometry, which stays worth reporting.
-    # Only the link whose geometry is offset qualifies; a geometry-derived center of mass never does.
+    # A zero-density geom weighs nothing by design, and the hull's composite already carries the body holding it.
+    assert_allclose(entity_with_zero_density_marker.get_link("marker").inertial_mass, gs.EPS, tol=gs.EPS)
+    assert_allclose(entity_with_zero_density_marker.get_mass(), 8.0, tol=gs.EPS)
+
+    # Only a center of mass resolved to the link frame can fall outside the geometry, so exactly one link qualifies.
     dubious_com_records = [record for record in caplog.records if "dubious center of mass" in record.getMessage()]
     assert len(dubious_com_records) == 1
 
@@ -346,6 +386,7 @@ def test_urdf_parsing_inertia_defaults(
     assert_allclose(entity_without_inertia.get_pos(), (-0.3, 0.0, -0.03), tol=1e-3)
     assert_allclose(entity_with_implicit_origin.get_pos(), (0.0, 0.0, -0.03), tol=1e-3)
     assert_allclose(entity_with_zero_inertia.get_pos(), (0.3, 0.0, -0.03), tol=1e-3)
+    assert_allclose(entity_with_zero_mass.get_pos(), (-0.9, 0.0, -0.03), tol=1e-3)
 
 
 @pytest.mark.slow  # ~200s

@@ -824,22 +824,23 @@ class KinematicEntity(Entity):
             bool(link_g_infos) or (l_info.get("inertial_mass") or 0.0) > 0.0
             for link_g_infos, l_info in zip(links_g_infos, l_infos)
         ]
+        has_links_fixed_child_mass = [False] * len(l_infos)
         for i in reversed(range(len(l_infos))):
             parent_idx = l_infos[i]["parent_idx"]
             if parent_idx >= 0 and all(j_info["type"] == gs.JOINT_TYPE.FIXED for j_info in links_j_infos[i]):
                 has_links_subtree_mass[parent_idx] |= has_links_subtree_mass[i]
+                has_links_fixed_child_mass[parent_idx] |= has_links_subtree_mass[i]
 
-        for i, (l_info, link_g_infos, link_j_infos, has_link_subtree_mass) in enumerate(
-            zip(l_infos, links_g_infos, links_j_infos, has_links_subtree_mass)
+        for i, (l_info, link_g_infos, link_j_infos, has_link_subtree_mass, has_link_fixed_child_mass) in enumerate(
+            zip(l_infos, links_g_infos, links_j_infos, has_links_subtree_mass, has_links_fixed_child_mass)
         ):
-            # A fixed link is subsumed into its parent's composite, which its own inertia contributes to, so it is
-            # recovered as well whenever it has geometry to derive one from.
-            if not link_g_infos and all(j_info["type"] == gs.JOINT_TYPE.FIXED for j_info in link_j_infos):
+            # A fixed link contributes its own inertia to its parent's composite, so recover it when it has geometry.
+            is_fixed_link = all(j_info["type"] == gs.JOINT_TYPE.FIXED for j_info in link_j_infos)
+            if not link_g_infos and is_fixed_link:
                 continue
-            if not (
-                (l_info.get("inertial_mass") is None or l_info["inertial_mass"] <= 0.0)
-                or (l_info.get("inertial_i") is None or (np.diag(l_info["inertial_i"]) <= 0.0).any())
-            ):
+            is_mass_degenerate = (l_info.get("inertial_mass") or 0.0) <= 0.0
+            is_inertia_degenerate = l_info.get("inertial_i") is None or (np.diag(l_info["inertial_i"]) <= 0.0).any()
+            if not (is_mass_degenerate or is_inertia_degenerate):
                 continue
 
             # The own inertia is degenerate, so the parsed inverse weight (derived from it) must be recomputed
@@ -860,6 +861,10 @@ class KinematicEntity(Entity):
                 gs.logger.debug(
                     f"Invalid or undefined inertia for link '{l_info['name']}'. Force recomputing it based on geometry."
                 )
+            # A zero mass stands unless it would leave the link singular, which only a moving link with no mass
+            # anywhere in its rigidly-attached (fixed-joint) subtree is: any other link is carried by a composite.
+            if is_mass_degenerate and not is_fixed_link and not has_link_fixed_child_mass:
+                l_info["inertial_mass"] = None
             l_info["inertial_i"] = None
         if is_inertia_invalid:
             for l_info, link_j_infos in zip(l_infos, links_j_infos):

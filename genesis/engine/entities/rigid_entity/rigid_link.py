@@ -212,7 +212,6 @@ def finalize_inertial(
     if mass is None:
         mass = hint_mass
     if inertia is None:
-        # The geometry only describes how the mass is laid out, so an authored center of mass still places it.
         if com is None:
             com = hint_com
         inertia, quat = hint_inertia, gu.identity_quat()

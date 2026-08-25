@@ -469,6 +469,33 @@ def zero_inertia_urdf():
 
 
 @pytest.fixture(scope="session")
+def zero_mass_urdf():
+    """Generate a URDF stating a zero mass next to a well-defined inertia."""
+    urdf = ET.Element("robot", name="zero_mass")
+    _add_sphere_link(urdf, "base_link", "0.0 0.0 0.09", mass=0.0, inertia=(0.11, 0.01, 0.02, 0.22, 0.03, 0.30))
+    return ET.tostring(urdf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
+def massless_connector_urdf():
+    """Generate a URDF whose moving link states a zero mass beside its own geometry while a fixed child carries all
+    the mass."""
+    urdf = ET.Element("robot", name="massless_connector")
+    ET.SubElement(urdf, "link", name="base")
+    _add_sphere_link(urdf, "arm", "0.0 0.0 0.09", mass=0.0, inertia=(0.0,) * 6)
+    joint = ET.SubElement(urdf, "joint", name="hinge", type="continuous")
+    ET.SubElement(joint, "axis", xyz="1.0 0.0 0.0")
+    ET.SubElement(joint, "parent", link="base")
+    ET.SubElement(joint, "child", link="arm")
+    _add_sphere_link(urdf, "bob", "0.0 0.0 0.0", mass=1.0, inertia=(1e-3, 0.0, 0.0, 1e-3, 0.0, 1e-3))
+    joint = ET.SubElement(urdf, "joint", name="weld", type="fixed")
+    ET.SubElement(joint, "parent", link="arm")
+    ET.SubElement(joint, "child", link="bob")
+    ET.SubElement(joint, "origin", xyz="0.0 0.0 0.3", rpy="0.0 0.0 0.0")
+    return ET.tostring(urdf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
 def zero_inertia_fixed_child_urdf():
     """Generate a URDF stating a zero inertia on a fixed child far lighter than 'MASS_EPS'. The non-identity joint
     origin keeps the root from being dropped, so the child stays a fixed-jointed link."""
@@ -480,6 +507,20 @@ def zero_inertia_fixed_child_urdf():
     ET.SubElement(joint, "child", link="tip_link")
     ET.SubElement(joint, "origin", xyz="0.0 0.0 0.3", rpy="0.0 0.0 0.0")
     return ET.tostring(urdf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
+def zero_density_marker_mjcf():
+    """Generate an MJCF whose jointless child body carries a zero-density geom, weighing nothing beside the hull that
+    holds it. The two share a frame, so the marker's center of mass stays inside its own geometry."""
+    mjcf = ET.Element("mujoco", model="zero_density_marker")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    hull = ET.SubElement(worldbody, "body", name="hull")
+    ET.SubElement(hull, "freejoint")
+    ET.SubElement(hull, "geom", type="box", size="0.1 0.1 0.1")
+    marker = ET.SubElement(hull, "body", name="marker")
+    ET.SubElement(marker, "geom", type="sphere", size="0.05", density="0")
+    return ET.tostring(mjcf, encoding="unicode")
 
 
 @pytest.fixture(scope="session")
