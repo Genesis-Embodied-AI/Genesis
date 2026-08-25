@@ -438,7 +438,8 @@ def joint_with_partial_dynamics(joint_damping, joint_friction):
 
 @pytest.fixture(scope="session")
 def authored_geom_density_mjcf():
-    """Generate an MJCF whose three identical boxes take their density from the geom, a default class, and nothing."""
+    """Generate an MJCF whose three identical boxes take their density from the geom, a default class, and nothing,
+    beside a fourth body pairing a stated geom with an unstated one."""
     mjcf = ET.Element("mujoco", model="authored_geom_density")
     default = ET.SubElement(mjcf, "default")
     ET.SubElement(ET.SubElement(default, "default", {"class": "light"}), "geom", density="100")
@@ -452,6 +453,11 @@ def authored_geom_density_mjcf():
         body = ET.SubElement(worldbody, "body", name=name, pos="0.0 0.0 1.0")
         ET.SubElement(body, "freejoint")
         ET.SubElement(body, "geom", type="box", size="0.1 0.1 0.1", **attrib)
+
+    mixed = ET.SubElement(worldbody, "body", name="mixed", pos="0.0 0.0 1.0")
+    ET.SubElement(mixed, "freejoint")
+    ET.SubElement(mixed, "geom", type="box", size="0.1 0.1 0.1", pos="-0.3 0.0 0.0", density="250")
+    ET.SubElement(mixed, "geom", type="box", size="0.1 0.1 0.1", pos="0.3 0.0 0.0")
     return ET.tostring(mjcf, encoding="unicode")
 
 

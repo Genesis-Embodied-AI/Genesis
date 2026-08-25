@@ -1009,11 +1009,6 @@ class KinematicEntity(Entity):
                 # and estimated masses would make the anchor density-dependent, and a kinematic entity has no density
                 # to fall back on, so alignment could differ from the rigid counterpart. Require all-or-none and raise
                 # otherwise.
-                if None in mass_explicit:
-                    gs.raise_exception(
-                        f"Entity '{self.uid}': a link of an aligned free body mixes geoms with and without an "
-                        "authored density. Author a density on all of its geoms or none of them."
-                    )
                 if len(mass_explicit) > 1:
                     gs.raise_exception(
                         f"Entity '{self.uid}': an aligned free body mixes explicit (mass or authored per-geom "
@@ -1315,13 +1310,19 @@ class KinematicEntity(Entity):
     ):
         """Compute a link's load-time inertial data (see 'LinkInertialInfo').
 
-        The align-anchor inertial weighs each collision geom by its authored density, falling back to unit density,
-        so it never needs the material density - which a kinematic entity does not have. The geometry hint consumed
-        by 'RigidLink._build' uses the resolved material density as fallback instead, and falls back to the visual
-        geoms for a link without collision geometry.
+        The align-anchor inertial weighs each collision geom by its authored density, falling back to the default
+        density, so a link mixing authored and unauthored geoms still composes at the right relative weights. The
+        anchor never needs the material density - which a kinematic entity does not have - because a material that
+        states one drops every authored density (see '_add_by_info'), leaving the anchor density-independent. The
+        geometry hint consumed by 'RigidLink._build' uses the resolved material density instead, and falls back to
+        the visual geoms for a link without collision geometry.
         """
+        if self._solver._enable_mujoco_compatibility:
+            rho_default = RHO_MUJOCO
+        else:
+            rho_default = RHO_ROBOT if is_robot else RHO_OBJECT
         if cg_infos:
-            hint = compose_inertial_from_g_infos(cg_infos, rho=1.0)
+            hint = compose_inertial_from_g_infos(cg_infos, rho=rho_default)
         else:
             hint = InertialProperties(0.0, np.zeros(3, dtype=gs.np_float), np.zeros((3, 3), dtype=gs.np_float))
         props = finalize_inertial(
@@ -1330,22 +1331,13 @@ class KinematicEntity(Entity):
         if explicit_mass is not None and explicit_mass > 0.0:
             is_mass_explicit = True
         else:
-            geoms_with_density = sum(g_info.get("density") is not None for g_info in cg_infos)
-            if geoms_with_density == 0:
-                is_mass_explicit = False
-            elif geoms_with_density == len(cg_infos):
-                is_mass_explicit = True
-            else:
-                is_mass_explicit = None
+            # A geom the asset weighs is anchored at that weight, and one it does not is anchored at the default the
+            # dynamics falls back on too, so any link the asset weighs at all anchors at its own dynamics mass.
+            is_mass_explicit = any(g_info.get("density") is not None for g_info in cg_infos)
 
         dynamics_hint = None
         if isinstance(self.material, gs.materials.Rigid):
-            rho = self.material.rho
-            if rho is None:
-                if self._solver._enable_mujoco_compatibility:
-                    rho = RHO_MUJOCO
-                else:
-                    rho = RHO_ROBOT if is_robot else RHO_OBJECT
+            rho = self.material.rho if self.material.rho is not None else rho_default
             hint_g_infos = cg_infos if cg_infos else vg_infos
             if hint_g_infos:
                 dynamics_hint = compose_inertial_from_g_infos(hint_g_infos, rho)
