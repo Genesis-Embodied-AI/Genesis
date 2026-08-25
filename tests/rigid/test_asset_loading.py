@@ -220,7 +220,7 @@ def test_urdf_parsing(show_viewer, tol):
 
 
 @pytest.mark.required
-def test_mjcf_authored_geom_density(authored_geom_density_mjcf, show_viewer):
+def test_mjcf_authored_geom_mass(authored_geom_mass_mjcf, show_viewer):
     # An authored density, on the geom or inherited from a default class, is what a recomputed inertial must weigh.
     HALF_EXTENT = 0.1
     VOLUME = (2.0 * HALF_EXTENT) ** 3
@@ -234,7 +234,7 @@ def test_mjcf_authored_geom_density(authored_geom_density_mjcf, show_viewer):
     )
     entity = scene.add_entity(
         morph=gs.morphs.MJCF(
-            file=authored_geom_density_mjcf,
+            file=authored_geom_mass_mjcf,
             recompute_inertia=True,
             align=True,
             convexify=False,
@@ -244,7 +244,7 @@ def test_mjcf_authored_geom_density(authored_geom_density_mjcf, show_viewer):
     # body is loaded a second time under it.
     entity_decomposed = scene.add_entity(
         morph=gs.morphs.MJCF(
-            file=authored_geom_density_mjcf,
+            file=authored_geom_mass_mjcf,
             recompute_inertia=True,
             align=True,
         ),

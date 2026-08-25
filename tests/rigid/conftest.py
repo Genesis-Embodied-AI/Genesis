@@ -437,11 +437,11 @@ def joint_with_partial_dynamics(joint_damping, joint_friction):
 
 
 @pytest.fixture(scope="session")
-def authored_geom_density_mjcf():
+def authored_geom_mass_mjcf():
     """Generate an MJCF whose identical boxes state their mass as a geom density, a default-class density, a geom
     mass, and not at all, beside bodies pairing a stated geom with an unstated one, fusing two stated masses, and
     leaving a weightless collision geom beside a visual one."""
-    mjcf = ET.Element("mujoco", model="authored_geom_density")
+    mjcf = ET.Element("mujoco", model="authored_geom_mass")
     default = ET.SubElement(mjcf, "default")
     ET.SubElement(ET.SubElement(default, "default", {"class": "light"}), "geom", density="100")
 
