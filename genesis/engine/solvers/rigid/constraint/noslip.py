@@ -753,9 +753,7 @@ def func_noslip_update_collision_pair_lane(j_efc, i_b, i_lane, EPS, omega, const
 #
 # The scalar kernel_noslip runs one env per thread, starving the GPU at small batch. Here a block of NOSLIP_COOP_T lanes
 # handles an env, with the rows graph-colored so same-color rows touch disjoint mass blocks and update in parallel.
-# Sweeping the colors in order keeps it true Gauss-Seidel (each color sees the previous colors' updates), so it is
-# stable at omega=1 without the under-relaxation a Jacobi sweep would need. The row reorder makes it non-bit-identical
-# to the scalar sweep.
+# Sweeping the colors in order keeps it true Gauss-Seidel (each color sees the previous colors' updates).
 # ======================================================================================================================
 
 
