@@ -313,7 +313,13 @@ class ConstraintSolver:
         )
 
     def noslip(self):
-        constraint_noslip.kernel_noslip(
+        # Colored Gauss-Seidel warp-per-env sweep when enabled (small-batch GPU); otherwise the scalar
+        # one-thread-per-env kernel.
+        if self._solver.rigid_config.enable_color_noslip:
+            noslip_kernel = constraint_noslip.kernel_noslip_color
+        else:
+            noslip_kernel = constraint_noslip.kernel_noslip
+        noslip_kernel(
             self._solver.dyn_state,
             self._collider._collider_state,
             self.constraint_state,

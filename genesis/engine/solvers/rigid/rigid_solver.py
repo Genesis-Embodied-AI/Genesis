@@ -737,6 +737,16 @@ class RigidSolver(KinematicSolver):
                     island_factor_n_blocks=max(1, max_tiled_envs // cholesky_tile_size),
                 )
 
+                # Colored Gauss-Seidel warp-per-env noslip (opt-in via GS_NOSLIP_COLOR=1). Only when the cooperative
+                # constraint layout is active and the whole-env sweep runs (per-island off), which is what
+                # kernel_noslip_color assumes. Graph-colors the rows so it runs true Gauss-Seidel (omega=1, no damping)
+                # in parallel across a warp. Non-bit-identical (row reorder), so it stays off by default.
+                rigid_config["enable_color_noslip"] = (
+                    enable_cooperative_constraint_kernels
+                    and not rigid_config["enable_per_island_solve"]
+                    and os.environ.get("GS_NOSLIP_COLOR", "0") == "1"
+                )
+
                 # Manually pin the solve arm only where the winner is determinable in advance AND confirmed across
                 # CUDA + Metal; genuinely backend-dependent cases fall through to the per-step autotuner.
                 if not enable_cooperative_constraint_kernels:
