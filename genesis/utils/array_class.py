@@ -615,16 +615,14 @@ class ConstraintState:
     prev_active: qd.Tensor
     qfrc_constraint: qd.Tensor
     qacc: qd.Tensor
-    # Per-lane M^-1 scratch for the warp-per-env colored noslip sweep, shape (n_dofs, NOSLIP_COOP_T, _B). Empty tensor
-    # unless enable_color_noslip. Lets concurrent lanes each compute their row's M^-1 J^T without clobbering a shared
-    # buffer.
+    # Per-lane M^-1 scratch for the colored noslip sweep, (n_dofs, NOSLIP_COOP_T, _B); empty unless enable_color_noslip.
+    # The lane dim lets concurrent rows compute their own M^-1 J^T without clobbering a shared buffer.
     noslip_minv: qd.Tensor
-    # Colored-noslip scratch (kernel_noslip_color). Empty unless enable_color_noslip.
-    #  - row_color[i_c, i_b]: greedy graph-color of constraint row i_c, or -1 for rows the sweep skips (equality/limit).
-    #    A collision pyramid pair (j_efc, j_efc+1) shares one color, stored on both rows.
-    #  - n_colors[i_b]: number of colors used for this env (loop bound of the color sweep).
-    #  - color_block_used[c, i_d, i_b]: greedy-coloring workspace, 1 iff color c already claims the mass block whose
-    #    first dof is i_d. First axis is NOSLIP_COLOR_MAXC (must match noslip.NOSLIP_COLOR_MAXC).
+    # Colored-noslip scratch (kernel_noslip_color); empty unless enable_color_noslip.
+    #  - row_color[i_c, i_b]: color of row i_c, or -1 for skipped rows (equality/limit); a pyramid pair shares a color.
+    #  - n_colors[i_b]: color count for this env (sweep loop bound), or -1 on coloring overflow.
+    #  - color_block_used[c, i_d, i_b]: coloring workspace, 1 iff color c claims the mass block with first dof i_d;
+    #    first axis is NOSLIP_COLOR_MAXC.
     row_color: qd.Tensor
     n_colors: qd.Tensor
     color_block_used: qd.Tensor
@@ -869,8 +867,7 @@ def get_constraint_state(constraint_solver, solver, collider):
             dtype=gs.qd_float,
             shape=maybe_shape((_B, solver.n_dofs_), solver.rigid_config.enable_cone_free_hessian_reuse),
         ),
-        # Per-lane scratch for kernel_noslip_color. The 32 must match noslip.NOSLIP_COOP_T. Empty unless the colored
-        # noslip path is enabled, so the scalar / non-GPU paths pay nothing.
+        # Per-lane scratch for kernel_noslip_color; the 32 must match noslip.NOSLIP_COOP_T. Empty unless enabled.
         noslip_minv=V(
             dtype=gs.qd_float,
             shape=maybe_shape(
@@ -878,9 +875,8 @@ def get_constraint_state(constraint_solver, solver, collider):
                 solver.rigid_config.enable_color_noslip,
             ),
         ),
-        # Colored-noslip scratch (kernel_noslip_color). Empty unless the colored path is enabled. row_color matches
-        # efc_force's serial (per-env-contiguous) layout since they are indexed identically in the sweep. The 64 must
-        # match noslip.NOSLIP_COLOR_MAXC (the greedy coloring's max color count).
+        # Colored-noslip scratch; empty unless enabled. row_color uses efc_force's serial layout (indexed identically in
+        # the sweep); color_block_used's first axis (64) must match noslip.NOSLIP_COLOR_MAXC.
         row_color=V(
             dtype=gs.qd_int,
             shape=maybe_shape((len_constraints_, _B), solver.rigid_config.enable_color_noslip),
@@ -2670,12 +2666,8 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # tensor layouts they expect, eg (_B, len_constraints_) for Jaref / efc_D / ... which unlocks coalesced cross-lane
     # reads.
     enable_cooperative_constraint_kernels: bool = False
-    # Colored Gauss-Seidel matrix-free noslip (kernel_noslip_color): replaces the scalar one-thread-per-env friction
-    # sweep with a warp-per-env sweep where the constraint rows are graph-colored by disjoint DOF/mass-block support, so
-    # each color updates in parallel and colors are swept in order (Gauss-Seidel across colors, omega=1, no damping).
-    # Non-bit-identical (row reorder), same convergence class as the scalar sweep. GPU-only; requires the whole-env
-    # sweep (per-island solve off); allocates the per-lane ConstraintState.noslip_minv scratch plus row_color /
-    # n_colors / color_block_used.
+    # Selects the colored Gauss-Seidel warp-per-env noslip kernel (kernel_noslip_color) over the scalar one. Non-bit-
+    # identical (row reorder), same convergence class. GPU-only; requires the whole-env sweep (per-island solve off).
     enable_color_noslip: bool = False
     # Purely descriptive layout flag: True whenever the layout-flippable constraint-state tensors are physically
     # batch-first, i.e. enable_cooperative_constraint_kernels or serialized execution (env loop outermost, so per-env
