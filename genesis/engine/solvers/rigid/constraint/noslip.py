@@ -12,8 +12,9 @@ NOSLIP_COOP_T = 32
 NOSLIP_COOP_ITERS = int(os.environ.get("GS_NOSLIP_COOP_ITERS", "0"))
 
 # NOSLIP_COLOR_MAXC caps the greedy coloring's color count (first axis of ConstraintState.color_block_used); a scene
-# needing more colors overflows to the n_colors = -1 sentinel. These bake in as qd.static, so change them only with a
-# dedicated compile cache (QD_OFFLINE_CACHE_FILE_PATH).
+# needing more colors falls back to a serial single-lane sweep for that env (correct, slower), so this is a perf knob,
+# not a correctness bound. These bake in as qd.static, so change them only with a dedicated compile cache
+# (QD_OFFLINE_CACHE_FILE_PATH).
 NOSLIP_COLOR_OMEGA = float(os.environ.get("GS_NOSLIP_COLOR_OMEGA", "1.0"))
 NOSLIP_COLOR_MAXC = int(os.environ.get("GS_NOSLIP_COLOR_MAXC", "64"))
 
@@ -784,7 +785,8 @@ def func_color_assign(
     Atoms are the friction rows and the pyramid bases j_efc (the base's dof support also covers its j_efc+1 partner).
     Two atoms conflict iff they share a mass block (keyed on the first dof). Each atom takes the lowest conflict-free
     color and claims its blocks; equality / joint-limit rows keep -1 so the sweep skips them (matching the scalar
-    kernel). Overflow past NOSLIP_COLOR_MAXC colors sets n_colors = -1 as a host-checkable sentinel."""
+    kernel). Overflow past NOSLIP_COLOR_MAXC colors sets n_colors = -1, which the kernel handles by falling back to a
+    serial single-lane sweep for that env."""
     MAXC = qd.static(NOSLIP_COLOR_MAXC)
     max_color = gs.qd_int(-1)
     overflow = False
@@ -819,6 +821,38 @@ def func_color_assign(
         constraint_state.n_colors[i_b] = gs.qd_int(-1)
     else:
         constraint_state.n_colors[i_b] = max_color + 1
+
+
+@qd.func
+def func_color_apply_row(
+    i_c, i_b, i_lane, ne, nf, const_start, const_end, EPS, omega,
+    constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo,
+):
+    """Project one noslip row at lane i_lane and scatter its force delta into qacc. Friction rows get the 1x1 update,
+    pyramid bases the 2x2; equality / joint-limit rows are skipped. The update leaves noslip_minv holding M^-1 J^T, so
+    propagation is a scaled accumulate (no extra solve)."""
+    if i_c >= ne and i_c < ne + nf:
+        old = constraint_state.efc_force[i_c, i_b]
+        func_noslip_update_frictionloss_lane(i_c, i_b, i_lane, omega, constraint_state, rigid_info)
+        dfc = constraint_state.efc_force[i_c, i_b] - old
+        func_accumulate_row_blocks_lane(
+            i_c, i_b, i_lane, dfc, constraint_state.jac_dofs_idx, constraint_state.noslip_minv,
+            constraint_state.qacc, constraint_state.jac_n_dofs, rigid_info,
+        )
+    elif i_c >= const_start and i_c < const_end and (i_c - const_start) % 2 == 0:
+        old0 = constraint_state.efc_force[i_c, i_b]
+        old1 = constraint_state.efc_force[i_c + 1, i_b]
+        func_noslip_update_collision_pair_lane(i_c, i_b, i_lane, EPS, omega, constraint_state, rigid_info)
+        df0 = constraint_state.efc_force[i_c, i_b] - old0
+        df1 = constraint_state.efc_force[i_c + 1, i_b] - old1
+        func_apply_Minv_rows_lane(
+            i_c, i_c + 1, i_b, i_lane, constraint_state.jac_dofs_idx, df0, df1,
+            constraint_state.noslip_minv, constraint_state.jac, constraint_state.jac_n_dofs, rigid_info,
+        )
+        func_accumulate_row_blocks_lane(
+            i_c, i_b, i_lane, 1.0, constraint_state.jac_dofs_idx, constraint_state.noslip_minv,
+            constraint_state.qacc, constraint_state.jac_n_dofs, rigid_info,
+        )
 
 
 @qd.kernel(fastcache=True)
@@ -876,42 +910,29 @@ def kernel_noslip_color(
                 func_coop_add_smooth(tid, _T, i_b, n_dofs, constraint_state, dyn_state)
                 qd.simt.block.sync()
 
-                for c in range(n_colors):
-                    # Same-color rows own disjoint mass blocks, so updating them and scattering their deltas into qacc
-                    # are race-free across lanes without a mid-color sync.
-                    i_c = tid
-                    while i_c < n_rows:
-                        if constraint_state.row_color[i_c, i_b] == c:
-                            if i_c >= ne and i_c < ne + nf:
-                                old = constraint_state.efc_force[i_c, i_b]
-                                func_noslip_update_frictionloss_lane(
-                                    i_c, i_b, tid, qd.static(NOSLIP_COLOR_OMEGA), constraint_state, rigid_info
+                if n_colors >= 0:
+                    for c in range(n_colors):
+                        # Same-color rows own disjoint mass blocks, so updating them and scattering their deltas into
+                        # qacc are race-free across lanes without a mid-color sync.
+                        i_c = tid
+                        while i_c < n_rows:
+                            if constraint_state.row_color[i_c, i_b] == c:
+                                func_color_apply_row(
+                                    i_c, i_b, tid, ne, nf, const_start, const_end, EPS,
+                                    qd.static(NOSLIP_COLOR_OMEGA), constraint_state, rigid_info,
                                 )
-                                # noslip_minv still holds M^-1 J_ic^T, so propagation is a scaled accumulate (no solve).
-                                dfc = constraint_state.efc_force[i_c, i_b] - old
-                                func_accumulate_row_blocks_lane(
-                                    i_c, i_b, tid, dfc, constraint_state.jac_dofs_idx, constraint_state.noslip_minv,
-                                    constraint_state.qacc, constraint_state.jac_n_dofs, rigid_info,
-                                )
-                            elif i_c >= const_start and i_c < const_end and (i_c - const_start) % 2 == 0:
-                                old0 = constraint_state.efc_force[i_c, i_b]
-                                old1 = constraint_state.efc_force[i_c + 1, i_b]
-                                func_noslip_update_collision_pair_lane(
-                                    i_c, i_b, tid, EPS, qd.static(NOSLIP_COLOR_OMEGA), constraint_state, rigid_info
-                                )
-                                df0 = constraint_state.efc_force[i_c, i_b] - old0
-                                df1 = constraint_state.efc_force[i_c + 1, i_b] - old1
-                                # Rebuild noslip_minv = M^-1 (df0 J0^T + df1 J1^T) for the pair, then accumulate it.
-                                func_apply_Minv_rows_lane(
-                                    i_c, i_c + 1, i_b, tid, constraint_state.jac_dofs_idx, df0, df1,
-                                    constraint_state.noslip_minv, constraint_state.jac, constraint_state.jac_n_dofs,
-                                    rigid_info,
-                                )
-                                func_accumulate_row_blocks_lane(
-                                    i_c, i_b, tid, 1.0, constraint_state.jac_dofs_idx, constraint_state.noslip_minv,
-                                    constraint_state.qacc, constraint_state.jac_n_dofs, rigid_info,
-                                )
-                        i_c += _T
+                            i_c += _T
+                        qd.simt.block.sync()
+                else:
+                    # Coloring overflowed NOSLIP_COLOR_MAXC: fall back to a serial single-lane Gauss-Seidel sweep over
+                    # all rows in index order. Slower for this env, but correct and race-free (one lane), and it still
+                    # rides the cooperative qacc refresh above.
+                    if tid == 0:
+                        for i_c in range(n_rows):
+                            func_color_apply_row(
+                                i_c, i_b, 0, ne, nf, const_start, const_end, EPS,
+                                qd.static(NOSLIP_COLOR_OMEGA), constraint_state, rigid_info,
+                            )
                     qd.simt.block.sync()
 
             # Dual finish: rebuild qacc / qfrc from the final forces and write them to dof state.

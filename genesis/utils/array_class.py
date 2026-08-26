@@ -620,7 +620,7 @@ class ConstraintState:
     noslip_minv: qd.Tensor
     # Colored-noslip scratch (kernel_noslip_color); empty unless enable_color_noslip.
     #  - row_color[i_c, i_b]: color of row i_c, or -1 for skipped rows (equality/limit); a pyramid pair shares a color.
-    #  - n_colors[i_b]: color count for this env (sweep loop bound), or -1 on coloring overflow.
+    #  - n_colors[i_b]: color count for this env (sweep loop bound), or -1 on overflow (kernel then sweeps serially).
     #  - color_block_used[c, i_d, i_b]: coloring workspace, 1 iff color c claims the mass block with first dof i_d;
     #    first axis is NOSLIP_COLOR_MAXC.
     row_color: qd.Tensor
