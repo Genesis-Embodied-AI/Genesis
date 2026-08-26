@@ -737,14 +737,19 @@ class RigidSolver(KinematicSolver):
                     island_factor_n_blocks=max(1, max_tiled_envs // cholesky_tile_size),
                 )
 
-                # Colored Gauss-Seidel warp-per-env noslip (opt-in via GS_NOSLIP_COLOR=1). Only when the cooperative
-                # constraint layout is active and the whole-env sweep runs (per-island off), which is what
-                # kernel_noslip_color assumes. Graph-colors the rows so it runs true Gauss-Seidel (omega=1, no damping)
-                # in parallel across a warp. Non-bit-identical (row reorder), so it stays off by default.
+                # Colored Gauss-Seidel warp-per-env noslip: auto-selected (no opt-in) whenever noslip runs inside the
+                # cooperative-constraint envelope with the whole-env sweep. That envelope (computed above) already pins
+                # the regime where a warp-per-env sweep beats one-thread-per-env for the constraint solve -- GPU, dense,
+                # non-differentiable, n_dofs >= 16, and few enough envs that the batch dimension alone undersaturates the
+                # GPU -- and noslip is the last one-thread-per-env kernel left in it, so it inherits the same envelope.
+                # Requires the whole-env sweep (per-island off): the colored kernel does not do the per-(env, island)
+                # partition. Excluded under MuJoCo compatibility, which asks for the reference algorithm -- the colored
+                # sweep visits rows in color order, so it is non-bit-identical to the scalar Gauss-Seidel sweep.
                 rigid_config["enable_color_noslip"] = (
-                    enable_cooperative_constraint_kernels
+                    self._options.noslip_iterations > 0
+                    and enable_cooperative_constraint_kernels
                     and not rigid_config["enable_per_island_solve"]
-                    and os.environ.get("GS_NOSLIP_COLOR", "0") == "1"
+                    and not self._enable_mujoco_compatibility
                 )
 
                 # Manually pin the solve arm only where the winner is determinable in advance AND confirmed across
