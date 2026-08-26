@@ -53,8 +53,8 @@ jobs:
             exit 1
           fi
           VER=$(tr -d '[:space:]' < .github/genesis_image_ver)
-          if [[ ! "${VER}" =~ ^[0-9]+_[0-9]+$ ]] ; then
-            echo "::error::'.github/genesis_image_ver' must hold a version of the form '<major>_<minor>'."
+          if [[ ! "${VER}" =~ ^[0-9]+_[0-9]+[a-z0-9]*$ ]] ; then
+            echo "::error::'.github/genesis_image_ver' must hold a version of the form '<major>_<minor>[<suffix>]'."
             exit 1
           fi
           echo "ver=${VER}" >> $GITHUB_OUTPUT
