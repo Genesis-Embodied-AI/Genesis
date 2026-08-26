@@ -19,8 +19,6 @@ env:
   # Note that secrets are not passed to workflows that are triggered by a pull request from a fork
   HF_TOKEN: ${{ secrets.HF_TOKEN }}
   HF_HUB_DOWNLOAD_TIMEOUT: 60
-  # Increment to switch new jobs to fresh caches before deleting the previous version.
-  CACHE_VERSION: "1"
   GENESIS_IMAGE_VER: "1_25"
   TIMEOUT_MINUTES: 60
   FORCE_COLOR: 1
@@ -51,6 +49,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Sets CACHE_VERSION to the UTC ISO week bucket; retention policy is in production_rotate_cache.sh.
+      - name: Rotate production caches
+        run: bash .github/workflows/scripts/production_rotate_cache.sh
+
       - name: Spawn Slurm job
         if: github.event_name == 'pull_request'
         run: |
@@ -67,12 +69,6 @@ jobs:
                --no-container-mount-home \
                --container-workdir=/root/workspace"
           SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
-
-          mkdir -p \
-            "${HOME}/.cache/${CACHE_VERSION}/uv" \
-            "${HOME}/.cache/${CACHE_VERSION}/genesis" \
-            "${HOME}/.cache/${CACHE_VERSION}/quadrants" \
-            "${HOME}/.cache/${CACHE_VERSION}/huggingface"
 
           JOBID_FIFO="${{ github.workspace }}/.slurm_job_id_fifo"
           [[ -e "$JOBID_FIFO" ]] && rm -f "$JOBID_FIFO"
@@ -142,6 +138,10 @@ jobs:
           # tracking thereby making it impossible to detect whether a commit is contained in upstream main.
           fetch-depth: 0
 
+      # Sets CACHE_VERSION to the UTC ISO week bucket; retention policy is in production_rotate_cache.sh.
+      - name: Rotate production caches
+        run: bash .github/workflows/scripts/production_rotate_cache.sh
+
       - name: Spawn Slurm job
         run: |
           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
@@ -159,8 +159,6 @@ jobs:
           if [[ "${{ github.repository }}" == 'Genesis-Embodied-AI/genesis-world' && "${{ github.ref }}" == 'refs/heads/main' ]] ; then
             SLURM_ENV_VARS="${SLURM_ENV_VARS},WANDB_API_KEY"
           fi
-
-          mkdir -p "${HOME}/.cache/${CACHE_VERSION}/uv" "${HOME}/.cache/${CACHE_VERSION}/huggingface"
 
           JOBID_FIFO="${{ github.workspace }}/.slurm_job_id_fifo"
           [[ -e "$JOBID_FIFO" ]] && rm -f "$JOBID_FIFO"
