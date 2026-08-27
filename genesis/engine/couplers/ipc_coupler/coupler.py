@@ -122,19 +122,22 @@ class IPCCoupler(RBC):
         self.rigid_solver: "RigidSolver" = self.sim.rigid_solver
         self.fem_solver: "FEMSolver" = self.sim.fem_solver
 
-        self._constraint_strength_translation_scaled = self.options.constraint_strength_translation / self.sim.dt**2
-        self._constraint_strength_rotation_scaled = self.options.constraint_strength_rotation / self.sim.dt**2
-
         # ==== IPC System Infrastructure ====
+        # The soft-constraint strengths coupling a rigid body to its Genesis pose, 'constraint_strength_translation'
+        # and 'constraint_strength_rotation', are scaled by the inverse square of the substep interval to reach the
+        # units the IPC world expects. That interval is only known once every solver has derived its substeps, so the
+        # initialization of both of them, and of the IPC scene, is postponed to build time.
+        self._constraint_strength_translation_scaled: float | None = None
+        self._constraint_strength_rotation_scaled: float | None = None
         self._ipc_engine: Engine | None = None
         self._ipc_world: World | None = None
-        self._ipc_scene = Scene(build_ipc_scene_config(self.options, self.sim.options))
+        self._ipc_scene: Scene | None = None
         self._ipc_subscenes: list[SubsceneElement] = []
-        self._ipc_constitution_tabular = self._ipc_scene.constitution_tabular()
-        self._ipc_contact_tabular = self._ipc_scene.contact_tabular()
-        self._ipc_subscene_tabular = self._ipc_scene.subscene_tabular()
-        self._ipc_objects = self._ipc_scene.objects()
-        self._ipc_animator = self._ipc_scene.animator()
+        self._ipc_constitution_tabular = None
+        self._ipc_contact_tabular = None
+        self._ipc_subscene_tabular = None
+        self._ipc_objects = None
+        self._ipc_animator = None
 
         # ==== IPC Constitutions ====
         self._ipc_abd: AffineBodyConstitution | None = None
@@ -145,7 +148,7 @@ class IPCCoupler(RBC):
         self._ipc_eac: ExternalArticulationConstraint | None = None
 
         # ==== IPC Contact Elements ====
-        self._ipc_no_collision_contact: ContactElement = self._ipc_contact_tabular.create("no_collision_contact")
+        self._ipc_no_collision_contact: ContactElement | None = None
         self._ipc_fem_contacts: dict["FEMEntity", ContactElement] = {}
         self._ipc_cloth_contacts: dict["FEMEntity", ContactElement] = {}
         self._ipc_abd_contacts: dict["RigidEntity", ContactElement] = {}
@@ -196,8 +199,10 @@ class IPCCoupler(RBC):
         # for the scene's own, explicitly or by inheriting it, gets what the world already applies.
         # FIXME: 'Solver.set_gravity' is not honored either, and goes through: it writes a solver buffer the IPC world
         # never reads, and there is nothing to detect it by, the world being built long before the write.
+        gravity_scene = self.sim.options.gravity
         for solver in (self.rigid_solver, self.fem_solver):
-            if solver.is_active and tuple(solver._options.gravity) != tuple(self.sim.options.gravity):
+            gravity_solver = solver._options.gravity
+            if solver.is_active and not np.allclose(gravity_solver, gravity_scene, atol=gs.EPS):
                 gs.raise_exception(
                     f"{type(solver).__name__} specifies a gravity of {tuple(gravity_solver)}, which the IPC coupler "
                     f"cannot honor: every body it couples falls under the {tuple(gravity_scene)} of 'SimOptions'."
@@ -279,6 +284,18 @@ class IPCCoupler(RBC):
         # before Genesis initialization, as libuipc Engine does not expose device selection in constructor
         self._ipc_engine = Engine("cuda", workspace)
         self._ipc_world = World(self._ipc_engine)
+
+        substep_dt = self.sim.substep_dt
+        self._constraint_strength_translation_scaled = self.options.constraint_strength_translation / substep_dt**2
+        self._constraint_strength_rotation_scaled = self.options.constraint_strength_rotation / substep_dt**2
+
+        self._ipc_scene = Scene(build_ipc_scene_config(self.options, self.sim.options, substep_dt))
+        self._ipc_constitution_tabular = self._ipc_scene.constitution_tabular()
+        self._ipc_contact_tabular = self._ipc_scene.contact_tabular()
+        self._ipc_subscene_tabular = self._ipc_scene.subscene_tabular()
+        self._ipc_objects = self._ipc_scene.objects()
+        self._ipc_animator = self._ipc_scene.animator()
+        self._ipc_no_collision_contact = self._ipc_contact_tabular.create("no_collision_contact")
 
         # Set up sub-scenes for multi-environment to isolate per-environment contacts if batched
         for env_idx in range(self.sim._B):

@@ -131,6 +131,8 @@ def build_genesis_sim(
             enable_multi_contact=multi_contact,
             enable_mujoco_compatibility=mujoco_compatibility,
             use_gjk_collision=gjk_collision,
+            # None gives a geom carrying no time constant of its own the floor, twice the timestep, as Mujoco does.
+            constraint_timeconst=None,
         ),
         viewer_options=gs.options.ViewerOptions(
             res=(960, 640),
@@ -167,12 +169,6 @@ def build_genesis_sim(
         visualize_contact=True,
     )
 
-    # Force matching Mujoco safety factor for constraint time constant.
-    # Note that this time constant affects the penetration depth at rest.
-    gs_sim = scene.sim
-    gs_sim.rigid_solver._sol_default_timeconst = None
-    gs_sim.rigid_solver._sol_min_timeconst = 2.0 * gs_sim._substep_dt
-
     # Force recomputation of invweights to make sure it works fine
     for link in scene.rigid_solver.links:
         link.invweight[:] = -1
@@ -185,4 +181,4 @@ def build_genesis_sim(
 
     scene.build()
 
-    return gs_sim
+    return scene.sim

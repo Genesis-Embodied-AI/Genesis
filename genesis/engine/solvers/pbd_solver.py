@@ -18,14 +18,14 @@ from genesis.engine.states.solvers import PBDSolverState
 from genesis.utils.array_class import LinksState
 from genesis.utils.geom import SpatialHasher
 
-from .base_solver import GravityMixin, Solver
+from .base_solver import GravityMixin, Solver, TimeBasedMixin
 
 if TYPE_CHECKING:
     from genesis.engine.entities import PBD2DEntity, PBD3DEntity, PBDFreeParticleEntity, PBDParticleEntity
 
 
 @qd.data_oriented
-class PBDSolver(GravityMixin, Solver):
+class PBDSolver(GravityMixin, TimeBasedMixin, Solver):
     # ------------------------------------------------------------------------------------
     # --------------------------------- Initialization -----------------------------------
     # ------------------------------------------------------------------------------------

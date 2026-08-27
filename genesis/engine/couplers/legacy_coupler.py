@@ -922,7 +922,7 @@ class LegacyCoupler(RBC):
             )
 
             # 1-way: animate particles by links
-            full_step_inv_dt = 1.0 / self.pbd_solver._dt
+            full_step_inv_dt = 1.0 / self.pbd_solver.dt
             clamped_inv_dt = min(full_step_inv_dt, CLAMPED_INV_DT)
             self.kernel_pbd_rigid_solve_animate_particles_by_link(clamped_inv_dt, self.rigid_solver.dyn_state.links)
 

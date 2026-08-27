@@ -9,14 +9,14 @@ from genesis.engine.boundaries import CubeBoundary
 from genesis.engine.entities import SPHEntity
 from genesis.engine.states.solvers import SPHSolverState
 
-from .base_solver import GravityMixin, Solver
+from .base_solver import GravityMixin, Solver, TimeBasedMixin
 
 if TYPE_CHECKING:
     from genesis.engine.entities import SPHEntity
 
 
 @qd.data_oriented
-class SPHSolver(GravityMixin, Solver):
+class SPHSolver(GravityMixin, TimeBasedMixin, Solver):
     # ------------------------------------------------------------------------------------
     # --------------------------------- Initialization -----------------------------------
     # ------------------------------------------------------------------------------------

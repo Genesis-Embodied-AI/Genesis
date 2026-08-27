@@ -191,6 +191,41 @@ class Subscriber:
         self._pending.clear()
 
 
+class TimeBasedMixin:
+    """Integration interval of one solver, and the number of substeps it implies per scene step.
+
+    Mixed into every solver whose options carry a `dt`.
+    """
+
+    _substeps: int
+    _substep_dt: float
+
+    def __init__(self, scene, sim, options):
+        """Compute how many substeps this solver runs per scene step, from the interval it integrates over.
+
+        The count is `SimOptions.dt` divided by the interval the options of this solver ask for. A solver whose `dt`
+        was left unset takes `SimOptions.substeps` instead. Since the substep loop advances every solver together,
+        `Simulator.build` then checks that the active solvers all end up on the same count.
+        """
+        super().__init__(scene, sim, options)
+        self._substeps = max(1, round(sim.dt / options.dt)) if "dt" in options.model_fields_set else sim.substeps
+        self._substep_dt = sim.dt / self._substeps
+
+    @property
+    def dt(self):
+        """Duration of one scene step, in seconds, which this solver covers in `substeps` substeps."""
+        return self._sim.dt
+
+    @property
+    def substep_dt(self):
+        return self._substep_dt
+
+    @property
+    def substeps(self):
+        """The number of times this solver integrates per scene step."""
+        return self._substeps
+
+
 class GravityMixin:
     """Gravity of one solver: the buffer storing it, and the accessors reading and writing it.
 
@@ -208,11 +243,11 @@ class GravityMixin:
         `as_field=True` for a solver whose kernels access gravity as an attribute of the solver object, which quadrants
         supports for a field only. A solver holding no entity gets no buffer, and its accessors then raise.
         """
-        # FIXME: a field is what a kernel taking the solver as a template can read, since Quadrants resolves no ndarray
-        # attribute of a @qd.data_oriented class in kernel scope. Two ways out, either of which retires the as_field flag:
-        # adding ndarray support to that resolution, or migrating the solver to a frozen dataclass so its ndarrays are
-        # predeclared. Until then the buffer is only allocated for a solver with an entity, since a field costs an
-        # SNode tree that Quadrants never gives back short of qd.reset().
+        # FIXME: a field is what a kernel taking the solver as a template can read, since Quadrants resolves no
+        # ndarray attribute of a @qd.data_oriented class in kernel scope. Two ways out, either of which retires the
+        # as_field flag: adding ndarray support to that resolution, or migrating the solver to a frozen dataclass so
+        # its ndarrays are predeclared. Until then the buffer is only allocated for a solver with an entity, since a
+        # field costs an SNode tree that Quadrants never gives back short of qd.reset().
         if not self.is_active:
             return
         shape = (self._B,)
@@ -280,8 +315,6 @@ class Solver(RBC):
         self._sim = sim
         self._scene = scene
         self._options = options
-        self._dt: float = options.dt
-        self._substep_dt: float = options.dt / sim.substeps
         self._entities: list[Entity] = gs.List()
 
         # Queue of solver-level states queried during the current backward window. Solvers that surface solver-state
@@ -411,16 +444,8 @@ class Solver(RBC):
         return self._sim
 
     @property
-    def dt(self):
-        return self._dt
-
-    @property
     def is_built(self):
         return self._scene._is_built
-
-    @property
-    def substep_dt(self):
-        return self._substep_dt
 
     @property
     def entities(self) -> list[Entity]:

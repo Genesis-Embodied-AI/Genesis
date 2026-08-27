@@ -1,5 +1,7 @@
 from typing import TYPE_CHECKING
 
+import torch
+
 import genesis as gs
 from genesis.options.morphs import Morph
 from genesis.options.solvers import (
@@ -30,6 +32,7 @@ from .solvers import (
     RigidSolver,
     SFSolver,
     SPHSolver,
+    TimeBasedMixin,
     ToolSolver,
 )
 from .couplers import IPCCoupler, LegacyCoupler, SAPCoupler
@@ -195,6 +198,59 @@ class Simulator(RBC):
         self._B = self.scene._B
         self._para_level = self.scene._para_level
 
+        # Settled before any solver builds: a solver fills its own buffers with the interval it holds, so a rate
+        # settled afterwards would leave those buffers describing an interval the loop does not run at. Whether a
+        # solver is active follows from the entities added to it, which is already known at this point. A solver that
+        # integrates over no interval of its own has no rate to agree on.
+        integrating_solvers = [
+            solver for solver in self._solvers if isinstance(solver, TimeBasedMixin) and solver.is_active
+        ]
+        # A solver given an interval asks for a rate of its own, whatever that interval works out to. A solver left
+        # unset takes the rate the shorthand of SimOptions decides, and has nothing to reconcile.
+        asking_solvers = [solver for solver in integrating_solvers if "dt" in solver._options.model_fields_set]
+        for solver in asking_solvers:
+            interval = solver._options.dt
+            n_substeps = solver.substeps
+            if abs(n_substeps * interval - self._dt) > gs.EPS * self._dt:
+                gs.raise_exception(
+                    f"{type(solver).__name__} dt={interval} does not divide the step dt={self._dt} an integer number "
+                    "of times."
+                )
+            # Asked for, rather than left at its default, which is what tells a count of one from no count at all.
+            if "substeps" in self.options.model_fields_set and n_substeps != self._substeps:
+                gs.raise_exception(
+                    f"{type(solver).__name__} dt={interval} implies {n_substeps} substep(s) per step, conflicting with "
+                    f"the requested substeps={self._substeps}. Set one or the other."
+                )
+        rates = {solver.substeps for solver in asking_solvers}
+        if len(rates) > 1:
+            gs.raise_exception(
+                "Solvers integrating at different rates are not supported yet, got "
+                + ", ".join(f"{type(solver).__name__} at dt={solver._options.dt}" for solver in asking_solvers)
+                + "."
+            )
+        substeps = next(iter(rates), self._substeps)
+        # The differentiable window was sized from the authored substeps before the solvers allocated their buffers,
+        # so a rate derived afterwards would leave the tape describing a step of a different length than the one run.
+        if self._requires_grad and substeps != self._substeps:
+            gs.raise_exception(
+                f"A solver dt deriving {substeps} substep(s) per step is not supported in differentiable mode, which "
+                f"is recording {self._substeps}. Ask for the rate through `SimOptions.substeps={substeps}` instead."
+            )
+        self._substeps = substeps
+        self._substep_dt = self._dt / self._substeps
+        # The substep loop advances every active solver once per iteration, so the rate one of them asks for is the
+        # rate they all take, the ones asking for nothing included.
+        for solver in integrating_solvers:
+            solver._substeps = self._substeps
+            solver._substep_dt = self._substep_dt
+
+        # The substep loop advances every active solver once per iteration, so they share one rate until the loop
+        # learns to schedule them separately. Environments are independent and reset one by one, so simulated time is
+        # counted per environment. It is a step count rather than an accumulated duration, so a long run adds no
+        # floating-point drift.
+        self._steps = torch.zeros((self._B,), dtype=gs.tc_int, device=gs.device)
+
         # solvers
         # IPCCoupler needs full substep flow for pre/post coupling phases
         self._rigid_only = self.rigid_solver.is_active and not isinstance(self._coupler, (SAPCoupler, IPCCoupler))
@@ -204,6 +260,8 @@ class Simulator(RBC):
                 self._active_solvers.append(solver)
                 if not isinstance(solver, RigidSolver):
                     self._rigid_only = False
+
+        # A coupler exchanges state once per substep, so it is built once the rate that loop runs at is known.
         self._coupler.build()
 
         if self.n_envs > 0 and self.sf_solver.is_active:
@@ -447,6 +505,11 @@ class Simulator(RBC):
     def substeps(self):
         """The number of substeps per simulation step."""
         return self._substeps
+
+    @property
+    def substep_dt(self) -> float:
+        """Duration of one substep, in seconds, which is the interval every solver integrates over."""
+        return self._substep_dt
 
     @property
     def scene(self):

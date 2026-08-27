@@ -1656,6 +1656,14 @@ class Scene(RBC):
         return self.profiling_options.show_FPS
 
     @property
+    def gravity(self):
+        """The gravity in the scene.
+
+        Deprecated: gravity belongs to each solver, which may hold its own. Use `solver.get_gravity(envs_idx)`.
+        """
+        return self._sim.gravity
+
+    @property
     def viewer(self):
         """The viewer object for the scene."""
         return self._visualizer.viewer

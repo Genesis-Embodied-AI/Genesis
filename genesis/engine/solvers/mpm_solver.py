@@ -14,7 +14,7 @@ from genesis.engine.states.solvers import MPMSolverState
 from genesis.options.solvers import MPMOptions
 from genesis.utils.misc import DeprecationError, qd_to_torch
 
-from .base_solver import GravityMixin, Solver
+from .base_solver import GravityMixin, Solver, TimeBasedMixin
 
 if TYPE_CHECKING:
     from genesis.engine.entities import MPMEntity
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 
 @qd.data_oriented
-class MPMSolver(GravityMixin, Solver):
+class MPMSolver(GravityMixin, TimeBasedMixin, Solver):
     # ------------------------------------------------------------------------------------
     # --------------------------------- Initialization -----------------------------------
     # ------------------------------------------------------------------------------------

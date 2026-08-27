@@ -30,7 +30,7 @@ from genesis.utils.misc import (
 )
 from genesis.utils.sdf import SDF
 
-from ..base_solver import GravityMixin, MutatedLinks, Solver, StateChange, mutates
+from ..base_solver import GravityMixin, MutatedLinks, Solver, StateChange, TimeBasedMixin, mutates
 from ..kinematic_solver import KinematicSolver, _fill_base_link_geom_offsets, _offset_world_shift, _select_links_offset
 from .collider import Collider
 from .constraint import ConstraintSolver
@@ -248,7 +248,7 @@ def _sanitize_sol_params(
     return sol_params
 
 
-class RigidSolver(GravityMixin, KinematicSolver):
+class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
     # override typing
     _entities: list[RigidEntity] = gs.List()
 
@@ -293,7 +293,9 @@ class RigidSolver(GravityMixin, KinematicSolver):
             self._hibernation_thresh_vel = options.hibernation_thresh_vel
 
         self._sol_min_timeconst = TIME_CONSTANT_SAFETY_FACTOR * self._substep_dt
-        self._sol_default_timeconst = max(options.constraint_timeconst, self._sol_min_timeconst)
+        self._sol_default_timeconst = (
+            None if options.constraint_timeconst is None else max(options.constraint_timeconst, self._sol_min_timeconst)
+        )
 
         if options.friction_cone == gs.friction_cone.elliptic and self._requires_grad:
             gs.raise_exception("The elliptic friction cone is not supported yet when 'requires_grad' is True.")

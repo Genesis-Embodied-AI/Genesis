@@ -10,7 +10,8 @@ from .options import Options
 
 ############################ Top level: simulator and coupler ############################
 """
-Simulator options specifies the global settings for the simulator and the coupler options specifies whether the coupling between pairs of solvers is enabled.
+Simulator options specifies the global settings for the simulator and the coupler options specifies whether the
+coupling between pairs of solvers is enabled.
 """
 
 
@@ -20,16 +21,24 @@ class SimOptions(Options):
 
     Note
     ----
-    1. `SimOptions` specifies the global settings for the simulator. Some parameters exist both in `SimOptions` and `SolverOptions`. In this case, if such parameters are given in `SolverOptions`, it will override the one specified in `SimOptions` for this specific solver. For example, if `dt` is only given in `SimOptions`, it will be shared by all the solvers, but it's also possible to let a solver run at a different temporal speed by setting its own `dt` to be a different value.
+    1. `SimOptions` specifies the global settings for the simulator. Some parameters exist both in `SimOptions` and
+    `SolverOptions`. In this case, if such parameters are given in `SolverOptions`, it will override the one specified
+    in `SimOptions` for this specific solver. For example, if `dt` is only given in `SimOptions`, it will be shared by
+    all the solvers, while a solver given its own `dt` integrates over that interval instead, and the number of
+    substeps of every solver follows from it.
 
-    2. In differentiable mode, `substeps_local` must be divisible by `substeps`, as external command is input per `step`, but `substep`. If `requires_grad` is False, we can use arbitrary `substeps_local`.
+    2. In differentiable mode, `substeps_local` must be divisible by `substeps`, as external command is input per
+    `step`, but `substep`. If `requires_grad` is False, we can use arbitrary `substeps_local`.
 
     Parameters
     ----------
     dt : float, optional
         Time duration for each simulation step in seconds. Defaults to 1e-2.
     substeps : int, optional
-        Number of substeps per simulation step. Defaults to 1.
+        Number of substeps per simulation step, i.e. how many times each solver integrates per `scene.step()`. More
+        substeps buy accuracy and stability, at a runtime cost that grows linearly with the count in the worst case
+        though sub-linearly in practice. Setting both this and a solver `dt` that implies a different count raises an
+        exception. Defaults to 1.
     substeps_local : int, optional
         Number of substeps stored in GPU memory. Defaults to None. This is used for differentiable mode.
     gravity : tuple, optional
@@ -349,6 +358,24 @@ Parameters in these solver-specific options will override SimOptions if availabl
 """
 
 
+class TimeBasedMixin(Options):
+    """
+    A mixin adding the integration interval `dt` to the options of the solvers that integrate over one.
+
+    Parameters
+    ----------
+    dt : float, optional
+        The interval this solver integrates over, in seconds. It must divide `SimOptions.dt` an integer number of
+        times, and that quotient is the number of substeps this solver runs per scene step. A shorter interval buys
+        accuracy and stability where the motion is stiff or fast, at a runtime cost that grows linearly with the number
+        of substeps in the worst case though sub-linearly in practice. Every active solver advances together, so an
+        interval that disagrees with another solver's, or with `SimOptions.substeps`, raises an exception. If none, this
+        solver integrates over the interval the other options settle on. Defaults to None.
+    """
+
+    dt: PositiveFloat | None = None
+
+
 class GravityMixin(Options):
     """
     A mixin adding `gravity` to the options of the solvers that accelerate their bodies under it.
@@ -374,8 +401,6 @@ class KinematicOptions(Options):
 
     Parameters
     ----------
-    dt : float, optional
-        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
     batch_links_info : bool, optional
         Whether to batch link info. Automatically enabled for heterogeneous simulation. Defaults to False.
     batch_dofs_info : bool, optional
@@ -385,14 +410,13 @@ class KinematicOptions(Options):
         Defaults to 6.
     """
 
-    dt: PositiveFloat | None = None
     batch_links_info: StrictBool = False
     batch_joints_info: StrictBool = False
     batch_dofs_info: StrictBool = False
     IK_max_targets: PositiveInt = 6
 
 
-class ToolOptions(Options):
+class ToolOptions(TimeBasedMixin):
     """
     Options configuring the ToolSolver.
 
@@ -408,18 +432,15 @@ class ToolOptions(Options):
         Height of the floor in meters. Defaults to 0.0.
     """
 
-    dt: PositiveFloat | None = None
     floor_height: float | None = None
 
 
-class RigidOptions(GravityMixin):
+class RigidOptions(GravityMixin, TimeBasedMixin):
     """
     Options configuring the RigidSolver.
 
     Parameters
     ----------
-    dt : float, optional
-        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
     enable_collision : bool, optional
         Whether to enable collision detection. Defaults to True.
     enable_joint_limit : bool, optional
@@ -520,10 +541,13 @@ class RigidOptions(GravityMixin):
     contact_resolve_time : float, optional
         Please note that this option will be deprecated in a future version. Use 'constraint_timeconst'
         instead.
-    constraint_timeconst : float
-        Lower-bound of the default time to resolve the constraint (2*dt). The smaller the value, the more stiff the
-        constraint. This parameter is called 'timeconst' in Mujoco
-        (https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters). Defaults to 0.01.
+    constraint_timeconst : float | None
+        Time constant of the constraint response, in seconds, used for every geom that does not carry one of its
+        own. The smaller it is, the stiffer the constraint, down to a floor of twice the integration interval, below
+        which the solve becomes unstable. Set it to None to leave those geoms at that floor: as stiff as the timestep
+        allows, and what a model authoring its own values expects, at the cost of contacts that respond more abruptly. This parameter is called
+        'timeconst' in Mujoco (https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters). Defaults to
+        0.01.
     use_contact_island : bool, optional
         Whether to partition the constraint solve into independent per-island blocks. It has no effect on a scene that
         is a single dense-coupled tree (one island) or is differentiable, where the dense whole-scene solve is used
@@ -559,7 +583,6 @@ class RigidOptions(GravityMixin):
     Hibernation hasn't been robustly tested and will be fully supported soon.
     """
 
-    dt: PositiveFloat | None = None
     enable_collision: StrictBool = True
     enable_joint_limit: StrictBool = True
     enable_self_collision: StrictBool = True
@@ -592,7 +615,7 @@ class RigidOptions(GravityMixin):
     impratio: PositiveFloat | None = None
     contact_pruning_tolerance: PositiveFloat | None = 0.02
     sparse_solve: StrictBool | None = None
-    constraint_timeconst: PositiveFloat = 0.01
+    constraint_timeconst: PositiveFloat | None = 0.01
     use_contact_island: StrictBool = True
     box_box_detection: StrictBool = False
 
@@ -634,7 +657,7 @@ class RigidOptions(GravityMixin):
             gs.raise_exception("'enable_rolling_friction' requires 'enable_torsional_friction'.")
 
 
-class MPMOptions(GravityMixin):
+class MPMOptions(GravityMixin, TimeBasedMixin):
     """
     Options configuring the MPMSolver.
 
@@ -644,8 +667,6 @@ class MPMOptions(GravityMixin):
 
     Parameters
     ----------
-    dt : float, optional
-        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
     particle_size : float, optional
         Particle diameter in meters. If not given, we will compute `particle_size` based on `grid_density`, where `particle_size` will be linearly proportional to the grid cell size. A reference value is `particle_size = 0.01` for `grid_density = 64`. Defaults to None.
     grid_density : float, optional
@@ -662,7 +683,6 @@ class MPMOptions(GravityMixin):
         This option is deprecated.
     """
 
-    dt: PositiveFloat | None = None
     particle_size: PositiveFloat | None = None  # in meters. Will be computed automatically if it's None.
     grid_density: PositiveFloat = 64
     enable_CPIC: StrictBool = False
@@ -690,7 +710,7 @@ class MPMOptions(GravityMixin):
             gs.raise_exception("Invalid pair of upper_bound and lower_bound.")
 
 
-class SPHOptions(GravityMixin):
+class SPHOptions(GravityMixin, TimeBasedMixin):
     """
     Options configuring the SPHSolver.
 
@@ -700,8 +720,6 @@ class SPHOptions(GravityMixin):
 
     Parameters
     ----------
-    dt : float, optional
-        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
     particle_size : float, optional
         Particle diameter in meters. Defaults to 0.02.
     pressure_solver : str, optional
@@ -724,7 +742,6 @@ class SPHOptions(GravityMixin):
         Maximum number of iterations for the density solver. Defaults to 100.
     """
 
-    dt: PositiveFloat | None = None
     particle_size: PositiveFloat = 0.02
     pressure_solver: Literal["WCSPH", "DFSPH"] = "WCSPH"
 
@@ -771,7 +788,7 @@ class SPHOptions(GravityMixin):
             self._hash_grid_res = np.ceil(np.array(self.hash_grid_res) / self.hash_grid_cell_size).astype(gs.np_int)
 
 
-class PBDOptions(GravityMixin):
+class PBDOptions(GravityMixin, TimeBasedMixin):
     """
     Options configuring the PBDSolver.
 
@@ -781,8 +798,6 @@ class PBDOptions(GravityMixin):
 
     Parameters
     ----------
-    dt : float, optional
-        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
     max_stretch_solver_iterations : int, optional
         Maximum number of iterations for the solving stretch constraints. Defaults to 4.
     max_bending_solver_iterations : int, optional
@@ -804,8 +819,6 @@ class PBDOptions(GravityMixin):
     upper_bound : tuple, shape (3,), optional
         Upper bound of the simulation domain. Defaults to (100.0, 100.0, 100.0).
     """
-
-    dt: PositiveFloat | None = None
 
     # constraints solving iterations
     max_stretch_solver_iterations: PositiveInt = 4
@@ -853,7 +866,7 @@ class PBDOptions(GravityMixin):
             self._hash_grid_res = np.ceil(np.array(self.hash_grid_res) / self.hash_grid_cell_size).astype(gs.np_int)
 
 
-class FEMOptions(GravityMixin):
+class FEMOptions(GravityMixin, TimeBasedMixin):
     """
     Options configuring the FEMSolver.
 
@@ -866,8 +879,6 @@ class FEMOptions(GravityMixin):
 
     Parameters
     ----------
-    dt : float, optional
-        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
     damping : float, optional
         Damping factor. Defaults to 0.0.
     floor_height : float, optional
@@ -897,7 +908,6 @@ class FEMOptions(GravityMixin):
         Whether to enable vertex constraints. Defaults to False.
     """
 
-    dt: PositiveFloat | None = None
     damping: NonNegativeFloat = 0.0
     floor_height: float | None = None
     use_implicit_solver: StrictBool = False
@@ -913,17 +923,11 @@ class FEMOptions(GravityMixin):
     enable_vertex_constraints: StrictBool = False
 
 
-class SFOptions(Options):
+class SFOptions(TimeBasedMixin):
     """
     Options configuring the SFSolver.
-
-    Parameters
-    ----------
-    dt : float, optional
-        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
     """
 
-    dt: PositiveFloat | None = None
     res: PositiveInt = 128
     solver_iters: PositiveInt = 500
     decay: PositiveFloat = 0.99

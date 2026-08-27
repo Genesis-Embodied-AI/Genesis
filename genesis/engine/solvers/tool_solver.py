@@ -7,14 +7,14 @@ from genesis.engine.states.solvers import ToolSolverState
 from genesis.engine.entities.tool_entity.tool_entity import ToolEntity
 from genesis.utils.misc import *
 
-from .base_solver import Solver
+from .base_solver import Solver, TimeBasedMixin
 
 if TYPE_CHECKING:
     from genesis.engine.entities import ToolEntity
 
 
 @qd.data_oriented
-class ToolSolver(Solver):
+class ToolSolver(TimeBasedMixin, Solver):
     """
     Note
     ----

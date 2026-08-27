@@ -15,14 +15,14 @@ from genesis.engine.states.solvers import FEMSolverState
 from genesis.utils.misc import qd_to_torch
 from genesis.utils.geom import qd_transform_by_quat, qd_transform_quat_by_quat
 
-from .base_solver import GravityMixin, Solver
+from .base_solver import GravityMixin, Solver, TimeBasedMixin
 
 if TYPE_CHECKING:
     from genesis.engine.entities import FEMEntity
 
 
 @qd.data_oriented
-class FEMSolver(GravityMixin, Solver):
+class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
     # ------------------------------------------------------------------------------------
     # --------------------------------- Initialization -----------------------------------
     # ------------------------------------------------------------------------------------
@@ -385,7 +385,9 @@ class FEMSolver(GravityMixin, Solver):
 
     @property
     def is_active(self):
-        return self.n_elements_max > 0
+        # Counted from the entities rather than from what build recorded, so the answer stands before it: the rate
+        # every solver integrates at is settled from the active ones, and that is settled before any of them builds.
+        return self.n_elements > 0
 
     def add_entity(self, idx, material, morph, surface, name: str | None = None) -> "FEMEntity":
         # add material's update methods if not matching any existing material
