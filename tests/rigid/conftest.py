@@ -10,15 +10,49 @@ from genesis.utils.misc import get_assets_dir
 
 @pytest.fixture
 def xml_path(request, tmp_path, model_name):
+    """The model Mujoco is built from, which holds every subtree, however Genesis groups them into entities."""
     # An asset-relative path passes through to the asset resolver; a bare name is the fixture generating the model.
     if "/" in model_name:
         return model_name
     mjcf = request.getfixturevalue(model_name)
-    xml_tree = ET.ElementTree(mjcf)
     file_name = f"{model_name}.urdf" if mjcf.tag == "robot" else f"{model_name}.xml"
     file_path = str(tmp_path / file_name)
-    xml_tree.write(file_path, encoding="utf-8", xml_declaration=True)
+    ET.ElementTree(mjcf).write(file_path, encoding="utf-8", xml_declaration=True)
     return file_path
+
+
+@pytest.fixture
+def xml_paths(request, tmp_path, xml_path):
+    """The models the Genesis scene is assembled from, one entity per model, which is the Mujoco model by default.
+
+    A test marked 'split_entities' gets the model of 'model_name' split into one model per independent subtree, so that
+    the Genesis scene holds one entity per subtree while Mujoco holds them all in one model. Every top-level body of
+    the worldbody roots a subtree of its own, and the geoms of the worldbody itself root nothing, so they make a model
+    of their own. Each part keeps the headers of the source model, its defaults and assets included.
+
+    Splitting changes which entity a body belongs to, and with it how Genesis pairs contacts, so it is asked for by the
+    tests that compare what must not depend on the grouping, rather than applied to every model.
+    """
+    if next(request.node.iter_markers("split_entities"), None) is None:
+        return (xml_path,)
+
+    model_name = request.getfixturevalue("model_name")
+    mjcf = request.getfixturevalue(model_name)
+    parts = []
+    worldbody = mjcf.find("worldbody")
+    geoms = worldbody.findall("geom")
+    for children in [[body] for body in worldbody.findall("body")] + ([geoms] if geoms else []):
+        part = ET.Element(mjcf.tag, mjcf.attrib)
+        part.extend(header for header in mjcf if header.tag != "worldbody")
+        ET.SubElement(part, "worldbody").extend(children)
+        parts.append(part)
+
+    paths = []
+    for i_part, part in enumerate(parts):
+        file_path = str(tmp_path / f"{model_name}_{i_part}.xml")
+        ET.ElementTree(part).write(file_path, encoding="utf-8", xml_declaration=True)
+        paths.append(file_path)
+    return tuple(paths)
 
 
 def _build_plane_contact_model(model_name, condim, friction, plane_size):
@@ -47,6 +81,27 @@ def box_plan():
     mjcf = _build_plane_contact_model("box_plan", condim="3", friction="1. 0.5 0.5", plane_size="40. 40. 40.")
     _add_free_body(mjcf, name="box", geom_type="box", geom_size="0.2 0.2 0.2", pos="0. 0. 0.3")
     return mjcf
+
+
+def _build_free_box_model(model_name, boxes):
+    """Generate an MJCF model holding the given free boxes and nothing else, as (name, pos) pairs."""
+    mjcf = ET.Element("mujoco", model=model_name)
+    ET.SubElement(mjcf, "option", timestep="0.01")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    for name, pos in boxes:
+        body = ET.SubElement(worldbody, "body", name=name, pos=pos)
+        ET.SubElement(body, "geom", type="box", size="0.2 0.2 0.2", pos="0. 0. 0.")
+        ET.SubElement(body, "joint", name=f"{name}_root", type="free")
+    return mjcf
+
+
+FREE_BOXES = (("box_left", "-0.5 0. 1."), ("box_right", "0.5 0. 1."))
+
+
+@pytest.fixture(scope="session")
+def two_free_boxes():
+    """Generate an MJCF model for two free boxes, which Mujoco holds as one model."""
+    return _build_free_box_model("two_free_boxes", FREE_BOXES)
 
 
 @pytest.fixture(scope="session")

@@ -1212,7 +1212,9 @@ def func_init_meaninertia(
             for i_e in range(n_entities):
                 for i_d in range(dyn_info.entities.dof_start[i_e], dyn_info.entities.dof_end[i_e]):
                     rigid_info.meaninertia[i_b] = rigid_info.meaninertia[i_b] + rigid_info.mass_mat[i_d, i_d, i_b]
-                rigid_info.meaninertia[i_b] = rigid_info.meaninertia[i_b] / n_dofs
+            # Divided once the whole diagonal is in: the mean is over every degree of freedom of the scene, so a
+            # division per entity would scale it down by however many entities there are.
+            rigid_info.meaninertia[i_b] = rigid_info.meaninertia[i_b] / n_dofs
         else:
             rigid_info.meaninertia[i_b] = 1.0
 

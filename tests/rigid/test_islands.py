@@ -767,16 +767,17 @@ def test_hibernation_wakes_on_user_input(show_viewer, n_envs, tol):
     # analytic one of a free body.
     MASS = 4.0
     ARMATURE = 0.5
-    meaninertia_before = qd_to_numpy(solver.rigid_info.meaninertia).copy()
     invweight_before = solver.get_links_invweight(box_mass.base_link_idx)
     box_mass.set_mass(MASS)
     assert not asleep(box_mass)
     assert_allclose(solver.get_links_invweight(box_mass.base_link_idx)[..., 0], 1.0 / MASS, tol=gs.EPS)
     assert ((invweight_before - solver.get_links_invweight(box_mass.base_link_idx)).abs() > 1e-3).all()
 
-    # The mean inertia the constraint solve is quoted on is taken over the mass matrix, so a mass written on a woken
-    # tree reaches it, where a tree left asleep would have held its own contribution at whatever it last ran with.
-    assert (qd_to_numpy(solver.rigid_info.meaninertia) != meaninertia_before).all()
+    # The mean inertia the constraint solve is quoted on is the mean of the mass-matrix diagonal, so a mass written on
+    # a woken tree is in it; a tree left asleep would hold its contribution at whatever it last ran with.
+    mass_mat = solver.get_mass_mat()
+    diagonal = mass_mat.diagonal(dim1=-2, dim2=-1) if mass_mat.ndim > 2 else mass_mat.diagonal()
+    assert_allclose(qd_to_numpy(solver.rigid_info.meaninertia), tensor_to_array(diagonal.mean(dim=-1)), tol=tol)
 
     invweight_before = box_armature.get_dofs_invweight()
     box_armature.set_dofs_armature([ARMATURE] * 6)
