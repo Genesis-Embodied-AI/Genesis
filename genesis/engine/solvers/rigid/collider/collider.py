@@ -16,7 +16,7 @@ import trimesh
 import genesis as gs
 import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
 import genesis.utils.array_class as array_class
-from genesis.utils.misc import indices_to_mask, qd_to_numpy, qd_to_torch, tensor_to_array
+from genesis.utils.misc import assign_indexed_tensor, indices_to_mask, qd_to_numpy, qd_to_torch, tensor_to_array
 from genesis.utils.sdf import SDF
 
 from . import gjk, mpr, narrowphase, support_field
@@ -748,29 +748,15 @@ class Collider:
     def reset(self, envs_idx=None, *, cache_only: bool = True) -> None:
         self._contact_data_cache.clear()
         if gs.use_zerocopy and self._contact_data is not None:
-            envs_idx = slice(None) if envs_idx is None else envs_idx
+            envs_mask = indices_to_mask(envs_idx)
             if not cache_only:
                 first_time = qd_to_torch(self._collider_state.first_time, copy=False)
-                if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
-                    first_time.masked_fill_(envs_idx, True)
-                else:
-                    first_time[envs_idx] = True
+                assign_indexed_tensor(first_time, envs_mask, True)
 
             normal = qd_to_torch(self._collider_state.contact_cache.normal, copy=False)
             penetration = qd_to_torch(self._collider_state.contact_cache.penetration, copy=False)
-            if isinstance(envs_idx, torch.Tensor) and (not IS_OLD_TORCH or envs_idx.dtype == torch.bool):
-                if envs_idx.dtype == torch.bool:
-                    normal.masked_fill_(envs_idx[None, :, None], 0.0)
-                    penetration.masked_fill_(envs_idx[None, :], 0.0)
-                else:
-                    normal.scatter_(1, envs_idx[None, :, None].expand((normal.shape[0], -1, 3)), 0.0)
-                    penetration.scatter_(1, envs_idx[None, :].expand((normal.shape[0], -1)), 0.0)
-            elif envs_idx is None:
-                normal.zero_()
-                penetration.zero_()
-            else:
-                normal[:, envs_idx] = 0.0
-                penetration[:, envs_idx] = 0.0
+            assign_indexed_tensor(normal, (slice(None), *envs_mask), 0.0)
+            assign_indexed_tensor(penetration, (slice(None), *envs_mask), 0.0)
 
             if gs.backend == gs.metal:
                 torch.mps.synchronize()

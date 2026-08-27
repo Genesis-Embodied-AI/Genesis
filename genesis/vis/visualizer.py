@@ -221,7 +221,7 @@ class Visualizer(RBC):
         Update all visualization-only variables here.
         """
         # Early return if already updated previously
-        if not force_render and self._t >= self.scene._t:
+        if not force_render and self._t >= self.scene.sim.cur_step_global:
             return
 
         for camera in self._cameras:
@@ -255,7 +255,7 @@ class Visualizer(RBC):
         if self._scene.pbd_solver.is_active:
             self._scene.pbd_solver.update_render_fields()
 
-        self._t = self._scene._t
+        self._t = self._scene.sim.cur_step_global
 
     def colorize_seg_idxc_arr(self, seg_idxc_arr):
         if self._batch_renderer is not None:

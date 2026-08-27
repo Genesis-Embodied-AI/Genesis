@@ -1081,6 +1081,10 @@ def test_scene_saver_franka(tmp_path, show_viewer, tol):
     # FIXME: It should be possible to achieve better accuracy with 64bits precision
     assert_allclose(pose_ref, pose_loaded, tol=2e-6)
 
+    # A checkpoint carries how long each environment had simulated, so the loaded scene reports the time of the pose
+    # it restored rather than the one it had reached on its own.
+    assert_allclose(scene1.get_time(), scene2.get_time(), tol=gs.EPS)
+
 
 @pytest.mark.required
 def test_deprecated_properties(caplog):

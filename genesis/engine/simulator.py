@@ -5,15 +5,15 @@ import torch
 import genesis as gs
 from genesis.options.morphs import Morph
 from genesis.options.solvers import (
-    KinematicOptions,
     BaseCouplerOptions,
-    IPCCouplerOptions,
-    LegacyCouplerOptions,
-    SAPCouplerOptions,
     FEMOptions,
+    IPCCouplerOptions,
+    KinematicOptions,
+    LegacyCouplerOptions,
     MPMOptions,
     PBDOptions,
     RigidOptions,
+    SAPCouplerOptions,
     SFOptions,
     SPHOptions,
     SimOptions,
@@ -22,23 +22,22 @@ from genesis.options.solvers import (
 from genesis.repr_base import RBC
 from genesis.utils.misc import indices_to_mask
 
+from .couplers import IPCCoupler, LegacyCoupler, SAPCoupler
 from .entities import HybridEntity
+from .sensors import SensorManager
 from .solvers import (
-    GravityMixin,
-    KinematicSolver,
     FEMSolver,
+    KinematicSolver,
     MPMSolver,
     PBDSolver,
     RigidSolver,
     SFSolver,
     SPHSolver,
-    TimeBasedMixin,
     ToolSolver,
 )
-from .couplers import IPCCoupler, LegacyCoupler, SAPCoupler
+from .solvers.base_solver import GravityMixin, TimeBasedMixin
 from .states.cache import QueriedStates
 from .states.solvers import SimState
-from .sensors import SensorManager
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -245,10 +244,7 @@ class Simulator(RBC):
             solver._substeps = self._substeps
             solver._substep_dt = self._substep_dt
 
-        # The substep loop advances every active solver once per iteration, so they share one rate until the loop
-        # learns to schedule them separately. Environments are independent and reset one by one, so simulated time is
-        # counted per environment. It is a step count rather than an accumulated duration, so a long run adds no
-        # floating-point drift.
+        # Counted per environment to support per-env reset, as steps rather than seconds to avoid drifting over time.
         self._steps = torch.zeros((self._B,), dtype=gs.tc_int, device=gs.device)
 
         # solvers
@@ -286,7 +282,12 @@ class Simulator(RBC):
 
         # TODO: keeping as is for now
         self.reset_grad()
+        # The tape cursor is a position in the recorded window, not a clock, so it rewinds whole.
         self._cur_substep_global = 0
+        if envs_idx is None:
+            self._steps.zero_()
+        else:
+            self._steps[indices_to_mask(envs_idx)] = 0
 
         # reset sensors state
         self._sensor_manager.reset(envs_idx=envs_idx)
@@ -334,6 +335,11 @@ class Simulator(RBC):
         if self.rigid_solver.is_active and self._cur_substep_global % RATE_CHECK_ERRNO == 0:
             self.rigid_solver.check_errno()
 
+        # Reconstructing a checkpoint window replays steps the environments already simulated, so only a forward step
+        # advances their clock. The backward pass winds it down again through `_step_grad`.
+        if not in_backward:
+            self._steps += 1
+
         if self._rigid_only and not self._requires_grad:  # "Only Advance!" --Thomas Wade :P
             for _ in range(self._substeps):
                 self.rigid_solver.substep(self.cur_substep_local)
@@ -353,6 +359,7 @@ class Simulator(RBC):
         self._sensor_manager.step()
 
     def _step_grad(self):
+        self._steps -= 1
         for _ in range(self._substeps - 1, -1, -1):
             if self.cur_substep_local == 0:
                 self.load_ckpt()
@@ -553,12 +560,29 @@ class Simulator(RBC):
 
     @property
     def cur_step_global(self):
-        """The current step of the simulation."""
+        """Number of `scene.step()` calls, counted for the whole batch.
+
+        Use it to tell that the simulation moved on, for instance to invalidate a cache. For the simulated time of an
+        environment, use `get_time`.
+        """
         return self.f_global_to_s_global(self._cur_substep_global)
+
+    def get_time(self, envs_idx=None):
+        """The simulated time of each environment, in seconds.
+
+        Environments are stepped and reset independently, so simulated time is per environment, and this is where it
+        is read from.
+        """
+        time = self._steps[indices_to_mask(envs_idx)] * self._dt
+        return time[0] if self.n_envs == 0 else time
 
     @property
     def cur_t(self):
-        """The current time of the simulation."""
+        """How far the substep loop has advanced, in seconds: the number of substeps run times the substep interval.
+
+        Shared by every environment, so it tells that the simulation moved on rather than what one environment has
+        simulated, which is `get_time`.
+        """
         return self._cur_substep_global * self._substep_dt
 
     @property

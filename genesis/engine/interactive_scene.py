@@ -151,7 +151,7 @@ class InteractiveScene:
 
     @property
     def t(self) -> int:
-        return self.scene.t
+        return self.scene.sim.cur_step_global
 
     @property
     def dt(self) -> float:

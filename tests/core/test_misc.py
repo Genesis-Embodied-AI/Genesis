@@ -679,6 +679,61 @@ def test_per_solver_gravity():
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 3])
+def test_per_env_time(show_viewer, n_envs, tol):
+    DT = 0.01
+    N_STEPS = 10
+    N_MORE_STEPS = 5
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.5, 0.0, 1.0),
+            camera_lookat=(0.0, 0.0, 0.5),
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=(0.0, 0.0, 1.0),
+        ),
+    )
+    scene.build(n_envs=n_envs)
+
+    for _ in range(N_STEPS):
+        scene.step()
+
+    # A scene of no parallel environments has one clock, reported as the scalar the whole scene runs on.
+    if n_envs == 0:
+        assert_equal(scene.get_time().ndim, 0)
+        assert_allclose(scene.get_time(), N_STEPS * DT, tol=tol)
+        scene.reset()
+        assert_allclose(scene.get_time(), 0.0, tol=tol)
+        return
+
+    # Environments reset independently, so resetting one rewinds its clock alone while the others keep theirs, whether
+    # it is named by an index counted from either end, by a selection of several, or by a mask.
+    scene.reset(envs_idx=-2)
+    assert_allclose(scene.get_time(), [N_STEPS * DT, 0.0, N_STEPS * DT], tol=tol)
+
+    for _ in range(N_MORE_STEPS):
+        scene.step()
+    times_expected = [(N_STEPS + N_MORE_STEPS) * DT, N_MORE_STEPS * DT, (N_STEPS + N_MORE_STEPS) * DT]
+    assert_allclose(scene.get_time(), times_expected, tol=tol)
+    assert_allclose(scene.get_time(envs_idx=1), N_MORE_STEPS * DT, tol=tol)
+
+    scene.reset(envs_idx=(0, 2))
+    assert_allclose(scene.get_time(), [0.0, N_MORE_STEPS * DT, 0.0], tol=tol)
+
+    for _ in range(N_MORE_STEPS):
+        scene.step()
+    scene.reset(envs_idx=torch.tensor((False, True, False)))
+    assert_allclose(scene.get_time(), [N_MORE_STEPS * DT, 0.0, N_MORE_STEPS * DT], tol=tol)
+
+
+@pytest.mark.required
 def test_derived_substeps(show_viewer, tol):
     GRAVITY = -9.81
     N_STEPS = 10

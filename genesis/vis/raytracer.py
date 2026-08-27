@@ -669,14 +669,14 @@ class Raytracer:
         self._t = -1
 
     def update_scene(self, force_render: bool = False):
-        if not force_render and self._t >= self.scene.t:
+        if not force_render and self._t >= self.scene.sim.cur_step_global:
             if self.camera_updated:
                 self._scene.update_scene(time=self._t)
                 self.camera_updated = False
             return
 
         # update t
-        self._t = self.scene.t
+        self._t = self.scene.sim.cur_step_global
 
         # update variables not used in simulation
         self.visualizer.update_visual_states(force_render)

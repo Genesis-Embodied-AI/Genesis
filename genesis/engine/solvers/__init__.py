@@ -1,4 +1,3 @@
-from .base_solver import GravityMixin, TimeBasedMixin
 from .fem_solver import FEMSolver
 from .kinematic_solver import KinematicSolver
 from .mpm_solver import MPMSolver

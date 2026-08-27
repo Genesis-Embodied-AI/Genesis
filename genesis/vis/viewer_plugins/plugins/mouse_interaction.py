@@ -62,9 +62,9 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
 
         self._lock: Lock = Lock()
         self._held_link: RigidLink | None = None
-        # The plugin is active only while the simulation advances (scene.t increases). _last_step_t is the step
-        # counter seen at the previous sim-step callback; _sim_running caches whether it advanced so on_draw and the
-        # mouse handlers, which run off the step loop, share the same paused/running verdict.
+        # The plugin is active only while the simulation advances. _last_step_t is the step counter seen at the
+        # previous sim-step callback, and _sim_running caches whether it advanced, so that on_draw and the mouse
+        # handlers, which run off the step loop, share the same paused or running verdict.
         self._last_step_t: int = 0
         self._sim_running: bool = False
         self._interact_env_idx: int | None = None
@@ -84,7 +84,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
 
     def build(self, viewer, camera: "Node", scene: "Scene"):
         super().build(viewer, camera, scene)
-        self._last_step_t = self.scene.t
+        self._last_step_t = self.scene.sim.cur_step_global
         self._prev_mouse_screen_pos = (self.viewer._viewport_size[0] // 2, self.viewer._viewport_size[1] // 2)
 
         self._unit_cylinder_mesh = create_cylinder(radius=0.005, height=1.0, color=self.color)
@@ -177,11 +177,11 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
     @with_lock
     @override
     def update_on_sim_step(self) -> None:
-        # Active only while the simulation advances: a grabbed body is dragged through physics, so when the step did
-        # not advance scene.t (paused) the plugin releases its grip and applies no force or motion. on_draw reads
-        # _sim_running to drop its hover/drag visuals too.
-        self._sim_running = self.scene.t > self._last_step_t
-        self._last_step_t = self.scene.t
+        # Active only while the simulation advances: a grabbed body is dragged through physics, so a step that did not
+        # advance the counter (paused) releases the grip and applies no force or motion. on_draw reads _sim_running to
+        # drop its hover/drag visuals too.
+        self._sim_running = self.scene.sim.cur_step_global > self._last_step_t
+        self._last_step_t = self.scene.sim.cur_step_global
         if not self._sim_running:
             self._held_link = None
             return

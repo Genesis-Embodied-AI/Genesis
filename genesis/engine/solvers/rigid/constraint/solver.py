@@ -205,18 +205,11 @@ class ConstraintSolver:
         self._eq_const_info_cache.clear()
 
         if gs.use_zerocopy:
+            envs_mask = indices_to_mask(envs_idx)
             is_warmstart = qd_to_torch(self.constraint_state.is_warmstart, copy=False)
             qacc_ws = qd_to_torch(self.constraint_state.qacc_ws, copy=False)
-            if isinstance(envs_idx, torch.Tensor) and (not IS_OLD_TORCH or envs_idx.dtype == torch.bool):
-                if envs_idx.dtype == torch.bool:
-                    is_warmstart.masked_fill_(envs_idx, False)
-                    qacc_ws.masked_fill_(envs_idx[None], 0.0)
-                else:
-                    is_warmstart.scatter_(0, envs_idx, False)
-                    qacc_ws.scatter_(1, envs_idx[None].expand((qacc_ws.shape[0], -1)), 0.0)
-            else:
-                is_warmstart[envs_idx] = False
-                qacc_ws[:, envs_idx] = 0.0
+            assign_indexed_tensor(is_warmstart, envs_mask, False)
+            assign_indexed_tensor(qacc_ws, (slice(None), *envs_mask), 0.0)
             if gs.backend == gs.metal:
                 torch.mps.synchronize()
             return
