@@ -74,10 +74,17 @@
 
 ## Style
 
+- **Write plain declaratives: subject, verb, object.** Name the operation with the standard simulation vocabulary (mass matrix, Jacobian, inverse weight, kinematic tree, substep). Never invent a verb for an ordinary operation ("weigh a link", "quote a value at", "hold a rate"), and never write a clause of the form "X is what Y does". A docstring states what the function does, what each argument means and what the caller gets back. A comment states why the code is the way it is.
 - **Docstrings describe the current state, not history.** Write what a function does now, not what it used to do or what was added. Do not write "Preserves the original X scenario" or "Added Y for Z". If a behavior is required for a bug fix, explain why in terms of the current invariant (e.g., "Must handle Z case to avoid Y").
 - **User-facing option docs state the TRADEOFF, stand alone, and stay behavioral.** An option's doc must let the user decide: give cost AND benefit and when to pick each value, not just what it does (if one setting looks strictly better, the downside is missing - the doc is useless). State the real cost in user terms (if speed is not it, say what is, e.g. numerical robustness). Explain it in Genesis terms only - no external-engine references (e.g. MuJoCo) and no internal/implementation mechanism (constraint "rows", "coupling", "cone projection", kernels, factor paths); those belong in dev code comments. Keep it compact.
 - **Comments justify - generically.** A comment's purpose is to explain why the code is the way it is: the invariant it preserves, the failure mode the tempting alternative runs into. Keep the justification generic and present-tense; never anchor it to perishable specifics (measured values, benchmark figures, particular unit tests or examples) - those go stale long before the mechanism does.
 - **Each fact lives in exactly one comment; other sites cross-reference it.** Mechanics belong at the data/declaration they describe, motivation and gating rationale at the decision site that owns them. Never restate the same information at several sites - but every dependent site keeps a one-liner with an explicit pointer to the source of truth (e.g. "see nt_H in array_class.py").
+- **No semicolon in prose, and no dash as a parenthesis.** Write two sentences, or use parentheses.
+- **Name a local after what it is, not after the property under test.** A scene is `scene_from_substeps`, never `shorthand`, `inheriting` or `idle`.
+- **A known upstream bug is a `# FIXME:` naming the issue.** Two lines at most, with the tracker reference (`# FIXME: quadrants#887 - ...`) and what the workaround costs.
+- **Never document a contract the code does not offer.** No array shape and no memory layout in a docstring unless the API guarantees it.
+- **Compare floats with a tolerance.** `==` and `!=` on floating-point values are prohibited, host-side values included: use `np.allclose(a, b, atol=gs.EPS)` or an explicit bound.
+- **Never write to a third-party object's private state.** Keep our own record beside the object and expose it through a property.
 - **State what IS, never what is NOT.** In comments, docstrings, and reports, drop "not X", "unlike Y", "does not ...", "it is X, not Y" unless the negation was explicitly asked for or is the literal spec. If a property is not mentioned, it does not exist - defending against an unraised concern is noise. Say the positive fact and stop.
 - **Function-level description goes in a docstring, never a block of leading `#` comments** at the top of the body. Reserve inline comments for non-obvious implementation details at their point of use (e.g. a constraint-layout invariant a few lines rely on). A getter/method that opens with a paragraph of `#` prose is wrong; that prose is its docstring.
 - **Comments go on their own line above the code they annotate, never trailing inline, whenever possible.**
@@ -105,6 +112,7 @@
 - **Never filter or truncate test output inline** (no `pytest ... | tail` / `| grep`). Redirect the full output to a log file, then extract from the file: a filter between pytest and disk destroys the only copy of the failure names and masks the exit code.
 - **Never remove or weaken an existing assertion or measurement to silence a failure** (local or CI). Report the failure with the data and ask; a threshold that only holds on one machine is a calibration problem.
 - **Bug fix PRs** must include a regression test that fails on `main` and passes with the fix, added to the test already covering the capability that broke.
+- **Never write a test that pins a known defect.** Tests assert observable physics and public API behavior, never implementation details.
 - **No deprecation tests.** Do not add unit tests that verify deprecation warnings are emitted.
 - Feature tests exercise the new behavior, not the internal warning machinery.
 - **Unit tests must NOT have docstrings.** A good test name spares writing the short docstring. A code comment is acceptable only when strongly motivated, i.e. it explains something the test body cannot convey. Never state regressions or history.
