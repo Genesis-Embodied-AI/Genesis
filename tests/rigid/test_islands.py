@@ -839,9 +839,22 @@ def test_hibernation_wakes_on_collision(show_viewer, n_envs, broadphase_traversa
     def link_asleep(link):
         return qd_to_numpy(solver.dyn_state.links.is_hibernated, link.idx).all()
 
-    for _ in range(50):
+    # One free body of the entity is dropped from higher up, so the trees of one entity land, settle and fall asleep
+    # at different moments: what sleeps is the tree, not the entity that holds it.
+    multibody_bases = [link for link in multibody.links if link.parent_idx == -1 and link.n_dofs > 0]
+    late = multibody_bases[-1]
+    lifted = solver.get_links_pos(late.idx)
+    lifted[..., 2] += 0.6
+    solver.set_base_links_pos(lifted, links_idx=late.idx)
+
+    for _ in range(60):
         scene.step()
     assert asleep(box_rest) and asleep(box_hit)
+    # The bodies that landed first sleep while the one still falling does not.
+    assert all(link_asleep(link) for link in multibody_bases[:-1])
+    assert not link_asleep(late)
+    for _ in range(40):
+        scene.step()
     rest_x0 = box_rest.get_pos()[..., 0]
 
     box_hit.set_dofs_velocity([-2.0, 0.0, 0.0, 0.0, 0.0, 0.0])
@@ -856,7 +869,6 @@ def test_hibernation_wakes_on_collision(show_viewer, n_envs, broadphase_traversa
     assert (hit_x1 > rest_x1).all()
 
     # The undisturbed entity's free bodies all settled and slept independently; disturbing one wakes only its island.
-    multibody_bases = [link for link in multibody.links if link.parent_idx == -1 and link.n_dofs > 0]
     assert all(link_asleep(link) for link in multibody_bases)
     disturbed = multibody_bases[0]
     solver.set_dofs_velocity(
@@ -865,6 +877,21 @@ def test_hibernation_wakes_on_collision(show_viewer, n_envs, broadphase_traversa
     )
     assert not link_asleep(disturbed)
     assert all(link_asleep(link) for link in multibody_bases[1:])
+
+    # A sleeping tree is left out of the mass solve rather than solved and thrown away, which is what makes the cost
+    # follow what is awake. The solve is the only pass writing the smooth accelerations, so a sentinel written into
+    # them comes back untouched for a sleeping tree of the entity and rewritten for its woken sibling.
+    SENTINEL = -13.0
+    sentinels = qd_to_numpy(solver.dyn_state.dofs.acc_smooth)
+    sentinels[disturbed.dof_start : disturbed.dof_end] = SENTINEL
+    for link in multibody_bases[1:]:
+        sentinels[link.dof_start : link.dof_end] = SENTINEL
+    solver.dyn_state.dofs.acc_smooth.from_numpy(sentinels)
+    scene.step()
+    solved = qd_to_numpy(solver.dyn_state.dofs.acc_smooth)
+    assert (solved[disturbed.dof_start : disturbed.dof_end] != SENTINEL).any()
+    for link in multibody_bases[1:]:
+        assert_allclose(solved[link.dof_start : link.dof_end], SENTINEL, tol=gs.EPS)
 
 
 @pytest.mark.parametrize("n_envs", [0, 2])

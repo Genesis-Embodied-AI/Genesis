@@ -1093,16 +1093,19 @@ def func_solve_mass_batch(
     i_b: qd.int32,
     vec: qd.Tensor,
     out: qd.Tensor,
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
-    # A block is what a solve is: the smallest coupled set of degrees of freedom, and one worker's whole share of the
-    # work. A degree of freedom that starts its own block is that block's root, and the entity it belongs to is what
-    # says whether the block was factored (see mass_mat_mask in array_class.py).
+    # A block is the smallest set of coupled degrees of freedom, and one worker's whole share of the work. The degree
+    # of freedom starting a block is its root, and answers for the block on the two counts that decide whether there is
+    # anything to solve: whether its kinematic tree is hibernated, which is per tree and not per entity, and whether
+    # the entity rooting the block was factorized (see mass_mat_mask in array_class.py).
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_d in range(rigid_info.mass_mat.shape[0]):
-        if rigid_info.dofs_mass_block_start[i_d] == i_d:
+        is_hibernated = dyn_state.dofs.is_hibernated[i_d, i_b] if qd.static(rigid_config.use_hibernation) else False
+        if rigid_info.dofs_mass_block_start[i_d] == i_d and not is_hibernated:
             I_d = [i_d, i_b] if qd.static(rigid_config.batch_dofs_info) else i_d
             i_e = dyn_info.dofs.entity_idx[I_d]
             block_end = rigid_info.dofs_mass_block_end[i_d]
@@ -1113,6 +1116,7 @@ def func_solve_mass_batch(
 def func_solve_mass(
     vec: qd.Tensor,
     out: qd.Tensor,
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
@@ -1120,7 +1124,8 @@ def func_solve_mass(
     # Parallel over the blocks of every environment at once. See func_solve_mass_batch for what a block is.
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_d, i_b in qd.ndrange(rigid_info.mass_mat.shape[0], out.shape[1]):
-        if rigid_info.dofs_mass_block_start[i_d] == i_d:
+        is_hibernated = dyn_state.dofs.is_hibernated[i_d, i_b] if qd.static(rigid_config.use_hibernation) else False
+        if rigid_info.dofs_mass_block_start[i_d] == i_d and not is_hibernated:
             I_d = [i_d, i_b] if qd.static(rigid_config.batch_dofs_info) else i_d
             i_e = dyn_info.dofs.entity_idx[I_d]
             block_end = rigid_info.dofs_mass_block_end[i_d]
@@ -1880,7 +1885,7 @@ def func_compute_qacc(
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
-    func_solve_mass(dyn_state.dofs.force, dyn_state.dofs.acc_smooth, dyn_info, rigid_info, rigid_config)
+    func_solve_mass(dyn_state.dofs.force, dyn_state.dofs.acc_smooth, dyn_state, dyn_info, rigid_info, rigid_config)
 
     # Assume this is the outermost loop
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
@@ -2285,7 +2290,7 @@ def func_implicit_damping(
                         rigid_info.mass_mat_mask[i_e, i_b] = True
 
     func_factor_mass(dyn_state, dyn_info, rigid_info, rigid_config, implicit_damping=True)
-    func_solve_mass(dyn_state.dofs.force, dyn_state.dofs.acc, dyn_info, rigid_info, rigid_config)
+    func_solve_mass(dyn_state.dofs.force, dyn_state.dofs.acc, dyn_state, dyn_info, rigid_info, rigid_config)
 
     # Disable pre-computed factorization mask right away
     if qd.static(not rigid_config.enable_mujoco_compatibility or rigid_config.integrator == gs.integrator.Euler):
