@@ -349,6 +349,21 @@ Parameters in these solver-specific options will override SimOptions if availabl
 """
 
 
+class GravityMixin(Options):
+    """
+    A mixin adding `gravity` to the options of the solvers that accelerate their bodies under it.
+
+    Parameters
+    ----------
+    gravity : tuple, optional
+        The acceleration applied to the bodies of this solver, in m/s^2. Each solver has its own, so one subsystem
+        can be simulated weightless next to another. If none, the value carried by `SimOptions` is used. Defaults to
+        None.
+    """
+
+    gravity: Vec3FType | None = None
+
+
 class KinematicOptions(Options):
     """
     Options configuring the KinematicSolver (visualization-only solver).
@@ -397,7 +412,7 @@ class ToolOptions(Options):
     floor_height: float | None = None
 
 
-class RigidOptions(Options):
+class RigidOptions(GravityMixin):
     """
     Options configuring the RigidSolver.
 
@@ -405,8 +420,6 @@ class RigidOptions(Options):
     ----------
     dt : float, optional
         Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
-    gravity : tuple, optional
-        Gravity force in N/kg. If none, it will inherit from `SimOptions`. Defaults to None.
     enable_collision : bool, optional
         Whether to enable collision detection. Defaults to True.
     enable_joint_limit : bool, optional
@@ -547,7 +560,6 @@ class RigidOptions(Options):
     """
 
     dt: PositiveFloat | None = None
-    gravity: Vec3FType | None = None
     enable_collision: StrictBool = True
     enable_joint_limit: StrictBool = True
     enable_self_collision: StrictBool = True
@@ -622,7 +634,7 @@ class RigidOptions(Options):
             gs.raise_exception("'enable_rolling_friction' requires 'enable_torsional_friction'.")
 
 
-class MPMOptions(Options):
+class MPMOptions(GravityMixin):
     """
     Options configuring the MPMSolver.
 
@@ -634,8 +646,6 @@ class MPMOptions(Options):
     ----------
     dt : float, optional
         Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
-    gravity : tuple, optional
-        Gravity force in N/kg. If none, it will inherit from `SimOptions`. Defaults to None.
     particle_size : float, optional
         Particle diameter in meters. If not given, we will compute `particle_size` based on `grid_density`, where `particle_size` will be linearly proportional to the grid cell size. A reference value is `particle_size = 0.01` for `grid_density = 64`. Defaults to None.
     grid_density : float, optional
@@ -653,7 +663,6 @@ class MPMOptions(Options):
     """
 
     dt: PositiveFloat | None = None
-    gravity: Vec3FType | None = None
     particle_size: PositiveFloat | None = None  # in meters. Will be computed automatically if it's None.
     grid_density: PositiveFloat = 64
     enable_CPIC: StrictBool = False
@@ -681,7 +690,7 @@ class MPMOptions(Options):
             gs.raise_exception("Invalid pair of upper_bound and lower_bound.")
 
 
-class SPHOptions(Options):
+class SPHOptions(GravityMixin):
     """
     Options configuring the SPHSolver.
 
@@ -693,8 +702,6 @@ class SPHOptions(Options):
     ----------
     dt : float, optional
         Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
-    gravity : tuple, optional
-        Gravity force in N/kg. If none, it will inherit from `SimOptions`. Defaults to None.
     particle_size : float, optional
         Particle diameter in meters. Defaults to 0.02.
     pressure_solver : str, optional
@@ -718,7 +725,6 @@ class SPHOptions(Options):
     """
 
     dt: PositiveFloat | None = None
-    gravity: Vec3FType | None = None
     particle_size: PositiveFloat = 0.02
     pressure_solver: Literal["WCSPH", "DFSPH"] = "WCSPH"
 
@@ -765,7 +771,7 @@ class SPHOptions(Options):
             self._hash_grid_res = np.ceil(np.array(self.hash_grid_res) / self.hash_grid_cell_size).astype(gs.np_int)
 
 
-class PBDOptions(Options):
+class PBDOptions(GravityMixin):
     """
     Options configuring the PBDSolver.
 
@@ -777,8 +783,6 @@ class PBDOptions(Options):
     ----------
     dt : float, optional
         Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
-    gravity : tuple, optional
-        Gravity force in N/kg. If none, it will inherit from `SimOptions`. Defaults to None.
     max_stretch_solver_iterations : int, optional
         Maximum number of iterations for the solving stretch constraints. Defaults to 4.
     max_bending_solver_iterations : int, optional
@@ -802,7 +806,6 @@ class PBDOptions(Options):
     """
 
     dt: PositiveFloat | None = None
-    gravity: Vec3FType | None = None
 
     # constraints solving iterations
     max_stretch_solver_iterations: PositiveInt = 4
@@ -850,7 +853,7 @@ class PBDOptions(Options):
             self._hash_grid_res = np.ceil(np.array(self.hash_grid_res) / self.hash_grid_cell_size).astype(gs.np_int)
 
 
-class FEMOptions(Options):
+class FEMOptions(GravityMixin):
     """
     Options configuring the FEMSolver.
 
@@ -865,8 +868,6 @@ class FEMOptions(Options):
     ----------
     dt : float, optional
         Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
-    gravity : tuple, optional
-        Gravity force in N/kg. If none, it will inherit from `SimOptions`. Defaults to None.
     damping : float, optional
         Damping factor. Defaults to 0.0.
     floor_height : float, optional
@@ -897,7 +898,6 @@ class FEMOptions(Options):
     """
 
     dt: PositiveFloat | None = None
-    gravity: Vec3FType | None = None
     damping: NonNegativeFloat = 0.0
     floor_height: float | None = None
     use_implicit_solver: StrictBool = False

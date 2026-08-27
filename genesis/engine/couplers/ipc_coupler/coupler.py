@@ -191,6 +191,18 @@ class IPCCoupler(RBC):
                     "batch_joints_info). Please disable these options when using IPC coupling."
                 )
 
+        # The IPC world is built with one gravity, the scene's, and applies it to every body it couples, whether the
+        # coupling runs one way or two. A solver asking for a different one is therefore refused, while a solver asking
+        # for the scene's own, explicitly or by inheriting it, gets what the world already applies.
+        # FIXME: 'Solver.set_gravity' is not honored either, and goes through: it writes a solver buffer the IPC world
+        # never reads, and there is nothing to detect it by, the world being built long before the write.
+        for solver in (self.rigid_solver, self.fem_solver):
+            if solver.is_active and tuple(solver._options.gravity) != tuple(self.sim.options.gravity):
+                gs.raise_exception(
+                    f"{type(solver).__name__} specifies a gravity of {tuple(gravity_solver)}, which the IPC coupler "
+                    f"cannot honor: every body it couples falls under the {tuple(gravity_scene)} of 'SimOptions'."
+                )
+
         self._init_ipc()
         self._setup_coupling_config()
         self._add_objects_to_ipc()

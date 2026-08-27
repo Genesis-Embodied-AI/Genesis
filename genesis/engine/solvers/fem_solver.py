@@ -15,14 +15,14 @@ from genesis.engine.states.solvers import FEMSolverState
 from genesis.utils.misc import qd_to_torch
 from genesis.utils.geom import qd_transform_by_quat, qd_transform_quat_by_quat
 
-from .base_solver import Solver
+from .base_solver import GravityMixin, Solver
 
 if TYPE_CHECKING:
     from genesis.engine.entities import FEMEntity
 
 
 @qd.data_oriented
-class FEMSolver(Solver):
+class FEMSolver(GravityMixin, Solver):
     # ------------------------------------------------------------------------------------
     # --------------------------------- Initialization -----------------------------------
     # ------------------------------------------------------------------------------------
@@ -380,12 +380,8 @@ class FEMSolver(Solver):
         if self.n_vertices_max > 0 and self._enable_vertex_constraints and not self._constraints_initialized:
             self.init_constraints()
 
-        # FIXME: _gravity must be a raw qd.field() — see comment in mpm_solver.py
-        # Only when active — see the SNode-tree note in mpm_solver.py.
-        if self.is_active and self._gravity is not None:
-            gravity = self._gravity.to_numpy()
-            self._gravity = qd.field(dtype=gs.qd_vec3, shape=(self._B,))
-            self._gravity.from_numpy(gravity)
+        # Kernels of this solver take the solver itself, so gravity has to be a field for them.
+        self._build_gravity(as_field=True)
 
     @property
     def is_active(self):

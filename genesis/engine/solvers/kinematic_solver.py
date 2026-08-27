@@ -162,8 +162,6 @@ class KinematicSolver(Solver):
     def __init__(self, scene: "Scene", sim: "Simulator", options: "KinematicOptions") -> None:
         super().__init__(scene, sim, options)
 
-        self._options = options
-
         self._enable_collision = False
         self._enable_mujoco_compatibility = False
         self._requires_grad = False

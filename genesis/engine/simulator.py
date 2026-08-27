@@ -1,7 +1,5 @@
 from typing import TYPE_CHECKING
 
-import numpy as np
-
 import genesis as gs
 from genesis.options.morphs import Morph
 from genesis.options.solvers import (
@@ -20,9 +18,11 @@ from genesis.options.solvers import (
     ToolOptions,
 )
 from genesis.repr_base import RBC
+from genesis.utils.misc import indices_to_mask
 
 from .entities import HybridEntity
 from .solvers import (
+    GravityMixin,
     KinematicSolver,
     FEMSolver,
     MPMSolver,
@@ -111,7 +111,6 @@ class Simulator(RBC):
         self._steps_local: int | None = options._steps_local
 
         self._cur_substep_global = 0
-        self._gravity = np.array(options.gravity, dtype=gs.np_float)
 
         # solvers
         self.tool_solver = ToolSolver(self.scene, self, self.tool_options)
@@ -432,7 +431,7 @@ class Simulator(RBC):
 
     def set_gravity(self, gravity, envs_idx=None):
         for solver in self._solvers:
-            if solver.is_active:
+            if solver.is_active and isinstance(solver, GravityMixin):
                 solver.set_gravity(gravity, envs_idx)
 
     # ------------------------------------------------------------------------------------
@@ -453,11 +452,6 @@ class Simulator(RBC):
     def scene(self):
         """The scene object that the simulator is associated with."""
         return self._scene
-
-    @property
-    def gravity(self):
-        """The gravity vector."""
-        return self._gravity
 
     @property
     def requires_grad(self):

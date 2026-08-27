@@ -275,7 +275,7 @@ def check_mujoco_model_consistency(
     mj_bodies_idx, mj_joints_idx, mj_qs_idx, mj_dofs_idx, mj_geoms_idx, mj_motors_idx = mj_maps
 
     # solver
-    gs_gravity = gs_sim.rigid_solver.scene.gravity
+    gs_gravity = gs_sim.rigid_solver.get_gravity()
     mj_gravity = mj_sim.model.opt.gravity
     assert_allclose(gs_gravity, mj_gravity, tol=tol)
     assert mj_sim.model.opt.timestep == gs_sim.rigid_solver.substep_dt

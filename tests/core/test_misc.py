@@ -624,9 +624,9 @@ def test_solver_state_change_subscribers(show_viewer, two_link_fixed_urdf):
 
 
 @pytest.mark.parametrize("backend", [None])
-def test_set_gravity_accepts_field_and_tensor():
-    # The 'gravity: qd.Tensor' annotation must accept both a raw qd.field() (subclass solvers like MPM) and
-    # a qd.Tensor wrapper (base_solver / rigid solver).
+def test_per_solver_gravity():
+    # Field-backed storage is what a solver whose kernels reach gravity through the solver itself holds, and the array
+    # mode is forced to fields here so both kinds of solver are on that storage at once.
     os.environ["GS_ENABLE_NDARRAY"] = "0"
     try:
         gs.init(backend=gs.cpu, seed=0)
@@ -651,21 +651,27 @@ def test_set_gravity_accepts_field_and_tensor():
             ),
             material=gs.materials.MPM.Liquid(),
         )
-        scene.build()
+        scene.build(n_envs=2)
 
         new_gravity = [0.0, 0.0, -5.0]
 
-        # Rigid solver: _gravity is a qd.Tensor (from base_solver.build via V())
         rigid = scene.sim.rigid_solver
-        assert isinstance(rigid._gravity, qd.Tensor), f"Expected qd.Tensor, got {type(rigid._gravity)}"
         rigid.set_gravity(new_gravity)
-        np.testing.assert_allclose(rigid.get_gravity(), new_gravity, atol=1e-6)
+        assert_allclose(rigid.get_gravity(), new_gravity, atol=1e-6)
 
-        # MPM solver: _gravity is a raw qd.field() (subclass override)
         mpm = scene.sim.mpm_solver
-        assert isinstance(mpm._gravity, qd.Field), f"Expected qd.Field, got {type(mpm._gravity)}"
         mpm.set_gravity(new_gravity)
-        np.testing.assert_allclose(mpm._gravity.to_numpy().flatten(), new_gravity, atol=1e-6)
+        assert_allclose(mpm.get_gravity(), new_gravity, atol=1e-6)
+
+        # Gravity is per solver, so setting one leaves the other where it was.
+        rigid.set_gravity(0.0)
+        assert_allclose(rigid.get_gravity(), 0.0, atol=1e-6)
+        assert_allclose(mpm.get_gravity(), new_gravity, atol=1e-6)
+
+        # It is per environment too, so naming one leaves the others where they were.
+        rigid.set_gravity([0.0, 0.0, -1.0], envs_idx=1)
+        assert_allclose(rigid.get_gravity(envs_idx=0), 0.0, atol=1e-6)
+        assert_allclose(rigid.get_gravity(envs_idx=1), [0.0, 0.0, -1.0], atol=1e-6)
 
     finally:
         gs.destroy()

@@ -30,7 +30,7 @@ from genesis.utils.misc import (
 )
 from genesis.utils.sdf import SDF
 
-from ..base_solver import MutatedLinks, Solver, StateChange, mutates
+from ..base_solver import GravityMixin, MutatedLinks, Solver, StateChange, mutates
 from ..kinematic_solver import KinematicSolver, _fill_base_link_geom_offsets, _offset_world_shift, _select_links_offset
 from .collider import Collider
 from .constraint import ConstraintSolver
@@ -248,7 +248,7 @@ def _sanitize_sol_params(
     return sol_params
 
 
-class RigidSolver(KinematicSolver):
+class RigidSolver(GravityMixin, KinematicSolver):
     # override typing
     _entities: list[RigidEntity] = gs.List()
 
@@ -813,6 +813,9 @@ class RigidSolver(KinematicSolver):
         if self._requires_grad:
             self.dyn_state_adjoint_cache = self.data_manager.dyn_state_adjoint_cache
 
+        # Gravity lives with the rigid arrays, which the kernels read, so that array is the one handed over to hold it.
+        self._build_gravity(self.rigid_info.gravity)
+
     def _sanitize_joint_sol_params(self, sol_params):
         return _sanitize_sol_params(sol_params, self._sol_min_timeconst, self._sol_default_timeconst)
 
@@ -1140,8 +1143,6 @@ class RigidSolver(KinematicSolver):
         self.rigid_info.links_tree_end.from_numpy(links_tree_end)
         self.rigid_info.entities_mass_block_dof_start.from_numpy(entities_mass_block_dof_start)
         self.rigid_info.entities_mass_block_dof_end.from_numpy(entities_mass_block_dof_end)
-
-        self.rigid_info.gravity.from_numpy(self.gravity)
 
     def _dispatch_heterogeneous_vgeoms(self):
         """
@@ -3322,12 +3323,6 @@ class RigidSolver(KinematicSolver):
             return
 
         kernel_clear_external_force(self.dyn_state, self.rigid_info, self.rigid_config)
-
-    @gs.assert_built
-    def set_gravity(self, gravity, envs_idx=None):
-        super().set_gravity(gravity, envs_idx)
-        if hasattr(self, "rigid_info"):
-            self.rigid_info.gravity.copy_from(self._gravity)
 
     def update_drone_propeller_vgeoms(self, propellers_vgeom_idxs, propellers_revs, propellers_spin):
         kernel_update_drone_propeller_vgeoms(
