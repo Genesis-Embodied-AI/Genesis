@@ -1438,13 +1438,27 @@ def kernel_refresh_invweight_and_meaninertia(
     jac_row: qd.Tensor,
     solve_out: qd.Tensor,
     dyn_state: array_class.DynState,
+    constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
     force_update: qd.template(),
     refresh_position: qd.template(),
+    refresh_velocity: qd.template(),
 ):
-    """Refresh the constraint weights of every link and DOF of the solver, and the mean inertia."""
+    """Recompute the inverse weights of every link and DOF of the solver, and the mean inertia.
+
+    Hibernated trees are woken up first: writing an inertial property moves the equilibrium a resting body had settled
+    into, and a hibernated body cannot settle into the new one.
+    """
+    if qd.static(rigid_config.use_hibernation):
+        qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
+        for i_l, i_b_ in qd.ndrange(dyn_info.links.parent_idx.shape[0], envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+            if dyn_state.links.is_hibernated[i_l, i_b]:
+                i_is = constraint_state.island.links_island_idx[i_l, i_b]
+                func_wakeup_island(i_is, i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
+
     func_enter_neutral_configuration(envs_idx, dyn_state, dyn_info, rigid_info, rigid_config)
 
     n_links = dyn_info.links.parent_idx.shape[0]
@@ -1476,9 +1490,17 @@ def kernel_refresh_invweight_and_meaninertia(
 
     func_init_meaninertia(envs_idx, dyn_info, rigid_info, rigid_config)
 
-    # Owed for the reason given in func_refresh_links_invweight_and_meaninertia, which ends on the same pass.
-    if qd.static(refresh_position):
+    # Both passes are the ones func_refresh_links_invweight_and_meaninertia ends on, and are owed for the same
+    # reasons, which are given there.
+    if qd.static(refresh_position or refresh_velocity):
         func_exit_neutral_configuration(envs_idx, dyn_state, dyn_info, rigid_info, rigid_config)
+
+    if qd.static(refresh_velocity):
+        qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
+        for i_b_ in range(envs_idx.shape[0]):
+            func_forward_velocity_batch(
+                envs_idx[i_b_], dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False
+            )
 
 
 @qd.func

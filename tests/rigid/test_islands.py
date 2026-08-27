@@ -681,6 +681,12 @@ def test_hibernation_wakes_on_user_input(show_viewer, n_envs, tol):
             pos=(7.0, 0.0, 0.1),
         )
     )
+    box_armature = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(8.0, 0.0, 0.1),
+        )
+    )
     scene.build(n_envs=n_envs)
 
     solver = scene.rigid_solver
@@ -701,7 +707,9 @@ def test_hibernation_wakes_on_user_input(show_viewer, n_envs, tol):
 
     for _ in range(90):
         scene.step()
-    assert all(map(asleep, (box_force, box_pos, box_vel, box_qpos, box_cforce, box_cvel, box_cpos, box_mass)))
+    assert all(
+        map(asleep, (box_force, box_pos, box_vel, box_qpos, box_cforce, box_cvel, box_cpos, box_mass, box_armature))
+    )
 
     z0 = z_of(box_force)
     for _ in range(6):
@@ -754,15 +762,30 @@ def test_hibernation_wakes_on_user_input(show_viewer, n_envs, tol):
         scene.step()
     assert not asleep(box_cpos) and (z_of(box_cpos) > z0 + 0.05).all()
 
-    # A mass is weighed against the tree at its neutral configuration, which the sleeping bodies are not carried to,
-    # so setting one on a sleeping body must wake it: the two boxes are built alike, so the weights the sleeping one
-    # comes out with are the weights the awake one does.
+    # A mass or an armature written moves the equilibrium a resting body found, so a body it is written on must wake
+    # to settle into the new one. Both writes are made while the body sleeps, and the weight they land on is the
+    # analytic one of a free body.
     MASS = 4.0
-    was_weighed = solver.get_links_invweight(box_mass.base_link_idx)
+    ARMATURE = 0.5
+    meaninertia_before = qd_to_numpy(solver.rigid_info.meaninertia).copy()
+    invweight_before = solver.get_links_invweight(box_mass.base_link_idx)
     box_mass.set_mass(MASS)
     assert not asleep(box_mass)
     assert_allclose(solver.get_links_invweight(box_mass.base_link_idx)[..., 0], 1.0 / MASS, tol=gs.EPS)
-    assert ((was_weighed - solver.get_links_invweight(box_mass.base_link_idx)).abs() > 1e-3).all()
+    assert ((invweight_before - solver.get_links_invweight(box_mass.base_link_idx)).abs() > 1e-3).all()
+
+    # The mean inertia the constraint solve is quoted on is taken over the mass matrix, so a mass written on a woken
+    # tree reaches it, where a tree left asleep would have held its own contribution at whatever it last ran with.
+    assert (qd_to_numpy(solver.rigid_info.meaninertia) != meaninertia_before).all()
+
+    invweight_before = box_armature.get_dofs_invweight()
+    box_armature.set_dofs_armature([ARMATURE] * 6)
+    assert not asleep(box_armature)
+    # An armature adds to the mass matrix without belonging to any link, so a translational degree of freedom of a
+    # free body weighs the mass it carries plus the armature on it.
+    mass_armature = float(box_armature.get_mass()) + ARMATURE
+    assert_allclose(box_armature.get_dofs_invweight()[..., :3], 1.0 / mass_armature, tol=tol)
+    assert ((invweight_before - box_armature.get_dofs_invweight()).abs() > 1e-3).all()
 
 
 @pytest.mark.parametrize("n_envs", [0, 2])

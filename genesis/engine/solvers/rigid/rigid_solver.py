@@ -956,11 +956,13 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             jac_row,
             solve_out,
             self.dyn_state,
+            self.constraint_solver.constraint_state,
             self.dyn_info,
             self.rigid_info,
             self.rigid_config,
             force_update,
             self._is_forward_pos_updated,
+            self._is_forward_vel_updated,
         )
 
     def _init_mass_mat(self):
