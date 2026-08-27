@@ -1130,34 +1130,24 @@ def func_solve_mass(
 @qd.func
 def func_enter_neutral_configuration(
     envs_idx: qd.types.ndarray(),
-    qpos_cache: qd.Tensor,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
-    """Overwrite qpos with the neutral configuration, saving the one the scene is in, and factorize the mass matrix.
+    """Evaluate forward kinematics at the neutral configuration `qpos0`, and factorize the mass matrix there.
 
-    The inverse weights are defined at the neutral configuration, so the configuration the scene is in has to make way
-    for it, and saving it is what keeps a mass written mid-simulation from teleporting the body it belongs to. The
-    weights are computed from the mass matrix without its implicit damping term, which has to be factorized (LDL^T)
-    before it can be solved against.
+    The inverse weights are defined at the neutral configuration, and computed from the mass matrix without its
+    implicit damping term, which has to be factorized (LDL^T) before it can be solved against.
 
     Only the environments in `envs_idx` are assembled and factorized, hence the masked implementation of those passes.
     """
-    n_qs = rigid_info.qpos.shape[0]
-
-    qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
-    for i_q, i_b_ in qd.ndrange(n_qs, envs_idx.shape[0]):
-        i_b = envs_idx[i_b_]
-        qpos_cache[i_q, i_b] = rigid_info.qpos[i_q, i_b]
-        rigid_info.qpos[i_q, i_b] = rigid_info.qpos0[i_q, i_b]
-
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
         func_update_cartesian_space_batch(
             i_b,
+            rigid_info.qpos0,
             dyn_state,
             dyn_info,
             rigid_info,
@@ -1175,27 +1165,25 @@ def func_enter_neutral_configuration(
 @qd.func
 def func_exit_neutral_configuration(
     envs_idx: qd.types.ndarray(),
-    qpos_cache: qd.Tensor,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
-    """Restore the configuration saved by func_enter_neutral_configuration, the weights having been computed."""
-    n_qs = rigid_info.qpos.shape[0]
-
-    qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
-    for i_q, i_b_ in qd.ndrange(n_qs, envs_idx.shape[0]):
-        i_b = envs_idx[i_b_]
-        rigid_info.qpos[i_q, i_b] = qpos_cache[i_q, i_b]
-
+    """Evaluate forward kinematics again at the configuration the scene is in, which the neutral pass overwrote."""
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
         func_update_cartesian_space_batch(
-            i_b, dyn_state, dyn_info, rigid_info, rigid_config, force_update_fixed_geoms=True, is_backward=False
+            i_b,
+            rigid_info.qpos,
+            dyn_state,
+            dyn_info,
+            rigid_info,
+            rigid_config,
+            force_update_fixed_geoms=True,
+            is_backward=False,
         )
-        func_forward_velocity_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
 
 
 @qd.func
@@ -1215,13 +1203,13 @@ def func_init_meaninertia(
         if n_dofs > 0:
             # Accumulated through the field rather than a local: a register would carry more precision than the
             # working one, and every consumer of the mean inertia is quoted on the value the field holds.
-            rigid_info.meaninertia[i_b] = gs.qd_float(0.0)
+            rigid_info.meaninertia[i_b] = 0.0
             for i_e in range(n_entities):
                 for i_d in range(dyn_info.entities.dof_start[i_e], dyn_info.entities.dof_end[i_e]):
                     rigid_info.meaninertia[i_b] = rigid_info.meaninertia[i_b] + rigid_info.mass_mat[i_d, i_d, i_b]
                 rigid_info.meaninertia[i_b] = rigid_info.meaninertia[i_b] / n_dofs
         else:
-            rigid_info.meaninertia[i_b] = gs.qd_float(1.0)
+            rigid_info.meaninertia[i_b] = 1.0
 
 
 @qd.func
@@ -1375,7 +1363,6 @@ def func_refresh_links_invweight_and_meaninertia(
     envs_idx: qd.types.ndarray(),
     jac_row: qd.Tensor,
     solve_out: qd.Tensor,
-    qpos_cache: qd.Tensor,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -1389,7 +1376,7 @@ def func_refresh_links_invweight_and_meaninertia(
     A weight is computed against the mass matrix of the whole tree, so a tree is the smallest unit that can be
     recomputed on its own, and each tree is recomputed once however many of its links are listed.
     """
-    func_enter_neutral_configuration(envs_idx, qpos_cache, dyn_state, dyn_info, rigid_info, rigid_config)
+    func_enter_neutral_configuration(envs_idx, dyn_state, dyn_info, rigid_info, rigid_config)
 
     # Unbatched weights hold one value for the whole batch, so the first environment alone has anything to do. Trees
     # are weighed side by side: a weight is solved over the blocks of its own chain (see func_solve_mass_block), so the
@@ -1429,11 +1416,11 @@ def func_refresh_links_invweight_and_meaninertia(
 
     func_init_meaninertia(envs_idx, dyn_info, rigid_info, rigid_config)
 
-    # Weighing imposed the neutral configuration, so bring the poses back to the live one when the caller had
-    # them up to date, and whenever a velocity is recomputed below, since that reads the live poses. The
-    # factored mass matrix is left at the neutral configuration, the next step assembling it again.
+    # Weighing moved the poses to the neutral configuration, so bring them back to the live one when the caller had
+    # them up to date, and whenever a velocity is recomputed below, since that reads the live poses. The factored mass
+    # matrix is left at the neutral configuration, the next step assembling it again for the one the scene is in.
     if qd.static(refresh_position or refresh_velocity):
-        func_exit_neutral_configuration(envs_idx, qpos_cache, dyn_state, dyn_info, rigid_info, rigid_config)
+        func_exit_neutral_configuration(envs_idx, dyn_state, dyn_info, rigid_info, rigid_config)
 
     # A velocity is quoted about the center of mass this pass moves, so the same motion reads as a different velocity
     # from here. Both readings are brought back where the caller held them current, since this is what moved them.
@@ -1450,7 +1437,6 @@ def kernel_refresh_invweight_and_meaninertia(
     envs_idx: qd.types.ndarray(),
     jac_row: qd.Tensor,
     solve_out: qd.Tensor,
-    qpos_cache: qd.Tensor,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -1459,7 +1445,7 @@ def kernel_refresh_invweight_and_meaninertia(
     refresh_position: qd.template(),
 ):
     """Refresh the constraint weights of every link and DOF of the solver, and the mean inertia."""
-    func_enter_neutral_configuration(envs_idx, qpos_cache, dyn_state, dyn_info, rigid_info, rigid_config)
+    func_enter_neutral_configuration(envs_idx, dyn_state, dyn_info, rigid_info, rigid_config)
 
     n_links = dyn_info.links.parent_idx.shape[0]
     # Weighed as in func_refresh_links_invweight_and_meaninertia, over every tree instead of the listed ones.
@@ -1492,7 +1478,7 @@ def kernel_refresh_invweight_and_meaninertia(
 
     # Owed for the reason given in func_refresh_links_invweight_and_meaninertia, which ends on the same pass.
     if qd.static(refresh_position):
-        func_exit_neutral_configuration(envs_idx, qpos_cache, dyn_state, dyn_info, rigid_info, rigid_config)
+        func_exit_neutral_configuration(envs_idx, dyn_state, dyn_info, rigid_info, rigid_config)
 
 
 @qd.func

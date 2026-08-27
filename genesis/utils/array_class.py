@@ -551,28 +551,21 @@ def get_kinematics_scratch(solver):
     )
 
 
-class InvweightScratch(NamedTuple):
-    """Buffers backing the inverse-weight solve of one solver.
+class WeightScratch(NamedTuple):
+    """Buffers used to compute the constraint inverse weights of one solver.
 
-    A column is an environment. `jac_row` holds one row of the Jacobian of the link or joint being weighed and
-    `solve_out` the mass-matrix solve against it, which is all the diagonal of `J M^-1 J^T` needs; forming the dense
-    inverse would cost a square of the configuration per environment. `qpos_cache` holds the live configuration while
-    the neutral one, where the weights are defined, is imposed.
+    One weight needs one row of a link Jacobian and the mass-matrix solve against that row, which is what these two
+    hold.
     """
 
     jac_row: qd.Tensor
     solve_out: qd.Tensor
-    qpos_cache: qd.Tensor
 
 
-def get_invweight_scratch(solver):
-    # A solver no DOF can move has no weight to compute, so it carries none of the buffers.
-    is_active = solver.n_dofs > 0
-
-    return InvweightScratch(
-        jac_row=V(dtype=gs.qd_float, shape=maybe_shape((solver.n_dofs_, solver._B), is_active)),
-        solve_out=V(dtype=gs.qd_float, shape=maybe_shape((solver.n_dofs_, solver._B), is_active)),
-        qpos_cache=V(dtype=gs.qd_float, shape=maybe_shape((solver.n_qs_, solver._B), is_active)),
+def get_weight_scratch(solver):
+    return WeightScratch(
+        jac_row=V(dtype=gs.qd_float, shape=(solver.n_dofs_, solver._B)),
+        solve_out=V(dtype=gs.qd_float, shape=(solver.n_dofs_, solver._B)),
     )
 
 
@@ -2744,7 +2737,6 @@ class DataManager:
         equalities_info = get_equalities_info(solver, is_dynamic)
 
         self.kinematics_scratch = get_kinematics_scratch(solver)
-        self.invweight_scratch = get_invweight_scratch(solver)
 
         self.dyn_info = DynInfo(
             entities=entities_info,
@@ -2781,6 +2773,18 @@ class DataManager:
 
         self._solver = solver
         self._ik_scratch = None
+        self._weight_scratch = None
+
+    @property
+    def weight_scratch(self) -> WeightScratch:
+        """Scratch buffers for the inverse-weight computation, allocated the first time a setter triggers one.
+
+        At build time the computation borrows the buffers of the constraint solver, so a scene that never writes a
+        mass, a center of mass or an inertia allocates none of this.
+        """
+        if self._weight_scratch is None:
+            self._weight_scratch = get_weight_scratch(self._solver)
+        return self._weight_scratch
 
     @property
     def ik_scratch(self) -> IKScratch:

@@ -99,7 +99,6 @@ from .abd.forward_kinematics import (
     kernel_update_all_verts,
     kernel_update_cartesian_space,
     kernel_update_geom_aabbs,
-    kernel_update_geoms,
     kernel_update_geoms_replay,
     kernel_update_verts_for_geoms,
     kernel_update_vgeoms,
@@ -429,11 +428,9 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         self._init_equality_fields()
         self._init_dof_length()
 
-        # Neither of these leaves the other anything to do: the weights are taken at the neutral configuration and put
-        # the live one back, and the collider brings the geoms to itself, so they may be swapped at will.
-        self._refresh_invweight_and_meaninertia(force_update=False)
         self._init_collider()
         self._init_constraint_solver()
+        self._refresh_invweight_and_meaninertia(force_update=False, in_place=True)
 
         # The constraint solver decides it has converged from quantities summed over the whole scene, and every DOF of
         # a link contributes a cost of the order of the link's mass. A link whose mass is a tolerance-fraction of the
@@ -829,7 +826,6 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         self.dyn_info = self.data_manager.dyn_info
         self.dyn_state = self.data_manager.dyn_state
         self.kinematics_scratch = self.data_manager.kinematics_scratch
-        self.invweight_scratch = self.data_manager.invweight_scratch
         if self._use_hibernation:
             self.n_awake_dofs = self.rigid_info.n_awake_dofs
             self.awake_dofs = self.rigid_info.awake_dofs
@@ -932,7 +928,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             return 0.0
         return max(upper) / min(lower)
 
-    def _refresh_invweight_and_meaninertia(self, envs_idx=None, *, force_update=True):
+    def _refresh_invweight_and_meaninertia(self, envs_idx=None, *, force_update=True, in_place=False):
         # Every kinematic tree of the solver is recomputed. A change limited to some links is handled by the setter
         # writing them, which recomputes their own tree only.
         # Early return if no DoFs. This is essential to avoid segfault on CUDA.
@@ -947,11 +943,18 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             )
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
 
+        # The computation needs one vector of size n_dofs and one mass-matrix solve against it. Build time borrows
+        # both from the constraint solver, so that a scene never writing an inertial property allocates no scratch of
+        # its own.
+        if in_place:
+            constraint_state = self.constraint_solver.constraint_state
+            jac_row, solve_out = constraint_state.grad, constraint_state.Mgrad
+        else:
+            jac_row, solve_out = self.data_manager.weight_scratch.jac_row, self.data_manager.weight_scratch.solve_out
         kernel_refresh_invweight_and_meaninertia(
             envs_idx,
-            self.invweight_scratch.jac_row,
-            self.invweight_scratch.solve_out,
-            self.invweight_scratch.qpos_cache,
+            jac_row,
+            solve_out,
             self.dyn_state,
             self.dyn_info,
             self.rigid_info,
@@ -1489,11 +1492,6 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
 
     def _func_integrate_dq_entity(self, dq, i_e, i_b, respect_joint_limit):
         func_integrate_dq_entity(i_e, i_b, dq, self.dyn_info, self.rigid_info, self.rigid_config, respect_joint_limit)
-
-    def _func_update_geoms(self, envs_idx, *, force_update_fixed_geoms=False):
-        kernel_update_geoms(
-            envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, force_update_fixed_geoms
-        )
 
     def apply_links_external_wrench(
         self,
@@ -2303,9 +2301,8 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 links_idx,
                 envs_idx,
                 values,
-                self.invweight_scratch.jac_row,
-                self.invweight_scratch.solve_out,
-                self.invweight_scratch.qpos_cache,
+                self.data_manager.weight_scratch.jac_row,
+                self.data_manager.weight_scratch.solve_out,
                 self.dyn_state,
                 self.constraint_solver.constraint_state,
                 self.dyn_info,
@@ -2320,9 +2317,8 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 links_idx,
                 envs_idx,
                 values,
-                self.invweight_scratch.jac_row,
-                self.invweight_scratch.solve_out,
-                self.invweight_scratch.qpos_cache,
+                self.data_manager.weight_scratch.jac_row,
+                self.data_manager.weight_scratch.solve_out,
                 self.dyn_state,
                 self.constraint_solver.constraint_state,
                 self.dyn_info,
@@ -2336,9 +2332,8 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 links_idx,
                 envs_idx,
                 values,
-                self.invweight_scratch.jac_row,
-                self.invweight_scratch.solve_out,
-                self.invweight_scratch.qpos_cache,
+                self.data_manager.weight_scratch.jac_row,
+                self.data_manager.weight_scratch.solve_out,
                 self.dyn_state,
                 self.constraint_solver.constraint_state,
                 self.dyn_info,
