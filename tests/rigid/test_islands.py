@@ -610,11 +610,11 @@ def test_sparsity(show_viewer, n_envs):
 
 
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_hibernation_wakes_on_user_input(show_viewer, n_envs):
+def test_hibernation_wakes_on_user_input(show_viewer, n_envs, tol):
     # Every user input that drives a sleeping body must wake it (and only its island) AND take effect: a hibernated
     # body's dofs are skipped by forward dynamics and integration, so the motion checks catch a body that wakes but
-    # stays frozen (e.g. gravity cancelled by a neighbour's stale constraint force). Seven separated boxes are seven
-    # islands, so each input wakes exactly one.
+    # stays frozen (e.g. gravity cancelled by a neighbour's stale constraint force). Each box is separated from the
+    # others, hence an island of its own, so each input wakes exactly one.
     G = 9.8
     DT = 1.0 / 60.0
     scene = gs.Scene(
@@ -675,6 +675,12 @@ def test_hibernation_wakes_on_user_input(show_viewer, n_envs):
             pos=(6.0, 0.0, 0.1),
         )
     )
+    box_mass = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(7.0, 0.0, 0.1),
+        )
+    )
     scene.build(n_envs=n_envs)
 
     solver = scene.rigid_solver
@@ -695,7 +701,7 @@ def test_hibernation_wakes_on_user_input(show_viewer, n_envs):
 
     for _ in range(90):
         scene.step()
-    assert all(map(asleep, (box_force, box_pos, box_vel, box_qpos, box_cforce, box_cvel, box_cpos)))
+    assert all(map(asleep, (box_force, box_pos, box_vel, box_qpos, box_cforce, box_cvel, box_cpos, box_mass)))
 
     z0 = z_of(box_force)
     for _ in range(6):
@@ -747,6 +753,16 @@ def test_hibernation_wakes_on_user_input(show_viewer, n_envs):
         box_cpos.control_dofs_position([6.0, 0.0, 0.6, 0.0, 0.0, 0.0])
         scene.step()
     assert not asleep(box_cpos) and (z_of(box_cpos) > z0 + 0.05).all()
+
+    # A mass is weighed against the tree at its neutral configuration, which the sleeping bodies are not carried to,
+    # so setting one on a sleeping body must wake it: the two boxes are built alike, so the weights the sleeping one
+    # comes out with are the weights the awake one does.
+    MASS = 4.0
+    was_weighed = solver.get_links_invweight(box_mass.base_link_idx)
+    box_mass.set_mass(MASS)
+    assert not asleep(box_mass)
+    assert_allclose(solver.get_links_invweight(box_mass.base_link_idx)[..., 0], 1.0 / MASS, tol=gs.EPS)
+    assert ((was_weighed - solver.get_links_invweight(box_mass.base_link_idx)).abs() > 1e-3).all()
 
 
 @pytest.mark.parametrize("n_envs", [0, 2])

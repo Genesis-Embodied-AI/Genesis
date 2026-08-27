@@ -551,6 +551,31 @@ def get_kinematics_scratch(solver):
     )
 
 
+class InvweightScratch(NamedTuple):
+    """Buffers backing the inverse-weight solve of one solver.
+
+    A column is an environment. `jac_row` holds one row of the Jacobian of the link or joint being weighed and
+    `solve_out` the mass-matrix solve against it, which is all the diagonal of `J M^-1 J^T` needs; forming the dense
+    inverse would cost a square of the configuration per environment. `qpos_cache` holds the live configuration while
+    the neutral one, where the weights are defined, is imposed.
+    """
+
+    jac_row: qd.Tensor
+    solve_out: qd.Tensor
+    qpos_cache: qd.Tensor
+
+
+def get_invweight_scratch(solver):
+    # A solver no DOF can move has no weight to compute, so it carries none of the buffers.
+    is_active = solver.n_dofs > 0
+
+    return InvweightScratch(
+        jac_row=V(dtype=gs.qd_float, shape=maybe_shape((solver.n_dofs_, solver._B), is_active)),
+        solve_out=V(dtype=gs.qd_float, shape=maybe_shape((solver.n_dofs_, solver._B), is_active)),
+        qpos_cache=V(dtype=gs.qd_float, shape=maybe_shape((solver.n_qs_, solver._B), is_active)),
+    )
+
+
 class IKScratch(NamedTuple):
     """The three solve-time buffers an inverse-kinematics call needs, shared by every entity of one solver.
 
@@ -1944,8 +1969,6 @@ class LinksState:
     mass_sum: qd.Tensor
     root_COM: qd.Tensor  # COM of the kinematic tree
     root_COM_bw: qd.Tensor
-    mass_shift: qd.Tensor
-    i_pos_shift: qd.Tensor
     cacc_ang: qd.Tensor
     cacc_lin: qd.Tensor
     cfrc_ang: qd.Tensor
@@ -1998,8 +2021,6 @@ def get_links_state(solver):
         mass_sum=V(dtype=gs.qd_float, shape=shape, needs_grad=requires_grad),
         root_COM=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         root_COM_bw=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
-        mass_shift=V(dtype=gs.qd_float, shape=shape, needs_grad=requires_grad),
-        i_pos_shift=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         cacc_ang=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         cacc_lin=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         cfrc_ang=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
@@ -2723,6 +2744,7 @@ class DataManager:
         equalities_info = get_equalities_info(solver, is_dynamic)
 
         self.kinematics_scratch = get_kinematics_scratch(solver)
+        self.invweight_scratch = get_invweight_scratch(solver)
 
         self.dyn_info = DynInfo(
             entities=entities_info,

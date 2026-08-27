@@ -206,10 +206,11 @@ class ConstraintSolver:
 
         if gs.use_zerocopy:
             envs_mask = indices_to_mask(envs_idx)
+            dofs_mask = (slice(None), *envs_mask)
             is_warmstart = qd_to_torch(self.constraint_state.is_warmstart, copy=False)
             qacc_ws = qd_to_torch(self.constraint_state.qacc_ws, copy=False)
             assign_indexed_tensor(is_warmstart, envs_mask, False)
-            assign_indexed_tensor(qacc_ws, (slice(None), *envs_mask), 0.0)
+            assign_indexed_tensor(qacc_ws, dofs_mask, 0.0)
             if gs.backend == gs.metal:
                 torch.mps.synchronize()
             return

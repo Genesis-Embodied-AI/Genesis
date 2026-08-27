@@ -164,9 +164,9 @@ def func_COM_links_entity(
                 continue
         I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
 
-        mass = dyn_info.links.inertial_mass[I_l] + dyn_state.links.mass_shift[i_l, i_b]
+        mass = dyn_info.links.inertial_mass[I_l]
         (dyn_state.links.i_pos_bw[i_l, i_b], dyn_state.links.i_quat[i_l, i_b]) = gu.qd_transform_pos_quat_by_trans_quat(
-            dyn_info.links.inertial_pos[I_l] + dyn_state.links.i_pos_shift[i_l, i_b],
+            dyn_info.links.inertial_pos[I_l],
             dyn_info.links.inertial_quat[I_l],
             dyn_state.links.pos[i_l, i_b],
             dyn_state.links.quat[i_l, i_b],
@@ -212,15 +212,17 @@ def func_COM_links_entity(
         i_r = dyn_info.links.root_idx[I_l]
         dyn_state.links.i_pos[i_l, i_b] = dyn_state.links.i_pos_bw[i_l, i_b] - dyn_state.links.root_COM[i_l, i_b]
 
-        i_inertial = dyn_info.links.inertial_i[I_l]
-        i_mass = dyn_info.links.inertial_mass[I_l] + dyn_state.links.mass_shift[i_l, i_b]
         (
             dyn_state.links.cinr_inertial[i_l, i_b],
             dyn_state.links.cinr_pos[i_l, i_b],
             dyn_state.links.cinr_quat[i_l, i_b],
             dyn_state.links.cinr_mass[i_l, i_b],
         ) = gu.qd_transform_inertia_by_trans_quat(
-            i_inertial, i_mass, dyn_state.links.i_pos[i_l, i_b], dyn_state.links.i_quat[i_l, i_b], rigid_info.EPS[None]
+            dyn_info.links.inertial_i[I_l],
+            dyn_info.links.inertial_mass[I_l],
+            dyn_state.links.i_pos[i_l, i_b],
+            dyn_state.links.i_quat[i_l, i_b],
+            rigid_info.EPS[None],
         )
 
     for i_l in range(dyn_info.entities.link_start[i_e], dyn_info.entities.link_end[i_e]):

@@ -624,7 +624,7 @@ def test_momentum_conservation(n_envs, show_viewer):
     assert rigid_link.idx in ipc_links_idx
     assert rigid_link in coupler._abd_slots_by_link
 
-    cube_mass = rigid_cube.get_mass()
+    cube_mass = tensor_to_array(rigid_cube.get_mass())
 
     # Read actual FEM mass from IPC geometry (mesh mass != analytical sphere mass due to tet discretization).
     blob_radius = blob.morph.radius
@@ -638,7 +638,7 @@ def test_momentum_conservation(n_envs, show_viewer):
     assert_allclose(blob_mass, blob_analytical_mass, rtol=0.01)
 
     total_p_history = []
-    momentum_0 = VELOCITY * cube_mass
+    momentum_0 = VELOCITY * cube_mass[..., None]
 
     dist_min = np.array(float("inf"))
     fem_positions_prev = None  # FEM initial velocity is zero
@@ -646,7 +646,7 @@ def test_momentum_conservation(n_envs, show_viewer):
         cube_vel = tensor_to_array(
             rigid_cube.get_links_vel(links_idx_local=0, ref=gs.link_ref_frame.link_COM)[..., 0, :]
         )
-        rigid_linear_momentum = cube_mass * cube_vel
+        rigid_linear_momentum = cube_mass[..., None] * cube_vel
 
         fem_proc_geo = get_ipc_merged_geometry(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0)
         fem_positions = fem_proc_geo.positions().view().squeeze(axis=-1)

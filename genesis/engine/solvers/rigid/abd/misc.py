@@ -90,67 +90,6 @@ def func_wakeup_island(
 
 
 @qd.kernel(fastcache=True)
-def kernel_init_invweight(
-    envs_idx: qd.types.ndarray(),
-    links_invweight: qd.types.ndarray(),
-    dofs_invweight: qd.types.ndarray(),
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    rigid_config: qd.template(),
-    force_update: qd.template(),
-):
-    EPS = rigid_info.EPS[None]
-
-    if qd.static(rigid_config.batch_links_info):
-        qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
-        for i_l, i_b_ in qd.ndrange(dyn_info.links.parent_idx.shape[0], envs_idx.shape[0]):
-            i_b = envs_idx[i_b_]
-            for j in qd.static(range(2)):
-                if force_update or dyn_info.links.invweight[i_l, i_b][j] < EPS:
-                    dyn_info.links.invweight[i_l, i_b][j] = links_invweight[i_b_, i_l, j]
-    else:
-        qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
-        for i_l in range(dyn_info.links.parent_idx.shape[0]):
-            for j in qd.static(range(2)):
-                if force_update or dyn_info.links.invweight[i_l][j] < EPS:
-                    dyn_info.links.invweight[i_l][j] = links_invweight[i_l, j]
-
-    if qd.static(rigid_config.batch_dofs_info):
-        qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
-        for i_d, i_b_ in qd.ndrange(dyn_info.dofs.invweight.shape[0], envs_idx.shape[0]):
-            i_b = envs_idx[i_b_]
-            if force_update or dyn_info.dofs.invweight[i_d, i_b] < EPS:
-                dyn_info.dofs.invweight[i_d, i_b] = dofs_invweight[i_b_, i_d]
-    else:
-        qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
-        for i_d in range(dyn_info.dofs.invweight.shape[0]):
-            if force_update or dyn_info.dofs.invweight[i_d] < EPS:
-                dyn_info.dofs.invweight[i_d] = dofs_invweight[i_d]
-
-
-@qd.kernel(fastcache=True)
-def kernel_init_meaninertia(
-    envs_idx: qd.types.ndarray(),
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    rigid_config: qd.template(),
-):
-    n_dofs = rigid_info.mass_mat.shape[0]
-    n_entities = dyn_info.entities.n_links.shape[0]
-    qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
-    for i_b_ in range(envs_idx.shape[0]):
-        i_b = envs_idx[i_b_]
-        if n_dofs > 0:
-            rigid_info.meaninertia[i_b] = 0.0
-            for i_e in range(n_entities):
-                for i_d in range(dyn_info.entities.dof_start[i_e], dyn_info.entities.dof_end[i_e]):
-                    rigid_info.meaninertia[i_b] = rigid_info.meaninertia[i_b] + rigid_info.mass_mat[i_d, i_d, i_b]
-                rigid_info.meaninertia[i_b] = rigid_info.meaninertia[i_b] / n_dofs
-        else:
-            rigid_info.meaninertia[i_b] = 1.0
-
-
-@qd.kernel(fastcache=True)
 def kernel_init_dof_fields(
     entity_idx: qd.types.ndarray(),
     dofs_motion_ang: qd.types.ndarray(),
@@ -328,10 +267,6 @@ def kernel_init_link_fields(
 
             for j in qd.static(range(3)):
                 dyn_state.links.pos[i_l, i_b][j] = links_pos[i_l, j]
-
-        for j in qd.static(range(3)):
-            dyn_state.links.i_pos_shift[i_l, i_b][j] = 0.0
-        dyn_state.links.mass_shift[i_l, i_b] = 0.0
 
     if qd.static(rigid_config.use_hibernation):
         qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))

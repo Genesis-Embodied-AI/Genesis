@@ -454,6 +454,40 @@ def implicit_inertial_origin():
 
 
 @pytest.fixture(scope="session")
+def sliding_ball_pair():
+    """Build a URDF of two spheres joined by a prismatic joint, each carrying the requested mass and the inertia of a
+    sphere of that mass, so a pair authored at one set of masses can be compared against a pair brought to it."""
+
+    def build(base_mass, tip_mass):
+        radius = 0.06
+        urdf = ET.Element("robot", name="sliding_ball_pair")
+        for name, mass in (("base_link", base_mass), ("tip_link", tip_mass)):
+            inertia = 0.4 * mass * radius**2
+            _add_sphere_link(urdf, name, "0.0 0.0 0.0", mass=mass, inertia=(inertia, 0.0, 0.0, inertia, 0.0, inertia))
+        joint = ET.SubElement(urdf, "joint", name="slide", type="prismatic")
+        ET.SubElement(joint, "parent", link="base_link")
+        ET.SubElement(joint, "child", link="tip_link")
+        ET.SubElement(joint, "origin", xyz="0.0 0.0 0.2", rpy="0.0 0.0 0.0")
+        ET.SubElement(joint, "axis", xyz="0.0 0.0 1.0")
+        ET.SubElement(joint, "limit", lower="-0.1", upper="0.1", effort="100.0", velocity="10.0")
+        return ET.tostring(urdf, encoding="unicode")
+
+    return build
+
+
+@pytest.fixture(scope="session")
+def free_bodies_in_one_model():
+    """Generate an MJCF holding two free bodies, i.e. one entity of two kinematic trees sharing its mass blocks."""
+    mjcf = ET.Element("mujoco")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    for i_body, mass in enumerate((1.0, 3.0)):
+        body = ET.SubElement(worldbody, "body", name=f"free_{i_body}", pos=f"{i_body} 4.0 0.4")
+        ET.SubElement(body, "freejoint")
+        ET.SubElement(body, "geom", type="box", size="0.05 0.05 0.05", mass=str(mass))
+    return ET.tostring(mjcf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
 def implicit_inertial_origin_chain():
     """Generate a URDF with two fixed-jointed links, each authoring an inertia whose origin is omitted."""
     urdf = ET.Element("robot", name="implicit_inertial_origin_chain")

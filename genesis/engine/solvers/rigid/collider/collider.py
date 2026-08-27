@@ -21,6 +21,7 @@ from genesis.utils.sdf import SDF
 
 from . import gjk, mpr, narrowphase, support_field
 from .broadphase import func_broad_phase
+from .constants import CCD_ALGORITHM_CODE
 from .contact import (
     collider_kernel_get_contacts,
     collider_kernel_reset,
@@ -30,7 +31,6 @@ from .contact import (
     kernel_collider_clear,
     kernel_masked_collider_clear,
 )
-from .constants import CCD_ALGORITHM_CODE
 from .narrowphase import (
     func_narrow_phase_any_vs_terrain,
     func_narrow_phase_convex_specializations,
@@ -52,6 +52,9 @@ NEUTRAL_COLLISION_RES_REL = 0.05
 class Collider:
     def __init__(self, rigid_solver: "RigidSolver"):
         self._solver = rigid_solver
+
+        # Which pairs are kept is decided by their poses, so the geoms are placed at the scene's configuration first.
+        rigid_solver._func_update_geoms(rigid_solver._scene._envs_idx, force_update_fixed_geoms=True)
 
         self._mc_perturbation = 1e-3 if self._solver._enable_mujoco_compatibility else 3e-3
         self._mc_tolerance = 1e-3 if self._solver._enable_mujoco_compatibility else 1.5e-2
@@ -753,10 +756,11 @@ class Collider:
                 first_time = qd_to_torch(self._collider_state.first_time, copy=False)
                 assign_indexed_tensor(first_time, envs_mask, True)
 
+            pairs_mask = (slice(None), *envs_mask)
             normal = qd_to_torch(self._collider_state.contact_cache.normal, copy=False)
             penetration = qd_to_torch(self._collider_state.contact_cache.penetration, copy=False)
-            assign_indexed_tensor(normal, (slice(None), *envs_mask), 0.0)
-            assign_indexed_tensor(penetration, (slice(None), *envs_mask), 0.0)
+            assign_indexed_tensor(normal, pairs_mask, 0.0)
+            assign_indexed_tensor(penetration, pairs_mask, 0.0)
 
             if gs.backend == gs.metal:
                 torch.mps.synchronize()

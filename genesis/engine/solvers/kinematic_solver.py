@@ -700,7 +700,6 @@ class KinematicSolver(Solver):
             state = KinematicSolverState(self._scene, s_global)
 
             kernel_get_kinematic_state(
-                state.i_pos_shift,
                 state.qpos,
                 state.dofs_vel,
                 state.links_pos,
@@ -723,7 +722,6 @@ class KinematicSolver(Solver):
 
         kernel_set_kinematic_state(
             envs_idx,
-            state.i_pos_shift,
             state.qpos,
             state.dofs_vel,
             state.links_pos,

@@ -7,6 +7,7 @@ import pytest
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.utils.misc import qd_to_numpy
 
 from .assertions import assert_allclose
 
@@ -827,10 +828,22 @@ def simulate_and_check_mujoco_consistency(
     gs_sim, mj_sim, qpos=None, qvel=None, *, tol, num_steps, ignore_constraints=False
 ):
     # Get mapping between Mujoco and Genesis
-    (_, _, _, gs_dofs_idx, _, _), (_, _, mj_qs_idx, mj_dofs_idx, _, _) = _get_model_mappings(gs_sim, mj_sim)
+    gs_maps, mj_maps = _get_model_mappings(gs_sim, mj_sim)
+    gs_bodies_idx, _, _, gs_dofs_idx, _, _ = gs_maps
+    mj_bodies_idx, _, mj_qs_idx, mj_dofs_idx, _, _ = mj_maps
 
     # Make sure that "static" model information are matching
     check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
+
+    # Weights computed in single precision land a unit or two of the last place from MuJoCo's double ones, which a
+    # contact system holding near-equal rows carries through to forces differing by percents, so MuJoCo's are imposed.
+    if gs.np_float == np.float32:
+        links_invweight = qd_to_numpy(gs_sim.rigid_solver.dyn_info.links.invweight)
+        links_invweight[gs_bodies_idx] = mj_sim.model.body_invweight0[mj_bodies_idx]
+        gs_sim.rigid_solver.dyn_info.links.invweight.from_numpy(links_invweight)
+        dofs_invweight = qd_to_numpy(gs_sim.rigid_solver.dyn_info.dofs.invweight)
+        dofs_invweight[gs_dofs_idx] = mj_sim.model.dof_invweight0[mj_dofs_idx]
+        gs_sim.rigid_solver.dyn_info.dofs.invweight.from_numpy(dofs_invweight)
 
     # Initialize the simulation
     init_paired_simulators(gs_sim, mj_sim, qpos, qvel)

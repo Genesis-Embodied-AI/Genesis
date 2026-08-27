@@ -426,8 +426,6 @@ class ToolOptions(TimeBasedMixin):
 
     Parameters
     ----------
-    dt : float, optional
-        Time duration for each simulation step in seconds. Defaults to 1e-2.
     floor_height : float, optional
         Height of the floor in meters. Defaults to 0.0.
     """
@@ -477,6 +475,18 @@ class RigidOptions(GravityMixin, TimeBasedMixin):
     IK_max_targets : int, optional
         Maximum number of IK targets. Increasing this doesn't affect IK solving speed, but will increase memory usage.
         Defaults to 6.
+    batch_links_info : bool, optional
+        Whether the model parameters of a link, such as its mass or its inertia, are stored per environment rather
+        than shared by the whole batch. Storing them per environment is what lets each environment carry its own
+        values, which domain randomization needs, and what makes a per-environment write possible at all. It costs one
+        copy of every link parameter per environment, in memory and in the bandwidth to read it, which slows down the
+        memory-bound kernels. Automatically enabled for heterogeneous simulation. Defaults to False.
+    batch_joints_info : bool, optional
+        Whether the model parameters of a joint are stored per environment rather than shared by the whole batch,
+        with the same tradeoff as `batch_links_info`. Defaults to False.
+    batch_dofs_info : bool, optional
+        Whether the model parameters of a degree of freedom are stored per environment rather than shared by the
+        whole batch, with the same tradeoff as `batch_links_info`. Defaults to False.
     constraint_solver : gs.constraint_solver, optional
         Constraint solver type. Current supported constraint solvers are 'gs.constraint_solver.CG' (conjugate gradient)
         and 'gs.constraint_solver.Newton' (Newton's method). Defaults to 'Newton'.

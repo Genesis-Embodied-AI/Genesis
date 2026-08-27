@@ -10,7 +10,7 @@ from genesis.engine.mesh import InertialProperties
 from genesis.repr_base import RBC
 from genesis.typing import LaxPositiveFArrayType, Matrix3x3Type, UnitVec4FType, Vec3FType
 from genesis.utils import geom as gu
-from genesis.utils.misc import DeprecationError, qd_to_torch, tensor_to_array
+from genesis.utils.misc import DeprecationError, qd_to_torch
 
 from .rigid_geom import RigidGeom, RigidVisGeom
 
@@ -1045,38 +1045,90 @@ class RigidLink(KinematicLink):
     @gs.assert_built
     def set_mass(self, mass: LaxPositiveFArrayType):
         """
-        Set the mass of the link.
+        Set the mass of the link, in kg.
+
+        The inertia of the link is left unchanged, so use `set_inertia` to change it too. `RigidEntity.set_mass`
+        scales the inertia of every link of an entity instead, by the same factor as its mass, which is how a body of
+        the same shape made heavier behaves.
 
         Parameters
         ----------
         mass : float | array_like, shape (n_envs,)
-            The mass to set.
+            The mass to set. Per-environment values require `RigidOptions.batch_links_info=True`.
         """
         if self.is_fixed:
             gs.logger.warning("Updating the mass of a link that is fixed wrt world has no effect, skipping.")
             return
 
-        mass = tensor_to_array(mass)
-        if np.any(mass < gs.EPS):
-            gs.raise_exception(f"Attempt to set mass of link '{self.name}' to {mass}. Mass must be strictly positive.")
-        if mass.ndim > 0 and not self._solver._options.batch_links_info:
+        if np.ndim(mass) > 0 and not self._solver.is_links_info_batched:
             gs.raise_exception(
                 f"Impossible to set per-env mass of link '{self.name}'. Please specify "
                 "'RigidOptions.batch_links_info=True'."
             )
 
-        ratio = mass / self._inertial_mass
-        self._solver.set_links_inertia(ratio, [self.idx])
-        self._inertial_mass = mass
-        self._inertial_i = self._inertial_i * ratio[..., None, None]
-        self._invweight = self._invweight / ratio[..., None]
+        self._solver.set_links_mass(mass, self._idx)
 
     @gs.assert_built
-    def get_mass(self):
+    def set_COM(self, com):
         """
-        Get the mass of the link.
+        Set the center of mass (COM) of the link, as an offset in the link's local frame.
+
+        Parameters
+        ----------
+        com : array_like, shape (3,) or (n_envs, 3)
+            The center of mass to set. Per-environment values require `RigidOptions.batch_links_info=True`.
         """
-        return self._inertial_mass
+        self._solver.set_links_COM(com, self._idx)
+
+    @gs.assert_built
+    def set_inertia(self, inertia):
+        """
+        Set the inertia matrix of the link, expressed in its inertial frame.
+
+        Parameters
+        ----------
+        inertia : array_like, shape (3, 3) or (n_envs, 3, 3)
+            The inertia matrix to set, which must be symmetric positive definite. Per-environment values require
+            `RigidOptions.batch_links_info=True`.
+        """
+        self._solver.set_links_inertia(inertia, self._idx)
+
+    @gs.assert_built
+    def get_invweight(self, envs_idx=None):
+        """
+        Get the constraint inverse weights of the link: one for forces, one for torques.
+
+        See `RigidEntity.get_links_invweight` for what an inverse weight is and where its value comes from.
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments are returned. Defaults to None.
+
+        Returns
+        -------
+        invweight : torch.Tensor, shape (2,) or (n_envs, 2)
+            The translational and rotational inverse weight of the link, per environment for a batched scene whose link
+            info is batched.
+        """
+        return self._solver.get_links_invweight(self._idx, envs_idx)[..., 0, :]
+
+    @gs.assert_built
+    def get_mass(self, envs_idx=None):
+        """
+        Get the mass of the link, in kg.
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments are returned. Defaults to None.
+
+        Returns
+        -------
+        mass : torch.Tensor, shape (n_envs,) or scalar
+            The mass of the link, per environment for a batched scene whose link info is batched.
+        """
+        return self._solver.get_links_mass(self._idx, envs_idx)[..., 0]
 
     def set_friction(self, friction):
         """
@@ -1113,37 +1165,35 @@ class RigidLink(KinematicLink):
     @property
     def invweight(self):
         """
-        The invweight of the link.
+        The build-time invweight of the link.
         """
-        if self._invweight is None:
-            self._invweight = tensor_to_array(self._solver.get_links_invweight(self._idx))[..., 0, :]
         return self._invweight
 
     @property
     def inertial_pos(self) -> "np.typing.ArrayLike | None":
         """
-        The initial position of the link's inertial frame.
+        The build-time position of the link's inertial frame.
         """
         return self._inertial_pos
 
     @property
     def inertial_quat(self) -> "np.typing.ArrayLike | None":
         """
-        The initial quaternion of the link's inertial frame.
+        The build-time quaternion of the link's inertial frame.
         """
         return self._inertial_quat
 
     @property
     def inertial_mass(self) -> float | None:
         """
-        The initial mass of the link.
+        The build-time mass of the link.
         """
         return self._inertial_mass
 
     @property
     def inertial_i(self) -> "np.typing.ArrayLike | None":
         """
-        The inerial matrix of the link.
+        The build-time inertia matrix of the link.
         """
         return self._inertial_i
 
