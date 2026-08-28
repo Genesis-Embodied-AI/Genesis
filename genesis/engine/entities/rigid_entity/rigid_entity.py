@@ -3793,6 +3793,28 @@ class RigidEntity(KinematicEntity):
         self._solver.set_dofs_force_range(lower, upper, dofs_idx, envs_idx)
 
     @gs.assert_built
+    def set_dofs_limit(self, lower, upper, dofs_idx_local=None, envs_idx=None):
+        """
+        Set the positional limits (min and max) for the entity's dofs.
+
+        Setting a different limit per environment requires `RigidOptions.batch_dofs_info` to be enabled, otherwise all
+        environments share a single value.
+
+        Parameters
+        ----------
+        lower : array_like
+            The lower bounds of the positional limits.
+        upper : array_like
+            The upper bounds of the positional limits.
+        dofs_idx_local : None | array_like, optional
+            The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        """
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        self._solver.set_dofs_limit(lower, upper, dofs_idx, envs_idx)
+
+    @gs.assert_built
     def set_dofs_stiffness(self, stiffness, dofs_idx_local=None, envs_idx=None):
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.set_dofs_stiffness(stiffness, dofs_idx, envs_idx)
