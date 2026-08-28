@@ -400,12 +400,14 @@ def double_pendulum():
     return _build_multi_pendulum(n=2, joint_damping=0.0, joint_friction=0.0)
 
 
-def _add_sphere_link(urdf, link_name, geom_pos, mass=None, inertia=None):
+def _add_sphere_link(urdf, link_name, geom_pos, mass=None, inertia=None, inertial_pos=None):
     """Append a link carrying a single sphere geometry offset by 'geom_pos' from the link frame, optionally authoring
-    an inertial element whose origin is left omitted."""
+    an inertial element, whose origin is left omitted unless 'inertial_pos' is given."""
     link = ET.SubElement(urdf, "link", name=link_name)
     if mass is not None:
         inertial = ET.SubElement(link, "inertial")
+        if inertial_pos is not None:
+            ET.SubElement(inertial, "origin", xyz=inertial_pos, rpy="0.0 0.0 0.0")
         ET.SubElement(inertial, "mass", value=str(mass))
         ixx, ixy, ixz, iyy, iyz, izz = (str(value) for value in inertia)
         ET.SubElement(inertial, "inertia", ixx=ixx, ixy=ixy, ixz=ixz, iyy=iyy, iyz=iyz, izz=izz)
@@ -444,6 +446,43 @@ def undefined_inertia():
     return ET.tostring(urdf, encoding="unicode")
 
 
+def _add_simplified_collision_link(urdf, link_name, visual_mesh, scale):
+    """Append a link with no inertial element whose visual mesh is much bulkier than its collision sphere, the way an
+    asset simplifies collision geometry for speed."""
+    link = ET.SubElement(urdf, "link", name=link_name)
+    visual = ET.SubElement(link, "visual")
+    ET.SubElement(ET.SubElement(visual, "geometry"), "mesh", filename=visual_mesh, scale=f"{scale} {scale} {scale}")
+    collision = ET.SubElement(link, "collision")
+    ET.SubElement(ET.SubElement(collision, "geometry"), "sphere", radius="0.04")
+
+
+@pytest.fixture(scope="session")
+def simplified_collision_sphere():
+    """Generate a URDF whose single link carries a watertight sphere visual mesh and a smaller collision sphere."""
+    urdf = ET.Element("robot", name="simplified_collision_sphere")
+    _add_simplified_collision_link(urdf, "base_link", os.path.join(get_assets_dir(), "meshes", "sphere.obj"), 0.05)
+    return ET.tostring(urdf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
+def simplified_collision_open_mesh(asset_tmp_path):
+    """Generate a URDF like 'simplified_collision_sphere' whose visual mesh is an open pipe, returned alongside the
+    volume the pipe encloses once closed.
+
+    The pipe is the two lateral surfaces of an annulus, so it is open at both ends and its bore - far wider than the
+    wrap can bridge - keeps its convex hull almost three times the volume of the shape itself.
+    """
+    pipe = trimesh.creation.annulus(r_min=0.08, r_max=0.1, height=0.2)
+    closed_volume = pipe.volume
+    pipe.update_faces(np.abs(pipe.face_normals[:, 2]) < 0.5)
+    mesh_path = str(asset_tmp_path / "open_pipe.obj")
+    pipe.export(mesh_path)
+
+    urdf = ET.Element("robot", name="simplified_collision_open_mesh")
+    _add_simplified_collision_link(urdf, "base_link", mesh_path, 1.0)
+    return ET.tostring(urdf, encoding="unicode"), closed_volume
+
+
 @pytest.fixture(scope="session")
 def implicit_inertial_origin():
     """Generate a URDF with an authored inertia whose origin is omitted. Its geometry is offset far enough from the
@@ -451,6 +490,79 @@ def implicit_inertial_origin():
     urdf = ET.Element("robot", name="implicit_inertial_origin")
     _add_sphere_link(urdf, "base_link", "0.0 0.0 0.09", mass=2.5, inertia=(0.11, 0.01, 0.02, 0.22, 0.03, 0.30))
     return ET.tostring(urdf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
+def zero_inertia_urdf():
+    """Generate a URDF stating a zero inertia next to an authored center of mass, on a link fixed to a root link
+    carrying no inertial element."""
+    urdf = ET.Element("robot", name="zero_inertia")
+    ET.SubElement(urdf, "link", name="world")
+    _add_sphere_link(urdf, "base_link", "0.0 0.0 0.09", mass=2.5, inertia=(0.0,) * 6, inertial_pos="0.0 0.0 0.11")
+    joint = ET.SubElement(urdf, "joint", name="weld", type="fixed")
+    ET.SubElement(joint, "parent", link="world")
+    ET.SubElement(joint, "child", link="base_link")
+    return ET.tostring(urdf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
+def zero_mass_urdf():
+    """Generate a URDF stating a zero mass next to a well-defined inertia, beside a link carrying no inertial
+    element at all, which is what makes the parser bound the stated zero rather than pass it through."""
+    urdf = ET.Element("robot", name="zero_mass")
+    _add_sphere_link(urdf, "base_link", "0.0 0.0 0.09", mass=0.0, inertia=(0.11, 0.01, 0.02, 0.22, 0.03, 0.30))
+    ET.SubElement(urdf, "link", name="bare")
+    joint = ET.SubElement(urdf, "joint", name="weld", type="fixed")
+    ET.SubElement(joint, "parent", link="base_link")
+    ET.SubElement(joint, "child", link="bare")
+    ET.SubElement(joint, "origin", xyz="0.0 0.0 0.3", rpy="0.0 0.0 0.0")
+    return ET.tostring(urdf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
+def massless_connector_urdf():
+    """Generate a URDF whose moving link states a zero mass beside its own geometry while a fixed child carries all
+    the mass."""
+    urdf = ET.Element("robot", name="massless_connector")
+    ET.SubElement(urdf, "link", name="base")
+    _add_sphere_link(urdf, "arm", "0.0 0.0 0.09", mass=0.0, inertia=(0.0,) * 6)
+    joint = ET.SubElement(urdf, "joint", name="hinge", type="continuous")
+    ET.SubElement(joint, "axis", xyz="1.0 0.0 0.0")
+    ET.SubElement(joint, "parent", link="base")
+    ET.SubElement(joint, "child", link="arm")
+    _add_sphere_link(urdf, "bob", "0.0 0.0 0.0", mass=1.0, inertia=(1e-3, 0.0, 0.0, 1e-3, 0.0, 1e-3))
+    joint = ET.SubElement(urdf, "joint", name="weld", type="fixed")
+    ET.SubElement(joint, "parent", link="arm")
+    ET.SubElement(joint, "child", link="bob")
+    ET.SubElement(joint, "origin", xyz="0.0 0.0 0.3", rpy="0.0 0.0 0.0")
+    return ET.tostring(urdf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
+def zero_inertia_fixed_child_urdf():
+    """Generate a URDF stating a zero inertia on a fixed child far lighter than 'MASS_EPS'."""
+    urdf = ET.Element("robot", name="zero_inertia_fixed_child")
+    ET.SubElement(urdf, "link", name="base_link")
+    _add_sphere_link(urdf, "tip_link", "0.0 0.0 0.0", mass=1e-5, inertia=(0.0,) * 6)
+    joint = ET.SubElement(urdf, "joint", name="weld", type="fixed")
+    ET.SubElement(joint, "parent", link="base_link")
+    ET.SubElement(joint, "child", link="tip_link")
+    ET.SubElement(joint, "origin", xyz="0.0 0.0 0.3", rpy="0.0 0.0 0.0")
+    return ET.tostring(urdf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
+def zero_density_marker_mjcf():
+    """Generate an MJCF whose jointless child body carries a zero-density geom, weighing nothing beside the hull that
+    holds it. The two share a frame, so the marker's center of mass stays inside its own geometry."""
+    mjcf = ET.Element("mujoco", model="zero_density_marker")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    hull = ET.SubElement(worldbody, "body", name="hull")
+    ET.SubElement(hull, "freejoint")
+    ET.SubElement(hull, "geom", type="box", size="0.1 0.1 0.1")
+    marker = ET.SubElement(hull, "body", name="marker")
+    ET.SubElement(marker, "geom", type="sphere", size="0.05", density="0")
+    return ET.tostring(mjcf, encoding="unicode")
 
 
 @pytest.fixture(scope="session")

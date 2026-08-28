@@ -221,20 +221,36 @@ def test_urdf_parsing(show_viewer, tol):
 
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
-def test_urdf_parsing_inertia_defaults(
-    undefined_inertia, implicit_inertial_origin, implicit_inertial_origin_chain, show_viewer, tol, caplog
+def test_parsing_inertia_defaults(
+    undefined_inertia,
+    implicit_inertial_origin,
+    zero_inertia_urdf,
+    zero_mass_urdf,
+    massless_connector_urdf,
+    zero_inertia_fixed_child_urdf,
+    zero_density_marker_mjcf,
+    implicit_inertial_origin_chain,
+    simplified_collision_sphere,
+    simplified_collision_open_mesh,
+    show_viewer,
+    tol,
+    caplog,
 ):
     GEOM_POS = (0.0, 0.0, 0.09)
+    INERTIAL_POS = (0.0, 0.0, 0.11)
+    TIP_MASS = 1e-5
     INERTIA = (
         (0.11, 0.01, 0.02),
         (0.01, 0.22, 0.03),
         (0.02, 0.03, 0.30),
     )
+    # Density is read back by the estimate assertions below, so it must be pinned rather than left to resolve.
+    RHO = 1000.0
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(0.5, 0.5, 0.5),
-            camera_lookat=(0.0, 0.0, 0.0),
+            camera_pos=(0.0, -5.0, 2.0),
+            camera_lookat=(0.2, 0.0, 0.1),
         ),
         show_viewer=show_viewer,
     )
@@ -256,6 +272,43 @@ def test_urdf_parsing_inertia_defaults(
             align=False,
         ),
     )
+    # Left unmerged, the fixed root link keeps no inertial element of its own, which is what bounds the stated zero.
+    entity_with_zero_inertia = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=zero_inertia_urdf,
+            pos=(0.3, 0.0, 0.1),
+            align=False,
+            merge_fixed_links=False,
+        ),
+    )
+    entity_with_zero_mass = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=zero_mass_urdf,
+            pos=(-0.9, 0.0, 0.1),
+            align=False,
+            merge_fixed_links=False,
+        ),
+    )
+    entity_with_massless_connector = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=massless_connector_urdf,
+            pos=(-1.5, 0.0, 0.5),
+            merge_fixed_links=False,
+        ),
+    )
+    entity_with_zero_inertia_child = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=zero_inertia_fixed_child_urdf,
+            pos=(2.4, 0.0, 0.5),
+            merge_fixed_links=False,
+        ),
+    )
+    entity_with_zero_density_marker = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file=zero_density_marker_mjcf,
+            pos=(-2.1, 0.0, 0.5),
+        ),
+    )
     entity_chain_unmerged = scene.add_entity(
         morph=gs.morphs.URDF(
             file=implicit_inertial_origin_chain,
@@ -268,6 +321,34 @@ def test_urdf_parsing_inertia_defaults(
             file=implicit_inertial_origin_chain,
             pos=(1.6, 0.0, 0.5),
         ),
+    )
+    # A link whose collision geometry is a deliberate simplification of its visual mesh: the estimate must describe
+    # the body rather than the proxy, and 'inertia_from_visual' must be able to select the proxy back.
+    entity_from_visual = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=simplified_collision_sphere,
+            pos=(2.4, 0.0, 0.5),
+            align=False,
+        ),
+        material=gs.materials.Rigid(rho=RHO),
+    )
+    entity_from_collision = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=simplified_collision_sphere,
+            pos=(3.2, 0.0, 0.5),
+            align=False,
+            inertia_from_visual=False,
+        ),
+        material=gs.materials.Rigid(rho=RHO),
+    )
+    open_mesh_urdf, open_mesh_closed_volume = simplified_collision_open_mesh
+    entity_open_visual = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=open_mesh_urdf,
+            pos=(4.0, 0.0, 0.5),
+            align=False,
+        ),
+        material=gs.materials.Rigid(rho=RHO),
     )
 
     assert entity_with_implicit_origin.base_link.inertial_pos is None
@@ -288,8 +369,64 @@ def test_urdf_parsing_inertia_defaults(
         tol=tol,
     )
 
-    # Resolving the center of mass to the link frame can place it outside the geometry, which stays worth reporting.
-    # Only the link whose geometry is offset qualifies; a geometry-derived center of mass never does.
+    estimate_link = entity_without_inertia.base_link
+    estimate_per_mass = np.linalg.eigvalsh(estimate_link.inertial_i) / estimate_link.inertial_mass
+    assert_allclose(entity_with_zero_inertia.base_link.inertial_pos, INERTIAL_POS, tol=gs.EPS)
+    assert_allclose(entity_with_zero_inertia.base_link.inertial_mass, 2.5, tol=gs.EPS)
+    assert_allclose(np.linalg.eigvalsh(entity_with_zero_inertia.base_link.inertial_i) / 2.5, estimate_per_mass, tol=tol)
+
+    # A stated zero mass is as undefined as a stated zero inertia, so the geometry supplies both.
+    assert_allclose(entity_with_zero_mass.base_link.inertial_mass, estimate_link.inertial_mass, tol=gs.EPS)
+    assert_allclose(entity_with_zero_mass.base_link.inertial_pos, GEOM_POS, tol=tol)
+    assert_allclose(
+        np.linalg.eigvalsh(entity_with_zero_mass.base_link.inertial_i),
+        np.linalg.eigvalsh(estimate_link.inertial_i),
+        tol=tol,
+    )
+
+    # A zero stated where a fixed child carries the mass is the connector idiom, so the geometry supplies neither.
+    assert_allclose(entity_with_massless_connector.get_link("arm").inertial_mass, gs.EPS, tol=gs.EPS)
+    assert_allclose(entity_with_massless_connector.get_mass(), 1.0, tol=1e-5)
+
+    # A fixed child's own inertia makes up its parent's composite, so a zero stated there is recovered too.
+    assert_allclose(entity_with_zero_inertia_child.get_mass(), TIP_MASS, rtol=1e-9)
+    assert_allclose(
+        np.linalg.eigvalsh(entity_with_zero_inertia_child.base_link.inertial_i) / TIP_MASS, estimate_per_mass, tol=tol
+    )
+
+    # A zero-density geom weighs nothing by design, and the hull's composite already carries the body holding it.
+    assert_allclose(entity_with_zero_density_marker.get_link("marker").inertial_mass, gs.EPS, tol=gs.EPS)
+    assert_allclose(entity_with_zero_density_marker.get_mass(), 8.0, tol=1e-5)
+
+    # An estimated inertia describes the visual shape, so it matches the visual mesh integrated at the material
+    # density rather than the collision sphere standing in for it, and the mesh's own tensor rather than an
+    # analytical sphere's, which its faceting departs from.
+    visual_tmesh = entity_from_visual.base_link.vgeoms[0].vmesh.trimesh
+    assert_allclose(entity_from_visual.base_link.inertial_mass, RHO * visual_tmesh.volume, tol=tol)
+    assert_allclose(
+        np.linalg.eigvalsh(entity_from_visual.base_link.inertial_i),
+        np.linalg.eigvalsh(RHO * visual_tmesh.moment_inertia),
+        tol=tol,
+    )
+
+    # Opting out recovers the collision sphere, which encloses about half the volume of the mesh it stands in for.
+    collision_radius = entity_from_collision.base_link.geoms[0].data[0]
+    collision_mass = RHO * (4.0 / 3.0) * np.pi * collision_radius**3
+    assert_allclose(entity_from_collision.base_link.inertial_mass, collision_mass, tol=tol)
+    assert_allclose(
+        np.linalg.eigvalsh(entity_from_collision.base_link.inertial_i),
+        (2.0 / 5.0) * collision_mass * collision_radius**2,
+        tol=tol,
+    )
+
+    # An open visual mesh encloses no volume of its own, so it has to be closed before being integrated: the estimate
+    # recovers the volume the pipe bounds. Filling its convex hull instead, which is what an open mesh otherwise falls
+    # back to, would bore-and-all hand it almost three times that.
+    open_tmesh = entity_open_visual.base_link.vgeoms[0].vmesh.trimesh
+    assert not open_tmesh.is_watertight
+    assert_allclose(entity_open_visual.base_link.inertial_mass, RHO * open_mesh_closed_volume, rtol=1e-2)
+
+    # Only a center of mass resolved to the link frame can fall outside the geometry, so exactly one link qualifies.
     dubious_com_records = [record for record in caplog.records if "dubious center of mass" in record.getMessage()]
     assert len(dubious_com_records) == 1
 
@@ -307,6 +444,8 @@ def test_urdf_parsing_inertia_defaults(
         scene.step()
     assert_allclose(entity_without_inertia.get_pos(), (-0.3, 0.0, -0.03), tol=1e-3)
     assert_allclose(entity_with_implicit_origin.get_pos(), (0.0, 0.0, -0.03), tol=1e-3)
+    assert_allclose(entity_with_zero_inertia.get_pos(), (0.3, 0.0, -0.03), tol=1e-3)
+    assert_allclose(entity_with_zero_mass.get_pos(), (-0.9, 0.0, -0.03), tol=1e-3)
 
 
 @pytest.mark.slow  # ~200s
