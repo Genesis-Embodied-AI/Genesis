@@ -279,9 +279,14 @@ def _torch_get_gpu_idx(device):
 
     backend = detect_gpu_backend()
     if backend is None:
+        if len(_get_gpu_indices()) == 1:
+            return int(device) if device is not None else 0
         return -1
 
-    return backend.get_device_index_from_uuid(device_uuid)
+    idx = backend.get_device_index_from_uuid(device_uuid)
+    if idx == -1 and backend.get_device_count() == 1:
+        return 0
+    return idx
 
 
 def _get_egl_index(gpu_index):

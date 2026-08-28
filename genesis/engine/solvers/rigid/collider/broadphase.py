@@ -121,6 +121,7 @@ def func_collision_clear(
         else:
             collider_state.n_contacts[i_b] = 0
 
+MAX_GEOMS_IN_LDS = 60
 
 @qd.kernel(fastcache=True)
 def _func_broad_phase_sap(

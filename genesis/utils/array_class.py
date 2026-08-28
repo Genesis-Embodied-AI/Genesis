@@ -10,6 +10,9 @@ import torch
 
 import genesis as gs
 
+# Type-polymorphic tensor annotation for @qd.func kernel parameters (Field or Ndarray).
+V_ANNOTATION = qd.Tensor
+
 
 def _tensor_backend():
     return qd.Backend.NDARRAY if gs.use_ndarray else qd.Backend.FIELD
@@ -144,6 +147,10 @@ class RigidInfo:
     n_candidate_equalities: qd.Tensor
     hibernation_thresh_vel: qd.Tensor
     EPS: qd.Tensor
+
+
+# Solver kernels use this name; keep alias for the upstream rename.
+RigidGlobalInfo = RigidInfo
 
 
 def get_rigid_info(solver, kinematic_only):
@@ -587,8 +594,10 @@ class ConstraintState:
     jac: qd.Tensor
     diag: qd.Tensor
     aref: qd.Tensor
-    jac_dofs_idx: qd.Tensor
-    jac_n_dofs: qd.Tensor
+    jac_relevant_dofs: qd.Tensor
+    jac_n_relevant_dofs: qd.Tensor
+    # C4 compact storage: per-row contiguous Jacobian values for sparse CG hot loops.
+    jac_compact_values: qd.Tensor
     n_constraints_equality: qd.Tensor
     n_constraints_frictionloss: qd.Tensor
     # Number of elliptic-cone contact rows (rows_per_contact per contact), laid out contiguously at the start of the
@@ -618,7 +627,9 @@ class ConstraintState:
     qacc_ws: qd.Tensor
     qacc_prev: qd.Tensor
     cost_ws: qd.Tensor
+    gauss: qd.Tensor
     cost: qd.Tensor
+    prev_cost: qd.Tensor
     gtol: qd.Tensor
     mv: qd.Tensor
     jv: qd.Tensor
@@ -752,8 +763,8 @@ def get_constraint_state(constraint_solver, solver, collider):
     jac_shape = (len_constraints_, solver.n_dofs_, _B)
     # The sparse-Jacobian representation is always active, so its index buffers are always allocated. The skyline DOF
     # permutation/envelope buffers stay gated on sparse_solve (CPU-only skyline Cholesky).
-    jac_dofs_idx_shape = jac_shape
-    jac_n_dofs_shape = (len_constraints_, _B)
+    jac_relevant_dofs_shape = jac_shape
+    jac_n_relevant_dofs_shape = (len_constraints_, _B)
     sparse_dof_shape = maybe_shape((_B, solver.n_dofs_), constraint_solver.sparse_solve)
 
     if math.prod(jac_shape) > np.iinfo(np.int32).max:
@@ -771,7 +782,9 @@ def get_constraint_state(constraint_solver, solver, collider):
         is_warmstart=V(dtype=gs.qd_bool, shape=(_B,)),
         improved=V(dtype=gs.qd_bool, shape=(_B,)),
         cost_ws=V(dtype=gs.qd_float, shape=(_B,)),
+        gauss=V(dtype=gs.qd_float, shape=(_B,)),
         cost=V(dtype=gs.qd_float, shape=(_B,)),
+        prev_cost=V(dtype=gs.qd_float, shape=(_B,)),
         gtol=V(dtype=gs.qd_float, shape=(_B,)),
         ls_it=V(dtype=gs.qd_int, shape=(_B,)),
         ls_result=V(dtype=gs.qd_int, shape=(_B,)),
@@ -815,23 +828,24 @@ def get_constraint_state(constraint_solver, solver, collider):
         dof_sort_key=V(dtype=gs.qd_float, shape=sparse_dof_shape),
         incr_changed_idx=V(dtype=gs.qd_int, shape=(len_constraints_, _B), layout=serial_layout),
         incr_n_changed=V(dtype=gs.qd_int, shape=(_B,)),
-        # Layout-flippable constraint-state tensors: allocated as qd.Tensor wrappers, optionally with
-        # ``layout=(1, 0)`` to physically store as (_B, len_constraints_). Canonical shape stays (len_constraints_, _B);
-        # kernel-body indexing ``Jaref[i_c, i_b]`` is rewritten by the AST when ``layout != None``.
-        active=V(dtype=gs.qd_bool, shape=(len_constraints_, _B), layout=con_layout),
-        prev_active=V(dtype=gs.qd_bool, shape=(len_constraints_, _B), layout=serial_layout),
-        diag=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
-        aref=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=serial_layout),
-        Jaref=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
-        efc_frictionloss=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
-        efc_force=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=serial_layout),
-        efc_D=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
-        jv=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
-        jac=V(dtype=gs.qd_float, shape=jac_shape, layout=jac_layout),
-        jac_dofs_idx=V(
-            dtype=gs.qd_int, shape=jac_dofs_idx_shape, layout=jac_layout if constraint_solver.sparse_solve else None
-        ),
-        jac_n_dofs=V(dtype=gs.qd_int, shape=jac_n_dofs_shape, layout=serial_layout if jac_n_dofs_shape else None),
+        efc_b=V(dtype=gs.qd_float, shape=efc_b_shape),
+        efc_AR=V(dtype=gs.qd_float, shape=efc_AR_shape),
+        active=V(dtype=gs.qd_bool, shape=(len_constraints_, _B)),
+        prev_active=V(dtype=gs.qd_bool, shape=(len_constraints_, _B)),
+        diag=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
+        aref=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
+        Jaref=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
+        efc_frictionloss=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
+        efc_force=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
+        efc_D=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
+        jv=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
+        jac=V(dtype=gs.qd_float, shape=jac_shape),
+        jac_relevant_dofs=V(dtype=gs.qd_int, shape=jac_relevant_dofs_shape),
+        jac_n_relevant_dofs=V(dtype=gs.qd_int, shape=jac_n_relevant_dofs_shape),
+        # C4 compact storage: same shape as jac_relevant_dofs (full N_c×N_d×B
+        # when sparse_solve=True so we never need to bound max_nz, (1,1,1)
+        # otherwise to avoid wasted memory).
+        jac_compact_values=V(dtype=gs.qd_float, shape=jac_relevant_dofs_shape),
         # Backward gradients
         dL_dqacc=V(dtype=gs.qd_float, shape=maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
         dL_dM=V(dtype=gs.qd_float, shape=maybe_shape((solver.n_dofs_, solver.n_dofs_, _B), solver._requires_grad)),
@@ -2654,9 +2668,23 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # larger than the worst-case work-list (n_links * n_envs), so tiny problems do not launch idle blocks.
     island_factor_n_blocks: int = 1
     max_n_geoms_per_entity: int = -1
+    # Unpadded counts. Only populated when requires_grad=True (used by autograd backward
+    # static loops; see e.g. forward_kinematics.py BW branches).
     n_entities: int = -1
     n_links: int = -1
     n_geoms: int = -1
+    # Always-populated PADDED shape constants (n_xxx_ = max(1, n_xxx)) used to elide _serial
+    # shape-lookup dispatches in hot kernels under gs.use_ndarray=True. Reading these inside an
+    # @qd.kernel/@qd.func through the qd.template() static_rigid_sim_config arg yields a
+    # compile-time literal (no per-step shape descriptor read, no tiny scope kernel emitted by
+    # Quadrants). Trailing underscore mirrors the solver attribute naming convention
+    # (solver.n_entities_). These match the actual array allocation sizes, so they're safe drop-in
+    # replacements for `<arr>.shape[0]` / `<arr>.shape[1]` reads.
+    n_entities_: int = -1
+    n_links_: int = -1
+    n_geoms_: int = -1
+    n_dofs_: int = -1
+    n_envs: int = -1
 
     @property
     def rows_per_contact(self) -> int:
