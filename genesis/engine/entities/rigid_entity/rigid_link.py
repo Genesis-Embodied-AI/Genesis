@@ -146,20 +146,28 @@ def compose_inertial_from_g_infos(g_infos: Sequence[dict], rho: float) -> Inerti
     g_infos : list[dict]
         Parsed geom infos to compute inertial from.
     rho : float
-        Material density (kg/m^3), used for every geom info without its own authored density.
+        Material density (kg/m^3), used for every geom info that states neither a mass nor a density of its own.
     """
-    geoms_inertial_info = tuple(
-        GeomInertialInfo(
-            get_local_inertial_from_geom_info(
-                {"type": gs.GEOM_TYPE.MESH, "mesh": g_info["vmesh"]} if "vmesh" in g_info else g_info,
-                rho if g_info.get("density") is None else g_info["density"],
-            ),
-            np.asarray(g_info.get("pos", gu.zero_pos()), dtype=gs.np_float),
-            np.asarray(g_info.get("quat", gu.identity_quat()), dtype=gs.np_float),
+    geoms_inertial_info = []
+    for g_info in g_infos:
+        info = {"type": gs.GEOM_TYPE.MESH, "mesh": g_info["vmesh"]} if "vmesh" in g_info else g_info
+        geom_mass = g_info.get("mass")
+        if geom_mass is None:
+            props = get_local_inertial_from_geom_info(info, rho if g_info.get("density") is None else g_info["density"])
+        else:
+            # Unit density yields the volume as the mass, and both scale linearly with it, so a stated mass rescales
+            # them exactly. A volume-less geom (a plane) weighs nothing whatever it states.
+            props = get_local_inertial_from_geom_info(info, 1.0)
+            if props.mass > gs.EPS:
+                props = InertialProperties(geom_mass, props.com, props.i * (geom_mass / props.mass))
+        geoms_inertial_info.append(
+            GeomInertialInfo(
+                props,
+                np.asarray(g_info.get("pos", gu.zero_pos()), dtype=gs.np_float),
+                np.asarray(g_info.get("quat", gu.identity_quat()), dtype=gs.np_float),
+            )
         )
-        for g_info in g_infos
-    )
-    return compose_inertial_properties(geoms_inertial_info)
+    return compose_inertial_properties(tuple(geoms_inertial_info))
 
 
 class LinkInertial(NamedTuple):
@@ -179,14 +187,13 @@ class LinkInertialInfo(NamedTuple):
 
     Computed while the parsed geom infos (and their authored per-geom densities) are still available, and consumed
     by the post-load passes. 'props' feeds the align anchor. 'is_mass_explicit' feeds the all-or-none source check
-    in '_align_free_roots': True when the mass is explicit in the asset (an explicit mass, or an authored density on
-    every geom), False for a pure geometry estimate (the true mass is a uniform material-density rescale of it), and
-    None when the link mixes geoms with and without an authored density (neither explicit nor uniformly rescalable).
+    in '_align_free_roots': True when the asset weighs the link (an explicit mass, or a density on any of its geoms),
+    False for a pure geometry estimate, whose true mass is a uniform material-density rescale of it.
     'hint' is the material-density-resolved geometry estimate consumed by 'RigidLink._build' (None for kinematic
     entities, which have no dynamics)."""
 
     props: LinkInertial
-    is_mass_explicit: bool | None
+    is_mass_explicit: bool
     hint: InertialProperties | None
 
 

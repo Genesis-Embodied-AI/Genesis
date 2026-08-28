@@ -219,6 +219,63 @@ def test_urdf_parsing(show_viewer, tol):
     _check_entity_positions(POS_OFFSET, tol=2e-3)
 
 
+@pytest.mark.required
+def test_mjcf_authored_geom_mass(authored_geom_mass_mjcf, show_viewer):
+    # An authored density, on the geom or inherited from a default class, is what a recomputed inertial must weigh.
+    HALF_EXTENT = 0.1
+    VOLUME = (2.0 * HALF_EXTENT) ** 3
+
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.5, -1.5, 1.5),
+            camera_lookat=(0.0, 0.0, 1.0),
+        ),
+        show_viewer=show_viewer,
+    )
+    entity = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file=authored_geom_mass_mjcf,
+            recompute_inertia=True,
+            align=True,
+            convexify=False,
+        ),
+    )
+    # Fusion needs the convex path off, while splitting a stated mass across hulls needs it on, so the decomposed
+    # body is loaded a second time under it.
+    entity_decomposed = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file=authored_geom_mass_mjcf,
+            recompute_inertia=True,
+            align=True,
+        ),
+    )
+    scene.build()
+
+    masses = {link.name: link.inertial_mass for link in entity.links}
+    assert_allclose(masses["on_geom"], 250.0 * VOLUME, tol=gs.EPS)
+    assert_allclose(masses["on_class"], 100.0 * VOLUME, tol=gs.EPS)
+    assert_allclose(masses["on_mass"], 5.0, tol=gs.EPS)
+    # The geom stating nothing takes the density Genesis resolves for a non-robot entity, which pins that an
+    # unauthored geom keeps falling back rather than picking up Mujoco's own default of 1000.
+    assert_allclose(masses["unstated"], 600.0 * VOLUME, tol=gs.EPS)
+    assert_allclose(masses["mixed"], (250.0 + 600.0) * VOLUME, tol=gs.EPS)
+    # A stated mass is extensive: fusing the two boxes would weigh the body at one of them.
+    assert_allclose(masses["fused"], 10.0, tol=gs.EPS)
+    assert_allclose(masses["weightless"], 600.0 * VOLUME, tol=gs.EPS)
+    # Every hull takes a share of the one stated mass, so together they still weigh exactly it.
+    decomposed_link = entity_decomposed.get_link("decomposed")
+    assert len(decomposed_link.geoms) > 1
+    assert_allclose(decomposed_link.inertial_mass, 5.0, tol=1e-6)
+
+    # Anchoring a free root puts its frame on the composite center of mass, so the geoms of the mixed body must sit
+    # at first moments that cancel. They only do if the stated geom is weighed apart from the unstated one.
+    mixed_link = entity.get_link("mixed")
+    first_moment = sum(
+        density * VOLUME * np.asarray(geom.init_pos) for density, geom in zip((250.0, 600.0), mixed_link.geoms)
+    )
+    assert_allclose(first_moment, 0.0, tol=1e-6)
+
+
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_urdf_parsing_inertia_defaults(
