@@ -1065,12 +1065,21 @@ class KinematicEntity(Entity):
                 principal_quat = gu.R_to_quat(principal_R)
                 inertia_diag = principal_R.T @ inertia_root @ principal_R
 
-                # Re-express the variant's geoms across the subtree so the body frame can move to (com_root, principal
-                # axes) while the world geometry stays fixed: bring each geom to the root frame, undo the anchoring
-                # there, bring it back to its link frame. The static link poses are not moved (they are shared across
-                # heterogeneous variants). A kinematic link has only visual geoms; a rigid link has both.
+                # Alignment moves the root frame to the composite center of mass and principal axes while keeping the
+                # world geometry fixed. Static link poses are shared across variants, so conjugate the inverse alignment
+                # into each link frame and reuse it for the link's geoms and inertial frame.
+                alignment_inv_in_link = {}
                 for link in subtree:
                     link_pos, link_quat = pose_in_root[link.idx]
+                    alignment_pos, alignment_quat = gu.inv_transform_pos_quat_by_trans_quat(
+                        link_pos, link_quat, com_root, principal_quat
+                    )
+                    alignment_pos, alignment_quat = gu.inv_transform_pos_quat_by_trans_quat(
+                        alignment_pos, alignment_quat, link_pos, link_quat
+                    )
+                    if isinstance(root, RigidLink) and link is not root:
+                        alignment_inv_in_link[link.idx] = (alignment_pos, alignment_quat)
+                    # Kinematic links own only visual geoms; rigid links own both collision and visual geoms.
                     if is_heterogeneous:
                         vgeom_start, vgeom_end = link._variant_vgeom_ranges[v]
                         geoms = [vg for vg in link.vgeoms if vgeom_start <= vg.idx < vgeom_end]
@@ -1083,10 +1092,8 @@ class KinematicEntity(Entity):
                         geoms = list(link.vgeoms)
                     for geom in geoms:
                         pos, quat = gu.transform_pos_quat_by_trans_quat(
-                            geom.init_pos, geom.init_quat, link_pos, link_quat
+                            geom.init_pos, geom.init_quat, alignment_pos, alignment_quat
                         )
-                        pos, quat = gu.inv_transform_pos_quat_by_trans_quat(pos, quat, com_root, principal_quat)
-                        pos, quat = gu.inv_transform_pos_quat_by_trans_quat(pos, quat, link_pos, link_quat)
                         geom.desc.pos, geom.desc.quat = pos, quat
                         geom._init_pos_tc = torch.from_numpy(pos).to(device=gs.device, dtype=gs.tc_float)
                         geom._init_quat_tc = torch.from_numpy(quat).to(device=gs.device, dtype=gs.tc_float)
@@ -1098,16 +1105,22 @@ class KinematicEntity(Entity):
                     # links skipped above (a geometry-less link carries only the 'gs.EPS' placeholder) must not
                     # inflate the composite.
                     real_total = sum(
-                        float(link._variant_inertial[v][0] if is_heterogeneous else link.desc.mass)
+                        float(link._variant_inertial[v].mass if is_heterogeneous else link.desc.mass)
                         for link in composite_links
                     )
                     scale = real_total / mass_total
-                    zero_pos, identity_quat = gu.zero_pos(), gu.identity_quat()
                     for link in subtree:
                         if link is root:
-                            props = LinkInertial(real_total, zero_pos, identity_quat, scale * inertia_diag)
+                            props = LinkInertial(real_total, gu.zero_pos(), gu.identity_quat(), scale * inertia_diag)
                         else:
-                            props = LinkInertial(gs.EPS, zero_pos, identity_quat, np.zeros((3, 3), dtype=gs.np_float))
+                            # Preserve each fixed child's inertial frame as its public link_COM reference.
+                            if is_heterogeneous:
+                                pos, quat = link._variant_inertial[v].com, link._variant_inertial[v].quat
+                            else:
+                                pos, quat = link.desc.inertial_pos, link.desc.inertial_quat
+                            alignment_pos, alignment_quat = alignment_inv_in_link[link.idx]
+                            pos, quat = gu.transform_pos_quat_by_trans_quat(pos, quat, alignment_pos, alignment_quat)
+                            props = LinkInertial(gs.EPS, pos, quat, np.zeros((3, 3), dtype=gs.np_float))
                         if is_heterogeneous:
                             link._variant_inertial[v] = props
                         else:

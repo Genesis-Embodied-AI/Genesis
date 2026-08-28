@@ -556,6 +556,73 @@ def implicit_inertial_origin_chain():
 
 
 @pytest.fixture(scope="session")
+def aligned_link_frame_urdfs():
+    """Generate two fixed-child URDF variants with nontrivial link-local frames.
+
+    Returns ``(urdfs, joint_pos, joint_rpy, variants_inertial)``.
+    """
+    joint_pos = (0.31, -0.09, 0.11)
+    joint_rpy = (-0.2, 0.15, 0.35)
+    variants_inertial = (
+        (
+            (1.0, (0.1, -0.05, 0.02), (0.0, 0.0, 0.0), (0.04, 0.05, 0.06)),
+            (0.5, (0.04, 0.02, -0.03), (0.2, -0.1, 0.3), (0.01, 0.015, 0.02)),
+        ),
+        (
+            (0.8, (-0.06, 0.04, 0.03), (0.0, 0.0, 0.0), (0.03, 0.04, 0.05)),
+            (0.4, (-0.03, 0.05, 0.02), (-0.1, 0.25, -0.2), (0.012, 0.016, 0.021)),
+        ),
+    )
+    links_geoms = (
+        ("base", "0.04 -0.02 0.03", "0.2 -0.1 0.3"),
+        ("child", "0.08 0.01 -0.02", "-0.3 0.2 0.1"),
+    )
+    urdfs = []
+    for i_variant, links_inertial in enumerate(variants_inertial):
+        urdf = ET.Element("robot", name=f"fixed_child_inertial_frame_{i_variant}")
+        for i_link, (link_name, geom_pos, geom_rpy) in enumerate(links_geoms):
+            link = ET.SubElement(urdf, "link", name=link_name)
+            collision = ET.SubElement(link, "collision")
+            geometry = ET.SubElement(collision, "geometry")
+            ET.SubElement(geometry, "box", size="0.3 0.2 0.15")
+            ET.SubElement(collision, "origin", xyz=geom_pos, rpy=geom_rpy)
+
+            mass, com, inertial_rpy, inertia = links_inertial[i_link]
+            inertial = ET.SubElement(link, "inertial")
+            ET.SubElement(inertial, "mass", value=str(mass))
+            ET.SubElement(
+                inertial,
+                "origin",
+                xyz=" ".join(map(str, com)),
+                rpy=" ".join(map(str, inertial_rpy)),
+            )
+            ixx, iyy, izz = inertia
+            ET.SubElement(
+                inertial,
+                "inertia",
+                ixx=str(ixx),
+                ixy="0",
+                ixz="0",
+                iyy=str(iyy),
+                iyz="0",
+                izz=str(izz),
+            )
+
+        joint = ET.SubElement(urdf, "joint", name="fixed_joint", type="fixed")
+        ET.SubElement(joint, "parent", link="base")
+        ET.SubElement(joint, "child", link="child")
+        ET.SubElement(
+            joint,
+            "origin",
+            xyz=" ".join(map(str, joint_pos)),
+            rpy=" ".join(map(str, joint_rpy)),
+        )
+        urdfs.append(ET.tostring(urdf, encoding="unicode"))
+
+    return tuple(urdfs), joint_pos, joint_rpy, variants_inertial
+
+
+@pytest.fixture(scope="session")
 def double_ball_pendulum():
     mjcf = ET.Element("mujoco", model="double_ball_pendulum")
 
