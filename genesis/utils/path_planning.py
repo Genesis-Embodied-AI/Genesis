@@ -291,7 +291,10 @@ class PathPlanner(ABC):
                 _pos=_pos,
                 _quat=_quat,
             )  # B
-            path[:, ~collision_mask] = result_path[:, ~collision_mask]
+            # Compared against zero rather than negated: the mask is integer-typed on the backends without a boolean
+            # one, where a bitwise negation would turn it into an index instead of the selection it reads as.
+            is_shortcut_free = collision_mask == 0
+            path[:, is_shortcut_free] = result_path[:, is_shortcut_free]
         return path
 
 
