@@ -623,10 +623,11 @@ def test_multi_robot_inverse_kinematics(show_viewer, tol):
 
 @pytest.mark.slow("gpu")  # gpu ~300s
 @pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
+@pytest.mark.parametrize("n_envs, batch_dofs_info", [(0, True), (2, False), (2, True)])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_path_planning_avoidance(backend, n_envs, show_viewer, tol):
+def test_path_planning_avoidance(backend, n_envs, batch_dofs_info, show_viewer, tol):
     CUBE_SIZE = 0.07
+    DOF_LIMIT = 0.5
 
     # FIXME: Implement a more robust plan planning algorithm
     if sys.platform == "darwin" and backend == gs.gpu:
@@ -635,6 +636,9 @@ def test_path_planning_avoidance(backend, n_envs, show_viewer, tol):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            batch_dofs_info=batch_dofs_info,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3, 1, 1.5),
@@ -742,6 +746,36 @@ def test_path_planning_avoidance(backend, n_envs, show_viewer, tol):
         hand_quat_diff = gu.transform_quat_by_quat(gu.inv_quat(hand_quat_ref), hand.get_quat())
         theta = 2 * torch.arctan2(torch.linalg.norm(hand_quat_diff[..., 1:]), torch.abs(hand_quat_diff[..., 0]))
         assert_allclose(theta, 0.0, tol=5e-3)
+
+    # A limit tightened once the scene is built is the one the planner samples within: a goal it excludes cannot be
+    # reached, while one it allows still can, and no waypoint leaves what the solver would let the robot hold.
+    scene.rigid_solver.set_dofs_limit(-DOF_LIMIT, DOF_LIMIT, dofs_idx=range(franka.dof_start, franka.dof_start + 7))
+    assert_allclose(franka.get_dofs_limit()[1][..., :7], DOF_LIMIT, tol=gs.EPS)
+    franka.set_qpos(torch.zeros_like(qpos_goal))
+
+    qpos_goal_within = torch.zeros_like(qpos_goal)
+    qpos_goal_within[..., :7] = 0.5 * DOF_LIMIT
+    within_path, within_valid_mask = franka.plan_path(
+        qpos_goal=qpos_goal_within,
+        num_waypoints=300,
+        ignore_collision=True,
+        resolution=0.05,
+        return_valid_mask=True,
+    )
+    assert within_valid_mask.all()
+    np.testing.assert_array_less(tensor_to_array(within_path[..., :7].abs()), DOF_LIMIT + tol)
+
+    # Reachable for the limits the model was parsed with, which is what a snapshot taken at build would hold.
+    qpos_goal_beyond = torch.zeros_like(qpos_goal)
+    qpos_goal_beyond[..., 0] = 2.0 * DOF_LIMIT
+    _, beyond_valid_mask = franka.plan_path(
+        qpos_goal=qpos_goal_beyond,
+        num_waypoints=300,
+        ignore_collision=True,
+        resolution=0.05,
+        return_valid_mask=True,
+    )
+    assert not beyond_valid_mask.any()
 
 
 @pytest.mark.required
