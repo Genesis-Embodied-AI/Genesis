@@ -270,20 +270,20 @@ def test_urdf_parsing_inertia_defaults(
         ),
     )
 
-    assert entity_with_implicit_origin.base_link.inertial_pos is None
+    assert entity_with_implicit_origin.base_link.desc.inertial_pos is None
 
     with caplog.at_level("WARNING"):
         scene.build()
 
     # An omitted inertial origin places the center of mass at the link frame, whereas a link without any inertial
     # element derives it from the geometry.
-    assert_allclose(entity_without_inertia.base_link.inertial_pos, GEOM_POS, tol=tol)
-    assert_allclose(entity_with_implicit_origin.base_link.inertial_pos, 0.0, tol=gs.EPS)
-    assert_allclose(entity_with_implicit_origin.base_link.inertial_mass, 2.5, tol=gs.EPS)
+    assert_allclose(entity_without_inertia.base_link.desc.inertial_pos, GEOM_POS, tol=tol)
+    assert_allclose(entity_with_implicit_origin.base_link.desc.inertial_pos, 0.0, tol=gs.EPS)
+    assert_allclose(entity_with_implicit_origin.base_link.desc.mass, 2.5, tol=gs.EPS)
     # The tensor is stored in its principal frame, whose parsed quaternion is markedly less accurate than the tensor
     # itself, so compare the rotation-invariant principal moments rather than the tensor rotated back.
     assert_allclose(
-        np.linalg.eigvalsh(entity_with_implicit_origin.base_link.inertial_i),
+        np.linalg.eigvalsh(entity_with_implicit_origin.base_link.desc.inertia),
         np.linalg.eigvalsh(INERTIA),
         tol=tol,
     )
@@ -298,8 +298,8 @@ def test_urdf_parsing_inertia_defaults(
     # code paths, so their agreement is bounded by that cross-path floor rather than by the storage precision.
     assert_allclose(entity_chain_unmerged.get_mass(), entity_chain_merged.get_mass(), rtol=5e-7)
     assert_allclose(
-        np.linalg.eigvalsh(entity_chain_unmerged.base_link.inertial_i),
-        np.linalg.eigvalsh(entity_chain_merged.base_link.inertial_i),
+        np.linalg.eigvalsh(entity_chain_unmerged.base_link.desc.inertia),
+        np.linalg.eigvalsh(entity_chain_merged.base_link.desc.inertia),
         rtol=5e-7,
     )
 
@@ -483,10 +483,10 @@ def test_urdf_joint_dynamics(joint_damping, joint_friction, xml_path):
     scene.build()
     expected_damping = 0.0 if joint_damping is None else joint_damping
     expected_frictionloss = 0.0 if joint_friction is None else joint_friction
-    assert_allclose(robot.joints[0].dofs_damping, 0.0, tol=gs.EPS)
-    assert_allclose(robot.joints[1].dofs_damping, expected_damping, tol=gs.EPS)
-    assert_allclose(robot.joints[0].dofs_frictionloss, 0.0, tol=gs.EPS)
-    assert_allclose(robot.joints[1].dofs_frictionloss, expected_frictionloss, tol=gs.EPS)
+    assert_allclose(robot.joints[0].desc.dofs_damping, 0.0, tol=gs.EPS)
+    assert_allclose(robot.joints[1].desc.dofs_damping, expected_damping, tol=gs.EPS)
+    assert_allclose(robot.joints[0].desc.dofs_frictionloss, 0.0, tol=gs.EPS)
+    assert_allclose(robot.joints[1].desc.dofs_frictionloss, expected_frictionloss, tol=gs.EPS)
 
 
 @pytest.mark.slow  # ~200s
@@ -742,7 +742,7 @@ def test_robot_scale_and_dofs_armature(xml_path, tol):
         attr_orig.setdefault("mass", mass)
         assert_allclose(mass, attr_orig["mass"], tol=tol)
 
-        inertia = np.stack([link.inertial_i for link in robot.links], axis=0) / scale**5
+        inertia = np.stack([link.desc.inertia for link in robot.links], axis=0) / scale**5
         attr_orig.setdefault("inertia", inertia)
         assert_allclose(inertia, attr_orig["inertia"], tol=tol)
 

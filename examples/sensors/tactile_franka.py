@@ -303,8 +303,8 @@ def main() -> None:
         franka.set_qpos(qpos[motor_dofs_idx], motor_dofs_idx)
         toggle_gripper(False)
 
-        cube.set_pos(cube.base_link.pos)
-        sphere.set_pos(sphere.base_link.pos)
+        cube.set_pos(cube.base_link.desc.pos)
+        sphere.set_pos(sphere.base_link.desc.pos)
 
     reset_robot()
 

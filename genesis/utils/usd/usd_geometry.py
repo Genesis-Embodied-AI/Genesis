@@ -1,4 +1,5 @@
 import re
+from dataclasses import replace
 from typing import Dict, List
 
 import numpy as np
@@ -7,13 +8,14 @@ from pxr import Usd, UsdGeom, UsdPhysics
 
 import genesis as gs
 from genesis.utils import geom as gu
+from genesis.utils.description import GeomDescription
 
 from .usd_context import UsdContext
 from .usd_utils import AXES_T, AXES_VECTOR, usd_attr_array_to_numpy, usd_primvar_array_to_numpy
 
 
 # UsdPhysics.MeshCollisionAPI 'approximation' tokens -> per-geom collision post-processing overrides
-# consumed by RigidEntity._postprocess_geoms_info. 'boundingCube'/'boundingSphere' are handled
+# consumed by RigidEntity._postprocess_geoms. 'boundingCube'/'boundingSphere' are handled
 # separately by fitting a primitive geom in the parser.
 _APPROXIMATION_OVERRIDES = {
     "convexHull": {"convexify": True, "decompose_error_threshold": float("inf")},  # single hull, no decomposition
@@ -39,7 +41,7 @@ def parse_prim_geoms(
     context: UsdContext,
     prim: Usd.Prim,
     link_prim: Usd.Prim,
-    links_g_infos: List[List[Dict]],
+    links_g_descs: List[List[GeomDescription]],
     link_path_to_idx: Dict[str, int],
     morph: gs.morphs.USD,
     surface: gs.surfaces.Surface,
@@ -332,18 +334,18 @@ def parse_prim_geoms(
         is_visual = (is_visible and not is_guide) and (match_visual or not (match_collision or match_visual))
         is_collision = is_visible and (match_collision or not (match_collision or match_visual))
 
-        g_infos = links_g_infos[link_path_to_idx[str(link_prim.GetPath())]]
+        g_descs = links_g_descs[link_path_to_idx[str(link_prim.GetPath())]]
         if is_visual:
             for mesh in meshes:
-                g_infos.append(
-                    dict(
-                        vmesh=mesh,
-                        pos=geom_pos,
-                        quat=geom_quat,
+                g_descs.append(
+                    GeomDescription(
                         contype=0,
                         conaffinity=0,
                         type=gs_type,
                         data=geom_data,
+                        pos=geom_pos,
+                        quat=geom_quat,
+                        vmesh=mesh,
                     )
                 )
         if is_collision:
@@ -370,18 +372,18 @@ def parse_prim_geoms(
                 if approximation_attr.HasAuthoredValue():
                     approximation = approximation_attr.Get()
 
-            # 'prim_path' resolves collision-group membership (see usd_collision) and 'density' feeds
-            # the density-derived link mass; parse_usd_rigid_entity strips both once consumed.
-            collision_g_info = dict(
-                pos=geom_pos,
-                quat=geom_quat,
+            # 'prim_path' resolves collision-group membership (see usd_collision) and 'density' feeds the
+            # density-derived link mass.
+            collision_g_desc = GeomDescription(
                 contype=1,
                 conaffinity=1,
+                pos=geom_pos,
+                quat=geom_quat,
                 friction=geom_friction,
                 prim_path=str(prim.GetPath()),
             )
             if physics_material is not None and physics_material.density is not None:
-                collision_g_info["density"] = physics_material.density
+                collision_g_desc.density = physics_material.density
 
             if approximation in ("boundingCube", "boundingSphere") and meshes:
                 # Fit a single primitive to the collision vertices, replacing the mesh collider.
@@ -398,30 +400,30 @@ def parse_prim_geoms(
                     bv_tmesh = trimesh.creation.icosphere(radius=radius, subdivisions=2)
                     bv_type, bv_data = gs.GEOM_TYPE.SPHERE, np.array([radius])
                 bv_mesh = gs.Mesh.from_trimesh(bv_tmesh, surface=geom_surface, metadata={"name": geom_id})
-                g_infos.append(
-                    {
-                        **collision_g_info,
-                        "mesh": bv_mesh,
-                        "pos": prim_pos,
-                        "sol_params": gu.default_solver_params(),
-                        "type": bv_type,
-                        "data": bv_data,
+                g_descs.append(
+                    replace(
+                        collision_g_desc,
+                        type=bv_type,
+                        data=bv_data,
+                        pos=prim_pos,
+                        mesh=bv_mesh,
+                        sol_params=gu.default_solver_params(),
                         # Already a primitive: skip mesh convexify for this geom.
-                        "convexify": False,
-                    }
+                        convexify=False,
+                    )
                 )
             else:
                 approximation_overrides = _APPROXIMATION_OVERRIDES.get(approximation, {})
                 for mesh in meshes:
-                    g_infos.append(
-                        {
-                            **collision_g_info,
-                            "mesh": mesh,
-                            "sol_params": gu.default_solver_params(),
-                            "type": gs_type,
-                            "data": geom_data,
+                    g_descs.append(
+                        replace(
+                            collision_g_desc,
+                            type=gs_type,
+                            data=geom_data,
+                            mesh=mesh,
+                            sol_params=gu.default_solver_params(),
                             **approximation_overrides,
-                        }
+                        )
                     )
 
     predicate = Usd.TraverseInstanceProxies()
@@ -431,6 +433,6 @@ def parse_prim_geoms(
     next(iterator)
     for child in iterator:
         parse_prim_geoms(
-            context, child, link_prim, links_g_infos, link_path_to_idx, morph, surface, match_visual, match_collision
+            context, child, link_prim, links_g_descs, link_path_to_idx, morph, surface, match_visual, match_collision
         )
         iterator.PruneChildren()

@@ -130,7 +130,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
                 hit_env_idx = ray_hit.env_idx
                 # The mass a link was built with, which a setter may only ever bring to another valid mass, so the
                 # affordance costs no reading of the solver from the thread that draws it.
-                mass = link.inertial_mass
+                mass = link.desc.mass
 
                 # Validate mass is not too small to prevent numerical instability
                 if mass < MIN_PICKABLE_MASS:
@@ -278,7 +278,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
                 self._sim_running
                 and isinstance(link, RigidLink)
                 and not link.is_fixed
-                and link.inertial_mass >= MIN_PICKABLE_MASS
+                and link.desc.mass >= MIN_PICKABLE_MASS
             )
             if is_pickable:
                 arrow_T = gu.trans_R_to_T(closest_hit.position, gu.z_up_to_R(closest_hit.normal))
@@ -366,7 +366,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
         inertia_local = tensor_to_array(solver.get_links_inertia(self._held_link.idx, envs_idx_info))[..., 0, :, :]
         if envs_idx_info is not None:
             com_local, inertia_local = com_local[0], inertia_local[0]
-        inertial_quat = tensor_to_array(self._held_link.inertial_quat)
+        inertial_quat = tensor_to_array(self._held_link.desc.inertial_quat)
         world_principal_quat = gu.transform_quat_by_quat(inertial_quat, link_quat)
 
         # Compute arm from COM to held point in world frame

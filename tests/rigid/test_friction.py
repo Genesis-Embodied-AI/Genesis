@@ -259,7 +259,7 @@ def test_static_friction(mode, friction, n_boxes, solver, scale, mesh_boxes, sho
     # Start every box at its static equilibrium instead of dropping it onto the stack, since the landing transient
     # proves nothing that the holding phase does not. The rest force of a contact is f(d) = k * imp(d)^2 * d / ((1 -
     # imp(d)) * inv_w) with the translation-only inverse weight, and friction still bootstraps at the first step.
-    timeconst, dampratio, dmin, dmax, width, mid, power = tensor_to_array(floating_boxes[0].geoms[0].sol_params)
+    timeconst, dampratio, dmin, dmax, width, mid, power = tensor_to_array(floating_boxes[0].geoms[0].get_sol_params())
     k_stiff = 1.0 / (dmax * dmax * timeconst * timeconst * dampratio * dampratio)
     push = -SAFETY_FACTOR * force_x
     inv_mass = [1.0 / masses[k] + (1.0 / masses[k - 1] if k > 0 else 0.0) for k in range(n_boxes)]
@@ -440,8 +440,8 @@ def test_static_hold_unaffected_by_press_on_separate_body(show_viewer):
     assert_allclose(geom.get_friction(), scene.rigid_solver.get_geoms_friction(geom.idx), tol=gs.EPS)
     assert_allclose(geom.get_friction(), 0.37, tol=gs.EPS)
     assert_allclose(geom.get_friction_rolling(), 0.02, tol=gs.EPS)
-    assert_allclose(geom.friction, FRICTION, tol=gs.EPS)
-    assert_allclose(geom.sol_params, scene.rigid_solver.get_sol_params(geoms_idx=geom.idx)[0], tol=gs.EPS)
+    assert_allclose(geom.desc.friction, FRICTION, tol=gs.EPS)
+    assert_allclose(geom.get_sol_params(), scene.rigid_solver.get_sol_params(geoms_idx=geom.idx)[0], tol=gs.EPS)
 
 
 @pytest.mark.required
