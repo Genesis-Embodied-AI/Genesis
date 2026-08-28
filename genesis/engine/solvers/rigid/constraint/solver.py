@@ -205,18 +205,12 @@ class ConstraintSolver:
         self._eq_const_info_cache.clear()
 
         if gs.use_zerocopy:
+            envs_mask = indices_to_mask(envs_idx)
+            dofs_mask = (slice(None), *envs_mask)
             is_warmstart = qd_to_torch(self.constraint_state.is_warmstart, copy=False)
             qacc_ws = qd_to_torch(self.constraint_state.qacc_ws, copy=False)
-            if isinstance(envs_idx, torch.Tensor) and (not IS_OLD_TORCH or envs_idx.dtype == torch.bool):
-                if envs_idx.dtype == torch.bool:
-                    is_warmstart.masked_fill_(envs_idx, False)
-                    qacc_ws.masked_fill_(envs_idx[None], 0.0)
-                else:
-                    is_warmstart.scatter_(0, envs_idx, False)
-                    qacc_ws.scatter_(1, envs_idx[None].expand((qacc_ws.shape[0], -1)), 0.0)
-            else:
-                is_warmstart[envs_idx] = False
-                qacc_ws[:, envs_idx] = 0.0
+            assign_indexed_tensor(is_warmstart, envs_mask, False)
+            assign_indexed_tensor(qacc_ws, dofs_mask, 0.0)
             if gs.backend == gs.metal:
                 torch.mps.synchronize()
             return
@@ -6273,7 +6267,9 @@ def func_update_gradient_batch(
         )
 
     if qd.static(rigid_config.solver_type == gs.constraint_solver.CG):
-        func_solve_mass_batch(i_b, constraint_state.grad, constraint_state.Mgrad, dyn_info, rigid_info, rigid_config)
+        func_solve_mass_batch(
+            i_b, constraint_state.grad, constraint_state.Mgrad, dyn_state, dyn_info, rigid_info, rigid_config
+        )
 
     if qd.static(rigid_config.solver_type == gs.constraint_solver.Newton):
         if qd.static(rigid_config.enable_per_island_solve):
@@ -6344,7 +6340,7 @@ def func_update_gradient_tiled(
         )
         for i_b in range(_B):
             func_solve_mass_batch(
-                i_b, constraint_state.grad, constraint_state.Mgrad, dyn_info, rigid_info, rigid_config
+                i_b, constraint_state.grad, constraint_state.Mgrad, dyn_state, dyn_info, rigid_info, rigid_config
             )
 
     if qd.static(rigid_config.solver_type == gs.constraint_solver.Newton):

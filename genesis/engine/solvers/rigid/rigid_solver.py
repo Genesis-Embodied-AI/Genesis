@@ -26,11 +26,11 @@ from genesis.utils.misc import (
     qd_to_numpy,
     qd_to_torch,
     qd_zero_grad,
-    sanitize_indexed_tensor,
+    tensor_to_array,
 )
 from genesis.utils.sdf import SDF
 
-from ..base_solver import MutatedLinks, Solver, StateChange, mutates
+from ..base_solver import GravityMixin, MutatedLinks, Solver, StateChange, TimeBasedMixin, mutates
 from ..kinematic_solver import KinematicSolver, _fill_base_link_geom_offsets, _offset_world_shift, _select_links_offset
 from .collider import Collider
 from .constraint import ConstraintSolver
@@ -59,10 +59,8 @@ from .abd.misc import (
     kernel_init_entity_fields,
     kernel_init_equality_fields,
     kernel_init_geom_fields,
-    kernel_init_invweight,
     kernel_init_joint_fields,
     kernel_init_link_fields,
-    kernel_init_meaninertia,
     kernel_init_vert_fields,
     kernel_init_vgeom_fields,
     kernel_init_vvert_fields,
@@ -101,7 +99,6 @@ from .abd.forward_kinematics import (
     kernel_update_all_verts,
     kernel_update_cartesian_space,
     kernel_update_geom_aabbs,
-    kernel_update_geoms,
     kernel_update_geoms_replay,
     kernel_update_verts_for_geoms,
     kernel_update_vgeoms,
@@ -117,21 +114,19 @@ from .abd.forward_dynamics import (
     func_integrate,
     func_solve_mass,
     func_solve_mass_batch,
-    func_solve_mass_entity,
     func_torque_and_passive_force,
     func_update_acc,
     func_update_force,
     func_vel_at_point,
-    kernel_compute_mass_matrix,
     kernel_forward_dynamics,
     kernel_forward_dynamics_without_qacc,
+    kernel_refresh_invweight_and_meaninertia,
     kernel_update_acc,
     update_qacc_from_qvel_delta,
     update_qvel,
 )
 from .abd.accessor import (
     ConstraintType,
-    kernel_adjust_link_inertia,
     kernel_control_dofs_force,
     kernel_control_dofs_position,
     kernel_control_dofs_position_velocity,
@@ -163,9 +158,9 @@ from .abd.accessor import (
     kernel_set_geoms_friction_rolling,
     kernel_set_geoms_friction_torsional,
     kernel_set_global_sol_params,
-    kernel_set_links_COM_shift,
-    kernel_set_links_inertial_mass,
-    kernel_set_links_mass_shift,
+    kernel_set_links_COM,
+    kernel_set_links_inertia,
+    kernel_set_links_mass,
     kernel_set_links_pos,
     kernel_set_links_quat,
     kernel_set_qpos,
@@ -248,7 +243,7 @@ def _sanitize_sol_params(
     return sol_params
 
 
-class RigidSolver(KinematicSolver):
+class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
     # override typing
     _entities: list[RigidEntity] = gs.List()
 
@@ -293,7 +288,9 @@ class RigidSolver(KinematicSolver):
             self._hibernation_thresh_vel = options.hibernation_thresh_vel
 
         self._sol_min_timeconst = TIME_CONSTANT_SAFETY_FACTOR * self._substep_dt
-        self._sol_default_timeconst = max(options.constraint_timeconst, self._sol_min_timeconst)
+        self._sol_default_timeconst = (
+            None if options.constraint_timeconst is None else max(options.constraint_timeconst, self._sol_min_timeconst)
+        )
 
         if options.friction_cone == gs.friction_cone.elliptic and self._requires_grad:
             gs.raise_exception("The elliptic friction cone is not supported yet when 'requires_grad' is True.")
@@ -431,11 +428,37 @@ class RigidSolver(KinematicSolver):
         self._init_equality_fields()
         self._init_dof_length()
 
-        self._init_invweight_and_meaninertia(force_update=False)
-        self._func_update_geoms(self._scene._envs_idx, force_update_fixed_geoms=True)
-
         self._init_collider()
         self._init_constraint_solver()
+        self._refresh_invweight_and_meaninertia(force_update=False, in_place=True)
+
+        # The constraint solver decides it has converged from quantities summed over the whole scene, and every DOF of
+        # a link contributes a cost of the order of the link's mass. A link whose mass is a tolerance-fraction of the
+        # scene total therefore contributes less than the tolerance, and the solve stops while that link still carries
+        # residual. The floor below follows the tolerance linearly, down to the resolution of the working precision in
+        # kilograms. The scene total is summed before the loop below folds each link into its parent, after which every
+        # entry holds the mass of a whole subtree, which is what the floor is compared against.
+        links_subtree_mass = np.atleast_2d(qd_to_numpy(self.dyn_info.links.inertial_mass, transpose=True, copy=True))
+        movable_links_idx = np.flatnonzero([link.n_dofs > 0 for link in self.links])
+        if movable_links_idx.size:
+            total_mass = links_subtree_mass[:, movable_links_idx].sum(axis=1)
+            for i_l in reversed(range(self._n_links)):
+                if self.links[i_l].parent_idx >= 0:
+                    links_subtree_mass[:, self.links[i_l].parent_idx] += links_subtree_mass[:, i_l]
+            movable_links_mass = links_subtree_mass[:, movable_links_idx]
+            mass_floor = np.maximum(self._options.tolerance * total_mass, 0.2 * self._options.tolerance)[:, None]
+            i_b_min, i_l_min = np.unravel_index((movable_links_mass / mass_floor).argmin(), movable_links_mass.shape)
+            mass_min = movable_links_mass[i_b_min, i_l_min]
+            if mass_min < mass_floor[i_b_min, 0]:
+                link = self.links[movable_links_idx[i_l_min]]
+                if gs.qd_float == qd.f32:
+                    remedy = "Use 64-bit simulation precision or tighten the solver tolerance."
+                else:
+                    remedy = "Tighten the solver tolerance."
+                gs.logger.warning(
+                    f"Link '{link.name}' has mass {mass_min:.1e}, too small for the constraint solver to be "
+                    f"numerically stable. {remedy} Note that increasing the solver iterations would not help."
+                )
 
         # Morph pose offset of each collision geom, conjugated into the geom's own frame so the relative getters
         # revert it for geoms rotated relative to the link. Each root link carries its own offset; child-link geoms
@@ -813,6 +836,9 @@ class RigidSolver(KinematicSolver):
         if self._requires_grad:
             self.dyn_state_adjoint_cache = self.data_manager.dyn_state_adjoint_cache
 
+        # Gravity lives with the rigid arrays, which the kernels read, so that array is the one handed over to hold it.
+        self._build_gravity(self.rigid_info.gravity)
+
     def _sanitize_joint_sol_params(self, sol_params):
         return _sanitize_sol_params(sol_params, self._sol_min_timeconst, self._sol_default_timeconst)
 
@@ -902,7 +928,9 @@ class RigidSolver(KinematicSolver):
             return 0.0
         return max(upper) / min(lower)
 
-    def _init_invweight_and_meaninertia(self, envs_idx=None, *, force_update=True):
+    def _refresh_invweight_and_meaninertia(self, envs_idx=None, *, force_update=True, in_place=False):
+        # Every kinematic tree of the solver is recomputed. A change limited to some links is handled by the setter
+        # writing them, which recomputes their own tree only.
         # Early return if no DoFs. This is essential to avoid segfault on CUDA.
         if self._n_dofs == 0:
             return
@@ -915,157 +943,27 @@ class RigidSolver(KinematicSolver):
             )
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
 
-        # Compute state in neutral configuration at rest
-        qpos = qd_to_torch(self.qpos0, envs_idx, transpose=True)
-        if self.n_envs == 0:
-            qpos = qpos[0]
-        self.set_qpos(qpos, envs_idx=envs_idx if self.n_envs > 0 else None)
-
-        # Compute mass matrix without any implicit damping terms
-        # TODO: This kernel could be optimized to take `envs_idx` as input if performance is critical.
-        kernel_compute_mass_matrix(self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, decompose=True)
-
-        # Define some proxies for convenience
-        mass_mat_D_inv = qd_to_numpy(self.rigid_info.mass_mat_D_inv)
-        mass_mat_L = qd_to_numpy(self.rigid_info.mass_mat_L)
-        offsets = qd_to_numpy(self.dyn_state.links.i_pos)
-        cdof_ang = qd_to_numpy(self.dyn_state.dofs.cdof_ang)
-        cdof_vel = qd_to_numpy(self.dyn_state.dofs.cdof_vel)
-        links_joint_start = qd_to_numpy(self.dyn_info.links.joint_start)
-        links_joint_end = qd_to_numpy(self.dyn_info.links.joint_end)
-        links_dof_end = qd_to_numpy(self.dyn_info.links.dof_end)
-        links_n_dofs = qd_to_numpy(self.dyn_info.links.n_dofs)
-        links_parent_idx = qd_to_numpy(self.dyn_info.links.parent_idx)
-        joints_type = qd_to_numpy(self.dyn_info.joints.type)
-        joints_dof_start = qd_to_numpy(self.dyn_info.joints.dof_start)
-        joints_n_dofs = qd_to_numpy(self.dyn_info.joints.n_dofs)
-
-        links_invweight = np.zeros((len(envs_idx), self._n_links, 2), dtype=gs.np_float)
-        dofs_invweight = np.zeros((len(envs_idx), self._n_dofs), dtype=gs.np_float)
-
-        # TODO: Simple numpy-based for-loop for now as it is not performance critical
-        for i_b_, i_b in enumerate(envs_idx):
-            # Compute the inverted mass matrix efficiently
-            mass_mat_L_inv = np.eye(self.n_dofs_)
-            for i_d in range(self.n_dofs_):
-                for j_d in range(i_d):
-                    mass_mat_L_inv[i_d] -= mass_mat_L[i_d, j_d, i_b] * mass_mat_L_inv[j_d]
-            mass_mat_inv = (mass_mat_L_inv * mass_mat_D_inv[:, i_b]) @ mass_mat_L_inv.T
-
-            # Compute links invweight if necessary
-            if i_b_ == 0 or self._options.batch_links_info:
-                for i_l in range(self._n_links):
-                    jacp = np.zeros((3, self._n_dofs))
-                    jacr = np.zeros((3, self._n_dofs))
-
-                    offset = offsets[i_l, i_b]
-
-                    j_l = i_l
-                    while j_l != -1:
-                        link_n_dofs = links_n_dofs[j_l]
-                        if self._options.batch_links_info:
-                            link_n_dofs = link_n_dofs[i_b]
-                        for i_d_ in range(link_n_dofs):
-                            link_dof_end = links_dof_end[j_l]
-                            if self._options.batch_links_info:
-                                link_dof_end = link_dof_end[i_b]
-                            i_d = link_dof_end - i_d_ - 1
-                            jacp[:, i_d] = cdof_vel[i_d, i_b] + np.cross(cdof_ang[i_d, i_b], offset)
-                            jacr[:, i_d] = cdof_ang[i_d, i_b]
-                        link_parent_idx = links_parent_idx[j_l]
-                        if self._options.batch_links_info:
-                            link_parent_idx = link_parent_idx[i_b]
-                        j_l = link_parent_idx
-
-                    jac = np.concatenate((jacp, jacr), axis=0)
-
-                    A = jac @ mass_mat_inv @ jac.T
-                    A_diag = np.diag(A)
-
-                    # A zero component is kept as is: substituting the other component to avoid degenerate constraint
-                    # weights over-stiffens the impedance of constraints on such links (e.g. connect constraints on a
-                    # link whose frame origin cannot translate) and destabilizes them.
-                    links_invweight[i_b_, i_l, 0] = A_diag[:3].mean()
-                    links_invweight[i_b_, i_l, 1] = A_diag[3:].mean()
-
-            # Compute dofs invweight
-            if i_b_ == 0 or self._options.batch_dofs_info:
-                for i_l in range(self._n_links):
-                    link_joint_start = links_joint_start[i_l]
-                    link_joint_end = links_joint_end[i_l]
-                    if self._options.batch_links_info:
-                        link_joint_start = link_joint_start[i_b]
-                        link_joint_end = link_joint_end[i_b]
-                    for i_j in range(link_joint_start, link_joint_end):
-                        joint_type = joints_type[i_j]
-                        if self._options.batch_joints_info:
-                            joint_type = joint_type[i_b]
-                        if joint_type == gs.JOINT_TYPE.FIXED:
-                            continue
-
-                        dof_start = joints_dof_start[i_j]
-                        n_dofs = joints_n_dofs[i_j]
-                        if self._options.batch_joints_info:
-                            dof_start = dof_start[i_b]
-                            n_dofs = n_dofs[i_b]
-                        jac = np.zeros((n_dofs, self._n_dofs))
-                        for i_d_ in range(n_dofs):
-                            jac[i_d_, dof_start + i_d_] = 1.0
-
-                        A = jac @ mass_mat_inv @ jac.T
-                        A_diag = np.diag(A)
-
-                        if joint_type == gs.JOINT_TYPE.FREE:
-                            dofs_invweight[i_b_, dof_start : (dof_start + 3)] = A_diag[:3].mean()
-                            dofs_invweight[i_b_, (dof_start + 3) : (dof_start + 6)] = A_diag[3:].mean()
-                        elif joint_type == gs.JOINT_TYPE.SPHERICAL:
-                            dofs_invweight[i_b_, dof_start : (dof_start + 3)] = A_diag[:3].mean()
-                        else:  # REVOLUTE or PRISMATIC
-                            dofs_invweight[i_b_, dof_start] = A_diag[0]
-
-            # Stop there if not batched
-            if not batched:
-                break
-
-        # Update links and dofs invweight if necessary
-        if not self._options.batch_links_info:
-            links_invweight = links_invweight[0]
-        if not self._options.batch_dofs_info:
-            dofs_invweight = dofs_invweight[0]
-        kernel_init_invweight(
-            envs_idx, links_invweight, dofs_invweight, self.dyn_info, self.rigid_info, self.rigid_config, force_update
+        # The computation needs one vector of size n_dofs and one mass-matrix solve against it. Build time borrows
+        # both from the constraint solver, so that a scene never writing an inertial property allocates no scratch of
+        # its own.
+        if in_place:
+            constraint_state = self.constraint_solver.constraint_state
+            jac_row, solve_out = constraint_state.grad, constraint_state.Mgrad
+        else:
+            jac_row, solve_out = self.data_manager.weight_scratch.jac_row, self.data_manager.weight_scratch.solve_out
+        kernel_refresh_invweight_and_meaninertia(
+            envs_idx,
+            jac_row,
+            solve_out,
+            self.dyn_state,
+            self.constraint_solver.constraint_state,
+            self.dyn_info,
+            self.rigid_info,
+            self.rigid_config,
+            force_update,
+            self._is_forward_pos_updated,
+            self._is_forward_vel_updated,
         )
-
-        # Compute meaninertia from mass matrix
-        kernel_init_meaninertia(envs_idx, self.dyn_info, self.rigid_info, self.rigid_config)
-
-        # The solve's exit tests are quoted on scene aggregates, and every DOF of a link contributes a cost of the
-        # order of the link's mass, so a link whose mass is a tolerance-fraction of the scene's is invisible to
-        # them: the solve stops while that link still carries residual. The absolute floor is the working
-        # precision's resolution limit, calibrated on the isotropy sweep boundary in kilograms, following the
-        # tolerance linearly. A joint carries the composite inertia of its whole subtree, so each link weighs in
-        # with its subtree's mass; the scene total is read before the accumulation folds children into parents.
-        links_subtree_mass = np.atleast_2d(qd_to_numpy(self.dyn_info.links.inertial_mass, transpose=True, copy=True))
-        movable_links_idx = np.flatnonzero([link.n_dofs > 0 for link in self.links])
-        if movable_links_idx.size:
-            total_mass = links_subtree_mass[:, movable_links_idx].sum(axis=1)
-            for i_l in reversed(range(self._n_links)):
-                if self.links[i_l].parent_idx >= 0:
-                    links_subtree_mass[:, self.links[i_l].parent_idx] += links_subtree_mass[:, i_l]
-            movable_links_mass = links_subtree_mass[:, movable_links_idx]
-            mass_floor = np.maximum(self._options.tolerance * total_mass, 0.2 * self._options.tolerance)[:, None]
-            i_b_min, i_l_min = np.unravel_index((movable_links_mass / mass_floor).argmin(), movable_links_mass.shape)
-            mass_min = movable_links_mass[i_b_min, i_l_min]
-            if mass_min < mass_floor[i_b_min, 0]:
-                link = self.links[movable_links_idx[i_l_min]]
-                if gs.qd_float == qd.f32:
-                    remedy = "Use 64-bit simulation precision or tighten the solver tolerance."
-                else:
-                    remedy = "Tighten the solver tolerance."
-                gs.logger.warning(
-                    f"Link '{link.name}' has mass {mass_min:.1e}, too small for the constraint solver to be "
-                    f"numerically stable. {remedy} Note that increasing the solver iterations would not help."
-                )
 
     def _init_mass_mat(self):
         self.mass_mat = self.rigid_info.mass_mat
@@ -1103,6 +1001,8 @@ class RigidSolver(KinematicSolver):
         # within-link off-diagonal mask to make the assembled mass exactly diagonal (else ~1e-6 round-off once it
         # rotates) and the skyline envelope tighter. A DOF-bearing (articulated) descendant adds off-diagonal base
         # coupling, so the block must be exactly the root's own DOFs for the diagonalization to be valid.
+        # Writing a center of mass or an inertia on such a link is rejected, so the block stays valid for good (see
+        # _set_links_info).
         for link in self.links:
             # 'aligned' already implies a free joint; the block bounds must additionally be exactly the link's own DOFs
             # (no DOF-bearing ancestor or descendant), otherwise the coupled block is not diagonal.
@@ -1140,8 +1040,6 @@ class RigidSolver(KinematicSolver):
         self.rigid_info.links_tree_end.from_numpy(links_tree_end)
         self.rigid_info.entities_mass_block_dof_start.from_numpy(entities_mass_block_dof_start)
         self.rigid_info.entities_mass_block_dof_end.from_numpy(entities_mass_block_dof_end)
-
-        self.rigid_info.gravity.from_numpy(self.gravity)
 
     def _dispatch_heterogeneous_vgeoms(self):
         """
@@ -1579,7 +1477,11 @@ class RigidSolver(KinematicSolver):
 
     def _func_forward_dynamics(self):
         kernel_forward_dynamics(
-            self.dyn_state, self.constraint_solver.constraint_state, self.dyn_info, self.rigid_info, self.rigid_config
+            self.dyn_state,
+            self.constraint_solver.constraint_state,
+            self.dyn_info,
+            self.rigid_info,
+            self.rigid_config,
         )
 
     def _func_update_acc(self):
@@ -1592,11 +1494,6 @@ class RigidSolver(KinematicSolver):
 
     def _func_integrate_dq_entity(self, dq, i_e, i_b, respect_joint_limit):
         func_integrate_dq_entity(i_e, i_b, dq, self.dyn_info, self.rigid_info, self.rigid_config, respect_joint_limit)
-
-    def _func_update_geoms(self, envs_idx, *, force_update_fixed_geoms=False):
-        kernel_update_geoms(
-            envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, force_update_fixed_geoms
-        )
 
     def apply_links_external_wrench(
         self,
@@ -1863,13 +1760,11 @@ class RigidSolver(KinematicSolver):
             self.update_forward_pos()
 
             kernel_get_state(
-                state.i_pos_shift,
                 state.qpos,
                 state.dofs_vel,
                 state.dofs_acc,
                 state.links_pos,
                 state.links_quat,
-                state.mass_shift,
                 state.friction_ratio,
                 self.dyn_state,
                 self.rigid_info,
@@ -1905,10 +1800,8 @@ class RigidSolver(KinematicSolver):
             ctrl_mode_dst = qd_to_torch(self.dyn_state.dofs.ctrl_mode, transpose=True, copy=False)
             pos_dst = qd_to_torch(self.dyn_state.links.pos, transpose=True, copy=False)
             quat_dst = qd_to_torch(self.dyn_state.links.quat, transpose=True, copy=False)
-            shift_dst = qd_to_torch(self.dyn_state.links.i_pos_shift, transpose=True, copy=False)
             cfrc_vel_dst = qd_to_torch(self.dyn_state.links.cfrc_applied_vel, transpose=True, copy=False)
             cfrc_ang_dst = qd_to_torch(self.dyn_state.links.cfrc_applied_ang, transpose=True, copy=False)
-            mass_dst = qd_to_torch(self.dyn_state.links.mass_shift, transpose=True, copy=False)
             fric_dst = qd_to_torch(self.dyn_state.geoms.friction_ratio, transpose=True, copy=False)
             # Setting the state is a discontinuity: wake every body in the affected envs (a body left hibernated would
             # stay frozen), restoring the flags and the compact awake lists alongside the other state buffers.
@@ -1954,10 +1847,8 @@ class RigidSolver(KinematicSolver):
                     ctrl_mode_dst.masked_fill_(envs_mask[:, None], gs.CTRL_MODE.FORCE)
                 torch.where(envs_mask[:, None, None], state.links_pos, pos_dst, out=pos_dst)
                 torch.where(envs_mask[:, None, None], state.links_quat, quat_dst, out=quat_dst)
-                torch.where(envs_mask[:, None, None], state.i_pos_shift, shift_dst, out=shift_dst)
                 cfrc_vel_dst.masked_fill_(envs_mask[:, None, None], 0.0)
                 cfrc_ang_dst.masked_fill_(envs_mask[:, None, None], 0.0)
-                torch.where(envs_mask[:, None], state.mass_shift, mass_dst, out=mass_dst)
                 if self.n_geoms:
                     torch.where(envs_mask[:, None], state.friction_ratio, fric_dst, out=fric_dst)
                 if self._use_hibernation:
@@ -1984,10 +1875,8 @@ class RigidSolver(KinematicSolver):
                     ctrl_mode_dst[envs_idx] = gs.CTRL_MODE.FORCE
                 pos_dst[envs_idx] = state.links_pos[envs_idx]
                 quat_dst[envs_idx] = state.links_quat[envs_idx]
-                shift_dst[envs_idx] = state.i_pos_shift[envs_idx]
                 cfrc_vel_dst[envs_idx] = 0.0
                 cfrc_ang_dst[envs_idx] = 0.0
-                mass_dst[envs_idx] = state.mass_shift[envs_idx]
                 if self.n_geoms:
                     fric_dst[envs_idx] = state.friction_ratio[envs_idx]
                 if self._use_hibernation:
@@ -2011,13 +1900,11 @@ class RigidSolver(KinematicSolver):
             kernel_set_zero(envs_idx, self._errno)
             kernel_set_state(
                 envs_idx,
-                state.i_pos_shift,
                 state.qpos,
                 state.dofs_vel,
                 state.dofs_acc,
                 state.links_pos,
                 state.links_quat,
-                state.mass_shift,
                 state.friction_ratio,
                 self.dyn_state,
                 self.rigid_info,
@@ -2362,66 +2249,143 @@ class RigidSolver(KinematicSolver):
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
 
-    def set_links_mass_shift(self, mass, links_idx=None, envs_idx=None):
-        mass, links_idx, envs_idx = self._sanitize_io_variables(
-            mass, links_idx, self.n_links, "links_idx", envs_idx, skip_allocation=True
-        )
-        if self.n_envs == 0:
-            mass = mass[None]
-        kernel_set_links_mass_shift(links_idx, envs_idx, mass, self.dyn_state, self.rigid_config)
+    def _set_links_info(self, values, links_idx, name, envs_idx=None, *, scale_inertia=False):
+        """Write one inertial property of the given links, then recompute the inverse weights of their trees once.
 
-    def set_links_COM_shift(self, com, links_idx=None, envs_idx=None):
-        com, links_idx, envs_idx = self._sanitize_io_variables(
-            com, links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
-        )
-        if self.n_envs == 0:
-            com = com[None]
-        kernel_set_links_COM_shift(links_idx, envs_idx, com, self.dyn_state, self.rigid_config)
-
-    def set_links_inertial_mass(self, mass, links_idx=None, envs_idx=None):
-        mass, links_idx, envs_idx = self._sanitize_io_variables(
-            mass,
+        The property is the mass, the center of mass or the inertia, selected by `name`. The inverse weights are per
+        environment even when the property itself is shared by the whole batch, so writing shared link info recomputes
+        them for every environment.
+        """
+        if not self._options.batch_links_info and envs_idx is not None:
+            gs.raise_exception("`envs_idx` cannot be specified for non-batched links info.")
+        shape = {"mass": (), "COM": (3,), "inertia": (3, 3)}[name]
+        # A value of fewer dimensions than the property holds would be spread over it, which for an inertia means a
+        # tensor of one number repeated: no inertia of any body.
+        if shape and np.shape(values)[-len(shape) :] != shape:
+            gs.raise_exception(f"{name} is {shape} per link, and {np.shape(values)} cannot be read as that.")
+        values, links_idx, envs_idx = self._sanitize_io_variables(
+            values,
             links_idx,
             self.n_links,
             "links_idx",
             envs_idx,
+            element_shape=shape,
             batched=self._options.batch_links_info,
             skip_allocation=True,
         )
-        if self.n_envs == 0 and self._options.batch_links_info:
-            mass = mass[None]
-        kernel_set_links_inertial_mass(links_idx, envs_idx, mass, self.dyn_info, self.rigid_config)
+        if name != "mass":
+            # TODO: An aligned link is anchored on its own center of mass and principal axes, which is what makes its
+            # mass block diagonal (see _init_mass_mat), so writing either one leaves the anchoring behind. Following
+            # the value instead means moving the frame, which shifts the local pose of every geom of the fixed subtree
+            # ('GeomsInfo.pos' / 'quat', one entry per geom, shared by all environments), so a per-environment value
+            # has no frame to go to. It also moves 'qpos', which is quoted in the anchored frame, and the origin a
+            # fixed child reports. Lifting this takes geom info batched per environment.
+            aligned_idx = next((i_l for i_l in tensor_to_array(links_idx) if self.links[i_l].aligned), None)
+            if aligned_idx is not None:
+                link = self.links[aligned_idx]
+                remedy = (
+                    "Load the entity with 'align=False' to write inertial properties at runtime."
+                    if isinstance(link.entity.main_morph, gs.options.morphs.FileMorph)
+                    else "Writing the inertial properties of a primitive morph is not supported yet."
+                )
+                gs.raise_exception(
+                    f"Cannot set the {'center of mass' if name == 'COM' else 'inertia'} of link '{link.name}': its "
+                    f"frame is anchored on the center of mass and principal axes of its body. {remedy}"
+                )
 
-    def set_links_inertia(self, ratio, links_idx=None, envs_idx=None):
-        if gs.use_zerocopy:
-            mass_data = qd_to_torch(self.dyn_info.links.inertial_mass, transpose=True, copy=False)
-            inertial_i_data = qd_to_torch(self.dyn_info.links.inertial_i, transpose=True, copy=False)
-            invweight_data = qd_to_torch(self.dyn_info.links.invweight, transpose=True, copy=False)
-            links_mask = indices_to_mask(links_idx)
-            if self._options.batch_links_info:
-                mask = (0, *links_mask) if self.n_envs == 0 else indices_to_mask(envs_idx, *links_mask)
+        envs_idx = envs_idx if self._options.batch_links_info else self._scene._envs_idx
+        if not self._options.batch_links_info or self.n_envs == 0:
+            values = values[None]
+        # The weights are solved again rather than scaled by the mass ratio: a weight follows the mass alone for a body
+        # whose degrees of freedom carry no armature, which a model loaded from a file has.
+        if name == "mass":
+            kernel_set_links_mass(
+                links_idx,
+                envs_idx,
+                values,
+                self.data_manager.weight_scratch.jac_row,
+                self.data_manager.weight_scratch.solve_out,
+                self.dyn_state,
+                self.constraint_solver.constraint_state,
+                self.dyn_info,
+                self.rigid_info,
+                self.rigid_config,
+                scale_inertia,
+                self._is_forward_pos_updated,
+                self._is_forward_vel_updated,
+            )
+        elif name == "COM":
+            kernel_set_links_COM(
+                links_idx,
+                envs_idx,
+                values,
+                self.data_manager.weight_scratch.jac_row,
+                self.data_manager.weight_scratch.solve_out,
+                self.dyn_state,
+                self.constraint_solver.constraint_state,
+                self.dyn_info,
+                self.rigid_info,
+                self.rigid_config,
+                self._is_forward_pos_updated,
+                self._is_forward_vel_updated,
+            )
+        else:
+            kernel_set_links_inertia(
+                links_idx,
+                envs_idx,
+                values,
+                self.data_manager.weight_scratch.jac_row,
+                self.data_manager.weight_scratch.solve_out,
+                self.dyn_state,
+                self.constraint_solver.constraint_state,
+                self.dyn_info,
+                self.rigid_info,
+                self.rigid_config,
+                refresh_position=self._is_forward_pos_updated,
+            )
+
+    def set_links_mass(self, mass, links_idx=None, envs_idx=None, scale_inertia=False):
+        """Set the mass of the given links, in kg.
+
+        Set 'scale_inertia' to scale their inertia by the same factor, which gives what a body of the same shape made
+        heavier behaves like, its inertia being proportional to its mass. Without it, the mass of a link changes and
+        the inertia it was given stays as it is.
+
+        Every mass must be finite and strictly positive, which is not checked.
+
+        The value written survives `scene.reset()`: a reset restores the configuration the scene was built at and
+        leaves inertial properties alone.
+        """
+        # Neither the masses nor the links they are written to are read back for checking: a condition drawn from
+        # values on the device forces a synchronization at every call. The mass is spread over the links given, so
+        # they have to carry some between them. A selection already on the device is left as it is, for that reason.
+        if not isinstance(links_idx, torch.Tensor):
+            if links_idx is None:
+                links = self.links
+            elif isinstance(links_idx, slice):
+                links = self.links[links_idx]
+            elif isinstance(links_idx, (int, np.integer)):
+                links = (self.links[links_idx],)
             else:
-                mask = links_mask
-            ratio_t = broadcast_tensor(ratio, gs.tc_float, mass_data[mask].shape)
-            assign_indexed_tensor(mass_data, mask, mass_data[mask] * ratio_t)
-            assign_indexed_tensor(inertial_i_data, mask, inertial_i_data[mask] * ratio_t[..., None, None])
-            assign_indexed_tensor(invweight_data, mask, invweight_data[mask] / ratio_t[..., None])
-            if gs.backend == gs.metal:
-                torch.mps.synchronize()
-            return
+                links = [self.links[i_l] for i_l in links_idx]
+            if sum(0.0 if link.is_fixed else link.inertial_mass for link in links) <= gs.EPS:
+                gs.raise_exception(
+                    "None of the links being set holds a mass to spread out, so there is no mass to set."
+                )
 
-        ratio, links_idx, envs_idx = self._sanitize_io_variables(
-            ratio,
-            links_idx,
-            self.n_links,
-            "links_idx",
-            envs_idx,
-            batched=self._options.batch_links_info,
-            skip_allocation=True,
-        )
-        if self.n_envs == 0 and self._options.batch_links_info:
-            ratio = ratio[None]
-        kernel_adjust_link_inertia(links_idx, envs_idx, ratio, self.dyn_info, self.rigid_config)
+        self._set_links_info(mass, links_idx, "mass", envs_idx, scale_inertia=scale_inertia)
+
+    def set_links_inertia(self, inertia, links_idx=None, envs_idx=None):
+        """Set the inertia tensor of the given links, expressed in their inertial frame.
+
+        The caller is responsible for making sure that the inertia specified is physically sound, that is symmetric
+        positive definite. There is no runtime check of this precondition, for the sake of efficiency.
+        """
+        self._set_links_info(inertia, links_idx, "inertia", envs_idx)
+
+    def set_links_COM(self, com, links_idx=None, envs_idx=None):
+        """Set the center of mass (COM) of the given links, as an offset from the origin of their local frame."""
+        self._set_links_info(com, links_idx, "COM", envs_idx)
 
     def set_geoms_friction_ratio(self, friction_ratio, geoms_idx=None, envs_idx=None):
         friction_ratio, geoms_idx, envs_idx = self._sanitize_io_variables(
@@ -2460,7 +2424,7 @@ class RigidSolver(KinematicSolver):
                     torch.where(envs_idx[:, None], qpos, qs_data, out=qs_data)
                 errno.masked_fill_(envs_idx, 0.0)
             else:
-                mask = (0, *qs_mask) if self.n_envs == 0 else indices_to_mask(envs_idx, *qs_mask)
+                mask = (0, *qs_mask) if self.n_envs == 0 else indices_to_mask(envs_idx, *qs_mask, boolean_mask=False)
                 assign_indexed_tensor(data, mask, qpos)
                 errno[envs_idx] = 0
                 if mask and isinstance(mask[0], torch.Tensor):
@@ -2636,10 +2600,7 @@ class RigidSolver(KinematicSolver):
             kernel_set_dofs_stiffness(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self.rigid_config)
         elif name == "armature":
             kernel_set_dofs_armature(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self.rigid_config)
-            qs_idx = torch.arange(self.n_qs, dtype=gs.tc_int, device=gs.device)
-            qpos_cur = self.get_qpos(qs_idx=qs_idx, envs_idx=envs_idx)
-            self._init_invweight_and_meaninertia(envs_idx=envs_idx, force_update=True)
-            self.set_qpos(qpos_cur, qs_idx=qs_idx, envs_idx=envs_idx)
+            self._refresh_invweight_and_meaninertia(envs_idx=envs_idx, force_update=True)
         elif name == "damping":
             kernel_set_dofs_damping(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self.rigid_config)
         elif name == "frictionloss":
@@ -2941,18 +2902,30 @@ class RigidSolver(KinematicSolver):
         tensor = qd_to_torch(self.dyn_state.links.root_COM, envs_idx, links_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
-    def get_links_mass_shift(self, links_idx=None, envs_idx=None):
-        tensor = qd_to_torch(self.dyn_state.links.mass_shift, envs_idx, links_idx, transpose=True, copy=True)
-        return tensor[0] if self.n_envs == 0 else tensor
+    def get_links_COM(self, links_idx=None, envs_idx=None):
+        """The center of mass (COM) of each link, as an offset from the origin of its local frame."""
+        if not self._options.batch_links_info and envs_idx is not None:
+            gs.raise_exception("`envs_idx` cannot be specified for non-batched links info.")
+        tensor = qd_to_torch(self.dyn_info.links.inertial_pos, envs_idx, links_idx, transpose=True, copy=True)
+        return tensor[0] if self.n_envs == 0 and self._options.batch_links_info else tensor
 
-    def get_links_COM_shift(self, links_idx=None, envs_idx=None):
-        tensor = qd_to_torch(self.dyn_state.links.i_pos_shift, envs_idx, links_idx, transpose=True, copy=True)
-        return tensor[0] if self.n_envs == 0 else tensor
+    @property
+    def is_links_info_batched(self) -> bool:
+        """Whether the inertial properties of a link are stored per environment rather than shared by the batch."""
+        return self._options.batch_links_info
 
-    def get_links_inertial_mass(self, links_idx=None, envs_idx=None):
+    def get_links_mass(self, links_idx=None, envs_idx=None):
+        """The mass of each link, as the solver currently uses it."""
         if not self._options.batch_links_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched links info.")
         tensor = qd_to_torch(self.dyn_info.links.inertial_mass, envs_idx, links_idx, transpose=True, copy=True)
+        return tensor[0] if self.n_envs == 0 and self._options.batch_links_info else tensor
+
+    def get_links_inertia(self, links_idx=None, envs_idx=None):
+        """The inertia matrix of each link, in its inertial frame, as the solver currently uses it."""
+        if not self._options.batch_links_info and envs_idx is not None:
+            gs.raise_exception("`envs_idx` cannot be specified for non-batched links info.")
+        tensor = qd_to_torch(self.dyn_info.links.inertial_i, envs_idx, links_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 and self._options.batch_links_info else tensor
 
     def get_links_invweight(self, links_idx=None, envs_idx=None):
@@ -3203,9 +3176,7 @@ class RigidSolver(KinematicSolver):
         """
         gravity = self.get_gravity(envs_idx=envs_idx)  # (3,) or (n_envs, 3)
         links_pos = self.get_links_pos(links_idx, envs_idx, ref=link_ref_frame.link_COM)  # (..., n_links, 3)
-        # `get_links_inertial_mass` only accepts `envs_idx` when links info is batched, since all the environments
-        # share the very same link masses otherwise.
-        links_mass = self.get_links_inertial_mass(links_idx, envs_idx if self._options.batch_links_info else None)
+        links_mass = self.get_links_mass(links_idx, envs_idx if self._options.batch_links_info else None)
 
         # PE_i = m_i * g^T * p_i => PE = sum_i(m_i * (g . p_i))
         # g is (..., 3), links_pos is (..., n_links, 3) -> broadcast g to (..., 1, 3)
@@ -3238,6 +3209,12 @@ class RigidSolver(KinematicSolver):
 
     def get_geoms_friction(self, geoms_idx=None):
         return qd_to_torch(self.dyn_info.geoms.friction, geoms_idx, copy=True)
+
+    def get_geoms_friction_torsional(self, geoms_idx=None):
+        return qd_to_torch(self.dyn_info.geoms.friction_torsional, geoms_idx, copy=True)
+
+    def get_geoms_friction_rolling(self, geoms_idx=None):
+        return qd_to_torch(self.dyn_info.geoms.friction_rolling, geoms_idx, copy=True)
 
     def get_AABB(self, entities_idx=None, envs_idx=None):
         from genesis.engine.couplers import LegacyCoupler
@@ -3322,12 +3299,6 @@ class RigidSolver(KinematicSolver):
             return
 
         kernel_clear_external_force(self.dyn_state, self.rigid_info, self.rigid_config)
-
-    @gs.assert_built
-    def set_gravity(self, gravity, envs_idx=None):
-        super().set_gravity(gravity, envs_idx)
-        if hasattr(self, "rigid_info"):
-            self.rigid_info.gravity.copy_from(self._gravity)
 
     def update_drone_propeller_vgeoms(self, propellers_vgeom_idxs, propellers_revs, propellers_spin):
         kernel_update_drone_propeller_vgeoms(

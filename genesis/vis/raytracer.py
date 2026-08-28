@@ -88,7 +88,7 @@ class SphereLight(ShapeLight):
             )
             renderer.update_rigid(self.name, gs.trans_to_T(self.pos))
         else:
-            renderer.add_particles(self.name)
+            renderer.add_particles(self.name, None)
             renderer.update_particles(self.name, self.pos, self.radius)
 
 
@@ -312,13 +312,21 @@ class Raytracer:
                     self.add_deformable(str(mpm_entity.uid))
                 else:
                     self.add_particles(
-                        str(mpm_entity.uid), self.sim.mpm_solver.particle_radius, mpm_entity.material.rho
+                        str(mpm_entity.uid),
+                        self.sim.mpm_solver,
+                        self.sim.mpm_solver.particle_radius,
+                        mpm_entity.material.rho,
                     )
 
         # SPH particles
         if self.sim.sph_solver.is_active:
             for sph_entity in self.sim.sph_solver.entities:
-                self.add_particles(str(sph_entity.uid), self.sim.sph_solver.particle_radius, sph_entity.material.rho)
+                self.add_particles(
+                    str(sph_entity.uid),
+                    self.sim.sph_solver,
+                    self.sim.sph_solver.particle_radius,
+                    sph_entity.material.rho,
+                )
 
         # PBD entities
         if self.sim.pbd_solver.is_active:
@@ -327,7 +335,7 @@ class Raytracer:
                     self.add_deformable(str(pbd_entity.uid))
                 else:
                     if self.render_particle_as == "sphere":
-                        self.add_particles(str(pbd_entity.uid))
+                        self.add_particles(str(pbd_entity.uid), self.sim.pbd_solver)
                     elif self.render_particle_as == "tet":
                         mesh = mu.create_tets_mesh(pbd_entity.n_particles, self.sim.pbd_solver.particle_radius)
                         pbd_entity._tets_mesh = mesh
@@ -548,7 +556,7 @@ class Raytracer:
         )
         self._scene.update_shape(self._shapes[shape_name])
 
-    def add_particles(self, name, radius=None, density=None):
+    def add_particles(self, name, solver, radius=None, density=None):
         if self.shape_reconstructs[name] is not None:
             self.add_deformable(name)
         else:
@@ -561,11 +569,17 @@ class Raytracer:
             )
 
         if self.shape_foamgens[name] is not None:
+            # The gravity of the environment being rendered, taken from the solver these particles belong to, since
+            # each holds its own and a solver no entity was given never built one.
+            envs_idx = self.rendered_envs_idx[:1] if self.sim.n_envs > 0 else None
+            gravity = solver.get_gravity(envs_idx)
+            if envs_idx is not None:
+                gravity = gravity[0]
             self.shape_foamgens[name]["generator"] = pu.init_foam_generator(
                 object_id=name,
                 particle_radius=radius,
                 time_step=self.scene.dt,
-                gravity=self.scene.gravity,
+                gravity=miscu.tensor_to_array(gravity),
                 lower_bound=self.sim.sph_solver.lower_bound,
                 upper_bound=self.sim.sph_solver.upper_bound,
                 spray_decay=self.shape_foamgens[name]["spray_decay"],
@@ -575,7 +589,7 @@ class Raytracer:
                 foam_density=density,  # use fluid density for foam
             )
             self.shape_foamgens[name]["radius"] = radius * self.shape_foamgens[name]["radius_scale"]
-            self.add_particles(f"{name}_foams")
+            self.add_particles(f"{name}_foams", solver)
 
     def update_particles(self, name, particles, radius=None, particles_vel=None, particles_radii=None):
         if self.shape_reconstructs[name] is not None:
@@ -655,14 +669,14 @@ class Raytracer:
         self._t = -1
 
     def update_scene(self, force_render: bool = False):
-        if not force_render and self._t >= self.scene.t:
+        if not force_render and self._t >= self.scene.sim.cur_step_global:
             if self.camera_updated:
                 self._scene.update_scene(time=self._t)
                 self.camera_updated = False
             return
 
         # update t
-        self._t = self.scene.t
+        self._t = self.scene.sim.cur_step_global
 
         # update variables not used in simulation
         self.visualizer.update_visual_states(force_render)

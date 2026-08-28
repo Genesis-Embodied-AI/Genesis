@@ -78,7 +78,7 @@ def main():
     blob_radius = blob.morph.radius
     blob_rho = blob.material.rho
     blob_mass = (4.0 / 3.0) * np.pi * (blob_radius**3) * blob_rho
-    cube_mass = rigid_cube.get_mass()
+    cube_mass = tensor_to_array(rigid_cube.get_mass())
 
     initial_momentum = 4.0 * cube_mass
 

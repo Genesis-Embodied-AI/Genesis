@@ -408,6 +408,7 @@ class RRT(PathPlanner):
                     gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_entity(
                         self._entity._idx_in_solver,
                         i_b,
+                        rigid_info.qpos,
                         dyn_state,
                         dyn_info,
                         rigid_info,
@@ -755,6 +756,7 @@ class RRTConnect(PathPlanner):
                     gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_entity(
                         self._entity._idx_in_solver,
                         i_b,
+                        rigid_info.qpos,
                         dyn_state,
                         dyn_info,
                         rigid_info,

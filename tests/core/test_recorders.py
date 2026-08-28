@@ -288,7 +288,9 @@ def test_video_writer(tmp_path):
     # Registered first, so that rejecting its very last frame aborts the step before the others have sampled it
     video_dtype_path = tmp_path / "test_dtype.mp4"
     scene.start_recording(
-        data_func=lambda: np.zeros((64, 64, 3), dtype=np.uint8) if scene.t <= STEPS else np.full((64, 64, 3), 0.5),
+        data_func=lambda: (
+            np.zeros((64, 64, 3), dtype=np.uint8) if scene.sim.cur_step_global <= STEPS else np.full((64, 64, 3), 0.5)
+        ),
         rec_options=gs.recorders.VideoFile(
             filename=video_dtype_path,
         ),

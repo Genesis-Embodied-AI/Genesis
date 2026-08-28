@@ -19,6 +19,8 @@ if TYPE_CHECKING:
 @pytest.mark.parametrize("model_name", ["two_aligned_hinges"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+# Swept over compatibility, which decides whether every step recomputes the whole derived state or only what is owed.
+@pytest.mark.parametrize("mujoco_compatibility", [True, False])
 def test_link_velocity(gs_sim, tol):
     # Check the velocity for a few "easy" special cases
     (gs_robot,) = gs_sim.entities
@@ -86,6 +88,30 @@ def test_link_velocity(gs_sim, tol):
         [xanchor[1] - COM_1[1], COM_1[0] - xanchor[0], 0.0]
     )
     assert_allclose(civel_1, civel_1_, tol=tol)
+
+    # A mass or a center of mass written moves the center the velocities are quoted about, and the write alone has to
+    # leave them right: the same identity, against the masses and the placements the solver now carries.
+    solver = gs_sim.rigid_solver
+    for writing in ("mass", "COM"):
+        if writing == "mass":
+            solver.set_links_mass([1.0, 3.0])
+        else:
+            solver.set_links_COM(solver.get_links_COM() + torch.tensor([0.05, -0.02, 0.0]))
+
+        masses = tensor_to_array(solver.get_links_mass())
+        centers = tensor_to_array(solver.get_links_pos(ref=gs.link_ref_frame.link_COM))
+        anchor = tensor_to_array(gs_robot.joints[1].get_anchor_pos())
+        turn = tensor_to_array(solver.get_links_ang())[:, 2]
+        weighed = (masses[:, None] * centers).sum(axis=0) / masses.sum()
+        assert_allclose(tensor_to_array(solver.get_links_pos(ref=gs.link_ref_frame.root_COM)), weighed, tol=tol)
+
+        # The velocity of a point of a turning link, taken at each link's own center of mass.
+        for i_l, (center, spin) in enumerate(zip(centers, turn)):
+            expected = turn[0] * np.array([-center[1], center[0], 0.0])
+            if i_l:
+                expected += (spin - turn[0]) * np.array([anchor[1] - center[1], center[0] - anchor[0], 0.0])
+            reported = tensor_to_array(solver.get_links_vel(i_l, ref=gs.link_ref_frame.link_COM))
+            assert_allclose(reported, expected, tol=tol)
 
 
 @pytest.mark.required
@@ -958,7 +984,7 @@ def test_kinematics_queries_span_entities_and_solvers(n_envs, show_viewer, tol):
         entity.set_qpos(qpos)
         assert_allclose(end_effector.get_pos(), target_pos, tol=tol)
 
-    # Carrying more targets than the error buffer is sized for is refused, rather than written past.
+    # Carrying more targets than the error buffer is sized for is rejected, rather than written past.
     n_tgts = franka.solver._options.IK_max_targets
     with pytest.raises(gs.GenesisException):
         franka.inverse_kinematics_multilink(

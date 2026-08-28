@@ -18,14 +18,14 @@ from genesis.engine.states.solvers import PBDSolverState
 from genesis.utils.array_class import LinksState
 from genesis.utils.geom import SpatialHasher
 
-from .base_solver import Solver
+from .base_solver import GravityMixin, Solver, TimeBasedMixin
 
 if TYPE_CHECKING:
     from genesis.engine.entities import PBD2DEntity, PBD3DEntity, PBDFreeParticleEntity, PBDParticleEntity
 
 
 @qd.data_oriented
-class PBDSolver(Solver):
+class PBDSolver(GravityMixin, TimeBasedMixin, Solver):
     # ------------------------------------------------------------------------------------
     # --------------------------------- Initialization -----------------------------------
     # ------------------------------------------------------------------------------------
@@ -229,12 +229,8 @@ class PBDSolver(Solver):
             for entity in self._entities:
                 entity._add_to_solver()
 
-        # FIXME: _gravity must be a raw qd.field() — see comment in mpm_solver.py
-        # Only when active — see the SNode-tree note in mpm_solver.py.
-        if self.is_active and self._gravity is not None:
-            gravity = self._gravity.to_numpy()
-            self._gravity = qd.field(dtype=gs.qd_vec3, shape=(self._B,))
-            self._gravity.from_numpy(gravity)
+        # Kernels of this solver take the solver itself, so gravity has to be a field for them.
+        self._build_gravity(as_field=True)
 
     # ------------------------------------------------------------------------------------
     # -------------------------------------- misc ----------------------------------------

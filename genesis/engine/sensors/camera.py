@@ -326,11 +326,11 @@ class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, None, SharedSensor
         scene = self._manager._sim.scene
 
         # If the scene time advanced, mark all cameras as stale
-        if self._shared_metadata.last_render_timestep != scene.t:
+        if self._shared_metadata.last_render_timestep != scene.sim.cur_step_global:
             if self._shared_metadata.sensors is not None:
                 for sensor in self._shared_metadata.sensors:
                     sensor._stale = True
-            self._shared_metadata.last_render_timestep = scene.t
+            self._shared_metadata.last_render_timestep = scene.sim.cur_step_global
 
         # If this camera is not stale, cache is considered fresh
         if not self._stale:
@@ -844,7 +844,7 @@ class BatchRendererCameraSensor(
             sensor._shared_metadata.image_cache[sensor._idx][:] = rgb_arr
             sensor._stale = False
 
-        self._shared_metadata.last_render_timestep = self._manager._sim.scene.t
+        self._shared_metadata.last_render_timestep = self._manager._sim.cur_step_global
 
     def _apply_camera_transform(self, camera_T: torch.Tensor):
         """Update batch renderer camera from a world transform."""

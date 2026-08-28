@@ -35,7 +35,14 @@ def kernel_forward_kinematics_links_geoms(
     for i_b_ in range(envs_idx.shape[0]):
         i_b = qd.cast(envs_idx[i_b_], qd.i32)
         func_update_cartesian_space_batch(
-            i_b, dyn_state, dyn_info, rigid_info, rigid_config, force_update_fixed_geoms=True, is_backward=False
+            i_b,
+            rigid_info.qpos,
+            dyn_state,
+            dyn_info,
+            rigid_info,
+            rigid_config,
+            force_update_fixed_geoms=True,
+            is_backward=False,
         )
         func_forward_velocity_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
 
@@ -51,7 +58,14 @@ def kernel_masked_forward_kinematics_links_geoms(
     for i_b in range(envs_mask.shape[0]):
         if envs_mask[i_b]:
             func_update_cartesian_space_batch(
-                i_b, dyn_state, dyn_info, rigid_info, rigid_config, force_update_fixed_geoms=True, is_backward=False
+                i_b,
+                rigid_info.qpos,
+                dyn_state,
+                dyn_info,
+                rigid_info,
+                rigid_config,
+                force_update_fixed_geoms=True,
+                is_backward=False,
             )
             func_forward_velocity_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
 
@@ -164,9 +178,9 @@ def func_COM_links_entity(
                 continue
         I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
 
-        mass = dyn_info.links.inertial_mass[I_l] + dyn_state.links.mass_shift[i_l, i_b]
+        mass = dyn_info.links.inertial_mass[I_l]
         (dyn_state.links.i_pos_bw[i_l, i_b], dyn_state.links.i_quat[i_l, i_b]) = gu.qd_transform_pos_quat_by_trans_quat(
-            dyn_info.links.inertial_pos[I_l] + dyn_state.links.i_pos_shift[i_l, i_b],
+            dyn_info.links.inertial_pos[I_l],
             dyn_info.links.inertial_quat[I_l],
             dyn_state.links.pos[i_l, i_b],
             dyn_state.links.quat[i_l, i_b],
@@ -212,15 +226,17 @@ def func_COM_links_entity(
         i_r = dyn_info.links.root_idx[I_l]
         dyn_state.links.i_pos[i_l, i_b] = dyn_state.links.i_pos_bw[i_l, i_b] - dyn_state.links.root_COM[i_l, i_b]
 
-        i_inertial = dyn_info.links.inertial_i[I_l]
-        i_mass = dyn_info.links.inertial_mass[I_l] + dyn_state.links.mass_shift[i_l, i_b]
         (
             dyn_state.links.cinr_inertial[i_l, i_b],
             dyn_state.links.cinr_pos[i_l, i_b],
             dyn_state.links.cinr_quat[i_l, i_b],
             dyn_state.links.cinr_mass[i_l, i_b],
         ) = gu.qd_transform_inertia_by_trans_quat(
-            i_inertial, i_mass, dyn_state.links.i_pos[i_l, i_b], dyn_state.links.i_quat[i_l, i_b], rigid_info.EPS[None]
+            dyn_info.links.inertial_i[I_l],
+            dyn_info.links.inertial_mass[I_l],
+            dyn_state.links.i_pos[i_l, i_b],
+            dyn_state.links.i_quat[i_l, i_b],
+            rigid_info.EPS[None],
         )
 
     for i_l in range(dyn_info.entities.link_start[i_e], dyn_info.entities.link_end[i_e]):
@@ -326,6 +342,7 @@ def func_COM_links_entity(
 def func_forward_kinematics_entity(
     i_e,
     i_b,
+    qpos: qd.Tensor,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -378,9 +395,9 @@ def func_forward_kinematics_entity(
             if joint_type == gs.JOINT_TYPE.FREE:
                 dyn_state.joints.xanchor[i_j, i_b] = qd.Vector(
                     [
-                        rigid_info.qpos[q_start, i_b],
-                        rigid_info.qpos[q_start + 1, i_b],
-                        rigid_info.qpos[q_start + 2, i_b],
+                        qpos[q_start, i_b],
+                        qpos[q_start + 1, i_b],
+                        qpos[q_start + 2, i_b],
                     ]
                 )
                 dyn_state.joints.xaxis[i_j, i_b] = qd.Vector([0.0, 0.0, 1.0])
@@ -402,18 +419,18 @@ def func_forward_kinematics_entity(
             if joint_type == gs.JOINT_TYPE.FREE:
                 pos_ = qd.Vector(
                     [
-                        rigid_info.qpos[q_start, i_b],
-                        rigid_info.qpos[q_start + 1, i_b],
-                        rigid_info.qpos[q_start + 2, i_b],
+                        qpos[q_start, i_b],
+                        qpos[q_start + 1, i_b],
+                        qpos[q_start + 2, i_b],
                     ],
                     dt=gs.qd_float,
                 )
                 quat_ = qd.Vector(
                     [
-                        rigid_info.qpos[q_start + 3, i_b],
-                        rigid_info.qpos[q_start + 4, i_b],
-                        rigid_info.qpos[q_start + 5, i_b],
-                        rigid_info.qpos[q_start + 6, i_b],
+                        qpos[q_start + 3, i_b],
+                        qpos[q_start + 4, i_b],
+                        qpos[q_start + 5, i_b],
+                        qpos[q_start + 6, i_b],
                     ],
                     dt=gs.qd_float,
                 )
@@ -430,10 +447,10 @@ def func_forward_kinematics_entity(
             elif joint_type == gs.JOINT_TYPE.SPHERICAL:
                 qloc = qd.Vector(
                     [
-                        rigid_info.qpos[q_start, i_b],
-                        rigid_info.qpos[q_start + 1, i_b],
-                        rigid_info.qpos[q_start + 2, i_b],
-                        rigid_info.qpos[q_start + 3, i_b],
+                        qpos[q_start, i_b],
+                        qpos[q_start + 1, i_b],
+                        qpos[q_start + 2, i_b],
+                        qpos[q_start + 3, i_b],
                     ],
                     dt=gs.qd_float,
                 )
@@ -446,14 +463,14 @@ def func_forward_kinematics_entity(
                 pos = W(next_I, pos_, dyn_state.links.pos_bw, BW)
             elif joint_type == gs.JOINT_TYPE.REVOLUTE:
                 axis = dyn_info.dofs.motion_ang[I_d]
-                dyn_state.dofs.pos[dof_start, i_b] = rigid_info.qpos[q_start, i_b] - rigid_info.qpos0[q_start, i_b]
+                dyn_state.dofs.pos[dof_start, i_b] = qpos[q_start, i_b] - rigid_info.qpos0[q_start, i_b]
                 qloc = gu.qd_rotvec_to_quat(axis * dyn_state.dofs.pos[dof_start, i_b], rigid_info.EPS[None])
                 quat_ = gu.qd_transform_quat_by_quat(qloc, R(curr_I, quat, dyn_state.links.quat_bw, BW))
                 quat = WR(next_I, quat_, dyn_state.links.quat_bw, BW)
                 pos_ = dyn_state.joints.xanchor[i_j, i_b] - gu.qd_transform_by_quat(dyn_info.joints.pos[I_j], quat)
                 pos = W(next_I, pos_, dyn_state.links.pos_bw, BW)
             else:  # joint_type == gs.JOINT_TYPE.PRISMATIC:
-                dyn_state.dofs.pos[dof_start, i_b] = rigid_info.qpos[q_start, i_b] - rigid_info.qpos0[q_start, i_b]
+                dyn_state.dofs.pos[dof_start, i_b] = qpos[q_start, i_b] - rigid_info.qpos0[q_start, i_b]
                 pos_ = (
                     R(curr_I, pos, dyn_state.links.pos_bw, BW)
                     + dyn_state.joints.xaxis[i_j, i_b] * dyn_state.dofs.pos[dof_start, i_b]
@@ -491,7 +508,9 @@ def func_forward_kinematics_batch(
         if func_check_index_range(i_e_, 0, rigid_info.n_awake_entities[i_b], rigid_config.use_hibernation):
             i_e = rigid_info.awake_entities[i_e_, i_b] if qd.static(rigid_config.use_hibernation) else i_e_
 
-            func_forward_kinematics_entity(i_e, i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
+            func_forward_kinematics_entity(
+                i_e, i_b, rigid_info.qpos, dyn_state, dyn_info, rigid_info, rigid_config, is_backward
+            )
 
 
 @qd.kernel(fastcache=True)
@@ -506,7 +525,9 @@ def kernel_forward_kinematics_entity(
     for i_b_ in range(envs_idx.shape[0]):
         i_b = qd.cast(envs_idx[i_b_], qd.i32)
 
-        func_forward_kinematics_entity(i_e, i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
+        func_forward_kinematics_entity(
+            i_e, i_b, rigid_info.qpos, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False
+        )
 
 
 @qd.func
@@ -1058,6 +1079,7 @@ def func_hibernate_link_and_zero_dof_velocities(
 def func_update_cartesian_space_entity(
     i_e,
     i_b,
+    qpos: qd.Tensor,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -1065,7 +1087,7 @@ def func_update_cartesian_space_entity(
     force_update_fixed_geoms: qd.template(),
     is_backward: qd.template(),
 ):
-    func_forward_kinematics_entity(i_e, i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
+    func_forward_kinematics_entity(i_e, i_b, qpos, dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
     func_COM_links_entity(i_e, i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
     func_update_geoms_entity(
         i_e, i_b, dyn_state, dyn_info, rigid_info, rigid_config, force_update_fixed_geoms, is_backward
@@ -1075,6 +1097,7 @@ def func_update_cartesian_space_entity(
 @qd.func
 def func_update_cartesian_space_batch(
     i_b,
+    qpos: qd.Tensor,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -1095,7 +1118,7 @@ def func_update_cartesian_space_batch(
         i_e = rigid_info.awake_entities[i_0, i_b] if qd.static(rigid_config.use_hibernation) else i_0
 
         func_update_cartesian_space_entity(
-            i_e, i_b, dyn_state, dyn_info, rigid_info, rigid_config, force_update_fixed_geoms, is_backward
+            i_e, i_b, qpos, dyn_state, dyn_info, rigid_info, rigid_config, force_update_fixed_geoms, is_backward
         )
 
 
@@ -1115,7 +1138,14 @@ def func_update_cartesian_space(
         qd.loop_config(name="update_carteisan_space_batch", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(dyn_state.links.pos.shape[1]):
             func_update_cartesian_space_batch(
-                i_b, dyn_state, dyn_info, rigid_info, rigid_config, force_update_fixed_geoms, is_backward
+                i_b,
+                rigid_info.qpos,
+                dyn_state,
+                dyn_info,
+                rigid_info,
+                rigid_config,
+                force_update_fixed_geoms,
+                is_backward,
             )
     else:
         # FIXME: Implement parallelization at tree-level (based on root_idx) instead of entity-level
@@ -1133,6 +1163,7 @@ def func_update_cartesian_space(
                         func_update_cartesian_space_entity(
                             j_e,
                             i_b,
+                            rigid_info.qpos,
                             dyn_state,
                             dyn_info,
                             rigid_info,

@@ -565,9 +565,11 @@ class FileMorph(Morph):
     align : bool, optional
         Whether to reframe root links so that the link origin coincides with the center of mass and its axes are
         aligned with the principal axes of inertia. This makes the inertia tensor diagonal, which improves numerical
-        stability. Only applies to root (floating-base) links. Uses file-specified inertia if valid (and
-        ``recompute_inertia=False``), otherwise computes from geometry. Defaults to None, which resolves to True
-        for basic rigid objects (entities with only a root free joint and no articulated descendants), False otherwise.
+        stability. The frame is then the solver's to keep, so the center of mass and the inertia of such a link cannot
+        be written once the scene is built; set it to False to keep the authored frame and write them at runtime. Only
+        applies to root (floating-base) links. Uses file-specified inertia if valid (and ``recompute_inertia=False``),
+        otherwise computes from geometry. Defaults to None, which resolves to True for basic rigid objects (entities
+        with only a root free joint and no articulated descendants), False otherwise.
         **This is only used for RigidEntity.**
     file_meshes_are_zup : bool, optional
         Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded

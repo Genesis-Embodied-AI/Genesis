@@ -551,6 +551,24 @@ def get_kinematics_scratch(solver):
     )
 
 
+class WeightScratch(NamedTuple):
+    """Buffers used to compute the constraint inverse weights of one solver.
+
+    One weight needs one row of a link Jacobian and the mass-matrix solve against that row, which is what these two
+    hold.
+    """
+
+    jac_row: qd.Tensor
+    solve_out: qd.Tensor
+
+
+def get_weight_scratch(solver):
+    return WeightScratch(
+        jac_row=V(dtype=gs.qd_float, shape=(solver.n_dofs_, solver._B)),
+        solve_out=V(dtype=gs.qd_float, shape=(solver.n_dofs_, solver._B)),
+    )
+
+
 class IKScratch(NamedTuple):
     """The three solve-time buffers an inverse-kinematics call needs, shared by every entity of one solver.
 
@@ -1944,8 +1962,6 @@ class LinksState:
     mass_sum: qd.Tensor
     root_COM: qd.Tensor  # COM of the kinematic tree
     root_COM_bw: qd.Tensor
-    mass_shift: qd.Tensor
-    i_pos_shift: qd.Tensor
     cacc_ang: qd.Tensor
     cacc_lin: qd.Tensor
     cfrc_ang: qd.Tensor
@@ -1998,8 +2014,6 @@ def get_links_state(solver):
         mass_sum=V(dtype=gs.qd_float, shape=shape, needs_grad=requires_grad),
         root_COM=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         root_COM_bw=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
-        mass_shift=V(dtype=gs.qd_float, shape=shape, needs_grad=requires_grad),
-        i_pos_shift=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         cacc_ang=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         cacc_lin=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         cfrc_ang=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
@@ -2759,6 +2773,18 @@ class DataManager:
 
         self._solver = solver
         self._ik_scratch = None
+        self._weight_scratch = None
+
+    @property
+    def weight_scratch(self) -> WeightScratch:
+        """Scratch buffers for the inverse-weight computation, allocated the first time a setter triggers one.
+
+        At build time the computation borrows the buffers of the constraint solver, so a scene that never writes a
+        mass, a center of mass or an inertia allocates none of this.
+        """
+        if self._weight_scratch is None:
+            self._weight_scratch = get_weight_scratch(self._solver)
+        return self._weight_scratch
 
     @property
     def ik_scratch(self) -> IKScratch:

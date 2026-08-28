@@ -1,30 +1,33 @@
 from typing import TYPE_CHECKING
 
-import numpy as np
+import torch
 
 import genesis as gs
 from genesis.options.morphs import Morph
 from genesis.options.solvers import (
-    KinematicOptions,
     BaseCouplerOptions,
-    IPCCouplerOptions,
-    LegacyCouplerOptions,
-    SAPCouplerOptions,
     FEMOptions,
+    IPCCouplerOptions,
+    KinematicOptions,
+    LegacyCouplerOptions,
     MPMOptions,
     PBDOptions,
     RigidOptions,
+    SAPCouplerOptions,
     SFOptions,
     SPHOptions,
     SimOptions,
     ToolOptions,
 )
 from genesis.repr_base import RBC
+from genesis.utils.misc import indices_to_mask
 
+from .couplers import IPCCoupler, LegacyCoupler, SAPCoupler
 from .entities import HybridEntity
+from .sensors import SensorManager
 from .solvers import (
-    KinematicSolver,
     FEMSolver,
+    KinematicSolver,
     MPMSolver,
     PBDSolver,
     RigidSolver,
@@ -32,10 +35,9 @@ from .solvers import (
     SPHSolver,
     ToolSolver,
 )
-from .couplers import IPCCoupler, LegacyCoupler, SAPCoupler
+from .solvers.base_solver import GravityMixin, TimeBasedMixin
 from .states.cache import QueriedStates
 from .states.solvers import SimState
-from .sensors import SensorManager
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -111,7 +113,6 @@ class Simulator(RBC):
         self._steps_local: int | None = options._steps_local
 
         self._cur_substep_global = 0
-        self._gravity = np.array(options.gravity, dtype=gs.np_float)
 
         # solvers
         self.tool_solver = ToolSolver(self.scene, self, self.tool_options)
@@ -196,6 +197,56 @@ class Simulator(RBC):
         self._B = self.scene._B
         self._para_level = self.scene._para_level
 
+        # Settled before any solver builds: a solver fills its own buffers with the interval it holds, so a rate
+        # settled afterwards would leave those buffers describing an interval the loop does not run at. Whether a
+        # solver is active follows from the entities added to it, which is already known at this point. A solver that
+        # integrates over no interval of its own has no rate to agree on.
+        integrating_solvers = [
+            solver for solver in self._solvers if isinstance(solver, TimeBasedMixin) and solver.is_active
+        ]
+        # A solver given an interval asks for a rate of its own, whatever that interval works out to. A solver left
+        # unset takes the rate the shorthand of SimOptions decides, and has nothing to reconcile.
+        asking_solvers = [solver for solver in integrating_solvers if "dt" in solver._options.model_fields_set]
+        for solver in asking_solvers:
+            interval = solver._options.dt
+            n_substeps = solver.substeps
+            if abs(n_substeps * interval - self._dt) > gs.EPS * self._dt:
+                gs.raise_exception(
+                    f"{type(solver).__name__} dt={interval} does not divide the step dt={self._dt} an integer number "
+                    "of times."
+                )
+            # Asked for, rather than left at its default, which is what tells a count of one from no count at all.
+            if "substeps" in self.options.model_fields_set and n_substeps != self._substeps:
+                gs.raise_exception(
+                    f"{type(solver).__name__} dt={interval} implies {n_substeps} substep(s) per step, conflicting with "
+                    f"the requested substeps={self._substeps}. Set one or the other."
+                )
+        rates = {solver.substeps for solver in asking_solvers}
+        if len(rates) > 1:
+            gs.raise_exception(
+                "Solvers integrating at different rates are not supported yet, got "
+                + ", ".join(f"{type(solver).__name__} at dt={solver._options.dt}" for solver in asking_solvers)
+                + "."
+            )
+        substeps = next(iter(rates), self._substeps)
+        # The differentiable window was sized from the authored substeps before the solvers allocated their buffers,
+        # so a rate derived afterwards would leave the tape describing a step of a different length than the one run.
+        if self._requires_grad and substeps != self._substeps:
+            gs.raise_exception(
+                f"A solver dt deriving {substeps} substep(s) per step is not supported in differentiable mode, which "
+                f"is recording {self._substeps}. Ask for the rate through `SimOptions.substeps={substeps}` instead."
+            )
+        self._substeps = substeps
+        self._substep_dt = self._dt / self._substeps
+        # The substep loop advances every active solver once per iteration, so the rate one of them asks for is the
+        # rate they all take, the ones asking for nothing included.
+        for solver in integrating_solvers:
+            solver._substeps = self._substeps
+            solver._substep_dt = self._substep_dt
+
+        # Counted per environment to support per-env reset, as steps rather than seconds to avoid drifting over time.
+        self._steps = torch.zeros((self._B,), dtype=gs.tc_int, device=gs.device)
+
         # solvers
         # IPCCoupler needs full substep flow for pre/post coupling phases
         self._rigid_only = self.rigid_solver.is_active and not isinstance(self._coupler, (SAPCoupler, IPCCoupler))
@@ -205,6 +256,8 @@ class Simulator(RBC):
                 self._active_solvers.append(solver)
                 if not isinstance(solver, RigidSolver):
                     self._rigid_only = False
+
+        # A coupler exchanges state once per substep, so it is built once the rate that loop runs at is known.
         self._coupler.build()
 
         if self.n_envs > 0 and self.sf_solver.is_active:
@@ -229,7 +282,12 @@ class Simulator(RBC):
 
         # TODO: keeping as is for now
         self.reset_grad()
+        # The tape cursor is a position in the recorded window, not a clock, so it rewinds whole.
         self._cur_substep_global = 0
+        if envs_idx is None:
+            self._steps.zero_()
+        else:
+            self._steps[indices_to_mask(envs_idx)] = 0
 
         # reset sensors state
         self._sensor_manager.reset(envs_idx=envs_idx)
@@ -277,6 +335,11 @@ class Simulator(RBC):
         if self.rigid_solver.is_active and self._cur_substep_global % RATE_CHECK_ERRNO == 0:
             self.rigid_solver.check_errno()
 
+        # Reconstructing a checkpoint window replays steps the environments already simulated, so only a forward step
+        # advances their clock. The backward pass winds it down again through `_step_grad`.
+        if not in_backward:
+            self._steps += 1
+
         if self._rigid_only and not self._requires_grad:  # "Only Advance!" --Thomas Wade :P
             for _ in range(self._substeps):
                 self.rigid_solver.substep(self.cur_substep_local)
@@ -296,6 +359,7 @@ class Simulator(RBC):
         self._sensor_manager.step()
 
     def _step_grad(self):
+        self._steps -= 1
         for _ in range(self._substeps - 1, -1, -1):
             if self.cur_substep_local == 0:
                 self.load_ckpt()
@@ -432,7 +496,7 @@ class Simulator(RBC):
 
     def set_gravity(self, gravity, envs_idx=None):
         for solver in self._solvers:
-            if solver.is_active:
+            if solver.is_active and isinstance(solver, GravityMixin):
                 solver.set_gravity(gravity, envs_idx)
 
     # ------------------------------------------------------------------------------------
@@ -450,14 +514,14 @@ class Simulator(RBC):
         return self._substeps
 
     @property
+    def substep_dt(self) -> float:
+        """Duration of one substep, in seconds, which is the interval every solver integrates over."""
+        return self._substep_dt
+
+    @property
     def scene(self):
         """The scene object that the simulator is associated with."""
         return self._scene
-
-    @property
-    def gravity(self):
-        """The gravity vector."""
-        return self._gravity
 
     @property
     def requires_grad(self):
@@ -496,12 +560,29 @@ class Simulator(RBC):
 
     @property
     def cur_step_global(self):
-        """The current step of the simulation."""
+        """Number of `scene.step()` calls, counted for the whole batch.
+
+        Use it to tell that the simulation moved on, for instance to invalidate a cache. For the simulated time of an
+        environment, use `get_time`.
+        """
         return self.f_global_to_s_global(self._cur_substep_global)
+
+    def get_time(self, envs_idx=None):
+        """The simulated time of each environment, in seconds.
+
+        Environments are stepped and reset independently, so simulated time is per environment, and this is where it
+        is read from.
+        """
+        time = self._steps[indices_to_mask(envs_idx)] * self._dt
+        return time[0] if self.n_envs == 0 else time
 
     @property
     def cur_t(self):
-        """The current time of the simulation."""
+        """How far the substep loop has advanced, in seconds: the number of substeps run times the substep interval.
+
+        Shared by every environment, so it tells that the simulation moved on rather than what one environment has
+        simulated, which is `get_time`.
+        """
         return self._cur_substep_global * self._substep_dt
 
     @property

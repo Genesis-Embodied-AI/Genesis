@@ -22,7 +22,7 @@ from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
-from genesis.utils.misc import DeprecationError, broadcast_tensor, qd_to_numpy, qd_to_torch, tensor_to_array
+from genesis.utils.misc import DeprecationError, broadcast_tensor, qd_to_torch, tensor_to_array
 
 from ..base_entity import Entity
 from .rigid_equality import RigidEquality
@@ -3563,12 +3563,95 @@ class RigidEntity(KinematicEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_links_inertial_mass(self, links_idx_local=None, envs_idx=None):
+    def get_links_mass(self, links_idx_local=None, envs_idx=None):
+        """
+        Get the mass of each link, in kg.
+
+        Parameters
+        ----------
+        links_idx_local : None | array_like, optional
+            The indices of the links on this entity. If None, all links are considered. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments are returned. Defaults to None.
+
+        Returns
+        -------
+        mass : torch.Tensor, shape (n_links,) or (n_envs, n_links)
+            The mass of each link, per environment for a scene whose link info is batched.
+        """
         links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
-        return self._solver.get_links_inertial_mass(links_idx, envs_idx)
+        return self._solver.get_links_mass(links_idx, envs_idx)
+
+    @gs.assert_built
+    def get_links_COM(self, links_idx_local=None, envs_idx=None):
+        """
+        Get the center of mass (COM) of each link, as an offset in its local frame.
+
+        That local frame is the one specified by the morph, except for a floating-base link loaded with `align=True`:
+        Genesis then moves its origin onto the center of mass and rotates its axes onto the principal axes of inertia,
+        so the offset returned for such a link is zero.
+
+        Parameters
+        ----------
+        links_idx_local : None | array_like, optional
+            The indices of the links on this entity. If None, all links are considered. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments are returned. Defaults to None.
+
+        Returns
+        -------
+        com : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
+            The center of mass of each link, per environment for a scene whose link info is batched.
+        """
+        links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        return self._solver.get_links_COM(links_idx, envs_idx)
+
+    @gs.assert_built
+    def get_links_inertia(self, links_idx_local=None, envs_idx=None):
+        """
+        Get the inertia matrix of each link, expressed in its inertial frame.
+
+        Parameters
+        ----------
+        links_idx_local : None | array_like, optional
+            The indices of the links on this entity. If None, all links are considered. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments are returned. Defaults to None.
+
+        Returns
+        -------
+        inertia : torch.Tensor, shape (n_links, 3, 3) or (n_envs, n_links, 3, 3)
+            The inertia matrix of each link, per environment for a scene whose link info is batched.
+        """
+        links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        return self._solver.get_links_inertia(links_idx, envs_idx)
 
     @gs.assert_built
     def get_links_invweight(self, links_idx_local=None, envs_idx=None):
+        """
+        Get the constraint inverse weights of each link: one for forces, one for torques.
+
+        The constraint solver models contacts, joint limits and equalities softly, and the regularization it adds to a
+        row is proportional to the inverse weights of the links that row couples. That normalizes the row by the
+        acceleration a unit impulse produces on them, so these weights change the solution the solve converges to. In
+        practice, they are tuned to make the solver parameters independent of how heavy the bodies are. These
+        regularization parameters are computed from the mass, the center of mass and the inertia of a link, and from the
+        armature of the degrees of freedom between it and the root of its tree, and are recomputed whenever one of these
+        quantities changes.
+
+        Parameters
+        ----------
+        links_idx_local : None | array_like, optional
+            The indices of the links on this entity. If None, all links are considered. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments are returned. Defaults to None.
+
+        Returns
+        -------
+        invweight : torch.Tensor, shape (n_links, 2) or (n_envs, n_links, 2)
+            The translational and rotational inverse weight of each link, per environment for a scene whose link info
+            is batched.
+        """
         links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         return self._solver.get_links_invweight(links_idx, envs_idx)
 
@@ -4433,89 +4516,118 @@ class RigidEntity(KinematicEntity):
     # --------------------------------- mass / inertia -----------------------------------
     # ------------------------------------------------------------------------------------
 
-    def set_mass_shift(self, mass_shift, links_idx_local=None, envs_idx=None):
-        """
-        Set the mass shift of specified links.
-
-        Parameters
-        ----------
-        mass : torch.Tensor, shape (n_envs, n_links)
-            The mass shift
-        links_idx_local : array_like
-            The indices of the links to set mass shift.
-        envs_idx : None | array_like, optional
-            The indices of the environments. If None, all environments will be considered. Defaults to None.
-        """
-        links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
-        self._solver.set_links_mass_shift(mass_shift, links_idx, envs_idx)
-
-    def set_COM_shift(self, com_shift, links_idx_local=None, envs_idx=None):
-        """
-        Set the center of mass (COM) shift of specified links.
-
-        Parameters
-        ----------
-        com : torch.Tensor, shape (n_envs, n_links, 3)
-            The COM shift
-        links_idx_local : array_like
-            The indices of the links to set COM shift.
-        envs_idx : None | array_like, optional
-            The indices of the environments. If None, all environments will be considered. Defaults to None.
-        """
-        links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
-        self._solver.set_links_COM_shift(com_shift, links_idx, envs_idx)
-
     @gs.assert_built
-    def set_links_inertial_mass(self, inertial_mass, links_idx_local=None, envs_idx=None):
+    def set_links_mass(self, mass, links_idx_local=None, envs_idx=None):
+        """
+        Set the mass of the given links, in kg.
+
+        The inertia of a link is left unchanged. Use `set_links_inertia` to change it too, or `set_mass` to set the
+        total mass of the entity, which keeps the ratios between the masses of its links and scales their inertia along
+        with them.
+
+        Parameters
+        ----------
+        mass : array_like, shape (n_links,) or (n_envs, n_links)
+            The mass of each link, in kg. Per-environment values require `RigidOptions.batch_links_info=True`.
+        links_idx_local : None | array_like, optional
+            The indices of the links. If None, all links are considered. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        """
         links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
-        self._solver.set_links_inertial_mass(inertial_mass, links_idx, envs_idx)
+        self._solver.set_links_mass(mass, links_idx, envs_idx)
 
     @gs.assert_built
     def set_links_invweight(self, invweight, links_idx_local=None, envs_idx=None):
-        raise DeprecationError(
-            "This method has been removed because links invweights are supposed to be a by-product of link properties "
-            "(mass, pose, and inertia matrix), joint placements, and dof armatures. Please consider using the "
-            "considering setters instead."
-        )
+        """
+        Removed: Genesis computes the inverse weights of a link from its mass, its center of mass, its inertia and
+        the armature of the degrees of freedom above it, so write one of those instead.
+        """
+        raise DeprecationError("This method has been removed because links invweights are supposed to be a by-product.")
 
     @gs.assert_built
-    def set_mass(self, mass):
+    def set_links_COM(self, com, links_idx_local=None, envs_idx=None):
         """
-        Set the mass of the entity.
+        Set the center of mass (COM) of the given links, as an offset in their local frame.
 
         Parameters
         ----------
-        mass : float
-            The mass to set.
+        com : array_like, shape (n_links, 3) or (n_envs, n_links, 3)
+            The center of mass of each link. Per-environment values require `RigidOptions.batch_links_info=True`.
+        links_idx_local : None | array_like, optional
+            The indices of the links. If None, all links are considered. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        ratio = float(mass) / self.get_mass()
-        for link in self.links:
-            link.set_mass(link.get_mass() * ratio)
+        links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        self._solver.set_links_COM(com, links_idx, envs_idx)
 
     @gs.assert_built
-    def get_mass(self):
+    def set_links_inertia(self, inertia, links_idx_local=None, envs_idx=None):
         """
-        Get the total mass of the entity in kg.
+        Set the inertia matrix of the given links, expressed in their inertial frame.
 
-        For heterogeneous entities, returns an array of masses for each environment.
-        For non-heterogeneous entities, returns a scalar mass.
+        Parameters
+        ----------
+        inertia : array_like, shape (n_links, 3, 3) or (n_envs, n_links, 3, 3)
+            The inertia matrix of each link, which must be symmetric positive definite. Per-environment values require
+            `RigidOptions.batch_links_info=True`.
+        links_idx_local : None | array_like, optional
+            The indices of the links. If None, all links are considered. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        """
+        links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        self._solver.set_links_inertia(inertia, links_idx, envs_idx)
+
+    @gs.assert_built
+    def set_mass(self, mass, envs_idx=None):
+        """
+        Set the total mass of the entity, in kg, keeping the ratios between the masses of its links.
+
+        The inertia of each link is scaled by the same factor as its mass, exactly how a body of the same shape made
+        heavier would behave. `RigidLink.set_mass` sets the mass of a single link and leaves its inertia unchanged.
+
+        An entity whose links are all fixed to the world moves no mass, so setting its total mass is ill-defined and
+        raises.
+
+        Parameters
+        ----------
+        mass : float | array_like, shape (n_envs,)
+            The mass to set. Per-environment values require `RigidOptions.batch_links_info=True`.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        """
+        # The mass of an entity is the mass it moves, so a link fixed to the world takes no part in the total nor in
+        # the fractions.
+        links_idx = [link.idx for link in self.links if not link.is_fixed]
+        links_mass = self._solver.get_links_mass(links_idx, envs_idx)
+        mass_entity = links_mass.sum(dim=-1, keepdim=True)
+        dim_names = ("envs_idx", "") if self._solver.is_links_info_batched else ("",)
+        mass_target = broadcast_tensor(mass, gs.tc_float, mass_entity.shape, dim_names)
+        # A body brought to a mass behaves as one built at it, so the inertia of every link grows with its share.
+        self._solver.set_links_mass(links_mass * mass_target / mass_entity, links_idx, envs_idx, scale_inertia=True)
+
+    @gs.assert_built
+    def get_mass(self, envs_idx=None):
+        """
+        Get the total mass of the entity, in kg.
+
+        Sums the links that are not fixed to the world, a fixed link never being accelerated, causing its mass to be
+        ill-defined as it is indistinguishable from the world itself.
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments are returned. Defaults to None.
 
         Returns
         -------
-        mass : float | np.ndarray
-            The total mass of the entity in kg. For heterogeneous entities, returns
-            an array of shape (n_envs,) with per-environment masses.
+        mass : torch.Tensor, shape (n_envs,) or scalar
+            The total mass of the entity in kg.
         """
-        if self._enable_heterogeneous:
-            links_idx = slice(self.link_start, self.link_end)
-            links_mass = qd_to_numpy(self._solver.dyn_info.links.inertial_mass, None, links_idx, transpose=True)
-            return links_mass.sum(axis=1)
-
-        # Original behavior: sum link masses to scalar
-        mass = 0.0
-        for link in self.links:
-            mass += link.get_mass()
-        return mass
+        links_idx = [link.idx for link in self.links if not link.is_fixed]
+        return self._solver.get_links_mass(links_idx, envs_idx).sum(dim=-1)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

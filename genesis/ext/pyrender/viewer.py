@@ -1042,7 +1042,7 @@ class Viewer(pyglet.window.Window):
     def _record(self):
         """Append the current frame to the video, unless the simulation has not advanced since the last recorded
         frame (e.g. while paused) so the recording does not accumulate duplicate frozen frames."""
-        t = self.gs_context.scene.t
+        t = self.gs_context.scene.sim.cur_step_global
         if t == self._last_recorded_t:
             return
         self._last_recorded_t = t

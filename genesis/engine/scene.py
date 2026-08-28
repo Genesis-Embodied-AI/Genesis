@@ -201,7 +201,6 @@ class Scene(RBC):
         self._forward_ready = False
 
         self._uid = gs.UID()
-        self._t = 0
         self._is_built = False
         self._pre_step_callbacks: list = []
 
@@ -1003,7 +1002,6 @@ class Scene(RBC):
         else:
             self._init_state = self._get_state()
 
-        self._t = 0
         self._forward_ready = True
         self._reset_grad()
 
@@ -1040,8 +1038,10 @@ class Scene(RBC):
         snapshot : SimState
             The physics state the scene was restored to.
         """
-        # Snapshot the current state before the gradient-tape unroll rewinds physics to step 0.
+        # Snapshot the current state before the gradient-tape unroll rewinds physics to step 0. The clocks go with
+        # it: the unroll winds them down step by step, and the restore below puts the physics back where they were.
         snapshot = self.get_state()
+        steps = self._sim._steps.clone()
         # The sim unroll (self._backward) re-enters the torch graph from each step's queried states, so the graph
         # must survive the initial autograd pass.
         if kwargs.setdefault("retain_graph", True) is not True:
@@ -1050,8 +1050,10 @@ class Scene(RBC):
         # the explicit self._backward call below, keeping gs.Tensor.backward's automatic scene._backward out of it.
         torch.autograd.backward(loss, *args, **kwargs)
         self._backward()
-        # keep_init semantics: see _reset
+        # keep_init semantics: see _reset. Restoring the snapshot puts the physics back where the forward pass left
+        # it, so the clocks snapshotted above are put back with it rather than left at zero.
         self._reset(snapshot, keep_init=True)
+        self._sim._steps[:] = steps
         return snapshot
 
     def _get_state(self):
@@ -1090,7 +1092,6 @@ class Scene(RBC):
             if not self._forward_ready:
                 gs.raise_exception("Forward simulation not allowed after backward pass. Please reset scene state.")
             self._sim.step()
-            self._t += 1
 
         if update_visualizer:
             # Force the refresh when the sim did not advance (e.g. paused) so edits made off the step loop -
@@ -1110,7 +1111,6 @@ class Scene(RBC):
     def _step_grad(self):
         self._sim.collect_output_grads()
         self._sim._step_grad()
-        self._t -= 1
 
     @gs.assert_built
     def draw_debug_line(self, start, end, radius=0.002, color=(1.0, 0.0, 0.0, 0.5)):
@@ -1515,7 +1515,7 @@ class Scene(RBC):
             gs.raise_exception("Multiple backward calls not allowed.")
 
         # backward pass through time
-        while self._t > 0:
+        while self._sim.cur_step_global > 0:
             self._step_grad()
 
         self._backward_ready = False
@@ -1542,6 +1542,7 @@ class Scene(RBC):
 
         return arrays
 
+    @gs.assert_built
     def save_checkpoint(self, path: str | os.PathLike) -> None:
         """
         Pickle the full physics state to *one* file.
@@ -1553,12 +1554,14 @@ class Scene(RBC):
         """
         state = {
             "timestamp": time.time(),
-            "step_index": self.t,
+            "step_index": self._sim.cur_step_global,
+            "steps": tensor_to_array(self._sim._steps),
             "arrays": self.dump_ckpt_to_numpy(),
         }
         with open(path, "wb") as f:
             pickle.dump(state, f, protocol=pickle.HIGHEST_PROTOCOL)
 
+    @gs.assert_built
     def load_checkpoint(self, path: str | os.PathLike) -> None:
         """
         Restore a file produced by :py:meth:`save_checkpoint`.
@@ -1582,7 +1585,10 @@ class Scene(RBC):
         for solver in self.active_solvers:
             solver.load_ckpt_from_numpy(arrays)
 
-        self._t = state.get("step_index", self._t)
+        # Two clocks, and neither stands for the other: the tape is indexed by how many times the host called step,
+        # while what each environment has simulated is its own and survives a reset of its neighbours.
+        self._sim._cur_substep_global = state["step_index"] * self._sim.substeps
+        self._sim._steps[:] = torch.as_tensor(state["steps"], device=gs.device)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- utilities --------------------------------------
@@ -1615,6 +1621,26 @@ class Scene(RBC):
 
         return sanitize_index(envs_idx, -1, self.n_envs, 0, "envs_idx")
 
+    @gs.assert_built
+    def get_time(self, envs_idx=None):
+        """
+        Get the simulated time of each environment, in seconds.
+
+        Environments are stepped and reset independently, so each one carries its own simulated time. The number of
+        `scene.step()` calls is a separate scalar, `Simulator.cur_step_global`.
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments are returned. Defaults to None.
+
+        Returns
+        -------
+        time : torch.Tensor, shape (n_envs,) or scalar
+            The simulated time of each environment.
+        """
+        return self._sim.get_time(envs_idx)
+
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
@@ -1628,11 +1654,6 @@ class Scene(RBC):
     def dt(self):
         """The time duration for each simulation step."""
         return self._sim.dt
-
-    @property
-    def t(self):
-        """The current simulation time step."""
-        return self._t
 
     @property
     def substeps(self):
@@ -1656,11 +1677,6 @@ class Scene(RBC):
         return self.profiling_options.show_FPS
 
     @property
-    def gravity(self):
-        """The gravity in the scene."""
-        return self._sim.gravity
-
-    @property
     def viewer(self):
         """The viewer object for the scene."""
         return self._visualizer.viewer
@@ -1674,11 +1690,6 @@ class Scene(RBC):
     def sim(self):
         """The scene's top-level simulator."""
         return self._sim
-
-    @property
-    def cur_t(self):
-        """The current simulation time."""
-        return self._sim.cur_t
 
     @property
     def solvers(self):

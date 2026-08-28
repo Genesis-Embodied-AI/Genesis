@@ -7,6 +7,7 @@ import pytest
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.utils.misc import qd_to_numpy
 
 from .assertions import assert_allclose
 
@@ -21,43 +22,39 @@ def _gs_search_by_joints_name(
     if isinstance(joints_name, str):
         joints_name = [joints_name]
 
+    gs_joints_idx = dict()
+    gs_joints_qs_idx = dict()
+    gs_joints_dofs_idx = dict()
+    valid_joints_name = []
     for entity in scene.entities:
-        try:
-            gs_joints_idx = dict()
-            gs_joints_qs_idx = dict()
-            gs_joints_dofs_idx = dict()
-            valid_joints_name = []
-            for joint in entity.joints:
-                valid_joints_name.append(joint.name)
-                if joint.name in joints_name:
-                    if to == "entity":
-                        gs_joints_idx[joint.name] = joint
-                        gs_joints_qs_idx[joint.name] = joint
-                        gs_joints_dofs_idx[joint.name] = joint
-                    elif to == "index":
-                        gs_joints_idx[joint.name] = joint.idx_local if is_local else joint.idx
-                        gs_joints_qs_idx[joint.name] = joint.qs_idx_local if is_local else joint.qs_idx
-                        gs_joints_dofs_idx[joint.name] = joint.dofs_idx_local if is_local else joint.dofs_idx
-                    else:
-                        raise ValueError(f"Cannot recognize what ({to}) to extract for the search")
+        for joint in entity.joints:
+            valid_joints_name.append(joint.name)
+            if joint.name in joints_name:
+                if to == "entity":
+                    gs_joints_idx[joint.name] = joint
+                    gs_joints_qs_idx[joint.name] = joint
+                    gs_joints_dofs_idx[joint.name] = joint
+                elif to == "index":
+                    gs_joints_idx[joint.name] = joint.idx_local if is_local else joint.idx
+                    gs_joints_qs_idx[joint.name] = joint.qs_idx_local if is_local else joint.qs_idx
+                    gs_joints_dofs_idx[joint.name] = joint.dofs_idx_local if is_local else joint.dofs_idx
+                else:
+                    raise ValueError(f"Cannot recognize what ({to}) to extract for the search")
 
-            missing_joints_name = set(joints_name) - gs_joints_idx.keys()
-            if len(missing_joints_name) > 0:
-                raise ValueError(
-                    f"Cannot find joints `{missing_joints_name}`. Valid joints names are {valid_joints_name}"
-                )
+    missing_joints_name = set(joints_name) - gs_joints_idx.keys()
+    if missing_joints_name:
+        raise ValueError(f"Cannot find joints `{missing_joints_name}`. Valid joints names are {valid_joints_name}")
 
-            if flatten:
-                return (
-                    list(gs_joints_idx.values()),
-                    list(chain.from_iterable(gs_joints_qs_idx.values())),
-                    list(chain.from_iterable(gs_joints_dofs_idx.values())),
-                )
-            return (gs_joints_idx, gs_joints_qs_idx, gs_joints_dofs_idx)
-        except ValueError:
-            pass
-    else:
-        raise ValueError(f"Fail to find joint indices for {joints_name}")
+    gs_joints_idx = {name: gs_joints_idx[name] for name in joints_name}
+    gs_joints_qs_idx = {name: gs_joints_qs_idx[name] for name in joints_name}
+    gs_joints_dofs_idx = {name: gs_joints_dofs_idx[name] for name in joints_name}
+    if flatten:
+        return (
+            list(gs_joints_idx.values()),
+            list(chain.from_iterable(gs_joints_qs_idx.values())),
+            list(chain.from_iterable(gs_joints_dofs_idx.values())),
+        )
+    return (gs_joints_idx, gs_joints_qs_idx, gs_joints_dofs_idx)
 
 
 def _gs_search_by_links_name(
@@ -70,31 +67,27 @@ def _gs_search_by_links_name(
     if isinstance(links_name, str):
         links_name = (links_name,)
 
+    gs_links_idx = dict()
+    valid_links_name = []
     for entity in scene.entities:
-        try:
-            gs_links_idx = dict()
-            valid_links_name = []
-            for link in entity.links:
-                valid_links_name.append(link.name)
-                if link.name in links_name:
-                    if to == "entity":
-                        gs_links_idx[link.name] = link
-                    elif to == "index":
-                        gs_links_idx[link.name] = link.idx_local if is_local else link.idx
-                    else:
-                        raise ValueError(f"Cannot recognize what ({to}) to extract for the search")
+        for link in entity.links:
+            valid_links_name.append(link.name)
+            if link.name in links_name:
+                if to == "entity":
+                    gs_links_idx[link.name] = link
+                elif to == "index":
+                    gs_links_idx[link.name] = link.idx_local if is_local else link.idx
+                else:
+                    raise ValueError(f"Cannot recognize what ({to}) to extract for the search")
 
-            missing_links_name = set(links_name) - gs_links_idx.keys()
-            if missing_links_name:
-                raise ValueError(f"Cannot find links `{missing_links_name}`. Valid link names are {valid_links_name}")
+    missing_links_name = set(links_name) - gs_links_idx.keys()
+    if missing_links_name:
+        raise ValueError(f"Cannot find links `{missing_links_name}`. Valid link names are {valid_links_name}")
 
-            if flatten:
-                return list(gs_links_idx.values())
-            return gs_links_idx
-        except ValueError:
-            pass
-    else:
-        raise ValueError(f"Fail to find link indices for {links_name}")
+    gs_links_idx = {name: gs_links_idx[name] for name in links_name}
+    if flatten:
+        return list(gs_links_idx.values())
+    return gs_links_idx
 
 
 def _get_model_mappings(
@@ -187,13 +180,13 @@ def _get_model_mappings(
 
 def init_paired_simulators(gs_sim, mj_sim, qpos=None, qvel=None):
     """Initialize the Genesis simulator and reset MuJoCo onto its exact state, ready for a step-by-step comparison."""
-    (gs_robot,) = gs_sim.entities
-
     gs_sim.scene.reset()
-    if qpos is not None:
-        gs_robot.set_qpos(qpos)
-    if qvel is not None:
-        gs_robot.set_dofs_velocity(qvel)
+    if qpos is not None or qvel is not None:
+        (gs_robot,) = gs_sim.entities
+        if qpos is not None:
+            gs_robot.set_qpos(qpos)
+        if qvel is not None:
+            gs_robot.set_dofs_velocity(qvel)
 
     # The consistency checks compare pre-step derived quantities (bias forces, smooth accelerations), which only a
     # dynamics pass populates on the Genesis side, mirroring the mj_forward call below.
@@ -275,7 +268,7 @@ def check_mujoco_model_consistency(
     mj_bodies_idx, mj_joints_idx, mj_qs_idx, mj_dofs_idx, mj_geoms_idx, mj_motors_idx = mj_maps
 
     # solver
-    gs_gravity = gs_sim.rigid_solver.scene.gravity
+    gs_gravity = gs_sim.rigid_solver.get_gravity()
     mj_gravity = mj_sim.model.opt.gravity
     assert_allclose(gs_gravity, mj_gravity, tol=tol)
     assert mj_sim.model.opt.timestep == gs_sim.rigid_solver.substep_dt
@@ -827,10 +820,22 @@ def simulate_and_check_mujoco_consistency(
     gs_sim, mj_sim, qpos=None, qvel=None, *, tol, num_steps, ignore_constraints=False
 ):
     # Get mapping between Mujoco and Genesis
-    (_, _, _, gs_dofs_idx, _, _), (_, _, mj_qs_idx, mj_dofs_idx, _, _) = _get_model_mappings(gs_sim, mj_sim)
+    gs_maps, mj_maps = _get_model_mappings(gs_sim, mj_sim)
+    gs_bodies_idx, _, _, gs_dofs_idx, _, _ = gs_maps
+    mj_bodies_idx, _, mj_qs_idx, mj_dofs_idx, _, _ = mj_maps
 
     # Make sure that "static" model information are matching
     check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
+
+    # Weights computed in single precision land a unit or two of the last place from MuJoCo's double ones, which a
+    # contact system holding near-equal rows carries through to forces differing by percents, so MuJoCo's are imposed.
+    if gs.np_float == np.float32:
+        links_invweight = qd_to_numpy(gs_sim.rigid_solver.dyn_info.links.invweight)
+        links_invweight[gs_bodies_idx] = mj_sim.model.body_invweight0[mj_bodies_idx]
+        gs_sim.rigid_solver.dyn_info.links.invweight.from_numpy(links_invweight)
+        dofs_invweight = qd_to_numpy(gs_sim.rigid_solver.dyn_info.dofs.invweight)
+        dofs_invweight[gs_dofs_idx] = mj_sim.model.dof_invweight0[mj_dofs_idx]
+        gs_sim.rigid_solver.dyn_info.dofs.invweight.from_numpy(dofs_invweight)
 
     # Initialize the simulation
     init_paired_simulators(gs_sim, mj_sim, qpos, qvel)

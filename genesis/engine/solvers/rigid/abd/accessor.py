@@ -17,6 +17,7 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 
+from .forward_dynamics import func_refresh_links_invweight_and_meaninertia
 from .misc import func_apply_link_external_wrench, func_wakeup_island
 
 
@@ -30,7 +31,6 @@ class ConstraintType(IntEnum):
 
 @qd.kernel(fastcache=True)
 def kernel_get_kinematic_state(
-    i_pos_shift: qd.types.ndarray(),
     qpos: qd.types.ndarray(),
     vel: qd.types.ndarray(),
     links_pos: qd.types.ndarray(),
@@ -56,7 +56,6 @@ def kernel_get_kinematic_state(
     for i_l, i_b in qd.ndrange(n_links, _B):
         for j in qd.static(range(3)):
             links_pos[i_b, i_l, j] = dyn_state.links.pos[i_l, i_b][j]
-            i_pos_shift[i_b, i_l, j] = dyn_state.links.i_pos_shift[i_l, i_b][j]
         for j in qd.static(range(4)):
             links_quat[i_b, i_l, j] = dyn_state.links.quat[i_l, i_b][j]
 
@@ -64,7 +63,6 @@ def kernel_get_kinematic_state(
 @qd.kernel(fastcache=True)
 def kernel_set_kinematic_state(
     envs_idx: qd.types.ndarray(),
-    i_pos_shift: qd.types.ndarray(),
     qpos: qd.types.ndarray(),
     dofs_vel: qd.types.ndarray(),
     links_pos: qd.types.ndarray(),
@@ -90,20 +88,17 @@ def kernel_set_kinematic_state(
     for i_l, i_b_ in qd.ndrange(n_links, _B):
         for j in qd.static(range(3)):
             dyn_state.links.pos[i_l, envs_idx[i_b_]][j] = links_pos[envs_idx[i_b_], i_l, j]
-            dyn_state.links.i_pos_shift[i_l, envs_idx[i_b_]][j] = i_pos_shift[envs_idx[i_b_], i_l, j]
         for j in qd.static(range(4)):
             dyn_state.links.quat[i_l, envs_idx[i_b_]][j] = links_quat[envs_idx[i_b_], i_l, j]
 
 
 @qd.kernel(fastcache=True)
 def kernel_get_state(
-    i_pos_shift: qd.types.ndarray(),
     qpos: qd.types.ndarray(),
     vel: qd.types.ndarray(),
     acc: qd.types.ndarray(),
     links_pos: qd.types.ndarray(),
     links_quat: qd.types.ndarray(),
-    mass_shift: qd.types.ndarray(),
     friction_ratio: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
@@ -128,10 +123,8 @@ def kernel_get_state(
     for i_l, i_b in qd.ndrange(n_links, _B):
         for j in qd.static(range(3)):
             links_pos[i_b, i_l, j] = dyn_state.links.pos[i_l, i_b][j]
-            i_pos_shift[i_b, i_l, j] = dyn_state.links.i_pos_shift[i_l, i_b][j]
         for j in qd.static(range(4)):
             links_quat[i_b, i_l, j] = dyn_state.links.quat[i_l, i_b][j]
-        mass_shift[i_b, i_l] = dyn_state.links.mass_shift[i_l, i_b]
 
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_l, i_b in qd.ndrange(n_geoms, _B):
@@ -141,13 +134,11 @@ def kernel_get_state(
 @qd.kernel(fastcache=True)
 def kernel_set_state(
     envs_idx: qd.types.ndarray(),
-    i_pos_shift: qd.types.ndarray(),
     qpos: qd.types.ndarray(),
     dofs_vel: qd.types.ndarray(),
     dofs_acc: qd.types.ndarray(),
     links_pos: qd.types.ndarray(),
     links_quat: qd.types.ndarray(),
-    mass_shift: qd.types.ndarray(),
     friction_ratio: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
@@ -174,12 +165,10 @@ def kernel_set_state(
     for i_l, i_b_ in qd.ndrange(n_links, _B):
         for j in qd.static(range(3)):
             dyn_state.links.pos[i_l, envs_idx[i_b_]][j] = links_pos[envs_idx[i_b_], i_l, j]
-            dyn_state.links.i_pos_shift[i_l, envs_idx[i_b_]][j] = i_pos_shift[envs_idx[i_b_], i_l, j]
             dyn_state.links.cfrc_applied_vel[i_l, envs_idx[i_b_]][j] = gs.qd_float(0.0)
             dyn_state.links.cfrc_applied_ang[i_l, envs_idx[i_b_]][j] = gs.qd_float(0.0)
         for j in qd.static(range(4)):
             dyn_state.links.quat[i_l, envs_idx[i_b_]][j] = links_quat[envs_idx[i_b_], i_l, j]
-        dyn_state.links.mass_shift[i_l, envs_idx[i_b_]] = mass_shift[envs_idx[i_b_], i_l]
 
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_l, i_b_ in qd.ndrange(n_geoms, _B):
@@ -463,75 +452,179 @@ def kernel_set_links_quat_grad(
                 rigid_info.qpos.grad[q_start + j + 3, i_b] = 0.0
 
 
+@qd.func
+def func_set_link_mass(
+    i_l,
+    i_b,
+    inertial_mass,
+    dyn_info: array_class.DynInfo,
+    rigid_config: qd.template(),
+    is_inertia_scaled: qd.template(),
+):
+    """Set the mass of one link, scaling its inertia by the same factor if requested."""
+    I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
+    if qd.static(is_inertia_scaled):
+        ratio = inertial_mass / dyn_info.links.inertial_mass[I_l]
+        for j1, j2 in qd.static(qd.ndrange(3, 3)):
+            dyn_info.links.inertial_i[I_l][j1, j2] = dyn_info.links.inertial_i[I_l][j1, j2] * ratio
+    dyn_info.links.inertial_mass[I_l] = inertial_mass
+
+
+@qd.func
+def func_wakeup_links_island(
+    links_idx: qd.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+):
+    """Wake up the constraint island of every hibernated link among those given, in every environment given."""
+    if qd.static(rigid_config.use_hibernation):
+        qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+            i_l = links_idx[i_l_]
+            if dyn_state.links.is_hibernated[i_l, i_b]:
+                i_is = constraint_state.island.links_island_idx[i_l, i_b]
+                func_wakeup_island(i_is, i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
+
+
 @qd.kernel(fastcache=True)
-def kernel_set_links_mass_shift(
+def kernel_set_links_mass(
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     mass: qd.types.ndarray(),
+    jac_row: qd.Tensor,
+    solve_out: qd.Tensor,
     dyn_state: array_class.DynState,
+    constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
+    is_inertia_scaled: qd.template(),
+    refresh_position: qd.template(),
+    refresh_velocity: qd.template(),
 ):
-    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
-        dyn_state.links.mass_shift[links_idx[i_l_], envs_idx[i_b_]] = mass[i_b_, i_l_]
+    # Waking here rather than from a kernel of its own: a setter that reaches a sleeping body is one launch, and the
+    # weighing below reads the tree at its neutral configuration, which the sleeping bodies are not carried to.
+    func_wakeup_links_island(links_idx, envs_idx, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
+
+    # Shared link info holds one value for every environment, so it is written once: scaling what is already there is
+    # not idempotent, and a loop over the batch would apply the ratio once per environment.
+    if qd.static(rigid_config.batch_links_info):
+        qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+            func_set_link_mass(
+                links_idx[i_l_], envs_idx[i_b_], mass[i_b_, i_l_], dyn_info, rigid_config, is_inertia_scaled
+            )
+    else:
+        qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_l_ in range(links_idx.shape[0]):
+            func_set_link_mass(links_idx[i_l_], 0, mass[0, i_l_], dyn_info, rigid_config, is_inertia_scaled)
+
+    func_refresh_links_invweight_and_meaninertia(
+        links_idx,
+        envs_idx,
+        jac_row,
+        solve_out,
+        dyn_state,
+        dyn_info,
+        rigid_info,
+        rigid_config,
+        force_update=True,
+        refresh_position=refresh_position,
+        refresh_velocity=refresh_velocity,
+    )
 
 
 @qd.kernel(fastcache=True)
-def kernel_set_links_COM_shift(
+def kernel_set_links_COM(
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     com: qd.types.ndarray(),
+    jac_row: qd.Tensor,
+    solve_out: qd.Tensor,
     dyn_state: array_class.DynState,
+    constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
+    refresh_position: qd.template(),
+    refresh_velocity: qd.template(),
 ):
-    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
-        for j in qd.static(range(3)):
-            dyn_state.links.i_pos_shift[links_idx[i_l_], envs_idx[i_b_]][j] = com[i_b_, i_l_, j]
+    func_wakeup_links_island(links_idx, envs_idx, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
+
+    # Shared link info holds one value for every environment, so it is written once. See kernel_set_links_mass.
+    if qd.static(rigid_config.batch_links_info):
+        qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+            for j in qd.static(range(3)):
+                dyn_info.links.inertial_pos[links_idx[i_l_], envs_idx[i_b_]][j] = com[i_b_, i_l_, j]
+    else:
+        qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_l_ in range(links_idx.shape[0]):
+            for j in qd.static(range(3)):
+                dyn_info.links.inertial_pos[links_idx[i_l_]][j] = com[0, i_l_, j]
+
+    func_refresh_links_invweight_and_meaninertia(
+        links_idx,
+        envs_idx,
+        jac_row,
+        solve_out,
+        dyn_state,
+        dyn_info,
+        rigid_info,
+        rigid_config,
+        force_update=True,
+        refresh_position=refresh_position,
+        refresh_velocity=refresh_velocity,
+    )
 
 
 @qd.kernel(fastcache=True)
-def kernel_set_links_inertial_mass(
+def kernel_set_links_inertia(
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
-    inertial_mass: qd.types.ndarray(),
+    inertia: qd.types.ndarray(),
+    jac_row: qd.Tensor,
+    solve_out: qd.Tensor,
+    dyn_state: array_class.DynState,
+    constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
+    refresh_position: qd.template(),
 ):
-    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
-    if qd.static(rigid_config.batch_links_info):
-        for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
-            dyn_info.links.inertial_mass[links_idx[i_l_], envs_idx[i_b_]] = inertial_mass[i_b_, i_l_]
-    else:
-        for i_l_ in range(links_idx.shape[0]):
-            dyn_info.links.inertial_mass[links_idx[i_l_]] = inertial_mass[i_l_]
+    func_wakeup_links_island(links_idx, envs_idx, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
 
-
-@qd.kernel(fastcache=True)
-def kernel_adjust_link_inertia(
-    links_idx: qd.types.ndarray(),
-    envs_idx: qd.types.ndarray(),
-    ratio: qd.types.ndarray(),
-    dyn_info: array_class.DynInfo,
-    rigid_config: qd.template(),
-):
-    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
+    # Shared link info holds one value for every environment, so it is written once. See kernel_set_links_mass.
     if qd.static(rigid_config.batch_links_info):
+        qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
         for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
-            r = ratio[i_b_, i_l_]
-            dyn_info.links.inertial_mass[links_idx[i_l_], envs_idx[i_b_]] *= r
             for j1, j2 in qd.static(qd.ndrange(3, 3)):
-                dyn_info.links.inertial_i[links_idx[i_l_], envs_idx[i_b_]][j1, j2] *= r
-            for j in qd.static(range(2)):
-                dyn_info.links.invweight[links_idx[i_l_], envs_idx[i_b_]][j] /= r
+                dyn_info.links.inertial_i[links_idx[i_l_], envs_idx[i_b_]][j1, j2] = inertia[i_b_, i_l_, j1, j2]
     else:
+        qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
         for i_l_ in range(links_idx.shape[0]):
-            r = ratio[i_l_]
-            dyn_info.links.inertial_mass[links_idx[i_l_]] *= r
             for j1, j2 in qd.static(qd.ndrange(3, 3)):
-                dyn_info.links.inertial_i[links_idx[i_l_]][j1, j2] *= r
-            for j in qd.static(range(2)):
-                dyn_info.links.invweight[links_idx[i_l_]][j] /= r
+                dyn_info.links.inertial_i[links_idx[i_l_]][j1, j2] = inertia[0, i_l_, j1, j2]
+
+    func_refresh_links_invweight_and_meaninertia(
+        links_idx,
+        envs_idx,
+        jac_row,
+        solve_out,
+        dyn_state,
+        dyn_info,
+        rigid_info,
+        rigid_config,
+        force_update=True,
+        refresh_position=refresh_position,
+        # An inertia moves no center of mass, so every velocity stands where it stood.
+        refresh_velocity=False,
+    )
 
 
 @qd.kernel(fastcache=True)

@@ -700,7 +700,7 @@ class Camera(RBC):
             1, round(realtime_factor / (self._recorded_fps * self._visualizer.scene.dt))
         )
 
-        t_scene = self._visualizer.scene._t
+        t_scene = self._visualizer.scene.sim.cur_step_global
         # A deadline further ahead than one interval is left over from a clock that has since been rewound, by a reset
         # of the scene for instance, and would otherwise hold back every frame until the clock caught up with it
         if t_scene + self._recorded_steps_per_frame < self._recorded_t_next:
@@ -752,7 +752,7 @@ class Camera(RBC):
         if self._recorded_encoders:
             if save_to_filename is not None or fps is not None:
                 gs.raise_exception("Resuming a paused recording cannot change 'save_to_filename' nor 'fps'.")
-            self._recorded_t_next = self._visualizer.scene._t + self._recorded_steps_per_frame
+            self._recorded_t_next = self._visualizer.scene.sim.cur_step_global + self._recorded_steps_per_frame
             self._is_recording = True
             return
 
@@ -786,7 +786,7 @@ class Camera(RBC):
         for filename in filenames:
             self._recorded_encoders.append(VideoEncoder(filename, fps_recorded, is_threaded=True))
 
-        self._recorded_t_next = self._visualizer.scene._t + self._recorded_steps_per_frame
+        self._recorded_t_next = self._visualizer.scene.sim.cur_step_global + self._recorded_steps_per_frame
         self._is_recording = True
 
     @gs.assert_built

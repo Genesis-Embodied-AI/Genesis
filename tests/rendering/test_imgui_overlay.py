@@ -248,8 +248,8 @@ def test_runtime_plugin_toggle_and_pause():
     assert mouse in pyrender_viewer.plugins
     pyrender_viewer.on_draw()
 
-    # The plugin acts on bodies through physics, so it is active only while the simulation advances scene.t: advancing
-    # steps mark it running, while steps vetoed by an overlay pause mark it inactive and drop any held link.
+    # The plugin acts on bodies through physics, so it is active only while the simulation advances the step counter:
+    # advancing steps mark it running, while steps vetoed by an overlay pause mark it inactive and drop any held link.
     scene.step()
     scene.step()
     assert mouse._sim_running
