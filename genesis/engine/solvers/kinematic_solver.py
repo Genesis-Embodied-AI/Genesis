@@ -950,7 +950,7 @@ class KinematicSolver(Solver):
                     qpos = broadcast_tensor(qpos, gs.tc_float, qs_data.shape)
                     torch.where(envs_idx[:, None], qpos, qs_data, out=qs_data)
             else:
-                mask = (0, *qs_mask) if self.n_envs == 0 else indices_to_mask(envs_idx, *qs_mask)
+                mask = (0, *qs_mask) if self.n_envs == 0 else indices_to_mask(envs_idx, *qs_mask, boolean_mask=False)
                 assign_indexed_tensor(data, mask, qpos)
                 if mask and isinstance(mask[0], torch.Tensor):
                     envs_idx = mask[0].reshape((-1,))
@@ -1005,7 +1005,9 @@ class KinematicSolver(Solver):
                         velocity = broadcast_tensor(velocity, gs.tc_float, dofs_vel.shape)
                         torch.where(envs_idx[:, None], velocity, dofs_vel, out=dofs_vel)
             else:
-                mask = (0, *dofs_mask) if self.n_envs == 0 else indices_to_mask(envs_idx, *dofs_mask)
+                mask = (
+                    (0, *dofs_mask) if self.n_envs == 0 else indices_to_mask(envs_idx, *dofs_mask, boolean_mask=False)
+                )
                 if velocity is None:
                     vel[mask] = 0.0
                 else:

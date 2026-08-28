@@ -13,7 +13,7 @@ import quadrants as qd
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.point_cloud as pc
-from genesis.utils.misc import sanitize_index, tensor_to_array
+from genesis.utils.misc import indices_to_mask, sanitize_index, tensor_to_array
 
 from ..utils.assertions import assert_allclose, assert_equal
 
@@ -389,6 +389,23 @@ def test_sanitize_index(index, expected):
 def test_sanitize_index_rejects_invalid_collections(index):
     with pytest.raises(gs.GenesisException):
         sanitize_index(index, -1, 4, 0, "index")
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("as_boolean", (False, True))
+def test_indices_to_mask_selects_the_cross_product(as_boolean):
+    buf = torch.arange(20, dtype=torch.int32).reshape((4, 5))
+    if as_boolean:
+        envs_idx = torch.tensor((False, True, False, True))
+        dofs_idx = torch.tensor((True, False, True, False, False))
+    else:
+        envs_idx = torch.tensor((1, 3), dtype=torch.int32)
+        dofs_idx = torch.tensor((0, 2), dtype=torch.int32)
+
+    # Selecting on two axes takes every combination, rather than pairing the two selections elementwise, which for
+    # these inputs would give the two values on the diagonal.
+    assert_equal(buf[indices_to_mask(envs_idx, dofs_idx)], torch.tensor(((5, 7), (15, 17)), dtype=torch.int32))
+    assert_equal(buf[indices_to_mask(envs_idx)], buf[torch.tensor((1, 3))])
 
 
 @pytest.mark.required

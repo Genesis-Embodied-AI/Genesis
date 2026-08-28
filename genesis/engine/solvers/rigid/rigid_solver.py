@@ -2460,7 +2460,7 @@ class RigidSolver(KinematicSolver):
                     torch.where(envs_idx[:, None], qpos, qs_data, out=qs_data)
                 errno.masked_fill_(envs_idx, 0.0)
             else:
-                mask = (0, *qs_mask) if self.n_envs == 0 else indices_to_mask(envs_idx, *qs_mask)
+                mask = (0, *qs_mask) if self.n_envs == 0 else indices_to_mask(envs_idx, *qs_mask, boolean_mask=False)
                 assign_indexed_tensor(data, mask, qpos)
                 errno[envs_idx] = 0
                 if mask and isinstance(mask[0], torch.Tensor):

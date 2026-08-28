@@ -613,7 +613,7 @@ def has_display() -> bool:
 
 
 def indices_to_mask(
-    *indices: Any, keepdim: bool = True, to_torch: bool = True, boolean_mask: bool = False, raise_if_fancy: bool = False
+    *indices: Any, keepdim: bool = True, to_torch: bool = True, boolean_mask: bool = True, raise_if_fancy: bool = False
 ) -> tuple[slice | int | torch.Tensor, ...]:
     """Converts a sequence of slice-like objects into a multi-dimensional mask corresponding to their cross-product.
 
@@ -625,10 +625,14 @@ def indices_to_mask(
     Args:
         keepdim (bool): Whether to keep all dimensions even if masks are integers. Defaults to True.
         to_torch (bool): Whether to force casting collections to torch.Tensor.
-        boolean_mask (bool): Whether boolean mask are supported more must be converted to indices via `torch.nonzero`.
-        raise_if_fancy (bool): Whether fancy indexing is supported for should raise an exception.
-        copy (bool, optional): Wether to raise an exception if the resulting mask requires advanced indexing (aka. fancy
-        indexing), which would trigger a copy when extracting slice.
+        boolean_mask (bool): Whether a boolean mask may be returned as it is. Defaults to True. Set it to False when
+        the mask is given to something that only accepts indices, such as a kernel that has no masked variant.
+        Converting a boolean mask to indices counts its selected entries on the device and reads that count back, which
+        synchronizes the GPU. It should be avoided at all cost because it would significantly impede performance,
+        especially for massively parallel applications like reinforcement learning. A mask selecting on several axes at
+        once is always converted, because the cross-product needs one index per axis.
+        raise_if_fancy (bool): Whether to raise if the resulting mask requires advanced indexing (aka. fancy
+        indexing), which would make extracting a slice copy.
     """
     mask: list[slice | int | torch.Tensor] = []
 
@@ -692,13 +696,16 @@ def indices_to_mask(
         tensor_idx = 0
         for i in range(len(mask)):
             if is_tensor[i]:
-                # assert isinstance(arg, torch.Tensor)
+                if not isinstance(mask[i], (torch.Tensor, np.ndarray)):
+                    gs.raise_exception("Multi-dimensional masking only supported for 'to_torch=True'.")
+                # The cross-product comes of broadcasting one index per axis, which a boolean selection cannot take
+                # part in: torch reads it as consuming as many axes as it has dimensions. It becomes indices here, at
+                # the only place where combining axes makes that necessary.
+                if isinstance(mask[i], torch.Tensor) and mask[i].dtype == torch.bool:
+                    mask[i] = mask[i].nonzero()[:, 0]
                 shape = [1] * num_tensors
                 shape[tensor_idx] = -1
-                try:
-                    mask[i] = mask[i].reshape(shape)
-                except AttributeError as e:
-                    gs.raise_exception_from("Multi-dimensional masking only supported for 'to_torch=True'.", e)
+                mask[i] = mask[i].reshape(shape)
                 tensor_idx += 1
 
     return tuple(mask)
