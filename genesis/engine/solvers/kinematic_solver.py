@@ -409,17 +409,17 @@ class KinematicSolver(Solver):
                     [(joint.link._entity_idx_in_solver,) * joint.n_dofs for joint in joints if joint.n_dofs],
                     dtype=gs.np_int,
                 ),
-                np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float),
-                np.concatenate([joint.dofs_motion_vel for joint in joints], dtype=gs.np_float),
-                np.concatenate([joint.dofs_limit for joint in joints], dtype=gs.np_float),
-                np.concatenate([joint.dofs_invweight for joint in joints], dtype=gs.np_float),
-                np.concatenate([joint.dofs_stiffness for joint in joints], dtype=gs.np_float),
-                np.concatenate([joint.dofs_damping for joint in joints], dtype=gs.np_float),
-                np.concatenate([joint.dofs_frictionloss for joint in joints], dtype=gs.np_float),
-                np.concatenate([joint.dofs_armature for joint in joints], dtype=gs.np_float),
-                np.concatenate([joint.dofs_act_gain for joint in joints], dtype=gs.np_float),
-                np.concatenate([joint.dofs_act_bias for joint in joints], dtype=gs.np_float),
-                np.concatenate([joint.dofs_force_range for joint in joints], dtype=gs.np_float),
+                np.concatenate([joint.desc.dofs_motion_ang for joint in joints], dtype=gs.np_float),
+                np.concatenate([joint.desc.dofs_motion_vel for joint in joints], dtype=gs.np_float),
+                np.concatenate([joint.desc.dofs_limit for joint in joints], dtype=gs.np_float),
+                np.concatenate([joint.desc.dofs_invweight for joint in joints], dtype=gs.np_float),
+                np.concatenate([joint.desc.dofs_stiffness for joint in joints], dtype=gs.np_float),
+                np.concatenate([joint.desc.dofs_damping for joint in joints], dtype=gs.np_float),
+                np.concatenate([joint.desc.dofs_frictionloss for joint in joints], dtype=gs.np_float),
+                np.concatenate([joint.desc.dofs_armature for joint in joints], dtype=gs.np_float),
+                np.concatenate([joint.desc.dofs_act_gain for joint in joints], dtype=gs.np_float),
+                np.concatenate([joint.desc.dofs_act_bias for joint in joints], dtype=gs.np_float),
+                np.concatenate([joint.desc.dofs_force_range for joint in joints], dtype=gs.np_float),
                 self.dyn_state,
                 self.dyn_info,
                 self.rigid_info,
@@ -445,14 +445,14 @@ class KinematicSolver(Solver):
                 np.array([link.geom_end for link in links], dtype=gs.np_int),
                 np.array([link.vgeom_start for link in links], dtype=gs.np_int),
                 np.array([link.vgeom_end for link in links], dtype=gs.np_int),
-                np.array([link.invweight for link in links], dtype=gs.np_float),
+                np.array([link.desc.invweight for link in links], dtype=gs.np_float),
                 np.array([link.is_fixed for link in links], dtype=gs.np_bool),
-                np.array([link.pos for link in links], dtype=gs.np_float),
-                np.array([link.quat for link in links], dtype=gs.np_float),
-                np.array([link.inertial_pos for link in links], dtype=gs.np_float),
-                np.array([link.inertial_quat for link in links], dtype=gs.np_float),
-                np.array([link.inertial_i for link in links], dtype=gs.np_float),
-                np.array([link.inertial_mass for link in links], dtype=gs.np_float),
+                np.array([link.desc.pos for link in links], dtype=gs.np_float),
+                np.array([link.desc.quat for link in links], dtype=gs.np_float),
+                np.array([link.desc.inertial_pos for link in links], dtype=gs.np_float),
+                np.array([link.desc.inertial_quat for link in links], dtype=gs.np_float),
+                np.array([link.desc.inertia for link in links], dtype=gs.np_float),
+                np.array([link.desc.mass for link in links], dtype=gs.np_float),
                 self.dyn_state,
                 self.dyn_info,
                 self.rigid_info,
@@ -461,7 +461,7 @@ class KinematicSolver(Solver):
 
         if self.joints:
             joints = self.joints
-            joints_sol_params = np.array([joint.sol_params for joint in joints], dtype=gs.np_float)
+            joints_sol_params = np.array([joint.desc.sol_params for joint in joints], dtype=gs.np_float)
             joints_sol_params = self._sanitize_joint_sol_params(joints_sol_params)
 
             kernel_init_joint_fields(
@@ -496,8 +496,8 @@ class KinematicSolver(Solver):
             is_init_qpos_out_of_bounds = False
             for joint in self.joints:
                 if joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC):
-                    is_init_qpos_out_of_bounds |= (joint.dofs_limit[0, 0] > init_qpos[joint.q_start]).any()
-                    is_init_qpos_out_of_bounds |= (init_qpos[joint.q_start] > joint.dofs_limit[0, 1]).any()
+                    is_init_qpos_out_of_bounds |= (joint.desc.dofs_limit[0, 0] > init_qpos[joint.q_start]).any()
+                    is_init_qpos_out_of_bounds |= (init_qpos[joint.q_start] > joint.desc.dofs_limit[0, 1]).any()
             if is_init_qpos_out_of_bounds:
                 gs.logger.warning("Neutral robot position (qpos0) exceeds joint limits.")
             self.qpos.from_numpy(init_qpos)
@@ -560,7 +560,7 @@ class KinematicSolver(Solver):
                 np.array([vgeom.vface_end for vgeom in vgeoms], dtype=gs.np_int),
                 np.array([vgeom.init_pos for vgeom in vgeoms], dtype=gs.np_float),
                 np.array([vgeom.init_quat for vgeom in vgeoms], dtype=gs.np_float),
-                np.array([vgeom._color for vgeom in vgeoms], dtype=gs.np_float),
+                np.array([vgeom.desc.vmesh.color for vgeom in vgeoms], dtype=gs.np_float),
                 self.dyn_info,
                 self.rigid_config,
             )
@@ -1123,6 +1123,14 @@ class KinematicSolver(Solver):
         if relative and self._links_offset_quat is not None:
             offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
             tensor = gu.transform_quat_by_quat(gu.inv_quat(offset_quat), tensor)
+        return tensor[0] if self.n_envs == 0 else tensor
+
+    def get_joints_anchor_pos(self, joints_idx=None, envs_idx=None):
+        tensor = qd_to_torch(self.dyn_state.joints.xanchor, envs_idx, joints_idx, transpose=True, copy=True)
+        return tensor[0] if self.n_envs == 0 else tensor
+
+    def get_joints_anchor_axis(self, joints_idx=None, envs_idx=None):
+        tensor = qd_to_torch(self.dyn_state.joints.xaxis, envs_idx, joints_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_vgeoms_pos(self, vgeoms_idx=None, envs_idx=None, *, relative=False):

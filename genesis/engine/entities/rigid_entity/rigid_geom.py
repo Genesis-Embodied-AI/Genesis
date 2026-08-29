@@ -12,7 +12,8 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 from genesis.repr_base import RBC
-from genesis.utils.misc import tensor_to_array, qd_to_torch, DeprecationError
+from genesis.utils.description import GeomDescription
+from genesis.utils.misc import DeprecationError, qd_to_torch, tensor_to_array
 
 if TYPE_CHECKING:
     from genesis.engine.materials.rigid import Rigid as RigidMaterial
@@ -41,36 +42,20 @@ class RigidGeom(RBC):
         face_start: int,
         edge_start: int,
         verts_state_start: int,
-        mesh: "Mesh",
-        type: gs.GEOM_TYPE,
-        friction: float,
-        friction_torsional: float,
-        friction_rolling: float,
-        sol_params,
-        init_pos,
-        init_quat,
         needs_coup: bool,
-        contype,
-        conaffinity,
+        desc: GeomDescription,
         center_init=None,
-        data=None,
     ):
+        mesh = desc.mesh
+        self.desc: GeomDescription = desc
         self._link: "RigidLink" = link
         self._entity: "RigidEntity" = link.entity
         self._material: "RigidMaterial" = link.entity.material
         self._solver: "RigidSolver" = link.entity.solver
-        self._mesh: "Mesh" = mesh
 
         self._uid = gs.UID()
         self._idx = idx
-        self._type: gs.GEOM_TYPE = type
-        self._friction: float = friction
-        self._friction_torsional: float = friction_torsional
-        self._friction_rolling: float = friction_rolling
-        self._sol_params = sol_params
         self._needs_coup: bool = needs_coup
-        self._contype = int(contype)
-        self._conaffinity = int(conaffinity)
         self._is_convex: bool = mesh.is_convex
         self._cell_start: int = cell_start
         self._vert_start: int = vert_start
@@ -81,9 +66,6 @@ class RigidGeom(RBC):
         self._coup_softness: float = self._material.coup_softness
         self._coup_friction: float = self._material.coup_friction
         self._coup_restitution: float = self._material.coup_restitution
-
-        self._init_pos: np.ndarray = init_pos
-        self._init_quat: np.ndarray = init_quat
 
         # For heterogeneous simulation: which environments this geom is active in (None = all envs)
         self.active_envs_mask: torch.Tensor | None = None
@@ -103,9 +85,10 @@ class RigidGeom(RBC):
             )
         else:
             self._init_center_pos = np.array(center_init)
+        # The solver reads a row of fixed width, so copy the described shape data into one
         self._data = np.zeros([7])
-        if data is not None:
-            self._data[: len(data)] = data
+        if desc.data is not None:
+            self._data[: len(desc.data)] = desc.data
 
         # verts and faces for sdf genertaion
         if "sdf_mesh" in self._metadata:
@@ -150,7 +133,7 @@ class RigidGeom(RBC):
             # The wall-thickness probe only makes sense on a closed surface: on an open mesh the inward rays escape
             # through the holes, so keep the material target there. The sdf mesh probed by 'get_wall_thickness' is a
             # proxy for this collision mesh and must share its watertightness, hence it raises if that does not hold.
-            if self._mesh.is_watertight:
+            if self.desc.mesh.is_watertight:
                 wall_thickness = mu.get_wall_thickness(self._sdf_verts, self._sdf_faces)
                 cell_size_target = min(cell_size_target, wall_thickness / 2.0)
             else:
@@ -281,7 +264,7 @@ class RigidGeom(RBC):
         """
         Get the geom's trimesh object.
         """
-        return self._mesh.trimesh
+        return self.desc.mesh.trimesh
 
     def get_sdf_trimesh(self, color=[1.0, 1.0, 0.6, 1.0]):
         """
@@ -466,20 +449,18 @@ class RigidGeom(RBC):
         if self._solver.is_built:
             self._solver.set_sol_params(sol_params, geoms_idx=self._idx, envs_idx=None)
         else:
-            self._sol_params = sol_params
-
-    @property
-    def sol_params(self):
-        """
-        Get the solver parameters of this geometry.
-        """
-        if self._solver.is_built:
-            return self._solver.get_sol_params(geoms_idx=self._idx, envs_idx=None)[0]
-        return self._sol_params
+            self.desc.sol_params = sol_params
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
+
+    @gs.assert_built
+    def get_sol_params(self):
+        """
+        Get the solver parameters the simulation is currently using for this geom.
+        """
+        return self._solver.get_sol_params(geoms_idx=self._idx, envs_idx=None)[0]
 
     @property
     def uid(self):
@@ -500,28 +481,7 @@ class RigidGeom(RBC):
         """
         Get the type of the geom.
         """
-        return self._type
-
-    @property
-    def friction(self):
-        """
-        Get the build-time friction coefficient of the geom.
-        """
-        return self._friction
-
-    @property
-    def friction_torsional(self):
-        """
-        Get the build-time torsional friction coefficient of the geom (see 'gs.materials.Rigid').
-        """
-        return self._friction_torsional
-
-    @property
-    def friction_rolling(self):
-        """
-        Get the build-time rolling friction coefficient of the geom (see 'gs.materials.Rigid').
-        """
-        return self._friction_rolling
+        return self.desc.type
 
     @property
     def data(self):
@@ -567,7 +527,7 @@ class RigidGeom(RBC):
 
     @property
     def mesh(self) -> "Mesh":
-        return self._mesh
+        return self.desc.mesh
 
     @property
     def needs_coup(self) -> bool:
@@ -586,7 +546,7 @@ class RigidGeom(RBC):
         `(geom1.contype & geom2.conaffinity) || (geom2.contype & geom1.conaffinity) == True`. This is a powerful
         mechanism borrowed from Open Dynamics Engine.
         """
-        return self._contype
+        return self.desc.contype
 
     @property
     def conaffinity(self) -> int:
@@ -595,7 +555,7 @@ class RigidGeom(RBC):
 
         See `contype` documentation for details.
         """
-        return self._conaffinity
+        return self.desc.conaffinity
 
     @property
     def coup_softness(self) -> float:
@@ -623,14 +583,14 @@ class RigidGeom(RBC):
         """
         Get the initial position of the geom.
         """
-        return self._init_pos
+        return self.desc.pos
 
     @property
     def init_quat(self) -> np.ndarray:
         """
         Get the initial quaternion of the geom.
         """
-        return self._init_quat
+        return self.desc.quat
 
     @property
     def init_verts(self):
@@ -904,16 +864,16 @@ class RigidVisGeom(RBC):
     A `RigidVisGeom` is a counterpart of `RigidGeom`, but for visualization purposes. This can be accessed via `link.vis_geoms`.
     """
 
-    def __init__(self, link, idx, vvert_start, vface_start, vmesh, init_pos, init_quat):
+    def __init__(self, link, idx, vvert_start, vface_start, desc: GeomDescription):
+        self.desc: GeomDescription = desc
         self._link = link
         self._entity = link.entity
         self._material = link.entity.material
         self._solver = link.entity.solver
-        self._vmesh = vmesh
 
         # Lazy-initialize low-res geometry because it is usually unused and may be slow to compute
-        self._init_pos_tc = torch.from_numpy(init_pos).to(device=gs.device, dtype=gs.tc_float)
-        self._init_quat_tc = torch.from_numpy(init_quat).to(device=gs.device, dtype=gs.tc_float)
+        self._init_pos_tc = torch.from_numpy(desc.pos).to(device=gs.device, dtype=gs.tc_float)
+        self._init_quat_tc = torch.from_numpy(desc.quat).to(device=gs.device, dtype=gs.tc_float)
         self._aabb_verts: torch.Tensor | None = None
 
         self._uid = gs.UID()
@@ -922,20 +882,9 @@ class RigidVisGeom(RBC):
         self._vvert_start = vvert_start
         self._vface_start = vface_start
 
-        self._init_pos: np.ndarray = init_pos
-        self._init_quat: np.ndarray = init_quat
-
         # For heterogeneous simulation: which environments this vgeom is active in (None = all envs)
         self.active_envs_mask: torch.Tensor | None = None
         self.active_envs_idx: np.ndarray | None = None
-
-        self._init_vverts = vmesh.verts
-        self._init_vfaces = vmesh.faces
-        self._init_vnormals = vmesh.normals
-        self._uvs = vmesh.uvs
-        self._surface = vmesh.surface
-        self._metadata = vmesh.metadata
-        self._color = vmesh._color
 
     def _build(self):
         pass
@@ -944,7 +893,7 @@ class RigidVisGeom(RBC):
         """
         Get trimesh object.
         """
-        return self._vmesh.trimesh
+        return self.desc.vmesh.trimesh
 
     # ------------------------------------------------------------------------------------
     # -------------------------------- real-time state -----------------------------------
@@ -1070,7 +1019,7 @@ class RigidVisGeom(RBC):
 
     @property
     def vmesh(self):
-        return self._vmesh
+        return self.desc.vmesh
 
     @property
     def solver(self):
@@ -1084,70 +1033,70 @@ class RigidVisGeom(RBC):
         """
         Get the metadata of the vgeom.
         """
-        return self._metadata
+        return self.desc.vmesh.metadata
 
     @property
     def init_pos(self):
         """
         Get the initial position of the vgeom.
         """
-        return self._init_pos
+        return self.desc.pos
 
     @property
     def init_quat(self):
         """
         Get the initial quaternion of the vgeom.
         """
-        return self._init_quat
+        return self.desc.quat
 
     @property
     def init_vverts(self):
         """
         Get the initial vertices of the vgeom.
         """
-        return self._init_vverts
+        return self.desc.vmesh.verts
 
     @property
     def init_vfaces(self):
         """
         Get the initial faces of the vgeom.
         """
-        return self._init_vfaces
+        return self.desc.vmesh.faces
 
     @property
     def init_vnormals(self):
         """
         Get the initial normals of the vgeom.
         """
-        return self._init_vnormals
+        return self.desc.vmesh.normals
 
     @property
     def uvs(self):
         """
         Get the UV coordinates of the vgeom.
         """
-        return self._uvs
+        return self.desc.vmesh.uvs
 
     @property
     def surface(self):
         """
         Get the surface object of the vgeom.
         """
-        return self._surface
+        return self.desc.vmesh.surface
 
     @property
     def n_vverts(self):
         """
         Number of vertices of the vgeom.
         """
-        return len(self._init_vverts)
+        return len(self.desc.vmesh.verts)
 
     @property
     def n_vfaces(self):
         """
         Number of faces of the vgeom.
         """
-        return len(self._init_vfaces)
+        return len(self.desc.vmesh.faces)
 
     @property
     def vvert_start(self):

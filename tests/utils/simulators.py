@@ -172,13 +172,13 @@ def build_genesis_sim(
 
     # Force recomputation of invweights to make sure it works fine
     for link in scene.rigid_solver.links:
-        link.invweight[:] = -1
+        link.desc.invweight[:] = -1
     for joint in scene.rigid_solver.joints:
-        joint.dofs_invweight[:] = -1
+        joint.desc.dofs_invweight[:] = -1
 
     # Canonicalize mesh center-of-mass dust to zero: see the matching body_ipos normalization in build_mujoco_sim.
     for link in scene.rigid_solver.links:
-        link.inertial_pos[np.abs(link.inertial_pos) < 1e-12] = 0.0
+        link.desc.inertial_pos[np.abs(link.desc.inertial_pos) < 1e-12] = 0.0
 
     scene.build()
 

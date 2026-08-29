@@ -42,7 +42,7 @@ def test_equality_link(gs_sim, mj_sim, gs_solver, xml_path):
     TIME_CONSTANT = 0.02
     for entity in gs_sim.entities:
         for equality in entity.equalities:
-            equality.set_sol_params((TIME_CONSTANT, *tensor_to_array(equality.sol_params)[1:]))
+            equality.set_sol_params((TIME_CONSTANT, *tensor_to_array(equality.desc.sol_params)[1:]))
     mj_sim.model.eq_solref[:, 0] = TIME_CONSTANT
 
     # Randomize the initial condition for force convergence of the constraints
@@ -285,9 +285,9 @@ def test_set_sol_params(n_envs, batched, tol):
 
     for objs, batched in ((robot.joints, batched), (robot.geoms, False), (robot.equalities, True)):
         for obj in objs:
-            sol_params = obj.sol_params + 1.0
+            sol_params = obj.get_sol_params() + 1.0
             obj.set_sol_params(sol_params)
             with pytest.raises(AssertionError):
-                assert_allclose(obj.sol_params, sol_params, tol=tol)
+                assert_allclose(obj.get_sol_params(), sol_params, tol=tol)
             obj.set_sol_params([0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0])
-            assert_allclose(obj.sol_params, [2.0e-02, 0.5, 1e-4, 1e-4, 0.0, 1e-4, 1.0], tol=tol)
+            assert_allclose(obj.get_sol_params(), [2.0e-02, 0.5, 1e-4, 1e-4, 0.0, 1e-4, 1.0], tol=tol)

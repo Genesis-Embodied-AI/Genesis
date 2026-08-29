@@ -874,50 +874,50 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 # their own anchors.
                 is_sole_joint = len(link.joints) == 1
                 if is_sole_joint:
-                    dist_com = {link.idx: np.linalg.norm(link.inertial_pos - anchor)}
+                    dist_com = {link.idx: np.linalg.norm(link.desc.inertial_pos - anchor)}
                 else:
-                    dist_com = {link.idx: np.linalg.norm(anchor) + np.linalg.norm(link.inertial_pos)}
+                    dist_com = {link.idx: np.linalg.norm(anchor) + np.linalg.norm(link.desc.inertial_pos)}
                 dist_origin = {link.idx: np.linalg.norm(anchor)}
                 sub, stack = [], [link]
                 while stack:
                     cur = stack.pop()
                     sub.append(cur)
                     for child in children.get(cur.idx, []):
-                        hop = np.linalg.norm(child.pos) + 2.0 * sum(np.linalg.norm(j.pos) for j in child.joints)
+                        hop = np.linalg.norm(child.desc.pos) + 2.0 * sum(np.linalg.norm(j.pos) for j in child.joints)
                         # A prismatic descendant carries the subtree outward by up to its full travel span (which
                         # covers the offset from any zero configuration within limits); an unlimited slide makes the
                         # upper bracket infinite and the gate enables.
-                        hop += sum(np.ptp(j.dofs_limit) for j in child.joints if j.type == gs.JOINT_TYPE.PRISMATIC)
+                        hop += sum(np.ptp(j.desc.dofs_limit) for j in child.joints if j.type == gs.JOINT_TYPE.PRISMATIC)
                         dist_origin[child.idx] = dist_origin[cur.idx] + hop
-                        dist_com[child.idx] = dist_origin[child.idx] + np.linalg.norm(child.inertial_pos)
+                        dist_com[child.idx] = dist_origin[child.idx] + np.linalg.norm(child.desc.inertial_pos)
                         stack.append(child)
-                sub_mass = sum(l.inertial_mass for l in sub)
-                eigvals = np.linalg.eigvalsh(link.inertial_i)
+                sub_mass = sum(l.desc.mass for l in sub)
+                eigvals = np.linalg.eigvalsh(link.desc.inertia)
                 rot_desc_upper = sum(
-                    np.linalg.eigvalsh(l.inertial_i)[-1] + l.inertial_mass * dist_com[l.idx] ** 2
+                    np.linalg.eigvalsh(l.desc.inertia)[-1] + l.desc.mass * dist_com[l.idx] ** 2
                     for l in sub
                     if l is not link
                 )
                 # Carrying link's inertia about the anchor: exact along a fixed axis, principal bracket otherwise.
                 if is_sole_joint:
-                    R_inertial = gu.quat_to_R(link.inertial_quat)
-                    inertia_com = R_inertial @ link.inertial_i @ R_inertial.T
-                    offset_com = link.inertial_pos - anchor
+                    R_inertial = gu.quat_to_R(link.desc.inertial_quat)
+                    inertia_com = R_inertial @ link.desc.inertia @ R_inertial.T
+                    offset_com = link.desc.inertial_pos - anchor
                     rot_self_lower = eigvals[0]
-                    rot_self_upper = eigvals[-1] + link.inertial_mass * np.dot(offset_com, offset_com)
+                    rot_self_upper = eigvals[-1] + link.desc.mass * np.dot(offset_com, offset_com)
                 else:
                     inertia_com = None
                     offset_com = None
                     rot_self_lower = eigvals[0]
-                    rot_self_upper = eigvals[-1] + link.inertial_mass * dist_com[link.idx] ** 2
-                for i_d, armature_d in enumerate(joint.dofs_armature):
+                    rot_self_upper = eigvals[-1] + link.desc.mass * dist_com[link.idx] ** 2
+                for i_d, armature_d in enumerate(joint.desc.dofs_armature):
                     if joint.type == gs.JOINT_TYPE.PRISMATIC or (joint.type == gs.JOINT_TYPE.FREE and i_d < 3):
                         lower.append(armature_d + sub_mass)
                         upper.append(armature_d + sub_mass)
                     elif joint.type == gs.JOINT_TYPE.REVOLUTE and is_sole_joint:
                         axis = joint.dofs_motion_ang[i_d]
                         lever = np.cross(axis, offset_com)
-                        rot_self = axis @ inertia_com @ axis + link.inertial_mass * np.dot(lever, lever)
+                        rot_self = axis @ inertia_com @ axis + link.desc.mass * np.dot(lever, lever)
                         lower.append(armature_d + rot_self)
                         upper.append(armature_d + rot_self + rot_desc_upper)
                     else:
@@ -1144,7 +1144,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
 
         if self.n_geoms > 0:
             geoms = self.geoms
-            geoms_sol_params = np.array([geom.sol_params for geom in geoms], dtype=gs.np_float)
+            geoms_sol_params = np.array([geom.desc.sol_params for geom in geoms], dtype=gs.np_float)
             # A geom keeps the time constant the model states; the floor lands on the value a contact mixes out of its
             # two geoms (see func_set_contact_data), the value the solver actually consumes. Flooring per geom would
             # raise the mix of a pair that is already above the floor, distorting the stated stiffness with no
@@ -1200,9 +1200,9 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 np.array(geoms_center, dtype=gs.np_float),
                 np.array([geom.init_quat for geom in geoms], dtype=gs.np_float),
                 np.array([geom.type for geom in geoms], dtype=gs.np_int),
-                np.array([geom.friction for geom in geoms], dtype=gs.np_float),
-                np.array([geom.friction_torsional for geom in geoms], dtype=gs.np_float),
-                np.array([geom.friction_rolling for geom in geoms], dtype=gs.np_float),
+                np.array([geom.desc.friction for geom in geoms], dtype=gs.np_float),
+                np.array([geom.desc.friction_torsional for geom in geoms], dtype=gs.np_float),
+                np.array([geom.desc.friction_rolling for geom in geoms], dtype=gs.np_float),
                 geoms_sol_params,
                 np.array([geom.data for geom in geoms], dtype=gs.np_float),
                 np.array([geom.is_convex for geom in geoms], dtype=gs.np_bool),
@@ -1243,7 +1243,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         if self.n_equalities > 0:
             equalities = self.equalities
 
-            equalities_sol_params = np.array([equality.sol_params for equality in equalities], dtype=gs.np_float)
+            equalities_sol_params = np.array([equality.desc.sol_params for equality in equalities], dtype=gs.np_float)
             _sanitize_sol_params(equalities_sol_params, self._sol_min_timeconst, self._sol_default_timeconst)
 
             kernel_init_equality_fields(
@@ -2368,7 +2368,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 links = (self.links[links_idx],)
             else:
                 links = [self.links[i_l] for i_l in links_idx]
-            if sum(0.0 if link.is_fixed else link.inertial_mass for link in links) <= gs.EPS:
+            if sum(0.0 if link.is_fixed else link.desc.mass for link in links) <= gs.EPS:
                 gs.raise_exception(
                     "None of the links being set holds a mass to spread out, so there is no mass to set."
                 )
