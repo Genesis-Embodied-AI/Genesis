@@ -818,6 +818,23 @@ def kernel_set_dofs_velocity(
 
 
 @qd.kernel(fastcache=True)
+def kernel_set_dofs_velocity_with_freshness(
+    dofs_idx: qd.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
+    velocity: qd.types.ndarray(),
+    forward_vel_updated: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    rigid_config: qd.template(),
+):
+    qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
+    for i_d_, i_b_ in qd.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+        dyn_state.dofs.vel[dofs_idx[i_d_], envs_idx[i_b_]] = velocity[i_b_, i_d_]
+
+    for i_b_ in range(envs_idx.shape[0]):
+        forward_vel_updated[envs_idx[i_b_]] = False
+
+
+@qd.kernel(fastcache=True)
 def kernel_set_dofs_velocity_grad(
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
@@ -855,6 +872,22 @@ def kernel_set_dofs_zero_velocity(
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_d_, i_b_ in qd.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
         dyn_state.dofs.vel[dofs_idx[i_d_], envs_idx[i_b_]] = 0.0
+
+
+@qd.kernel(fastcache=True)
+def kernel_set_dofs_zero_velocity_with_freshness(
+    dofs_idx: qd.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
+    forward_vel_updated: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    rigid_config: qd.template(),
+):
+    qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
+    for i_d_, i_b_ in qd.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+        dyn_state.dofs.vel[dofs_idx[i_d_], envs_idx[i_b_]] = 0.0
+
+    for i_b_ in range(envs_idx.shape[0]):
+        forward_vel_updated[envs_idx[i_b_]] = False
 
 
 @qd.func
@@ -945,6 +978,8 @@ def kernel_set_dofs_position_forward_kinematics(
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     position: qd.types.ndarray(),
+    forward_pos_updated: qd.types.ndarray(),
+    forward_vel_updated: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -965,6 +1000,8 @@ def kernel_set_dofs_position_forward_kinematics(
         i_b = qd.cast(envs_idx[i_b_], qd.i32)
         func_forward_kinematics_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
         func_COM_links(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
+        forward_pos_updated[i_b] = True
+        forward_vel_updated[i_b] = False
 
 
 @qd.kernel(fastcache=True)

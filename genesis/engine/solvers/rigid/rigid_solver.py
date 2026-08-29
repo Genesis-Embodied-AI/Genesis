@@ -813,6 +813,35 @@ class RigidSolver(KinematicSolver):
         if self._requires_grad:
             self.dyn_state_adjoint_cache = self.data_manager.dyn_state_adjoint_cache
 
+    def _init_forward_update_state(self):
+        # Rigid stepping specializes these flags as compile-time kernel arguments
+        self._is_forward_pos_updated = False
+        self._is_forward_vel_updated = False
+
+    def _write_dofs_velocity(self, dofs_idx, envs_idx, velocity):
+        if velocity is None:
+            kernel_set_dofs_zero_velocity(dofs_idx, envs_idx, self.dyn_state, self.rigid_config)
+        else:
+            kernel_set_dofs_velocity(dofs_idx, envs_idx, velocity, self.dyn_state, self.rigid_config)
+        return False
+
+    def _update_forward_after_dofs_velocity(self, envs_idx, is_all_envs, skip_forward, _freshness_updated):
+        if skip_forward:
+            self._is_forward_vel_updated = False
+            return
+        if not self._is_forward_pos_updated:
+            # Let the rigid pose refresh satisfy velocity propagation when its Cartesian state is stale
+            self._is_forward_vel_updated = False
+            self.update_forward_vel()
+            return
+        if envs_idx.dtype == torch.bool:
+            fn = kernel_masked_forward_velocity
+        else:
+            fn = kernel_forward_velocity
+        fn(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, is_backward=False)
+        if is_all_envs:
+            self._is_forward_vel_updated = True
+
     def _sanitize_joint_sol_params(self, sol_params):
         return _sanitize_sol_params(sol_params, self._sol_min_timeconst, self._sol_default_timeconst)
 
@@ -1380,6 +1409,22 @@ class RigidSolver(KinematicSolver):
         )
         self._is_forward_pos_updated = True
         # kernel_forward_kinematics_links_geoms propagates link velocities with the pose
+        self._is_forward_vel_updated = True
+
+    def update_forward_vel(self):
+        if self._is_forward_vel_updated:
+            return
+        self.update_forward_pos()
+        if self._is_forward_vel_updated:
+            return
+        kernel_forward_velocity(
+            self.scene._envs_idx,
+            self.dyn_state,
+            self.dyn_info,
+            self.rigid_info,
+            self.rigid_config,
+            is_backward=False,
+        )
         self._is_forward_vel_updated = True
 
     def substep(self, f):
