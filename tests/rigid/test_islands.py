@@ -610,11 +610,11 @@ def test_sparsity(show_viewer, n_envs):
 
 
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_hibernation_wakes_on_user_input(show_viewer, n_envs):
+def test_hibernation_wakes_on_user_input(show_viewer, n_envs, tol):
     # Every user input that drives a sleeping body must wake it (and only its island) AND take effect: a hibernated
     # body's dofs are skipped by forward dynamics and integration, so the motion checks catch a body that wakes but
-    # stays frozen (e.g. gravity cancelled by a neighbour's stale constraint force). Seven separated boxes are seven
-    # islands, so each input wakes exactly one.
+    # stays frozen (e.g. gravity cancelled by a neighbour's stale constraint force). Each box is separated from the
+    # others, hence an island of its own, so each input wakes exactly one.
     G = 9.8
     DT = 1.0 / 60.0
     scene = gs.Scene(
@@ -675,6 +675,18 @@ def test_hibernation_wakes_on_user_input(show_viewer, n_envs):
             pos=(6.0, 0.0, 0.1),
         )
     )
+    box_mass = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(7.0, 0.0, 0.1),
+        )
+    )
+    box_armature = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(8.0, 0.0, 0.1),
+        )
+    )
     scene.build(n_envs=n_envs)
 
     solver = scene.rigid_solver
@@ -695,7 +707,9 @@ def test_hibernation_wakes_on_user_input(show_viewer, n_envs):
 
     for _ in range(90):
         scene.step()
-    assert all(map(asleep, (box_force, box_pos, box_vel, box_qpos, box_cforce, box_cvel, box_cpos)))
+    assert all(
+        map(asleep, (box_force, box_pos, box_vel, box_qpos, box_cforce, box_cvel, box_cpos, box_mass, box_armature))
+    )
 
     z0 = z_of(box_force)
     for _ in range(6):
@@ -747,6 +761,32 @@ def test_hibernation_wakes_on_user_input(show_viewer, n_envs):
         box_cpos.control_dofs_position([6.0, 0.0, 0.6, 0.0, 0.0, 0.0])
         scene.step()
     assert not asleep(box_cpos) and (z_of(box_cpos) > z0 + 0.05).all()
+
+    # A mass or an armature written moves the equilibrium a resting body found, so a body it is written on must wake
+    # to settle into the new one. Both writes are made while the body sleeps, and the weight they land on is the
+    # analytic one of a free body.
+    MASS = 4.0
+    ARMATURE = 0.5
+    invweight_before = solver.get_links_invweight(box_mass.base_link_idx)
+    box_mass.set_mass(MASS)
+    assert not asleep(box_mass)
+    assert_allclose(solver.get_links_invweight(box_mass.base_link_idx)[..., 0], 1.0 / MASS, tol=gs.EPS)
+    assert ((invweight_before - solver.get_links_invweight(box_mass.base_link_idx)).abs() > 1e-3).all()
+
+    # The mean inertia the constraint solve is quoted on is the mean of the mass-matrix diagonal, so a mass written on
+    # a woken tree is in it; a tree left asleep would hold its contribution at whatever it last ran with.
+    mass_mat = solver.get_mass_mat()
+    diagonal = mass_mat.diagonal(dim1=-2, dim2=-1) if mass_mat.ndim > 2 else mass_mat.diagonal()
+    assert_allclose(qd_to_numpy(solver.rigid_info.meaninertia), tensor_to_array(diagonal.mean(dim=-1)), tol=tol)
+
+    invweight_before = box_armature.get_dofs_invweight()
+    box_armature.set_dofs_armature([ARMATURE] * 6)
+    assert not asleep(box_armature)
+    # An armature adds to the mass matrix without belonging to any link, so a translational degree of freedom of a
+    # free body weighs the mass it carries plus the armature on it.
+    mass_armature = float(box_armature.get_mass()) + ARMATURE
+    assert_allclose(box_armature.get_dofs_invweight()[..., :3], 1.0 / mass_armature, tol=tol)
+    assert ((invweight_before - box_armature.get_dofs_invweight()).abs() > 1e-3).all()
 
 
 @pytest.mark.parametrize("n_envs", [0, 2])
@@ -800,9 +840,22 @@ def test_hibernation_wakes_on_collision(show_viewer, n_envs, broadphase_traversa
     def link_asleep(link):
         return qd_to_numpy(solver.dyn_state.links.is_hibernated, link.idx).all()
 
-    for _ in range(50):
+    # One free body of the entity is dropped from higher up, so the trees of one entity land, settle and fall asleep
+    # at different moments: what sleeps is the tree, not the entity that holds it.
+    multibody_bases = [link for link in multibody.links if link.parent_idx == -1 and link.n_dofs > 0]
+    late = multibody_bases[-1]
+    lifted = solver.get_links_pos(late.idx)
+    lifted[..., 2] += 0.6
+    solver.set_base_links_pos(lifted, links_idx=late.idx)
+
+    for _ in range(60):
         scene.step()
     assert asleep(box_rest) and asleep(box_hit)
+    # The bodies that landed first sleep while the one still falling does not.
+    assert all(link_asleep(link) for link in multibody_bases[:-1])
+    assert not link_asleep(late)
+    for _ in range(40):
+        scene.step()
     rest_x0 = box_rest.get_pos()[..., 0]
 
     box_hit.set_dofs_velocity([-2.0, 0.0, 0.0, 0.0, 0.0, 0.0])
@@ -817,7 +870,6 @@ def test_hibernation_wakes_on_collision(show_viewer, n_envs, broadphase_traversa
     assert (hit_x1 > rest_x1).all()
 
     # The undisturbed entity's free bodies all settled and slept independently; disturbing one wakes only its island.
-    multibody_bases = [link for link in multibody.links if link.parent_idx == -1 and link.n_dofs > 0]
     assert all(link_asleep(link) for link in multibody_bases)
     disturbed = multibody_bases[0]
     solver.set_dofs_velocity(
@@ -826,6 +878,21 @@ def test_hibernation_wakes_on_collision(show_viewer, n_envs, broadphase_traversa
     )
     assert not link_asleep(disturbed)
     assert all(link_asleep(link) for link in multibody_bases[1:])
+
+    # A sleeping tree is left out of the mass solve rather than solved and thrown away, which is what makes the cost
+    # follow what is awake. The solve is the only pass writing the smooth accelerations, so a sentinel written into
+    # them comes back untouched for a sleeping tree of the entity and rewritten for its woken sibling.
+    SENTINEL = -13.0
+    sentinels = qd_to_numpy(solver.dyn_state.dofs.acc_smooth)
+    sentinels[disturbed.dof_start : disturbed.dof_end] = SENTINEL
+    for link in multibody_bases[1:]:
+        sentinels[link.dof_start : link.dof_end] = SENTINEL
+    solver.dyn_state.dofs.acc_smooth.from_numpy(sentinels)
+    scene.step()
+    solved = qd_to_numpy(solver.dyn_state.dofs.acc_smooth)
+    assert (solved[disturbed.dof_start : disturbed.dof_end] != SENTINEL).any()
+    for link in multibody_bases[1:]:
+        assert_allclose(solved[link.dof_start : link.dof_end], SENTINEL, tol=gs.EPS)
 
 
 @pytest.mark.parametrize("n_envs", [0, 2])

@@ -233,7 +233,7 @@ class RasterizerContext:
     def add_dynamic_node(self, entity, obj, **kwargs):
         if obj:
             dynamic_node = self.add_node(obj, **kwargs)
-            self.dynamic_nodes.setdefault(self.scene._t, []).append(dynamic_node)
+            self.dynamic_nodes.setdefault(self.scene.sim.cur_step_global, []).append(dynamic_node)
         else:
             dynamic_node = None
         if entity:
@@ -252,7 +252,7 @@ class RasterizerContext:
 
     def clear_dynamic_nodes(self, only_outdated: bool = True):
         for t in tuple(self.dynamic_nodes.keys()):
-            if not only_outdated or t < self.scene._t:
+            if not only_outdated or t < self.scene.sim.cur_step_global:
                 for dynamic_node in self.dynamic_nodes.pop(t):
                     self.remove_node_seg(dynamic_node)
                     self.remove_node(dynamic_node)
@@ -1137,11 +1137,11 @@ class RasterizerContext:
 
     def update(self, force_render: bool = False):
         # Early return if already updated previously
-        if not force_render and self._t >= self.scene._t:
+        if not force_render and self._t >= self.scene.sim.cur_step_global:
             return
 
         # Update current time right away
-        self._t = self.scene._t
+        self._t = self.scene.sim.cur_step_global
 
         # Remove up old dynamic nodes
         self.clear_dynamic_nodes(only_outdated=True)

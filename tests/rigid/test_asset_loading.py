@@ -569,9 +569,10 @@ def test_xacro_loading(xacro_robot, show_viewer, tol):
     assert entity.links[1].geoms[0].type == gs.GEOM_TYPE.CYLINDER
     assert entity.links[2].geoms[0].type == gs.GEOM_TYPE.MESH
 
-    # Mass check: 3 links at 1.0 each (default) vs 5.0 each (overridden)
-    assert_allclose(entity.get_mass(), 3.0, tol=tol)
-    assert_allclose(heavy.get_mass(), 15.0, tol=tol)
+    # Mass check: of the three links at 1.0 each (default) or 5.0 each (overridden), the base is fixed to the world
+    # and is carried with no mass of its own, so the body weighs what the dynamics moves.
+    assert_allclose(entity.get_mass(), 2.0, tol=tol)
+    assert_allclose(heavy.get_mass(), 10.0, tol=tol)
 
 
 @pytest.mark.required
@@ -1412,7 +1413,7 @@ def test_align_heterogeneous_inertial(show_viewer, tol):
     assert mass.shape == (scene.n_envs,)
     assert_allclose(mass[0], mass[1], tol=tol)
     assert_allclose(mass[2], mass[3], tol=tol)
-    assert not np.allclose(mass[0], mass[2], atol=tol, rtol=tol), "Variant A and B masses should differ"
+    assert not torch.allclose(mass[0], mass[2], atol=tol, rtol=tol), "Variant A and B masses should differ"
     # Variant B total mass should match the explicit URDF inertial values
     assert_allclose(mass[0], sphere_base_mass + sphere_moving_mass, tol=tol)
 

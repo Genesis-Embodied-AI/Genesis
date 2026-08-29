@@ -235,7 +235,8 @@ def test_static_friction(mode, friction, n_boxes, solver, scale, mesh_boxes, sho
         assert rigid_solver.rigid_config.prefer_decomposed_solver == (6 * n_boxes >= 16)
 
     # Force needed to hold the floating boxes static without slipping
-    # Native floats: the equilibrium below runs through scipy, which rejects device tensors.
+    # Native floats: the equilibrium below solves for the rest penetrations with scipy, which needs its residual to
+    # come back as a float, and every mass reaches it through the inverse masses and the force targets.
     masses = [float(box.get_mass()) for box in floating_boxes]
     total_mass = sum(masses)
     force_x = (total_mass * GRAVITY) / friction
@@ -430,6 +431,17 @@ def test_static_hold_unaffected_by_press_on_separate_body(show_viewer):
     slip = held_box.get_pos()[..., 2] - hold_z
     assert_allclose(slip, 0.0, atol=0.05 * BOX)
     assert_allclose(slip[1], slip[0], atol=1e-5)
+
+    # A geom asked for its friction reports what the solver rubs it with, while the property reports what it was built
+    # with, which is the value a scene rebuilt from the same material would hold again.
+    geom = presser.geoms[0]
+    geom.set_friction(0.37)
+    geom.set_friction_rolling(0.02)
+    assert_allclose(geom.get_friction(), scene.rigid_solver.get_geoms_friction(geom.idx), tol=gs.EPS)
+    assert_allclose(geom.get_friction(), 0.37, tol=gs.EPS)
+    assert_allclose(geom.get_friction_rolling(), 0.02, tol=gs.EPS)
+    assert_allclose(geom.friction, FRICTION, tol=gs.EPS)
+    assert_allclose(geom.sol_params, scene.rigid_solver.get_sol_params(geoms_idx=geom.idx)[0], tol=gs.EPS)
 
 
 @pytest.mark.required

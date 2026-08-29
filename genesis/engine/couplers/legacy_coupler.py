@@ -921,9 +921,9 @@ class LegacyCoupler(RBC):
                 collider_static_config=self.rigid_solver.collider._collider_static_config,
             )
 
-            # 1-way: animate particles by links
-            full_step_inv_dt = 1.0 / self.pbd_solver._dt
-            clamped_inv_dt = min(full_step_inv_dt, CLAMPED_INV_DT)
+            # 1-way: animate particles by links, over the substep interval and no faster than the clamp allows.
+            substep_inv_dt = 1.0 / self.pbd_solver.substep_dt
+            clamped_inv_dt = min(substep_inv_dt, CLAMPED_INV_DT)
             self.kernel_pbd_rigid_solve_animate_particles_by_link(clamped_inv_dt, self.rigid_solver.dyn_state.links)
 
         if self.fem_solver.is_active:

@@ -28,7 +28,8 @@ NUM_VERTS_VISUAL_GEOM_AABB = 200
 
 class RigidGeom(RBC):
     """
-    A `RigidGeom` is the basic building block of a `RigidEntity` for collision checking. It is usually constructed from a single mesh. This can be accessed via `link.geoms`.
+    A `RigidGeom` is the basic building block of a `RigidEntity` for collision checking. It is usually constructed
+    from a single mesh. This can be accessed via `link.geoms`.
     """
 
     def __init__(
@@ -345,38 +346,70 @@ class RigidGeom(RBC):
             )
             self._solver.scene.draw_debug_mesh(boundary_mesh, T=T)
 
+    @gs.assert_built
     def set_friction(self, friction):
         """
         Set the friction coefficient of this geometry.
         """
         if friction < 0:
             gs.raise_exception("`friction` must be non-negative.")
-        self._friction = friction
+        self._solver.set_geom_friction(friction, self._idx)
 
-        if self._solver.is_built:
-            self._solver.set_geom_friction(friction, self._idx)
+    @gs.assert_built
+    def get_friction(self):
+        """
+        Get the friction coefficient the simulation is currently using for this geom.
 
+        Returns
+        -------
+        friction : torch.Tensor, shape ()
+            The friction coefficient of the geom.
+        """
+        return self._solver.get_geoms_friction(self._idx)[0]
+
+    @gs.assert_built
+    def get_friction_torsional(self):
+        """
+        Get the torsional friction coefficient the simulation is currently using for this geom (see
+        'gs.materials.Rigid').
+
+        Returns
+        -------
+        friction_torsional : torch.Tensor, shape ()
+            The torsional friction coefficient of the geom.
+        """
+        return self._solver.get_geoms_friction_torsional(self._idx)[0]
+
+    @gs.assert_built
+    def get_friction_rolling(self):
+        """
+        Get the rolling friction coefficient the simulation is currently using for this geom (see
+        'gs.materials.Rigid').
+
+        Returns
+        -------
+        friction_rolling : torch.Tensor, shape ()
+            The rolling friction coefficient of the geom.
+        """
+        return self._solver.get_geoms_friction_rolling(self._idx)[0]
+
+    @gs.assert_built
     def set_friction_torsional(self, friction_torsional):
         """
         Set the torsional friction coefficient of this geometry (see 'gs.materials.Rigid').
         """
         if friction_torsional < 0:
             gs.raise_exception("`friction_torsional` must be non-negative.")
-        self._friction_torsional = friction_torsional
+        self._solver.set_geom_friction_torsional(friction_torsional, self._idx)
 
-        if self._solver.is_built:
-            self._solver.set_geom_friction_torsional(friction_torsional, self._idx)
-
+    @gs.assert_built
     def set_friction_rolling(self, friction_rolling):
         """
         Set the rolling friction coefficient of this geometry (see 'gs.materials.Rigid').
         """
         if friction_rolling < 0:
             gs.raise_exception("`friction_rolling` must be non-negative.")
-        self._friction_rolling = friction_rolling
-
-        if self._solver.is_built:
-            self._solver.set_geom_friction_rolling(friction_rolling, self._idx)
+        self._solver.set_geom_friction_rolling(friction_rolling, self._idx)
 
     # ------------------------------------------------------------------------------------
     # -------------------------------- real-time state -----------------------------------
@@ -472,21 +505,21 @@ class RigidGeom(RBC):
     @property
     def friction(self):
         """
-        Get the friction coefficient of the geom.
+        Get the build-time friction coefficient of the geom.
         """
         return self._friction
 
     @property
     def friction_torsional(self):
         """
-        Get the torsional friction coefficient of the geom (see 'gs.materials.Rigid').
+        Get the build-time torsional friction coefficient of the geom (see 'gs.materials.Rigid').
         """
         return self._friction_torsional
 
     @property
     def friction_rolling(self):
         """
-        Get the rolling friction coefficient of the geom (see 'gs.materials.Rigid').
+        Get the build-time rolling friction coefficient of the geom (see 'gs.materials.Rigid').
         """
         return self._friction_rolling
 

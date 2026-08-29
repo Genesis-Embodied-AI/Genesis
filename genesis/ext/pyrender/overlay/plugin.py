@@ -563,8 +563,8 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             imgui.pop_style_color(3)
 
         # Time display (frame count * dt = simulation time)
-        sim_time = self.scene.t * self.scene.sim.dt
-        imgui.text(f"Time: {sim_time:.3f}s  Step: {self.scene.t}")
+        step = self.scene.sim.cur_step_global
+        imgui.text(f"Time: {step * self.scene.sim.dt:.3f}s  Step: {step}")
 
         # FPS display
         if self._fps_history:

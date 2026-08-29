@@ -101,10 +101,11 @@ def test_position_control(show_viewer):
     force_range[:, 1, 1] = float("+inf")
     scene.rigid_solver.dyn_info.dofs.force_range.from_numpy(tensor_to_array(force_range))
     for i in range(1000):
-        t = scene.t * scene.dt
-        pos_target = A * np.sin(2 * np.pi * f * t)
-        vel_target = A * 2 * np.pi * f * np.cos(2 * np.pi * f * t)
-        robot.control_dofs_position_velocity(torch.full((9,), pos_target), torch.full((9,), vel_target), envs_idx=1)
+        # The clock of the environment being tracked, which is the one the targets are sent to.
+        t = scene.get_time(envs_idx=1)
+        pos_target = A * torch.sin(2 * np.pi * f * t)
+        vel_target = A * 2 * np.pi * f * torch.cos(2 * np.pi * f * t)
+        robot.control_dofs_position_velocity(pos_target, vel_target, envs_idx=1)
         scene.step()
         assert_allclose(pos_target, robot.get_dofs_position(envs_idx=1), tol=1e-2)
 

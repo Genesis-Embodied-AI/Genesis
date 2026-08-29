@@ -52,6 +52,18 @@ def test_box_plane_dynamics(gs_sim, mj_sim, tol):
 
 
 @pytest.mark.required
+@pytest.mark.split_entities
+@pytest.mark.parametrize("model_name", ["two_free_boxes"])
+@pytest.mark.parametrize("gs_solver, gs_integrator", [(gs.constraint_solver.Newton, gs.integrator.implicitfast)])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_scene_aggregates_hold_across_entities(gs_sim, mj_sim, tol):
+    # Mujoco holds the two boxes in one model while Genesis holds one entity per box. The mean inertia the constraint
+    # solver scales its tolerances by is a scene aggregate, so it must come out the same however the same bodies are
+    # grouped into entities, which one entity per box is what tells apart.
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=10, tol=tol)
+
+
+@pytest.mark.required
 @pytest.mark.friction_torsional(True)
 @pytest.mark.parametrize(
     "model_name",

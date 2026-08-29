@@ -861,7 +861,7 @@ def mj_sim(
 
 @pytest.fixture
 def gs_sim(
-    xml_path,
+    xml_paths,
     gs_solver,
     gs_integrator,
     merge_fixed_links,
@@ -878,7 +878,7 @@ def gs_sim(
     from .utils.simulators import build_genesis_sim
 
     return build_genesis_sim(
-        xml_path,
+        xml_paths,
         gs_solver,
         gs_integrator,
         merge_fixed_links,

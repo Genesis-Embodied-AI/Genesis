@@ -119,8 +119,11 @@ class Options(RBC, BaseModel):
             if value is None and field not in self.model_fields_set:
                 del self_dump[field]
         merged = {**self_dump, **other_dump} if override else {**other_dump, **self_dump}
-        # Cannot use 'self.model_copy(update=merged)' because it bypasses validators
-        return self.__class__(**merged)
+        # Constructing the copy would mark every merged field as set, including the ones filled in from 'other',
+        # while 'model_fields_set' tells a value the user gave from a default. 'model_construct' takes that set
+        # explicitly and still runs 'model_post_init'. It performs no validation, which the merged values have no need
+        # of: they were validated, and the defaults among them resolved, as 'self' and 'other' were built.
+        return self.__class__.model_construct(_fields_set=set(self.model_fields_set), **merged)
 
     def __repr__colorized__(self) -> str:
         repr_items = tuple(self.__repr_args__())

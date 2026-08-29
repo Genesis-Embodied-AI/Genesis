@@ -488,7 +488,7 @@ def test_contact_forces(show_viewer):
     )
     scene.build(n_envs=5)
 
-    cube_weight = scene.rigid_solver._gravity[0] * cube.get_mass()
+    cube_weight = scene.rigid_solver.get_gravity(envs_idx=0) * cube.get_mass()
     motors_dof = np.arange(7)
     fingers_dof = np.arange(7, 9)
     qpos = np.array([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04])
@@ -547,10 +547,10 @@ def test_contact_forces(show_viewer):
         for _ in range(160):
             scene.step()
 
-        contact_forces = tensor_to_array(cube.get_links_net_contact_force())
-        errors = np.linalg.norm(contact_forces[:, 0, :] + cube_weight, ord=np.inf, axis=-1)
+        contact_forces = cube.get_links_net_contact_force()
+        errors = torch.linalg.norm(contact_forces[:, 0, :] + cube_weight, ord=float("inf"), dim=-1)
         all_errors.append(errors)
-    assert np.percentile(all_errors, 95) < 2e-4
+    assert torch.quantile(torch.cat(all_errors), 0.95) < 2e-4
 
 
 @pytest.mark.slow  # ~200s

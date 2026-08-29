@@ -19,15 +19,36 @@ def test_gravity(show_viewer, tol):
     scene = gs.Scene(show_viewer=show_viewer)
 
     sphere = scene.add_entity(gs.morphs.Sphere())
+    ghost = scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=(1.0, 0.0, 0.0),
+        ),
+        material=gs.materials.Kinematic(),
+    )
     scene.build(n_envs=3)
+
+    # Gravity belongs to the solvers that fall under it, and a solver that does not carries no way of setting it at
+    # all; the scene-wide call reaches only those that do.
+    with pytest.raises(AttributeError):
+        ghost.solver.set_gravity((0.0, 0.0, -9.81))
 
     envs_idx_cases = (
         ([-3, -1], (0, 2)),
-        (range(-3, 0), (0, 1, 2)),
-        (range(-1, 1), (2, 0)),
         (slice(-2, None), (1, 2)),
-        (slice(-1, None, -1), (2, 1, 0)),
+        (range(-3, -1), (0, 1)),
+        (torch.tensor((True, False, True)), (0, 2)),
+        # The last environment, named in each of the forms it can be named in: one index becomes a slice of itself, and
+        # the last one is where that has to be said with no stop at all.
+        (-1, (2,)),
+        ([-1], (2,)),
+        ((-1,), (2,)),
+        (np.int64(-1), (2,)),
+        (np.array((-1,)), (2,)),
+        (torch.tensor((-1,)), (2,)),
     )
+    # A slice stepping backwards names its environments in reverse, which the kernel resolves and a view cannot.
+    if not gs.use_zerocopy:
+        envs_idx_cases += ((slice(-1, 0, -1), (2, 1)),)
     gravity_values = torch.tensor(((1.0, 0.0, 0.0), (0.0, 2.0, 0.0), (0.0, 0.0, 3.0)))
     for envs_idx, expected_envs_idx in envs_idx_cases:
         values = gravity_values[: len(expected_envs_idx)]
@@ -44,12 +65,11 @@ def test_gravity(show_viewer, tol):
     scene.sim.set_gravity(torch.tensor([[9.0, 0.0, 0.0], [0.0, 2.0, 0.0]]), envs_idx=[0, 1])
     scene.sim.set_gravity(torch.tensor([1.0, 0.0, 0.0]), envs_idx=np.int64(-3))
     scene.sim.set_gravity(torch.tensor([0.0, 0.0, 3.0]), envs_idx=-1)
-    for envs_idx in (-4, 3, np.int64(-4), np.int64(3)):
-        with pytest.raises(gs.GenesisException, match="`envs_idx` out of range"):
-            scene.sim.set_gravity(torch.tensor([0.0, 0.0, 0.0]), envs_idx=envs_idx)
-    with np.testing.assert_raises(RuntimeError):
+    # A vector that is not one, and one vector per environment where a single environment was named: rejected by
+    # shape, with the shape said, rather than by whatever the write would have made of it.
+    with pytest.raises(gs.GenesisException, match="Invalid input shape"):
         scene.sim.set_gravity(torch.tensor([0.0, -10.0]))
-    with np.testing.assert_raises(RuntimeError):
+    with pytest.raises(gs.GenesisException, match="Invalid input shape"):
         scene.sim.set_gravity(torch.tensor([[0.0, 0.0, -10.0], [0.0, 0.0, -10.0]]), envs_idx=1)
 
     scene.step()
@@ -230,12 +250,13 @@ def test_apply_external_wrench(xml_path, show_viewer):
     end_effector_link_idx_local = robot.links[-1].idx_local
     duck_link_idx = duck.links[0].idx
     duck_mass = duck.get_mass()
-    duck_init_link_pos, duck_init_link_R = duck.base_link.pos, gu.quat_to_R(duck.base_link.quat)
+    duck_init_link_pos = duck.base_link.get_pos()
+    duck_init_link_R = gu.quat_to_R(duck.base_link.get_quat())
     # The duck is held at rest by cancelling gravity, but the cancelling force is applied away from its center of mass
     # so that the moment arm of 'pos' is exercised: the spurious torque it generates is undone by an opposite torque
     # about the very same frame, hence any error in the arm leaves the duck accelerating.
     duck_lever_arm = (0.2, -0.15, 0.1)
-    duck_force_local = duck_mass * GRAVITY * duck_init_link_R[2]
+    duck_force_local = tensor_to_array(duck_mass * GRAVITY * duck_init_link_R[2])
     for step in range(801):
         ee_pos = rigid_solver.get_links_pos(end_effector_link_idx)[0]
         duck_pos = rigid_solver.get_links_pos(duck_link_idx)[0]
@@ -389,7 +410,7 @@ def test_energy_analytical_and_conservation(spring_double_pendulum, show_viewer,
     plane.geoms[0].set_sol_params(undamped_sol_params)
     sphere_a.geoms[0].set_sol_params(undamped_sol_params)
 
-    mass = sphere_a.get_links_inertial_mass()
+    mass = sphere_a.get_links_mass()
     te_initial = sphere_a.get_total_energy()
 
     ke_a, pe_a, ke_b, pe_b, te_arm = [], [], [], [], []
