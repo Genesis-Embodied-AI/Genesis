@@ -196,16 +196,7 @@ def scaled_urdf_mimic():
             link = ET.SubElement(robot, "link", name=f"{pair_name}_{role}_link")
             inertial = ET.SubElement(link, "inertial")
             ET.SubElement(inertial, "mass", value="1.0")
-            ET.SubElement(
-                inertial,
-                "inertia",
-                ixx="0.01",
-                ixy="0.0",
-                ixz="0.0",
-                iyy="0.01",
-                iyz="0.0",
-                izz="0.01",
-            )
+            ET.SubElement(inertial, "inertia", ixx="0.01", ixy="0.0", ixz="0.0", iyy="0.01", iyz="0.0", izz="0.01")
 
         driver = ET.SubElement(robot, "joint", name=f"{pair_name}_driver_joint", type=driver_type)
         ET.SubElement(driver, "parent", link="base")

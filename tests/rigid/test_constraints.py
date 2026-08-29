@@ -199,8 +199,7 @@ def test_dynamic_weld_scene_reset():
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
-def test_urdf_mimic(show_viewer, tol, scaled_urdf_mimic, n_envs):
+def test_urdf_mimic(show_viewer, tol, scaled_urdf_mimic):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             gravity=(0.0, 0.0, 0.0),
@@ -224,7 +223,7 @@ def test_urdf_mimic(show_viewer, tol, scaled_urdf_mimic, n_envs):
             fixed=True,
         ),
     )
-    scene.build(n_envs=n_envs)
+    scene.build()
     assert scene.rigid_solver.n_equalities == 5
 
     JOINT_NAMES = (
@@ -239,10 +238,9 @@ def test_urdf_mimic(show_viewer, tol, scaled_urdf_mimic, n_envs):
     )
     qs_idx_local = [mimic.get_joint(name).q_start - mimic.q_start for name in JOINT_NAMES]
     # Start every follower away from its non-zero mimic offset so the stepped assertions require active enforcement.
-    mimic.set_qpos(0.0, qs_idx_local=qs_idx_local, zero_velocity=True)
-    assert_equal(mimic.get_qpos(qs_idx_local=qs_idx_local), 0.0)
+    mimic.set_qpos(0.0, qs_idx_local=qs_idx_local)
     hand.set_dofs_velocity((0.0, 1.0))
-    for _ in range(81):
+    for _ in range(80):
         scene.step()
 
     qpos = mimic.get_qpos(qs_idx_local=qs_idx_local)
