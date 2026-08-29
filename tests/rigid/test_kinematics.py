@@ -112,7 +112,7 @@ def test_link_velocity(gs_sim, tol):
                 expected += (spin - turn[0]) * np.array([anchor[1] - center[1], center[0] - anchor[0], 0.0])
             reported = tensor_to_array(solver.get_links_vel(i_l, ref=gs.link_ref_frame.link_COM))
             assert_allclose(reported, expected, tol=tol)
-    # Rigid stepping owns link velocity propagation, so getters must not trigger a kinematic refresh
+    # A skipped forward update preserves the last propagated rigid link state
     gs_robot.set_dofs_velocity([0.3, -0.2])
     links_pos = gs_robot.get_links_pos()
     links_ang = gs_robot.get_links_ang()
