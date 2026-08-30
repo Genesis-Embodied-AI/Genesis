@@ -179,7 +179,7 @@ def test_cloth_attach_fixed_point(n_envs, material_type, show_viewer, tol):
 
 
 @pytest.mark.required
-def test_cloth_attach_rigid_link(show_viewer):
+def test_cloth_attach_rigid_link(tmp_path, show_viewer):
     particle_size = 0.01
     box_height = 2.25
 
@@ -253,6 +253,9 @@ def test_cloth_attach_rigid_link(show_viewer):
     link_pos1 = scene.rigid_solver.links[box_link_idx].get_pos().clone()
     assert_allclose((cloth_pos1 - cloth_pos0).movedim(0, -2), link_pos1 - link_pos0, atol=2e-5)
 
+    ckpt_path = tmp_path / "attached.pkl"
+    scene.save_checkpoint(ckpt_path)
+
     # Release cloth and restore box's speed
     box.set_dofs_velocity(vel, dofs_idx_local=[0, 1, 2])
     cloth.release_particle(particles_idx)
@@ -265,3 +268,15 @@ def test_cloth_attach_rigid_link(show_viewer):
     link_disp = link_pos2 - link_pos1
     cloth_disp = cloth_pos2 - cloth_pos1
     assert ((cloth_disp.movedim(0, -2) - link_disp).norm(dim=-1) > 0.2).all()
+
+    # The coupling owns the link a particle is attached to, so a checkpoint taken while the cloth is attached
+    # restores the attachment and the cloth travels with the link again.
+    scene.load_checkpoint(ckpt_path)
+    box.set_dofs_velocity(vel, dofs_idx_local=[0, 1, 2])
+    cloth_pos3 = cloth.get_particles_pos()[:, particles_idx].clone()
+    link_pos3 = scene.rigid_solver.links[box_link_idx].get_pos().clone()
+    for _ in range(10):
+        scene.step()
+    cloth_pos4 = cloth.get_particles_pos()[:, particles_idx]
+    link_pos4 = scene.rigid_solver.links[box_link_idx].get_pos()
+    assert_allclose((cloth_pos4 - cloth_pos3).movedim(0, -2), link_pos4 - link_pos3, atol=2e-5)

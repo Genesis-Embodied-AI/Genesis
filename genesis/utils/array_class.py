@@ -1,7 +1,6 @@
 import dataclasses
 import math
 from enum import IntEnum
-from typing import NamedTuple
 
 import quadrants as qd
 from typing_extensions import dataclass_transform  # Made it into standard lib from Python 3.12
@@ -9,6 +8,7 @@ import numpy as np
 import torch
 
 import genesis as gs
+from genesis.utils.misc import qd_to_torch
 
 
 def _tensor_backend():
@@ -75,6 +75,59 @@ def V_SCALAR_FROM(dtype, value):
     data = V(dtype=dtype, shape=())
     data.fill(value)
     return data
+
+
+def _iter_struct_arrays(prefix, struct):
+    if dataclasses.is_dataclass(struct):
+        for field in dataclasses.fields(struct):
+            yield from _iter_struct_arrays(f"{prefix}.{field.name}", getattr(struct, field.name))
+    elif isinstance(struct, qd.StructField):
+        # Each member of a struct field is a field of its own, under either memory layout
+        for member_name in struct.keys:
+            yield from _iter_struct_arrays(f"{prefix}.{member_name}", getattr(struct, member_name))
+    elif isinstance(struct, (qd.Tensor, qd.Field, qd.Ndarray)):
+        yield prefix, struct
+
+
+def iter_arrays(roots):
+    """Yield (dotted name, array) for every array the given roots hold, each root a (name, holder) pair.
+
+    A holder contributes the attributes of its own '__dict__', each followed through nested dataclasses, so the walk
+    covers what the holder owns and stops at any other kind of object. Only attributes already present are read, so a
+    structure a holder creates on demand joins the walk from the moment it exists.
+    """
+    for prefix, root in roots:
+        for attr_name, struct in root.__dict__.items():
+            yield from _iter_struct_arrays(f"{prefix}.{attr_name}", struct)
+
+
+def dump_arrays(roots) -> dict[str, torch.Tensor]:
+    """Read every array the given roots hold into a flat {dotted name: tensor} mapping.
+
+    Each tensor windows onto the buffer it was read from wherever zero-copy allows, so the mapping holds the state
+    the scene is in at the call and follows it from the next step on.
+    """
+    return {key: qd_to_torch(value) for key, value in iter_arrays(roots)}
+
+
+def load_arrays(roots, arrays) -> None:
+    """Refill every array the given roots hold from a mapping 'dump_arrays' produced, warning about each one it misses.
+
+    Metal leaves the writes on the torch stream, so a caller launching a kernel over these buffers synchronizes first.
+    """
+    for key, value in iter_arrays(roots):
+        saved = arrays.get(key)
+        if saved is None:
+            gs.logger.warning(f"Failed to load {key}. Not found in stored arrays.")
+            continue
+
+        if gs.use_zerocopy:
+            view = qd_to_torch(value, copy=False)
+            if tuple(view.shape) != tuple(saved.shape):
+                gs.raise_exception(f"Shape {tuple(saved.shape)} stored for {key}, which holds {tuple(view.shape)}.")
+            view.copy_(saved)
+        else:
+            value.from_torch(saved)
 
 
 # =========================================== ErrorCode ===========================================
@@ -551,7 +604,8 @@ def get_kinematics_scratch(solver):
     )
 
 
-class WeightScratch(NamedTuple):
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class WeightScratch:
     """Buffers used to compute the constraint inverse weights of one solver.
 
     One weight needs one row of a link Jacobian and the mass-matrix solve against that row, which is what these two
@@ -569,7 +623,8 @@ def get_weight_scratch(solver):
     )
 
 
-class IKScratch(NamedTuple):
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class IKScratch:
     """The three solve-time buffers an inverse-kinematics call needs, shared by every entity of one solver.
 
     Sized by the largest entity the solver holds and by the target cap, so each solve writes the leading rows its own

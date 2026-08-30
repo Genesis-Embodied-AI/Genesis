@@ -9,10 +9,9 @@ from typing import TYPE_CHECKING, Callable, Iterable, Literal, overload
 
 import numpy as np
 import torch
-import quadrants as qd
-from quadrants.lang import impl
 
 import genesis as gs
+import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 from genesis.engine.force_fields import ForceField
@@ -1521,26 +1520,17 @@ class Scene(RBC):
         self._backward_ready = False
         self._forward_ready = False
 
-    def dump_ckpt_to_numpy(self) -> dict[str, np.ndarray]:
+    def _array_roots(self):
+        """Return the holders of every array the scene holds, each paired with its key prefix.
+
+        The coupler belongs to a pair of solvers and to neither of them, and it owns the state of their exchange (the
+        link each particle is attached to, and the contact normals of the last exchange).
         """
-        Collect every Quadrants field in the **scene and its active solvers** and
-        return them as a flat ``{key: ndarray}`` dictionary.
-
-        Returns
-        -------
-        dict[str, np.ndarray]
-            Mapping ``"Class.attr[.member]" -> array`` with raw field data.
-        """
-        arrays: dict[str, np.ndarray] = {}
-
-        for name, value in self.__dict__.items():
-            if isinstance(value, (qd.Tensor, qd.Field, qd.Ndarray)):
-                arrays[".".join((self.__class__.__name__, name))] = value.to_numpy()
-
+        coupler = self._sim.coupler
+        roots = [(self.__class__.__name__, self), (type(coupler).__name__, coupler)]
         for solver in self.active_solvers:
-            arrays.update(solver.dump_ckpt_to_numpy())
-
-        return arrays
+            roots.extend(solver._array_roots())
+        return tuple(roots)
 
     @gs.assert_built
     def save_checkpoint(self, path: str | os.PathLike) -> None:
@@ -1555,8 +1545,8 @@ class Scene(RBC):
         state = {
             "timestamp": time.time(),
             "step_index": self._sim.cur_step_global,
-            "steps": tensor_to_array(self._sim._steps),
-            "arrays": self.dump_ckpt_to_numpy(),
+            "steps": self._sim._steps,
+            "arrays": array_class.dump_arrays(self._array_roots()),
         }
         with open(path, "wb") as f:
             pickle.dump(state, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -1574,21 +1564,14 @@ class Scene(RBC):
         with open(path, "rb") as f:
             state = pickle.load(f)
 
-        arrays = state["arrays"]
-
-        for name, value in self.__dict__.items():
-            if isinstance(value, (qd.Tensor, qd.Field, qd.Ndarray)):
-                key = ".".join((self.__class__.__name__, name))
-                if key in arrays:
-                    value.from_numpy(arrays[key])
-
-        for solver in self.active_solvers:
-            solver.load_ckpt_from_numpy(arrays)
+        array_class.load_arrays(self._array_roots(), state["arrays"])
+        if gs.use_zerocopy and gs.backend == gs.metal:
+            torch.mps.synchronize()
 
         # Two clocks, and neither stands for the other: the tape is indexed by how many times the host called step,
         # while what each environment has simulated is its own and survives a reset of its neighbours.
         self._sim._cur_substep_global = state["step_index"] * self._sim.substeps
-        self._sim._steps[:] = torch.as_tensor(state["steps"], device=gs.device)
+        self._sim._steps[:] = state["steps"].to(gs.device)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- utilities --------------------------------------

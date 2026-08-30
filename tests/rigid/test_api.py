@@ -1231,6 +1231,18 @@ def test_scene_saver_franka(tmp_path, show_viewer, tol):
             file="xml/franka_emika_panda/panda.xml",
         ),
     )
+    scene1.add_entity(
+        gs.morphs.Plane(),
+    )
+    boxes1 = [
+        scene1.add_entity(
+            gs.morphs.Box(
+                pos=(0.6, 0.0, 0.1 + 0.21 * i),
+                size=(0.2, 0.2, 0.2),
+            ),
+        )
+        for i in range(3)
+    ]
     scene1.build()
 
     dof_idx = [j.dofs_idx_local[0] for j in franka1.joints]
@@ -1255,6 +1267,16 @@ def test_scene_saver_franka(tmp_path, show_viewer, tol):
             file="xml/franka_emika_panda/panda.xml",
         ),
     )
+    scene2.add_entity(
+        gs.morphs.Plane(),
+    )
+    for i in range(3):
+        scene2.add_entity(
+            gs.morphs.Box(
+                pos=(0.6, 0.0, 0.1 + 0.21 * i),
+                size=(0.2, 0.2, 0.2),
+            ),
+        )
     scene2.build()
     scene2.load_checkpoint(ckpt_path)
 
@@ -1266,6 +1288,17 @@ def test_scene_saver_franka(tmp_path, show_viewer, tol):
     # A checkpoint carries how long each environment had simulated, so the loaded scene reports the time of the pose
     # it restored rather than the one it had reached on its own.
     assert_allclose(scene1.get_time(), scene2.get_time(), tol=gs.EPS)
+
+    # A checkpoint restores every array the solver owns, contacts and warm start included, so a scene resumed from
+    # one steps exactly as it stepped from the state it was saved at.
+    resumed = []
+    for _ in range(10):
+        scene1.step()
+        resumed.append(torch.stack([box.get_pos() for box in boxes1]))
+    scene1.load_checkpoint(ckpt_path)
+    for reference in resumed:
+        scene1.step()
+        assert_equal(torch.stack([box.get_pos() for box in boxes1]), reference)
 
 
 @pytest.mark.required

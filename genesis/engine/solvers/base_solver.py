@@ -1,4 +1,3 @@
-import dataclasses
 import enum
 import functools
 import inspect
@@ -356,76 +355,17 @@ class Solver(RBC):
     def build(self):
         self._B = self._sim._B
 
-    def _iter_data_manager_tensors(self):
-        """Yield (store name, tensor) for every tensor reachable from the data manager, descending through the
-        nested per-component dataclasses."""
+    def _array_roots(self):
+        """Return the holders of the arrays this solver owns, each paired with its key prefix.
 
-        def walk(prefix, struct):
-            if dataclasses.is_dataclass(struct):
-                for field in dataclasses.fields(struct):
-                    yield from walk(f"{prefix}.{field.name}", getattr(struct, field.name))
-            elif isinstance(struct, (qd.Tensor, qd.Field, qd.Ndarray)):
-                yield prefix, struct
-
-        for attr_name, struct in self.data_manager.__dict__.items():
-            yield from walk(f"{self.__class__.__name__}.data_manager.{attr_name}", struct)
-
-    def dump_ckpt_to_numpy(self) -> dict[str, np.ndarray]:
-        arrays: dict[str, np.ndarray] = {}
-
-        for attr_name, value in self.__dict__.items():
-            if not isinstance(value, (qd.Tensor, qd.Field, qd.Ndarray)):
-                continue
-
-            key_base = ".".join((self.__class__.__name__, attr_name))
-            data = value.to_numpy()
-
-            # StructField -> data is a dict: flatten each member
-            if isinstance(data, dict):
-                for sub_name, sub_arr in data.items():
-                    arrays[f"{key_base}.{sub_name}"] = sub_arr
-            else:
-                arrays[key_base] = data
-
+        Each holder is named here because an array is reachable through several attributes, and a walk that follows
+        every reference reaches the simulator and from there the state of another solver.
+        """
+        name = self.__class__.__name__
+        roots = ((name, self),)
         if self.data_manager is not None:
-            for store_name, sub_arr in self._iter_data_manager_tensors():
-                arrays[store_name] = sub_arr.to_numpy()
-
-        return arrays
-
-    def load_ckpt_from_numpy(self, arr_dict: dict[str, np.ndarray]) -> None:
-        for attr_name, value in self.__dict__.items():
-            if not isinstance(value, (qd.Tensor, qd.Field, qd.Ndarray)):
-                continue
-
-            key_base = ".".join((self.__class__.__name__, attr_name))
-            member_prefix = key_base + "."
-
-            # ---- StructField: gather its members -----------------------------
-            member_items = {}
-            for saved_key, saved_arr in arr_dict.items():
-                if saved_key.startswith(member_prefix):
-                    sub_name = saved_key[len(member_prefix) :]
-                    member_items[sub_name] = saved_arr
-
-            if member_items:  # we found at least one sub-member
-                value.from_numpy(member_items)
-                continue
-
-            # ---- Ordinary field ---------------------------------------------
-            if key_base not in arr_dict:
-                continue  # nothing saved for this attribute
-
-            arr = arr_dict[key_base]
-            value.from_numpy(arr)
-
-        # if it has data_manager, add it to the arrays
-        if self.data_manager is not None:
-            for store_name, sub_arr in self._iter_data_manager_tensors():
-                if store_name in arr_dict:
-                    sub_arr.from_numpy(arr_dict[store_name])
-                else:
-                    gs.logger.warning(f"Failed to load {store_name}. Not found in stored arrays.")
+            roots = (*roots, (f"{name}.data_manager", self.data_manager))
+        return roots
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

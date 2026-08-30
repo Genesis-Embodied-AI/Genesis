@@ -2909,6 +2909,17 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         tensor = qd_to_torch(self.dyn_info.links.inertial_pos, envs_idx, links_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 and self._options.batch_links_info else tensor
 
+    def _array_roots(self):
+        # The collider and the constraint solver own the contacts and the warm start, which a scene resumed from a
+        # checkpoint carries over for its next step to match the step that followed the state it was saved at.
+        name = self.__class__.__name__
+        roots = super()._array_roots()
+        if self.collider is not None:
+            roots = (*roots, (f"{name}.collider", self.collider))
+        if self.constraint_solver is not None:
+            roots = (*roots, (f"{name}.constraint_solver", self.constraint_solver))
+        return roots
+
     @property
     def is_links_info_batched(self) -> bool:
         """Whether the inertial properties of a link are stored per environment rather than shared by the batch."""
