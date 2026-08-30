@@ -224,8 +224,8 @@ def compare_links(compared_links, usd_links, tol):
         err_msg = f"Properties mismatched for link {link_name}"
 
         # Compare link properties
-        assert_allclose(compared_link.pos, usd_link.pos, tol=tol, err_msg=err_msg)
-        assert_allclose(compared_link.quat, usd_link.quat, tol=tol, err_msg=err_msg)
+        assert_allclose(compared_link.desc.pos, usd_link.desc.pos, tol=tol, err_msg=err_msg)
+        assert_allclose(compared_link.desc.quat, usd_link.desc.quat, tol=tol, err_msg=err_msg)
         assert compared_link.is_fixed == usd_link.is_fixed, err_msg
         assert len(compared_link.geoms) == len(usd_link.geoms), err_msg
         assert compared_link.n_joints == usd_link.n_joints, err_msg
@@ -245,13 +245,13 @@ def compare_links(compared_links, usd_links, tol):
         assert compared_parent_name == usd_parent_name, err_msg
 
         # Compare inertial properties if available
-        assert_allclose(compared_link.inertial_pos, usd_link.inertial_pos, tol=tol, err_msg=err_msg)
-        assert_allclose(compared_link.inertial_quat, usd_link.inertial_quat, tol=tol, err_msg=err_msg)
+        assert_allclose(compared_link.desc.inertial_pos, usd_link.desc.inertial_pos, tol=tol, err_msg=err_msg)
+        assert_allclose(compared_link.desc.inertial_quat, usd_link.desc.inertial_quat, tol=tol, err_msg=err_msg)
 
         # Skip mass and inertia checks for fixed links - they're not used in simulation
         if not compared_link.is_fixed:
-            assert_allclose(compared_link.inertial_mass, usd_link.inertial_mass, atol=tol, err_msg=err_msg)
-            assert_allclose(compared_link.inertial_i, usd_link.inertial_i, atol=tol, err_msg=err_msg)
+            assert_allclose(compared_link.desc.mass, usd_link.desc.mass, atol=tol, err_msg=err_msg)
+            assert_allclose(compared_link.desc.inertia, usd_link.desc.inertia, atol=tol, err_msg=err_msg)
 
 
 def compare_joints(compared_joints, usd_joints):
@@ -289,20 +289,20 @@ def compare_joints(compared_joints, usd_joints):
         # Skip mass/inertia-dependent property checks for fixed joints - they're not used in simulation
         if compared_joint.type != gs.JOINT_TYPE.FIXED:
             # Compare dof limits
-            assert_joint_allclose(compared_joint.dofs_limit, usd_joint.dofs_limit)
+            assert_joint_allclose(compared_joint.desc.dofs_limit, usd_joint.desc.dofs_limit)
 
             # Compare dof motion properties
             assert_joint_allclose(compared_joint.dofs_motion_ang, usd_joint.dofs_motion_ang)
             assert_joint_allclose(compared_joint.dofs_motion_vel, usd_joint.dofs_motion_vel)
-            assert_joint_allclose(compared_joint.dofs_frictionloss, usd_joint.dofs_frictionloss)
-            assert_joint_allclose(compared_joint.dofs_stiffness, usd_joint.dofs_stiffness)
-            assert_joint_allclose(compared_joint.dofs_force_range, usd_joint.dofs_force_range)
-            assert_joint_allclose(compared_joint.dofs_damping, usd_joint.dofs_damping)
-            assert_joint_allclose(compared_joint.dofs_armature, usd_joint.dofs_armature)
+            assert_joint_allclose(compared_joint.desc.dofs_frictionloss, usd_joint.desc.dofs_frictionloss)
+            assert_joint_allclose(compared_joint.desc.dofs_stiffness, usd_joint.desc.dofs_stiffness)
+            assert_joint_allclose(compared_joint.desc.dofs_force_range, usd_joint.desc.dofs_force_range)
+            assert_joint_allclose(compared_joint.desc.dofs_damping, usd_joint.desc.dofs_damping)
+            assert_joint_allclose(compared_joint.desc.dofs_armature, usd_joint.desc.dofs_armature)
 
             # Compare dof control properties
-            assert_joint_allclose(compared_joint.dofs_act_gain, usd_joint.dofs_act_gain)
-            assert_joint_allclose(compared_joint.dofs_act_bias, usd_joint.dofs_act_bias)
+            assert_joint_allclose(compared_joint.desc.dofs_act_gain, usd_joint.desc.dofs_act_gain)
+            assert_joint_allclose(compared_joint.desc.dofs_act_bias, usd_joint.desc.dofs_act_bias)
 
 
 def compare_geoms(compared_geoms, usd_geoms, tol):
@@ -332,10 +332,13 @@ def compare_vgeoms(compared_vgeoms, usd_vgeoms, tol):
 
     for compared_vgeom, usd_vgeom in zip(compared_vgeoms_sorted, usd_vgeoms_sorted):
         compared_vgeom_pos, compared_vgeom_quat = gu.transform_pos_quat_by_trans_quat(
-            compared_vgeom.init_pos, compared_vgeom.init_quat, compared_vgeom.link.pos, compared_vgeom.link.quat
+            compared_vgeom.init_pos,
+            compared_vgeom.init_quat,
+            compared_vgeom.link.desc.pos,
+            compared_vgeom.link.desc.quat,
         )
         usd_vgeom_pos, usd_vgeom_quat = gu.transform_pos_quat_by_trans_quat(
-            usd_vgeom.init_pos, usd_vgeom.init_quat, usd_vgeom.link.pos, usd_vgeom.link.quat
+            usd_vgeom.init_pos, usd_vgeom.init_quat, usd_vgeom.link.desc.pos, usd_vgeom.link.desc.quat
         )
         compared_vgeom_T = gu.trans_quat_to_T(compared_vgeom_pos, compared_vgeom_quat)
         usd_vgeom_T = gu.trans_quat_to_T(usd_vgeom_pos, usd_vgeom_quat)

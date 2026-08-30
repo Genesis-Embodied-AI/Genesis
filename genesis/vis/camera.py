@@ -294,7 +294,7 @@ class Camera(RBC):
                 entity_pos = entity.get_pos(self._env_idx, relative=False).reshape((-1,))
             pos_rel = self._pos - entity_pos
         else:
-            pos_rel = self._initial_pos - torch.tensor(entity.base_link.pos, dtype=gs.tc_float, device=gs.device)
+            pos_rel = self._initial_pos - torch.tensor(entity.base_link.desc.pos, dtype=gs.tc_float, device=gs.device)
 
         if (pos_rel.abs() < gs.EPS).all():
             gs.raise_exception("Camera must not be co-located with base link of entity to which it is attached.")

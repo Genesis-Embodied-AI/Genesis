@@ -89,14 +89,14 @@ def test_morph_scale(scale, mesh_file, mesh_urdf):
         vgeom_orig = obj_orig.vgeoms[i_vg]
         mesh_orig = vgeom_orig.vmesh.trimesh.copy()
         w_pos_orig, w_quat_orig = gu.transform_pos_quat_by_trans_quat(
-            vgeom_orig.init_pos, vgeom_orig.init_quat, obj_orig.base_link.pos, obj_orig.base_link.quat
+            vgeom_orig.init_pos, vgeom_orig.init_quat, obj_orig.base_link.desc.pos, obj_orig.base_link.desc.quat
         )
         mesh_orig.apply_transform(gu.trans_quat_to_T(w_pos_orig, w_quat_orig))
 
         vgeom_scaled = obj_scaled.vgeoms[i_vg]
         mesh_scaled = vgeom_scaled.vmesh.trimesh.copy()
         w_pos_scaled, w_quat_scaled = gu.transform_pos_quat_by_trans_quat(
-            vgeom_scaled.init_pos, vgeom_scaled.init_quat, obj_scaled.base_link.pos, obj_scaled.base_link.quat
+            vgeom_scaled.init_pos, vgeom_scaled.init_quat, obj_scaled.base_link.desc.pos, obj_scaled.base_link.desc.quat
         )
         mesh_scaled.apply_transform(gu.trans_quat_to_T(w_pos_scaled, w_quat_scaled))
         assert_allclose(mesh_orig.vertices, mesh_scaled.vertices, tol=gs.EPS)
@@ -105,7 +105,10 @@ def test_morph_scale(scale, mesh_file, mesh_urdf):
             vgeom_robot = robot_scaled.vgeoms[i_vg]
             mesh_robot_scaled = vgeom_robot.vmesh.trimesh.copy()
             w_pos_robot, w_quat_robot = gu.transform_pos_quat_by_trans_quat(
-                vgeom_robot.init_pos, vgeom_robot.init_quat, robot_scaled.base_link.pos, robot_scaled.base_link.quat
+                vgeom_robot.init_pos,
+                vgeom_robot.init_quat,
+                robot_scaled.base_link.desc.pos,
+                robot_scaled.base_link.desc.quat,
             )
             mesh_robot_scaled.apply_transform(gu.trans_quat_to_T(w_pos_robot, w_quat_robot))
             assert_allclose(mesh_robot_scaled.vertices, mesh_scaled.vertices, tol=gs.EPS)
@@ -213,7 +216,7 @@ def test_mesh_yup(show_viewer):
         for vgeom in entity.vgeoms:
             tmesh = vgeom.vmesh.trimesh.copy()
             w_pos, w_quat = gu.transform_pos_quat_by_trans_quat(
-                vgeom.init_pos, vgeom.init_quat, vgeom.link.pos, vgeom.link.quat
+                vgeom.init_pos, vgeom.init_quat, vgeom.link.desc.pos, vgeom.link.desc.quat
             )
             tmesh.apply_transform(gu.trans_quat_to_T(w_pos, w_quat))
             tmeshes.append(tmesh)
@@ -246,7 +249,7 @@ def test_urdf_yup(file_meshes_are_zup, mesh_urdf, show_viewer):
     tmeshes = []
     for vgeom in robot.vgeoms:
         tmesh = vgeom.vmesh.trimesh.copy()
-        tmesh.apply_transform(gu.trans_quat_to_T(vgeom.link.pos, vgeom.link.quat))
+        tmesh.apply_transform(gu.trans_quat_to_T(vgeom.link.desc.pos, vgeom.link.desc.quat))
         tmeshes.append(tmesh)
     combined = trimesh.util.concatenate(tmeshes)
     assert_allclose(combined.center_mass, (-0.012, -0.142, 0.397), tol=0.002)

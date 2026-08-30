@@ -89,7 +89,7 @@ def compute_link_to_link_transform(from_link, to_link):
     while link is not to_link:
         if link.parent_idx < 0:
             gs.raise_exception(f"Cannot compute transform from link {from_link} to {to_link}")
-        pos, quat = gu.transform_pos_quat_by_trans_quat(pos, quat, link.pos, link.quat)
+        pos, quat = gu.transform_pos_quat_by_trans_quat(pos, quat, link.desc.pos, link.desc.quat)
         link = entity.links[link.parent_idx - entity.link_start]
 
     return pos, quat

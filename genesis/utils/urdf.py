@@ -10,6 +10,7 @@ import xacro
 import genesis as gs
 import genesis.utils.gltf as gltf_utils
 from genesis.ext import urdfpy
+from genesis.utils.description import EqualityDescription, GeomDescription, JointDescription, LinkDescription
 
 from . import geom as gu
 from .misc import get_assets_dir
@@ -88,14 +89,14 @@ def load_xacro(path, mappings):
     return robot
 
 
-def order_links_depth_first(l_infos, j_infos, links_g_infos=None):
+def order_links_depth_first(l_descs, j_descs, links_g_descs=None):
     # Re-order links depth-first so that each subtree occupies a contiguous range and parents precede their children.
-    n_links = len(l_infos)
+    n_links = len(l_descs)
     dict_child = {k: [] for k in range(n_links)}
     for lc in range(n_links):
-        if "parent_idx" not in l_infos[lc]:
-            l_infos[lc]["parent_idx"] = -1
-        lp = l_infos[lc]["parent_idx"]
+        if l_descs[lc].parent_idx is None:
+            l_descs[lc].parent_idx = -1
+        lp = l_descs[lc].parent_idx
         if lp != -1:
             dict_child[lp].append(lc)
 
@@ -104,7 +105,7 @@ def order_links_depth_first(l_infos, j_infos, links_g_infos=None):
     # their original relative order, and the result matches MuJoCo's body ordering. Contiguity lets the per-tree
     # mass-matrix factorization stay block-local instead of spanning the whole (possibly multi-body) entity.
     ordered_links_idx = []
-    stack_topology = [lc for lc in reversed(range(n_links)) if l_infos[lc]["parent_idx"] == -1]
+    stack_topology = [lc for lc in reversed(range(n_links)) if l_descs[lc].parent_idx == -1]
     while stack_topology:
         link = stack_topology.pop()
         ordered_links_idx.append(link)
@@ -115,19 +116,19 @@ def order_links_depth_first(l_infos, j_infos, links_g_infos=None):
         # avoid case with worldbody without any body (geom directly assigned to worldbody)
         return [], [], [], []
 
-    for l_info in l_infos:
-        if l_info["parent_idx"] >= 0:  # non-base link
-            l_info["parent_idx"] = ordered_links_idx.index(l_info["parent_idx"])
-        if "root_idx" in l_info:
-            l_info["root_idx"] = ordered_links_idx.index(l_info["root_idx"])
+    for l_desc in l_descs:
+        if l_desc.parent_idx >= 0:  # non-base link
+            l_desc.parent_idx = ordered_links_idx.index(l_desc.parent_idx)
+        if l_desc.root_idx is not None:
+            l_desc.root_idx = ordered_links_idx.index(l_desc.root_idx)
 
-    new_l_infos = [l_infos[i] for i in ordered_links_idx]
-    new_j_infos = [j_infos[i] for i in ordered_links_idx]
+    new_l_descs = [l_descs[i] for i in ordered_links_idx]
+    new_j_descs = [j_descs[i] for i in ordered_links_idx]
 
-    if links_g_infos is not None:
-        links_g_infos = [links_g_infos[i] for i in ordered_links_idx]
+    if links_g_descs is not None:
+        links_g_descs = [links_g_descs[i] for i in ordered_links_idx]
 
-    return new_l_infos, new_j_infos, links_g_infos, ordered_links_idx
+    return new_l_descs, new_j_descs, links_g_descs, ordered_links_idx
 
 
 def parse_urdf(morph, surface):
@@ -156,35 +157,34 @@ def parse_urdf(morph, surface):
     # Note that each link corresponds to one joint
     n_links = len(robot.links)
     assert n_links == len(robot.joints) + 1
-    l_infos = [dict() for _ in range(n_links)]
-    links_j_infos = [[] for _ in range(n_links)]
-    links_g_infos = [[] for _ in range(n_links)]
+    # A link has no parent and a neutral pose until the joint reaching it says otherwise, and its inverse weight is
+    # computed later, from the inertia the whole tree ends up with.
+    l_descs = [
+        LinkDescription(
+            name=link.name,
+            parent_idx=-1,
+            pos=gu.zero_pos(),
+            quat=gu.identity_quat(),
+            inertial_pos=None,
+            inertial_quat=gu.identity_quat(),
+            inertia=None,
+            mass=None,
+            invweight=np.full((2,), fill_value=-1.0),
+        )
+        for link in robot.links
+    ]
+    links_j_descs = [[] for _ in range(n_links)]
+    links_g_descs = [[] for _ in range(n_links)]
 
-    for link, l_info, link_g_infos in zip(robot.links, l_infos, links_g_infos):
-        l_info["name"] = link.name
-
-        # No parent by default. It will be overwritten latter on if appropriate.
-        l_info["parent_idx"] = -1
-
-        # Neutral pose by default. It will be overwritten latter on if necessary.
-        l_info["pos"] = gu.zero_pos()
-        l_info["quat"] = gu.identity_quat()
-
-        # we compute urdf's invweight later
-        l_info["invweight"] = np.full((2,), fill_value=-1.0)
-
-        l_info["inertial_pos"] = None
-        l_info["inertial_quat"] = gu.identity_quat()
-        l_info["inertial_i"] = None
-        l_info["inertial_mass"] = None
+    for link, l_desc, link_g_descs in zip(robot.links, l_descs, links_g_descs):
         if link.inertial is not None:
             if link.inertial.origin is not None:
-                l_info["inertial_pos"] = link.inertial.origin[:3, 3]
-                l_info["inertial_quat"] = gu.R_to_quat(link.inertial.origin[:3, :3])
+                l_desc.inertial_pos = link.inertial.origin[:3, 3]
+                l_desc.inertial_quat = gu.R_to_quat(link.inertial.origin[:3, :3])
             if link.inertial.inertia is not None:
-                l_info["inertial_i"] = link.inertial.inertia
+                l_desc.inertia = link.inertial.inertia
             if link.inertial.mass is not None:
-                l_info["inertial_mass"] = link.inertial.mass
+                l_desc.mass = link.inertial.mass
 
         for geom_prop in (*link.collisions, *link.visuals):
             geometry = geom_prop.geometry.geometry
@@ -272,49 +272,45 @@ def parse_urdf(morph, surface):
                 geom_meshes.append(mesh)
 
             for mesh in geom_meshes:
-                g_info = {
-                    "mesh" if geom_is_col else "vmesh": mesh,
-                    "type": geom_type,
-                    "data": geom_data,
-                    "pos": geom_prop.origin[:3, 3].copy(),
-                    "quat": gu.R_to_quat(geom_prop.origin[:3, :3]),
-                    "contype": 1 if geom_is_col else 0,
-                    "conaffinity": 1 if geom_is_col else 0,
-                    "friction": gu.default_friction(),
-                    "sol_params": gu.default_solver_params(),
-                }
-                link_g_infos.append(g_info)
+                link_g_descs.append(
+                    GeomDescription(
+                        contype=1 if geom_is_col else 0,
+                        conaffinity=1 if geom_is_col else 0,
+                        type=geom_type,
+                        data=geom_data,
+                        pos=geom_prop.origin[:3, 3].copy(),
+                        quat=gu.R_to_quat(geom_prop.origin[:3, :3]),
+                        mesh=mesh if geom_is_col else None,
+                        vmesh=None if geom_is_col else mesh,
+                        friction=gu.default_friction(),
+                        sol_params=gu.default_solver_params(),
+                    )
+                )
 
     #########################  non-base joints and links #########################
     for joint in robot.joints:
         idx = link_name_to_idx[joint.child]
-        l_info = l_infos[idx]
-        j_info = dict()
-        links_j_infos[idx].append(j_info)
+        l_desc = l_descs[idx]
 
-        j_info["name"] = joint.name
-        j_info["pos"] = gu.zero_pos()
-        j_info["quat"] = gu.identity_quat()
-
-        l_info["parent_idx"] = link_name_to_idx[joint.parent]
-        l_info["pos"] = joint.origin[:3, 3]
-        l_info["quat"] = gu.R_to_quat(joint.origin[:3, :3])
+        l_desc.parent_idx = link_name_to_idx[joint.parent]
+        l_desc.pos = joint.origin[:3, 3]
+        l_desc.quat = gu.R_to_quat(joint.origin[:3, :3])
 
         if joint.joint_type == "fixed":
-            j_info["dofs_motion_ang"] = np.zeros((0, 3))
-            j_info["dofs_motion_vel"] = np.zeros((0, 3))
-            j_info["dofs_limit"] = np.zeros((0, 2))
-            j_info["dofs_stiffness"] = np.zeros((0))
+            dofs_motion_ang = np.zeros((0, 3))
+            dofs_motion_vel = np.zeros((0, 3))
+            dofs_limit = np.zeros((0, 2))
+            dofs_stiffness = np.zeros((0))
 
-            j_info["type"] = gs.JOINT_TYPE.FIXED
-            j_info["n_qs"] = 0
-            j_info["n_dofs"] = 0
-            j_info["init_qpos"] = np.zeros(0)
+            joint_type = gs.JOINT_TYPE.FIXED
+            n_qs = 0
+            n_dofs = 0
+            init_qpos = np.zeros(0)
 
         elif joint.joint_type == "revolute":
-            j_info["dofs_motion_ang"] = np.array([joint.axis])
-            j_info["dofs_motion_vel"] = np.zeros((1, 3))
-            j_info["dofs_limit"] = np.array(
+            dofs_motion_ang = np.array([joint.axis])
+            dofs_motion_vel = np.zeros((1, 3))
+            dofs_limit = np.array(
                 [
                     [
                         joint.limit.lower if joint.limit.lower is not None else -np.inf,
@@ -322,26 +318,26 @@ def parse_urdf(morph, surface):
                     ]
                 ]
             )
-            j_info["dofs_stiffness"] = np.array([0.0])
+            dofs_stiffness = np.array([0.0])
 
-            j_info["type"] = gs.JOINT_TYPE.REVOLUTE
-            j_info["n_qs"] = 1
-            j_info["n_dofs"] = 1
-            j_info["init_qpos"] = np.zeros(1)
+            joint_type = gs.JOINT_TYPE.REVOLUTE
+            n_qs = 1
+            n_dofs = 1
+            init_qpos = np.zeros(1)
         elif joint.joint_type == "continuous":
-            j_info["dofs_motion_ang"] = np.array([joint.axis])
-            j_info["dofs_motion_vel"] = np.zeros((1, 3))
-            j_info["dofs_limit"] = np.array([[-np.inf, np.inf]])
-            j_info["dofs_stiffness"] = np.array([0.0])
+            dofs_motion_ang = np.array([joint.axis])
+            dofs_motion_vel = np.zeros((1, 3))
+            dofs_limit = np.array([[-np.inf, np.inf]])
+            dofs_stiffness = np.array([0.0])
 
-            j_info["type"] = gs.JOINT_TYPE.REVOLUTE
-            j_info["n_qs"] = 1
-            j_info["n_dofs"] = 1
-            j_info["init_qpos"] = np.zeros(1)
+            joint_type = gs.JOINT_TYPE.REVOLUTE
+            n_qs = 1
+            n_dofs = 1
+            init_qpos = np.zeros(1)
         elif joint.joint_type == "prismatic":
-            j_info["dofs_motion_ang"] = np.zeros((1, 3))
-            j_info["dofs_motion_vel"] = np.array([joint.axis])
-            j_info["dofs_limit"] = np.array(
+            dofs_motion_ang = np.zeros((1, 3))
+            dofs_motion_vel = np.array([joint.axis])
+            dofs_limit = np.array(
                 [
                     [
                         morph.scale * joint.limit.lower if joint.limit.lower is not None else -np.inf,
@@ -349,27 +345,27 @@ def parse_urdf(morph, surface):
                     ]
                 ]
             )
-            j_info["dofs_stiffness"] = np.array([0.0])
+            dofs_stiffness = np.array([0.0])
 
-            j_info["type"] = gs.JOINT_TYPE.PRISMATIC
-            j_info["n_qs"] = 1
-            j_info["n_dofs"] = 1
-            j_info["init_qpos"] = np.zeros(1)
+            joint_type = gs.JOINT_TYPE.PRISMATIC
+            n_qs = 1
+            n_dofs = 1
+            init_qpos = np.zeros(1)
         elif joint.joint_type == "floating":
-            j_info["dofs_motion_ang"] = np.eye(6, 3, -3)
-            j_info["dofs_motion_vel"] = np.eye(6, 3)
-            j_info["dofs_limit"] = np.tile([-np.inf, np.inf], (6, 1))
-            j_info["dofs_stiffness"] = np.zeros(6)
+            dofs_motion_ang = np.eye(6, 3, -3)
+            dofs_motion_vel = np.eye(6, 3)
+            dofs_limit = np.tile([-np.inf, np.inf], (6, 1))
+            dofs_stiffness = np.zeros(6)
 
-            j_info["type"] = gs.JOINT_TYPE.FREE
-            j_info["n_qs"] = 7
-            j_info["n_dofs"] = 6
-            j_info["init_qpos"] = np.concatenate([gu.zero_pos(), gu.identity_quat()])
+            joint_type = gs.JOINT_TYPE.FREE
+            n_qs = 7
+            n_dofs = 6
+            init_qpos = np.concatenate([gu.zero_pos(), gu.identity_quat()])
         else:
             gs.raise_exception(f"Unsupported URDF joint type: {joint.joint_type}")
 
-        j_info["sol_params"] = gu.default_solver_params()
-        j_info["dofs_invweight"] = np.full((j_info["n_dofs"],), fill_value=-1.0)
+        sol_params = gu.default_solver_params()
+        dofs_invweight = np.full((n_dofs,), fill_value=-1.0)
 
         joint_friction, joint_damping = 0.0, 0.0
         if joint.dynamics is not None:
@@ -377,50 +373,72 @@ def parse_urdf(morph, surface):
                 joint_friction = joint.dynamics.friction
             if joint.dynamics.damping is not None:
                 joint_damping = joint.dynamics.damping
-        j_info["dofs_frictionloss"] = np.full(j_info["n_dofs"], joint_friction)
-        j_info["dofs_damping"] = np.full(j_info["n_dofs"], joint_damping)
-        j_info["dofs_armature"] = np.zeros(j_info["n_dofs"])
+        dofs_frictionloss = np.full(n_dofs, joint_friction)
+        dofs_damping = np.full(n_dofs, joint_damping)
+        dofs_armature = np.zeros(n_dofs)
         if joint.joint_type not in ("floating", "fixed") and morph.default_armature is not None:
-            j_info["dofs_armature"] = np.full((j_info["n_dofs"],), morph.default_armature)
+            dofs_armature = np.full((n_dofs,), morph.default_armature)
 
-        kp = gu.default_dofs_kp(j_info["n_dofs"])
-        kv = gu.default_dofs_kv(j_info["n_dofs"])
+        kp = gu.default_dofs_kp(n_dofs)
+        kv = gu.default_dofs_kv(n_dofs)
         if joint.safety_controller is not None:
             if joint.safety_controller.k_position is not None:
-                kp = np.tile(joint.safety_controller.k_position, j_info["n_dofs"])
+                kp = np.tile(joint.safety_controller.k_position, n_dofs)
             if joint.safety_controller.k_velocity is not None:
-                kv = np.tile(joint.safety_controller.k_velocity, j_info["n_dofs"])
-        j_info["dofs_act_gain"] = kp
-        j_info["dofs_act_bias"] = np.column_stack([np.zeros_like(kp), -kp, -kv])
+                kv = np.tile(joint.safety_controller.k_velocity, n_dofs)
+        dofs_act_gain = kp
+        dofs_act_bias = np.column_stack([np.zeros_like(kp), -kp, -kv])
 
-        j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (j_info["n_dofs"], 1))
+        dofs_force_range = np.tile([-np.inf, np.inf], (n_dofs, 1))
         if joint.limit is not None and joint.limit.effort is not None:
-            j_info["dofs_force_range"] = np.tile([-joint.limit.effort, joint.limit.effort], (j_info["n_dofs"], 1))
+            dofs_force_range = np.tile([-joint.limit.effort, joint.limit.effort], (n_dofs, 1))
+
+        links_j_descs[idx].append(
+            JointDescription(
+                name=joint.name,
+                type=joint_type,
+                pos=gu.zero_pos(),
+                quat=gu.identity_quat(),
+                init_qpos=init_qpos,
+                sol_params=sol_params,
+                dofs_motion_ang=dofs_motion_ang,
+                dofs_motion_vel=dofs_motion_vel,
+                dofs_limit=dofs_limit,
+                dofs_invweight=dofs_invweight,
+                dofs_frictionloss=dofs_frictionloss,
+                dofs_stiffness=dofs_stiffness,
+                dofs_damping=dofs_damping,
+                dofs_armature=dofs_armature,
+                dofs_act_gain=dofs_act_gain,
+                dofs_act_bias=dofs_act_bias,
+                dofs_force_range=dofs_force_range,
+            )
+        )
 
     # Apply scaling factor
-    for l_info, link_j_infos, link_g_infos in zip(l_infos, links_j_infos, links_g_infos):
-        l_info["pos"] *= morph.scale
-        if l_info["inertial_pos"] is not None:
-            l_info["inertial_pos"] *= morph.scale
-        if l_info["inertial_mass"] is not None:
-            l_info["inertial_mass"] *= morph.scale**3
-        if l_info["inertial_i"] is not None:
-            l_info["inertial_i"] *= morph.scale**5
-        for j_info in link_j_infos:
-            j_info["pos"] *= morph.scale
-        for g_info in link_g_infos:
-            g_info["pos"] *= morph.scale
+    for l_desc, link_j_descs, link_g_descs in zip(l_descs, links_j_descs, links_g_descs):
+        l_desc.pos *= morph.scale
+        if l_desc.inertial_pos is not None:
+            l_desc.inertial_pos *= morph.scale
+        if l_desc.mass is not None:
+            l_desc.mass *= morph.scale**3
+        if l_desc.inertia is not None:
+            l_desc.inertia *= morph.scale**5
+        for j_desc in link_j_descs:
+            j_desc.pos *= morph.scale
+        for g_desc in link_g_descs:
+            g_desc.pos *= morph.scale
 
     # Re-order kinematic tree info
-    l_infos, links_j_infos, links_g_infos, _ = order_links_depth_first(l_infos, links_j_infos, links_g_infos)
+    l_descs, links_j_descs, links_g_descs, _ = order_links_depth_first(l_descs, links_j_descs, links_g_descs)
 
-    eqs_info = parse_equalities(robot, morph)
+    eq_descs = parse_equalities(robot, morph)
 
-    return l_infos, links_j_infos, links_g_infos, eqs_info
+    return l_descs, links_j_descs, links_g_descs, eq_descs
 
 
 def parse_equalities(robot, morph):
-    eqs_info = []
+    eq_descs = []
 
     for joint in robot.joints:
         if joint.mimic:
@@ -428,20 +446,22 @@ def parse_equalities(robot, morph):
                 f"Joint '{joint.name}' mimics '{joint.mimic.joint}' with multiplier {joint.mimic.multiplier} and offset {joint.mimic.offset}"
             )
 
-            eq_info = dict()
-            eq_info["type"] = gs.EQUALITY_TYPE.JOINT
-            eq_info["name"] = f"mimic_{joint.name}_to_{joint.mimic.joint}"
-            eq_info["objs_name"] = (joint.name, joint.mimic.joint)
-            eq_info["sol_params"] = gu.default_solver_params()
+            eq_data = np.zeros([11])
+            eq_data[0] = joint.mimic.offset
+            eq_data[1] = joint.mimic.multiplier
+            eq_data[:6] *= morph.scale
 
-            eq_info["data"] = np.zeros([11])
-            eq_info["data"][0] = joint.mimic.offset
-            eq_info["data"][1] = joint.mimic.multiplier
-            eq_info["data"][:6] *= morph.scale
+            eq_descs.append(
+                EqualityDescription(
+                    name=f"mimic_{joint.name}_to_{joint.mimic.joint}",
+                    type=gs.EQUALITY_TYPE.JOINT,
+                    objs_name=(joint.name, joint.mimic.joint),
+                    data=eq_data,
+                    sol_params=gu.default_solver_params(),
+                )
+            )
 
-            eqs_info.append(eq_info)
-
-    return eqs_info
+    return eq_descs
 
 
 def merge_fixed_links(robot, links_to_keep):

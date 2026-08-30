@@ -792,10 +792,10 @@ class SPHOptions(GravityMixin, TimeBasedMixin):
         if self.hash_grid_res is None:
             max_hash_grid_res = np.ceil(
                 (np.array(self.upper_bound) - np.array(self.lower_bound)) / self.hash_grid_cell_size
-            ).astype(gs.np_int)
-            self._hash_grid_res = np.minimum(max_hash_grid_res, np.array([150, 150, 150], dtype=gs.np_int))
+            )
+            self._hash_grid_res = np.minimum(max_hash_grid_res, 150).astype(int).tolist()
         else:
-            self._hash_grid_res = np.ceil(np.array(self.hash_grid_res) / self.hash_grid_cell_size).astype(gs.np_int)
+            self._hash_grid_res = np.ceil(np.array(self.hash_grid_res) / self.hash_grid_cell_size).astype(int).tolist()
 
 
 class PBDOptions(GravityMixin, TimeBasedMixin):
@@ -870,10 +870,10 @@ class PBDOptions(GravityMixin, TimeBasedMixin):
         if self.hash_grid_res is None:
             max_hash_grid_res = np.ceil(
                 (np.array(self.upper_bound) - np.array(self.lower_bound)) / self.hash_grid_cell_size
-            ).astype(gs.np_int)
-            self._hash_grid_res = np.minimum(max_hash_grid_res, np.array([150, 150, 150], dtype=gs.np_int))
+            )
+            self._hash_grid_res = np.minimum(max_hash_grid_res, 150).astype(int).tolist()
         else:
-            self._hash_grid_res = np.ceil(np.array(self.hash_grid_res) / self.hash_grid_cell_size).astype(gs.np_int)
+            self._hash_grid_res = np.ceil(np.array(self.hash_grid_res) / self.hash_grid_cell_size).astype(int).tolist()
 
 
 class FEMOptions(GravityMixin, TimeBasedMixin):
