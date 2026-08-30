@@ -73,8 +73,6 @@ def kernel_masked_forward_kinematics_links_geoms(
 @qd.kernel(fastcache=True)
 def kernel_forward_kinematics(
     envs_idx: qd.types.ndarray(),
-    forward_pos_updated: qd.types.ndarray(),
-    forward_vel_updated: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -85,15 +83,11 @@ def kernel_forward_kinematics(
         func_forward_kinematics_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
         func_COM_links(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
         func_forward_velocity_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
-        forward_pos_updated[i_b] = True
-        forward_vel_updated[i_b] = True
 
 
 @qd.kernel(fastcache=True)
 def kernel_masked_forward_kinematics(
     envs_mask: qd.types.ndarray(),
-    forward_pos_updated: qd.types.ndarray(),
-    forward_vel_updated: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -104,8 +98,6 @@ def kernel_masked_forward_kinematics(
             func_forward_kinematics_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
             func_COM_links(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
             func_forward_velocity_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
-            forward_pos_updated[i_b] = True
-            forward_vel_updated[i_b] = True
 
 
 @qd.func
@@ -124,12 +116,9 @@ def func_refresh_kinematics(
         func_forward_kinematics_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
         func_COM_links(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
         func_forward_velocity_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
-        forward_pos_updated[i_b] = True
-        forward_vel_updated[i_b] = True
     elif qd.static(refresh_velocity):
         if not forward_vel_updated[i_b]:
             func_forward_velocity_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
-            forward_vel_updated[i_b] = True
 
 
 @qd.kernel(fastcache=True)

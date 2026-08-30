@@ -146,9 +146,7 @@ from .abd.accessor import (
     kernel_set_dofs_limit,
     kernel_set_dofs_position,
     kernel_set_dofs_stiffness,
-    kernel_set_dofs_velocity,
     kernel_set_dofs_velocity_grad,
-    kernel_set_dofs_zero_velocity,
     kernel_set_drone_rpm,
     kernel_set_geom_friction,
     kernel_set_geom_friction_rolling,
@@ -844,14 +842,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         self._is_forward_pos_updated = False
         self._is_forward_vel_updated = False
 
-    def _write_dofs_velocity(self, dofs_idx, envs_idx, velocity):
-        if velocity is None:
-            kernel_set_dofs_zero_velocity(dofs_idx, envs_idx, self.dyn_state, self.rigid_config)
-        else:
-            kernel_set_dofs_velocity(dofs_idx, envs_idx, velocity, self.dyn_state, self.rigid_config)
-        return False
-
-    def _update_forward_after_dofs_velocity(self, envs_idx, is_all_envs, skip_forward, _freshness_updated):
+    def _update_forward_after_dofs_velocity(self, envs_idx, is_all_envs, skip_forward):
         if skip_forward:
             self._is_forward_vel_updated = False
             return

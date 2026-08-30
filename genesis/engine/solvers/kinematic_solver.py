@@ -33,9 +33,9 @@ from .rigid.abd.accessor import (
     kernel_get_terrain_height,
     kernel_set_dofs_force_grad,
     kernel_set_dofs_position_forward_kinematics,
-    kernel_set_dofs_velocity_with_freshness,
+    kernel_set_dofs_velocity,
     kernel_set_dofs_velocity_grad,
-    kernel_set_dofs_zero_velocity_with_freshness,
+    kernel_set_dofs_zero_velocity,
     kernel_set_kinematic_state,
     kernel_set_links_pos,
     kernel_set_links_pos_grad,
@@ -400,34 +400,32 @@ class KinematicSolver(Solver):
         if gs.backend == gs.metal:
             torch.mps.synchronize()
 
-    def _mark_forward_stale(self, envs_idx, *, position):
+    def _set_forward_update_state(
+        self, envs_idx, *, is_position_updated: bool | None = None, is_velocity_updated: bool | None = None
+    ):
         if not isinstance(envs_idx, torch.Tensor):
             envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-        if position:
-            self._is_forward_pos_updated[envs_idx] = False
-            self._is_forward_pos_updated_for_all_envs = False
-        self._is_forward_vel_updated[envs_idx] = False
-        self._is_forward_vel_updated_for_all_envs = False
-        if gs.backend == gs.metal:
-            torch.mps.synchronize()
+        if is_position_updated is not None:
+            self._is_forward_pos_updated[envs_idx] = is_position_updated
+            if not is_position_updated:
+                self._is_forward_pos_updated_for_all_envs = False
+        if is_velocity_updated is not None:
+            self._is_forward_vel_updated[envs_idx] = is_velocity_updated
+            if not is_velocity_updated:
+                self._is_forward_vel_updated_for_all_envs = False
 
     def _write_dofs_velocity(self, dofs_idx, envs_idx, velocity):
         if velocity is None:
-            kernel_set_dofs_zero_velocity_with_freshness(
-                dofs_idx, envs_idx, self._is_forward_vel_updated, self.dyn_state, self.rigid_config
-            )
+            kernel_set_dofs_zero_velocity(dofs_idx, envs_idx, self.dyn_state, self.rigid_config)
         else:
-            kernel_set_dofs_velocity_with_freshness(
-                dofs_idx, envs_idx, velocity, self._is_forward_vel_updated, self.dyn_state, self.rigid_config
-            )
-        return True
+            kernel_set_dofs_velocity(dofs_idx, envs_idx, velocity, self.dyn_state, self.rigid_config)
 
-    def _update_forward_after_dofs_velocity(self, envs_idx, is_all_envs, skip_forward, freshness_updated):
-        if not freshness_updated:
-            self._mark_forward_stale(envs_idx, position=False)
+    def _update_forward_after_dofs_velocity(self, envs_idx, is_all_envs, skip_forward):
+        self._set_forward_update_state(envs_idx, is_velocity_updated=False)
         if skip_forward:
-            self._is_forward_vel_updated_for_all_envs = False
             return
+        if gs.backend == gs.metal:
+            torch.mps.synchronize()
         fn = kernel_masked_refresh_kinematics if envs_idx.dtype == torch.bool else kernel_refresh_kinematics
         fn(
             envs_idx,
@@ -439,6 +437,7 @@ class KinematicSolver(Solver):
             self.rigid_config,
             refresh_velocity=True,
         )
+        self._set_forward_update_state(envs_idx, is_position_updated=True, is_velocity_updated=True)
         if is_all_envs:
             self._is_forward_pos_updated_for_all_envs = True
             self._is_forward_vel_updated_for_all_envs = True
@@ -782,20 +781,13 @@ class KinematicSolver(Solver):
             self.rigid_config,
         )
         if not partial:
-            kernel_forward_kinematics(
-                envs_idx,
-                self._is_forward_pos_updated,
-                self._is_forward_vel_updated,
-                self.dyn_state,
-                self.dyn_info,
-                self.rigid_info,
-                self.rigid_config,
-            )
+            kernel_forward_kinematics(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
+            self._set_forward_update_state(envs_idx, is_position_updated=True, is_velocity_updated=True)
             if is_all_envs:
                 self._is_forward_pos_updated_for_all_envs = True
                 self._is_forward_vel_updated_for_all_envs = True
         else:
-            self._mark_forward_stale(envs_idx, position=True)
+            self._set_forward_update_state(envs_idx, is_position_updated=False, is_velocity_updated=False)
 
     # ------------------------------------------------------------------------------------
     # -------------------------------- process_input -------------------------------------
@@ -891,20 +883,13 @@ class KinematicSolver(Solver):
         )
 
         if not skip_forward:
-            kernel_forward_kinematics(
-                envs_idx,
-                self._is_forward_pos_updated,
-                self._is_forward_vel_updated,
-                self.dyn_state,
-                self.dyn_info,
-                self.rigid_info,
-                self.rigid_config,
-            )
+            kernel_forward_kinematics(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
+            self._set_forward_update_state(envs_idx, is_position_updated=True, is_velocity_updated=True)
             if is_all_envs:
                 self._is_forward_pos_updated_for_all_envs = True
                 self._is_forward_vel_updated_for_all_envs = True
         else:
-            self._mark_forward_stale(envs_idx, position=True)
+            self._set_forward_update_state(envs_idx, is_position_updated=False, is_velocity_updated=False)
 
     def set_base_links_pos_grad(self, links_idx, envs_idx, relative, pos_grad):
         if links_idx is None:
@@ -966,20 +951,13 @@ class KinematicSolver(Solver):
         )
 
         if not skip_forward:
-            kernel_forward_kinematics(
-                envs_idx,
-                self._is_forward_pos_updated,
-                self._is_forward_vel_updated,
-                self.dyn_state,
-                self.dyn_info,
-                self.rigid_info,
-                self.rigid_config,
-            )
+            kernel_forward_kinematics(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
+            self._set_forward_update_state(envs_idx, is_position_updated=True, is_velocity_updated=True)
             if is_all_envs:
                 self._is_forward_pos_updated_for_all_envs = True
                 self._is_forward_vel_updated_for_all_envs = True
         else:
-            self._mark_forward_stale(envs_idx, position=True)
+            self._set_forward_update_state(envs_idx, is_position_updated=False, is_velocity_updated=False)
 
     def set_base_links_quat_grad(self, links_idx, envs_idx, relative, quat_grad):
         if links_idx is None:
@@ -1045,25 +1023,17 @@ class KinematicSolver(Solver):
                 fn = kernel_masked_forward_kinematics
             else:
                 fn = kernel_forward_kinematics
-            fn(
-                envs_idx,
-                self._is_forward_pos_updated,
-                self._is_forward_vel_updated,
-                self.dyn_state,
-                self.dyn_info,
-                self.rigid_info,
-                self.rigid_config,
-            )
+            fn(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
+            self._set_forward_update_state(envs_idx, is_position_updated=True, is_velocity_updated=True)
             if is_all_envs:
                 self._is_forward_pos_updated_for_all_envs = True
                 self._is_forward_vel_updated_for_all_envs = True
         else:
-            self._mark_forward_stale(envs_idx, position=True)
+            self._set_forward_update_state(envs_idx, is_position_updated=False, is_velocity_updated=False)
 
     @mutates(StateChange.DYNAMICS, links=MutatedLinks.ARTICULATED)
     def set_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None, *, skip_forward=False):
         is_all_envs = envs_idx is None
-        freshness_updated = False
         if gs.use_zerocopy:
             vel = qd_to_torch(self.dyn_state.dofs.vel, transpose=True, copy=False)
             dofs_mask = indices_to_mask(dofs_idx)
@@ -1108,9 +1078,9 @@ class KinematicSolver(Solver):
             )
             if velocity is not None and self.n_envs == 0:
                 velocity = velocity[None]
-            freshness_updated = self._write_dofs_velocity(dofs_idx, envs_idx, velocity)
+            self._write_dofs_velocity(dofs_idx, envs_idx, velocity)
 
-        self._update_forward_after_dofs_velocity(envs_idx, is_all_envs, skip_forward, freshness_updated)
+        self._update_forward_after_dofs_velocity(envs_idx, is_all_envs, skip_forward)
 
     def set_dofs_velocity_grad(self, dofs_idx, envs_idx, velocity_grad):
         velocity_grad_, dofs_idx, envs_idx = self._sanitize_io_variables(
@@ -1140,16 +1110,14 @@ class KinematicSolver(Solver):
             dofs_idx,
             envs_idx,
             position,
-            self._is_forward_pos_updated,
-            self._is_forward_vel_updated,
             self.dyn_state,
             self.dyn_info,
             self.rigid_info,
             self.rigid_config,
         )
+        self._set_forward_update_state(envs_idx, is_position_updated=True, is_velocity_updated=False)
         if is_all_envs:
             self._is_forward_pos_updated_for_all_envs = True
-        self._is_forward_vel_updated_for_all_envs = False
 
     def get_terrain_height(self, positions, link_idx, envs_idx=None):
         terrain = self._links[link_idx].entity
@@ -1299,6 +1267,9 @@ class KinematicSolver(Solver):
         """Run forward kinematics if links_state is not already up to date for the current pose."""
         if self._is_forward_pos_updated_for_all_envs:
             return
+        is_position_stale = ~self._is_forward_pos_updated
+        if gs.backend == gs.metal:
+            torch.mps.synchronize()
         kernel_refresh_kinematics(
             self.scene._envs_idx,
             self._is_forward_pos_updated,
@@ -1309,12 +1280,15 @@ class KinematicSolver(Solver):
             self.rigid_config,
             refresh_velocity=False,
         )
+        self._set_forward_update_state(is_position_stale, is_position_updated=True, is_velocity_updated=True)
         self._is_forward_pos_updated_for_all_envs = True
 
     def update_forward_vel(self):
         """Propagate link velocities if they are not current for the pose and dof velocities."""
         if self._is_forward_vel_updated_for_all_envs:
             return
+        if gs.backend == gs.metal:
+            torch.mps.synchronize()
         kernel_refresh_kinematics(
             self.scene._envs_idx,
             self._is_forward_pos_updated,
@@ -1325,6 +1299,7 @@ class KinematicSolver(Solver):
             self.rigid_config,
             refresh_velocity=True,
         )
+        self._set_forward_update_state(self.scene._envs_idx, is_position_updated=True, is_velocity_updated=True)
         self._is_forward_pos_updated_for_all_envs = True
         self._is_forward_vel_updated_for_all_envs = True
 
