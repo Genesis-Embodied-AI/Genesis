@@ -4,33 +4,34 @@ from pxr import Usd, UsdPhysics
 
 import genesis as gs
 from genesis.utils.collision import solve_contype_conaffinity
+from genesis.utils.description import GeomDescription
 
 
-def _geoms_under(cg_infos: list[dict], path: str) -> list[int]:
-    """Indices of collision g_infos whose source prim is `path` or a descendant of it."""
+def _geoms_under(cg_descs: list[GeomDescription], path: str) -> list[int]:
+    """Indices of collision g_descs whose source prim is `path` or a descendant of it."""
     prefix = path.rstrip("/") + "/"
-    return [i for i, g in enumerate(cg_infos) if g["prim_path"] == path or g["prim_path"].startswith(prefix)]
+    return [i for i, g in enumerate(cg_descs) if g.prim_path == path or g.prim_path.startswith(prefix)]
 
 
-def apply_collision_filtering(context, cg_infos: list[dict]):
+def apply_collision_filtering(context, cg_descs: list[GeomDescription]):
     """
-    Set contype/conaffinity on collision g_infos from USD collision filtering.
+    Set contype/conaffinity on collision g_descs from USD collision filtering.
 
     Honors ``UsdPhysics.CollisionGroup`` (collider membership + ``filteredGroups`` + ``mergeGroupName``)
-    and per-prim ``UsdPhysics.FilteredPairsAPI``, for the geoms in ``cg_infos`` (a single entity). The
+    and per-prim ``UsdPhysics.FilteredPairsAPI``, for the geoms in ``cg_descs`` (a single entity). The
     resulting "must not collide" pairs are realized as contype/conaffinity bitmasks by the shared
     solver; if they cannot be expressed as bitmasks, a warning is logged and defaults are kept.
 
     Filtering that spans entities is not expressible per entity, so it is detected against the stage's
     full collider set and reported once via ``context.note_unsupported_cross_entity_filtering()``.
 
-    ``cg_infos`` must each carry a ``prim_path``.
+    ``cg_descs`` must each carry a ``prim_path``.
     """
-    if not cg_infos:
+    if not cg_descs:
         return
 
     stage: Usd.Stage = context.stage
-    n = len(cg_infos)
+    n = len(cg_descs)
     invalid_pairs: set[frozenset[int]] = set()
 
     # Single stage sweep gathering all filtering-relevant prims. The full collider set (this entity's
@@ -46,7 +47,7 @@ def apply_collision_filtering(context, cg_infos: list[dict]):
             group_prims.append(prim)
         if prim.HasAPI(UsdPhysics.FilteredPairsAPI):
             filter_prims.append(prim)
-    entity_paths = {g["prim_path"] for g in cg_infos}
+    entity_paths = {g.prim_path for g in cg_descs}
     external_collider_paths = stage_collider_paths - entity_paths
     has_cross_entity_filtering = False
 
@@ -84,7 +85,7 @@ def apply_collision_filtering(context, cg_infos: list[dict]):
                 p for p in stage_collider_paths if query.IsPathIncluded(p)
             )
         geoms_canonicals = [
-            {canonical for canonical, members in group_members.items() if g["prim_path"] in members} for g in cg_infos
+            {canonical for canonical, members in group_members.items() if g.prim_path in members} for g in cg_descs
         ]
         for i in range(n):
             for j in range(i + 1, n):
@@ -103,12 +104,12 @@ def apply_collision_filtering(context, cg_infos: list[dict]):
 
     # 2) FilteredPairsAPI: explicit prim-subtree pairs that must not collide.
     for prim in filter_prims:
-        geoms_a = _geoms_under(cg_infos, str(prim.GetPath()))
+        geoms_a = _geoms_under(cg_descs, str(prim.GetPath()))
         if not geoms_a:
             continue
         for target in UsdPhysics.FilteredPairsAPI(prim).GetFilteredPairsRel().GetTargets():
             target_path = str(target)
-            target_geoms = _geoms_under(cg_infos, target_path)
+            target_geoms = _geoms_under(cg_descs, target_path)
             if not target_geoms:
                 # The target collider (or one below it) lives in another entity.
                 target_prefix = target_path.rstrip("/") + "/"
@@ -127,8 +128,8 @@ def apply_collision_filtering(context, cg_infos: list[dict]):
                 "Keeping default (all-colliding) values."
             )
         else:
-            for g_info, (contype, conaffinity) in zip(cg_infos, masks):
-                g_info["contype"], g_info["conaffinity"] = contype, conaffinity
+            for g_desc, (contype, conaffinity) in zip(cg_descs, masks):
+                g_desc.contype, g_desc.conaffinity = contype, conaffinity
 
     if has_cross_entity_filtering:
         context.note_unsupported_cross_entity_filtering()

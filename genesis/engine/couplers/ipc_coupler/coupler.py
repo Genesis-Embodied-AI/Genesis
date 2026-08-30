@@ -530,7 +530,7 @@ class IPCCoupler(RBC):
                     if entity.solver._enable_mujoco_compatibility:
                         rho = RHO_MUJOCO
                     else:
-                        rho = RHO_ROBOT if target_link._is_robot else RHO_OBJECT
+                        rho = RHO_ROBOT if target_link.desc.is_robot else RHO_OBJECT
                 self._ipc_abd.apply_to(rigid_link_geom, kappa=ABD_KAPPA * uipc.unit.MPa, mass_density=rho)
 
                 # Apply SoftTransformConstraint and animator for coupled links

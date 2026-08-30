@@ -1,6 +1,7 @@
 import inspect
 import math
 import os
+from dataclasses import replace
 from functools import wraps
 from itertools import chain
 from typing import TYPE_CHECKING, Any, Hashable
@@ -14,14 +15,18 @@ from genesis.constants import link_ref_frame
 from genesis.engine.materials.base import Material
 from genesis.engine.mesh import InertialProperties
 from genesis.engine.states.entities import RigidEntityState
-from genesis.options.morphs import Morph
-from genesis.options.surfaces import Surface
 from genesis.typing import UnitVec4FType, Vec3FType
 from genesis.utils import geom as gu
 from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
+from genesis.utils.description import (
+    EqualityDescription,
+    GeomDescription,
+    JointDescription,
+    LinkDescription,
+)
 from genesis.utils.misc import DeprecationError, broadcast_tensor, qd_to_torch, tensor_to_array
 
 from ..base_entity import Entity
@@ -36,13 +41,17 @@ from .rigid_link import (
     KinematicLink,
     LinkInertial,
     LinkInertialInfo,
+    LinkVariant,
     RigidLink,
-    compose_inertial_from_g_infos,
+    compose_inertial_from_geoms,
     compose_inertial_properties,
     finalize_inertial,
 )
 
 if TYPE_CHECKING:
+    from genesis.options.morphs import Morph
+    from genesis.options.surfaces import Surface
+
     from genesis.engine.scene import Scene
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
     from genesis.engine.solvers.kinematic_solver import KinematicSolver
@@ -98,8 +107,8 @@ class KinematicEntity(Entity):
         scene: "Scene",
         solver: "KinematicSolver",
         material: Material,
-        morph: Morph,
-        surface: Surface,
+        morph: "Morph",
+        surface: "Surface",
         idx: int,
         idx_in_solver,
         link_start: int,
@@ -111,7 +120,7 @@ class KinematicEntity(Entity):
         vface_start: int,
         custom_vvert_start: int,
         custom_vface_start: int,
-        morph_heterogeneous: list[Morph] | None = None,
+        morph_heterogeneous: "list[Morph] | None" = None,
         name: str | None = None,
     ):
         # Set heterogeneous support before super().__init__() because _get_morph_identifier() needs it
@@ -187,7 +196,7 @@ class KinematicEntity(Entity):
     def init_ckpt(self):
         pass
 
-    def _load_morph(self, morph: Morph):
+    def _load_morph(self, morph: "Morph"):
         """Load a single morph into the entity."""
         if isinstance(morph, gs.morphs.Mesh):
             self._load_mesh(morph, self._surface)
@@ -234,36 +243,36 @@ class KinematicEntity(Entity):
             if isinstance(morph, (gs.morphs.URDF, gs.morphs.MJCF)):
                 # Parse variant scene file
                 morph._enable_mujoco_compatibility = self._morph._enable_mujoco_compatibility
-                v_l_infos, v_links_j_infos, v_links_g_infos, _ = self._parse_scene(morph, self._surface)
+                v_l_descs, v_links_j_descs, v_links_g_descs, _ = self._parse_scene(morph, self._surface)
 
                 # Validate that the variant has the same joint structure as the primary
-                if len(v_l_infos) != n_links:
+                if len(v_l_descs) != n_links:
                     gs.raise_exception(
-                        f"Heterogeneous variant has {len(v_l_infos)} links, "
+                        f"Heterogeneous variant has {len(v_l_descs)} links, "
                         f"but primary has {n_links}. All variants must have the same link count."
                     )
-                for i_l, (link, v_j_infos) in enumerate(zip(self._links, v_links_j_infos)):
+                for i_l, (link, v_j_descs) in enumerate(zip(self._links, v_links_j_descs)):
                     primary_joints = link.joints
-                    if len(v_j_infos) != len(primary_joints):
+                    if len(v_j_descs) != len(primary_joints):
                         gs.raise_exception(
-                            f"Heterogeneous variant link {i_l} has {len(v_j_infos)} joints, "
+                            f"Heterogeneous variant link {i_l} has {len(v_j_descs)} joints, "
                             f"but primary has {len(primary_joints)}."
                         )
-                    for p_joint, v_j_info in zip(primary_joints, v_j_infos):
-                        if p_joint.name != v_j_info["name"]:
+                    for p_joint, v_j_desc in zip(primary_joints, v_j_descs):
+                        if p_joint.name != v_j_desc.name:
                             gs.raise_exception(
                                 f"Joint name mismatch at link {i_l}: primary has '{p_joint.name}', "
-                                f"variant has '{v_j_info['name']}'. All variants must have the same joint names."
+                                f"variant has '{v_j_desc.name}'. All variants must have the same joint names."
                             )
-                        if p_joint.type != v_j_info["type"]:
+                        if p_joint.type != v_j_desc.type:
                             gs.raise_exception(
                                 f"Joint type mismatch for '{p_joint.name}': primary has {p_joint.type}, "
-                                f"variant has {v_j_info['type']}."
+                                f"variant has {v_j_desc.type}."
                             )
-                        if p_joint.n_dofs != v_j_info["n_dofs"]:
+                        if p_joint.n_dofs != v_j_desc.n_dofs:
                             gs.raise_exception(
                                 f"DoF count mismatch for joint '{p_joint.name}': primary has {p_joint.n_dofs}, "
-                                f"variant has {v_j_info['n_dofs']}."
+                                f"variant has {v_j_desc.n_dofs}."
                             )
 
                 # Post-process each link's geoms. The COM/principal-axis anchoring of the floating base is deferred to
@@ -271,20 +280,20 @@ class KinematicEntity(Entity):
                 # only the morph pose offset is composed into the variant's init_qpos and offset.
                 offset_pos = np.array(morph.offset_pos, dtype=gs.np_float)
                 offset_quat = np.array(morph.offset_quat, dtype=gs.np_float)
-                cg_vg_infos = []
-                for v_l_info, v_j_infos, v_g_infos in zip(v_l_infos, v_links_j_infos, v_links_g_infos):
-                    is_robot = v_l_info.get("is_robot", np.array(False, dtype=np.bool_))
-                    cg_infos, vg_infos = self._postprocess_geoms_info(morph, v_g_infos, is_robot)
-                    cg_vg_infos.append((cg_infos, vg_infos))
+                cg_vg_descs = []
+                for v_l_desc, v_j_descs, v_g_descs in zip(v_l_descs, v_links_j_descs, v_links_g_descs):
+                    is_robot = v_l_desc.is_robot
+                    cg_descs, vg_descs = self._postprocess_geoms(morph, v_g_descs, is_robot)
+                    cg_vg_descs.append((cg_descs, vg_descs))
 
-                # Extract variant's init_qpos from parsed joint infos, composing the morph offset into the free joint so
-                # relative getters report the variant's user frame.
+                # Extract the init_qpos of the variant from its joints, composing the morph offset into the free
+                # joint so that relative getters report the user frame of the variant
                 variant_init_qpos_parts = []
-                for v_l_info, v_j_infos in zip(v_l_infos, v_links_j_infos):
-                    is_root = v_l_info["parent_idx"] == -1
-                    for j_info in v_j_infos:
-                        qpos = j_info["init_qpos"]
-                        if is_root and j_info["type"] == gs.JOINT_TYPE.FREE:
+                for v_l_desc, v_j_descs in zip(v_l_descs, v_links_j_descs):
+                    is_root = v_l_desc.parent_idx == -1
+                    for j_desc in v_j_descs:
+                        qpos = j_desc.init_qpos
+                        if is_root and j_desc.type == gs.JOINT_TYPE.FREE:
                             init_pos, init_quat = gu.transform_pos_quat_by_trans_quat(
                                 np.array(morph.offset_pos, dtype=gs.np_float),
                                 np.array(morph.offset_quat, dtype=gs.np_float),
@@ -302,41 +311,41 @@ class KinematicEntity(Entity):
 
                 # Add geoms per link and stash this variant's finalized inertia for the align anchor.
                 recompute = morph.recompute_inertia
-                for i_link, (link, v_l_info, (cg_infos, vg_infos)) in enumerate(
-                    zip(self._links, v_l_infos, cg_vg_infos)
+                for i_link, (link, v_l_desc, (cg_descs, vg_descs)) in enumerate(
+                    zip(self._links, v_l_descs, cg_vg_descs)
                 ):
-                    self._add_heterogeneous_variant(link, cg_infos, vg_infos)
-                    self._on_heterogeneous_scene_variant_loaded(link, morph, v_l_info)
+                    self._add_heterogeneous_variant(link, cg_descs, vg_descs)
+                    self._on_heterogeneous_scene_variant_loaded(link, morph, v_l_desc)
                     self._links_inertial_info[i_link].append(
                         self._finalize_inertial(
-                            None if recompute else v_l_info.get("inertial_mass"),
-                            None if recompute else v_l_info.get("inertial_pos"),
-                            None if recompute else v_l_info.get("inertial_quat"),
-                            None if recompute else v_l_info.get("inertial_i"),
-                            cg_infos,
-                            vg_infos,
-                            v_l_info.get("is_robot", False),
+                            None if recompute else v_l_desc.mass,
+                            None if recompute else v_l_desc.inertial_pos,
+                            None if recompute else v_l_desc.inertial_quat,
+                            None if recompute else v_l_desc.inertia,
+                            cg_descs,
+                            vg_descs,
+                            v_l_desc.is_robot,
                         )
                     )
 
             elif isinstance(morph, (gs.morphs.Mesh, gs.morphs.Primitive)):
                 if isinstance(morph, gs.morphs.Mesh):
-                    g_infos = self._load_mesh(morph, self._surface, load_geom_only_for_heterogeneous=True)
+                    g_descs = self._load_mesh(morph, self._surface, load_geom_only_for_heterogeneous=True)
                 else:
-                    g_infos = self._load_primitive(morph, self._surface, load_geom_only_for_heterogeneous=True)
+                    g_descs = self._load_primitive(morph, self._surface, load_geom_only_for_heterogeneous=True)
                 if morph.fixed != self._morph.fixed:
                     gs.raise_exception("Mixing fixed and non-fixed morphs in heterogeneous entities is not supported.")
-                cg_infos, vg_infos = self._postprocess_geoms_info(morph, g_infos, is_robot=False)
+                cg_descs, vg_descs = self._postprocess_geoms(morph, g_descs, is_robot=False)
 
                 # The COM/principal-axis anchoring is deferred to '_align_free_roots' after build; compose only the
                 # morph pose offset here.
                 offset_pos = np.array(morph.offset_pos, dtype=gs.np_float)
                 offset_quat = np.array(morph.offset_quat, dtype=gs.np_float)
 
-                self._add_heterogeneous_variant(self._links[0], cg_infos, vg_infos)
+                self._add_heterogeneous_variant(self._links[0], cg_descs, vg_descs)
                 # Mesh/Primitive variants have no explicit inertial; the anchor inertia comes from their geometry.
                 self._links_inertial_info[0].append(
-                    self._finalize_inertial(None, None, None, None, cg_infos, vg_infos, is_robot=False)
+                    self._finalize_inertial(None, None, None, None, cg_descs, vg_descs, is_robot=False)
                 )
 
                 if morph.fixed:
@@ -361,20 +370,16 @@ class KinematicEntity(Entity):
         if len(self._links) > 1:
             self._reassign_heterogeneous_indices()
 
-    def _add_heterogeneous_variant(self, link, cg_infos, vg_infos):
+    def _add_heterogeneous_variant(self, link, cg_descs, vg_descs):
         """Add a heterogeneous variant's visual geoms to a link.
 
         RigidEntity overrides to additionally add collision geoms.
         """
-        for g_info in vg_infos:
-            link._add_vgeom(
-                vmesh=g_info["vmesh"],
-                init_pos=g_info.get("pos", gu.zero_pos()),
-                init_quat=g_info.get("quat", gu.identity_quat()),
-            )
-        link._record_variant_vgeom_range(len(vg_infos))
+        for g_desc in vg_descs:
+            link._add_vgeom(g_desc)
+        link._record_variant_vgeom_range(len(vg_descs))
 
-    def _on_heterogeneous_scene_variant_loaded(self, link, morph, v_l_info):
+    def _on_heterogeneous_scene_variant_loaded(self, link, morph, v_l_desc):
         """Hook for subclasses after a scene variant's geoms have been added to a link."""
 
     def _reassign_heterogeneous_indices(self):
@@ -459,51 +464,53 @@ class KinematicEntity(Entity):
             gs.raise_exception("Unsupported primitive shape")
 
         # contains one visual geom (vgeom) and one collision geom (geom)
-        g_infos = []
+        g_descs = []
         if morph.visualization:
-            g_infos.append(
-                dict(contype=0, conaffinity=0, vmesh=gs.Mesh.from_trimesh(tmesh, surface=surface, metadata=metadata))
+            g_descs.append(
+                GeomDescription(
+                    contype=0,
+                    conaffinity=0,
+                    vmesh=gs.Mesh.from_trimesh(tmesh, surface=surface, metadata=metadata),
+                )
             )
         if (morph.contype or morph.conaffinity) and morph.collision:
-            g_infos.append(
-                dict(
+            g_descs.append(
+                GeomDescription(
                     contype=morph.contype,
                     conaffinity=morph.conaffinity,
-                    mesh=gs.Mesh.from_trimesh(cmesh, surface=gs.surfaces.Collision()),
                     type=geom_type,
                     data=geom_data,
+                    mesh=gs.Mesh.from_trimesh(cmesh, surface=gs.surfaces.Collision()),
                     sol_params=gu.default_solver_params(),
                 )
             )
 
         # For heterogeneous simulation, only return geometry info without creating link/joint
         if load_geom_only_for_heterogeneous:
-            return g_infos
+            return g_descs
 
-        self._add_by_info(
-            l_info=dict(
-                is_robot=False,
+        self._add_by_description(
+            l_desc=LinkDescription(
                 name=f"{link_name_prefix}_baselink",
+                parent_idx=-1,
                 pos=np.array(morph.pos),
                 quat=np.array(morph.quat),
                 inertial_pos=None,  # we will compute the COM later based on the geometry
                 inertial_quat=gu.identity_quat(),
-                parent_idx=-1,
+                is_robot=False,
             ),
-            j_infos=[
-                dict(
+            j_descs=[
+                JointDescription(
                     name=f"{link_name_prefix}_baselink_joint",
-                    n_qs=n_qs,
-                    n_dofs=n_dofs,
                     type=joint_type,
                     init_qpos=init_qpos,
                 )
             ],
-            g_infos=g_infos,
+            g_descs=g_descs,
             morph=morph,
             surface=surface,
         )
-        return g_infos
+        return g_descs
 
     def _load_mesh(self, morph, surface, load_geom_only_for_heterogeneous=False):
         # Load meshes
@@ -522,10 +529,18 @@ class KinematicEntity(Entity):
             n_dofs = 6
             init_qpos = np.concatenate([link_pos, link_quat])
 
-        g_infos = []
+        g_descs = []
         if morph.visualization:
             for mesh in meshes:
-                g_infos.append(dict(contype=0, conaffinity=0, vmesh=mesh, pos=gu.zero_pos(), quat=gu.identity_quat()))
+                g_descs.append(
+                    GeomDescription(
+                        contype=0,
+                        conaffinity=0,
+                        pos=gu.zero_pos(),
+                        quat=gu.identity_quat(),
+                        vmesh=mesh,
+                    )
+                )
         if morph.collision:
             if morph.merge_submeshes_for_collision and len(meshes) > 1:
                 # Merge every submesh into a single collision geom if requested.
@@ -553,34 +568,44 @@ class KinematicEntity(Entity):
                 else:
                     tmesh = trimesh.util.concatenate([submesh.trimesh for submesh in group])
                     mesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=gs.surfaces.Collision())
-                g_infos.append(
-                    dict(
+                g_descs.append(
+                    GeomDescription(
                         contype=morph.contype,
                         conaffinity=morph.conaffinity,
-                        mesh=mesh,
                         type=gs.GEOM_TYPE.MESH,
-                        sol_params=gu.default_solver_params(),
                         pos=gu.zero_pos(),
                         quat=gu.identity_quat(),
+                        mesh=mesh,
+                        sol_params=gu.default_solver_params(),
                     )
                 )
 
         # For heterogeneous simulation, only return geometry info without creating link/joint
         if load_geom_only_for_heterogeneous:
-            return g_infos
+            return g_descs
 
         link_name = os.path.basename(morph.file).replace(".", "_")
 
-        self._add_by_info(
-            l_info=dict(is_robot=False, name=f"{link_name}_baselink", pos=link_pos, quat=link_quat, parent_idx=-1),
-            j_infos=[
-                dict(name=f"{link_name}_baselink_joint", n_qs=n_qs, n_dofs=n_dofs, type=joint_type, init_qpos=init_qpos)
+        self._add_by_description(
+            l_desc=LinkDescription(
+                name=f"{link_name}_baselink",
+                parent_idx=-1,
+                pos=link_pos,
+                quat=link_quat,
+                is_robot=False,
+            ),
+            j_descs=[
+                JointDescription(
+                    name=f"{link_name}_baselink_joint",
+                    type=joint_type,
+                    init_qpos=init_qpos,
+                )
             ],
-            g_infos=g_infos,
+            g_descs=g_descs,
             morph=morph,
             surface=surface,
         )
-        return g_infos
+        return g_descs
 
     def _load_terrain(self, morph, surface):
         vmesh, mesh, terrain_hf = tu.parse_terrain(morph, surface)
@@ -590,35 +615,35 @@ class KinematicEntity(Entity):
         # including kinematic ones.
         self._terrain_height_field = torch.as_tensor(self.terrain_hf, dtype=gs.tc_float, device=gs.device)
 
-        g_infos = []
+        g_descs = []
         if morph.visualization:
-            g_infos.append(dict(contype=0, conaffinity=0, vmesh=vmesh))
+            g_descs.append(GeomDescription(contype=0, conaffinity=0, vmesh=vmesh))
         if morph.collision:
-            g_infos.append(
-                dict(
+            g_descs.append(
+                GeomDescription(
                     contype=1,
                     conaffinity=1,
-                    mesh=mesh,
                     type=gs.GEOM_TYPE.TERRAIN,
+                    mesh=mesh,
                     sol_params=gu.default_solver_params(),
                 )
             )
 
-        self._add_by_info(
-            l_info=dict(
-                is_robot=False,
+        self._add_by_description(
+            l_desc=LinkDescription(
                 name="baselink",
+                parent_idx=-1,
                 pos=np.array(morph.pos),
                 quat=np.array(morph.quat),
                 inertial_pos=None,
                 inertial_quat=gu.identity_quat(),
-                inertial_i=None,
-                inertial_mass=None,
-                parent_idx=-1,
+                inertia=None,
+                mass=None,
                 invweight=None,
+                is_robot=False,
             ),
-            j_infos=[dict(name="joint_baselink", n_qs=0, n_dofs=0, type=gs.JOINT_TYPE.FIXED)],
-            g_infos=g_infos,
+            j_descs=[JointDescription(name="joint_baselink", type=gs.JOINT_TYPE.FIXED)],
+            g_descs=g_descs,
             morph=morph,
             surface=surface,
         )
@@ -635,70 +660,85 @@ class KinematicEntity(Entity):
         # initialized undetermined physics parameters.
         if isinstance(morph, gs.morphs.MJCF):
             # Mujoco's unified MJCF+URDF parser systematically for MJCF files
-            l_infos, links_j_infos, links_g_infos, eqs_info = mju.parse_xml(morph, surface, self._solver._options)
+            l_descs, links_j_descs, links_g_descs, eq_descs = mju.parse_xml(morph, surface, self._solver._options)
         elif isinstance(morph, (gs.morphs.URDF, gs.morphs.Drone)):
             # Custom "legacy" URDF parser for loading geometries (visual and collision) and equality constraints.
             # This is necessary because Mujoco cannot parse visual geometries (meshes) reliably for URDF.
-            l_infos, links_j_infos, links_g_infos, eqs_info = uu.parse_urdf(morph, surface)
+            l_descs, links_j_descs, links_g_descs, eq_descs = uu.parse_urdf(morph, surface)
 
             # Mujoco's unified MJCF+URDF parser for only link, joints, and collision geometries properties
             morph_ = morph.model_copy(update=dict(visualization=False))
             try:
                 # Mujoco's unified MJCF+URDF parser for URDF files.
                 # Note that Mujoco URDF parser completely ignores equality constraints.
-                l_infos_mj, links_j_infos_mj, links_g_infos_mj, _ = mju.parse_xml(morph_, surface)
+                l_descs_mj, links_j_infos_mj, links_g_descs_mj, _ = mju.parse_xml(morph_, surface)
 
                 # Unset link inertial properties that are actually undefined to force recomputation by genesis
                 if not morph._enable_mujoco_compatibility:
-                    for l_info_gs in l_infos:
-                        for l_info_mj in l_infos_mj:
-                            if l_info_gs["name"] == l_info_mj["name"]:
-                                for key, value in l_info_gs.items():
-                                    if value is None:
-                                        l_info_mj[key] = None
-                                        is_inertia_invalid = True
-                                break
-                l_infos = l_infos_mj
+                    links_desc_gs = {l_desc.name: l_desc for l_desc in l_descs}
+                    for i_l, l_desc_mj in enumerate(l_descs_mj):
+                        l_desc_gs = links_desc_gs.get(l_desc_mj.name)
+                        if l_desc_gs is None:
+                            continue
+                        # Clear the inertial values the asset leaves unset, so that the build estimates them from
+                        # the geometry rather than reading the ones MuJoCo initialized
+                        unset = {
+                            name: None
+                            for name, value in (
+                                ("inertial_pos", l_desc_gs.inertial_pos),
+                                ("inertial_quat", l_desc_gs.inertial_quat),
+                                ("inertia", l_desc_gs.inertia),
+                                ("mass", l_desc_gs.mass),
+                            )
+                            if value is None
+                        }
+                        if unset:
+                            l_descs_mj[i_l] = replace(l_desc_mj, **unset)
+                            is_inertia_invalid = True
+                l_descs = l_descs_mj
 
                 # Mujoco is not parsing actuators properties
-                for j_info_gs in chain.from_iterable(links_j_infos):
-                    for j_info_mj in chain.from_iterable(links_j_infos_mj):
-                        if j_info_mj["name"] == j_info_gs["name"]:
-                            for name in ("dofs_force_range", "dofs_armature", "dofs_act_gain", "dofs_act_bias"):
-                                j_info_mj[name] = j_info_gs[name]
-                            break
-                links_j_infos = links_j_infos_mj
+                joints_desc_gs = {j_desc.name: j_desc for j_desc in chain.from_iterable(links_j_descs)}
+                for j_desc_mj in chain.from_iterable(links_j_infos_mj):
+                    j_desc_gs = joints_desc_gs.get(j_desc_mj.name)
+                    if j_desc_gs is None:
+                        continue
+                    j_desc_mj.dofs_force_range = j_desc_gs.dofs_force_range
+                    j_desc_mj.dofs_armature = j_desc_gs.dofs_armature
+                    j_desc_mj.dofs_act_gain = j_desc_gs.dofs_act_gain
+                    j_desc_mj.dofs_act_bias = j_desc_gs.dofs_act_bias
+                links_j_descs = links_j_infos_mj
 
                 # Must invalidate invweight if default rotor armature inertia has been specified
                 if morph.default_armature is not None:
-                    for link_j_infos in links_j_infos:
-                        for j_info in link_j_infos:
-                            if j_info["type"] not in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED):
+                    for link_j_descs in links_j_descs:
+                        for j_desc in link_j_descs:
+                            if j_desc.type not in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED):
                                 is_inertia_invalid = True
                                 break
 
                 # Take into account 'world' body if it was added automatically for our legacy URDF parser
-                if len(links_g_infos_mj) == len(links_g_infos) + 1:
-                    assert not links_g_infos_mj[0]
-                    links_g_infos.insert(0, [])
-                assert len(links_g_infos_mj) == len(links_g_infos)
+                if len(links_g_descs_mj) == len(links_g_descs) + 1:
+                    assert not links_g_descs_mj[0]
+                    links_g_descs.insert(0, [])
+                assert len(links_g_descs_mj) == len(links_g_descs)
 
                 # Update collision geometries, ignoring fake" visual geometries returned by Mujoco, (which is using
                 # collision as visual to avoid loading mesh files), and keeping the true visual geometries provided
                 # by our custom legacy URDF parser.
                 # Note that the Kinematic tree ordering is stable between Mujoco and Genesis (Hopefully!).
-                for link_g_infos, link_g_infos_mj in zip(links_g_infos, links_g_infos_mj):
+                for link_g_descs, link_g_descs_mj in zip(links_g_descs, links_g_descs_mj):
                     # Remove collision geometries from our legacy URDF parser
-                    for i_g, g_info in tuple(enumerate(link_g_infos))[::-1]:
-                        is_col = g_info["contype"] or g_info["conaffinity"]
+                    for i_g, g_desc in tuple(enumerate(link_g_descs))[::-1]:
+                        is_col = g_desc.contype or g_desc.conaffinity
                         if is_col:
-                            del link_g_infos[i_g]
+                            del link_g_descs[i_g]
 
                     # Add visual geometries from Mujoco's unified MJCF+URDF parser
-                    for g_info in link_g_infos_mj:
-                        is_col = g_info["contype"] or g_info["conaffinity"]
+                    for g_desc in link_g_descs_mj:
+                        is_col = g_desc.contype or g_desc.conaffinity
                         if is_col:
-                            link_g_infos.append(g_info)
+                            link_g_descs.append(g_desc)
             except (ValueError, AssertionError) as e:
                 gs.logger.warning(
                     "Falling back to legacy URDF parser. Default values of physics properties may be off:\n"
@@ -708,12 +748,12 @@ class KinematicEntity(Entity):
             from genesis.utils.usd import parse_usd_rigid_entity
 
             # Unified parser handles both articulations and rigid bodies
-            l_infos, links_j_infos, links_g_infos, eqs_info = parse_usd_rigid_entity(morph, surface)
+            l_descs, links_j_descs, links_g_descs, eq_descs = parse_usd_rigid_entity(morph, surface)
 
         # Make sure that the inertia matrix of all links is valid
         if not morph.recompute_inertia:
-            for l_info in l_infos:
-                inertia_i = l_info.get("inertial_i")
+            for l_desc in l_descs:
+                inertia_i = l_desc.inertia
                 if inertia_i is None:
                     continue
 
@@ -723,7 +763,7 @@ class KinematicEntity(Entity):
                 # Make sure that all eigenvalues are positive, ignoring rounding errors
                 if (inertia_diag < -gs.EPS).any():
                     gs.raise_exception(
-                        f"Inertia matrix of link '{l_info['name']}' not positive definite (eigenvalues: {inertia_diag})."
+                        f"Inertia matrix of link '{l_desc.name}' not positive definite (eigenvalues: {inertia_diag})."
                     )
 
                 # Make sure that the inertia matrix is physically valid (nothing to do with numerical conditioning)
@@ -732,13 +772,13 @@ class KinematicEntity(Entity):
                     for i in range(3)
                 ):
                     gs.raise_exception(
-                        f"Inertia matrix of link '{l_info['name']}' does not satisfy A+B>=C for all permutations "
+                        f"Inertia matrix of link '{l_desc.name}' does not satisfy A+B>=C for all permutations "
                         f"(eigenvalues: {inertia_diag}). Please fix manually you morph file '{morph.file}' or specify "
                         "`recompute_inertia=True`."
                     )
 
                 # Make sure that the inertia matrix is symmetric with positive eigenvalues
-                l_info["inertial_i"] = Q @ np.diag(np.maximum(inertia_diag, 0.0)) @ Q.T
+                l_desc.inertia = Q @ np.diag(np.maximum(inertia_diag, 0.0)) @ Q.T
 
         # Remove any "virtual" root link that was not present in the original file morph.
         # Mujoco unified parser and our legacy parser have different behaviors.
@@ -747,97 +787,85 @@ class KinematicEntity(Entity):
         # * Our legacy parser adds a root 'world' link if the root joint is not a fixed joint in file morph.
         # Remove this virtual world link if the child has a free joint (the free joint absorbs the full pose into
         # 'init_qpos' regardless of pos/quat), or if the child has an identity transform.
-        base_j_info, base_g_info = links_j_infos[0], links_g_infos[0]
-        if len(l_infos) > 1 and (sum(j_info["n_dofs"] for j_info in base_j_info) == 0) and not base_g_info:
-            child_has_freejoint = any(j_info["type"] == gs.JOINT_TYPE.FREE for j_info in links_j_infos[1])
-            child_is_identity = (np.abs(l_infos[1]["pos"]) < gs.EPS).all() and (
-                np.abs(l_infos[1]["quat"] - (1, 0, 0, 0)) < gs.EPS
+        base_j_descs, base_g_descs = links_j_descs[0], links_g_descs[0]
+        if len(l_descs) > 1 and (sum(j_desc.n_dofs for j_desc in base_j_descs) == 0) and not base_g_descs:
+            child_has_freejoint = any(j_desc.type == gs.JOINT_TYPE.FREE for j_desc in links_j_descs[1])
+            child_is_identity = (np.abs(l_descs[1].pos) < gs.EPS).all() and (
+                np.abs(l_descs[1].quat - (1, 0, 0, 0)) < gs.EPS
             ).all()
             if child_has_freejoint or child_is_identity:
-                del l_infos[0], links_j_infos[0], links_g_infos[0]
-                for l_info in l_infos:
-                    l_info["parent_idx"] = max(l_info["parent_idx"] - 1, -1)
-                    if "root_idx" in l_info:
-                        l_info["root_idx"] = max(l_info["root_idx"] - 1, -1)
+                del l_descs[0], links_j_descs[0], links_g_descs[0]
+                for l_desc in l_descs:
+                    l_desc.parent_idx = max(l_desc.parent_idx - 1, -1)
+                    if l_desc.root_idx is not None:
+                        l_desc.root_idx = max(l_desc.root_idx - 1, -1)
 
         # URDF is a robot description file so all links have same root_idx
         if isinstance(morph, gs.morphs.URDF) and not morph._enable_mujoco_compatibility:
-            for l_info in l_infos:
-                l_info["root_idx"] = 0
+            for l_desc in l_descs:
+                l_desc.root_idx = 0
 
         # Genesis requires links associated with free joints to be attached to the world directly
-        for l_info, link_j_infos in zip(l_infos, links_j_infos):
-            if all(j_info["type"] == gs.JOINT_TYPE.FREE for j_info in link_j_infos):
-                l_info["parent_idx"] = -1
+        for l_desc, link_j_descs in zip(l_descs, links_j_descs):
+            if all(j_desc.type == gs.JOINT_TYPE.FREE for j_desc in link_j_descs):
+                l_desc.parent_idx = -1
 
         # Add free floating joint at root if necessary
         if (
             (isinstance(morph, gs.morphs.Drone) or (isinstance(morph, gs.morphs.URDF) and not morph.fixed))
-            and links_j_infos
-            and sum(j_info["n_dofs"] for j_info in links_j_infos[0]) == 0
+            and links_j_descs
+            and sum(j_desc.n_dofs for j_desc in links_j_descs[0]) == 0
         ):
             # Define free joint
-            j_info = dict()
-            j_info["name"] = "root_joint"
-            j_info["type"] = gs.JOINT_TYPE.FREE
-            j_info["n_qs"] = 7
-            j_info["n_dofs"] = 6
-            j_info["init_qpos"] = np.concatenate([gu.zero_pos(), gu.identity_quat()])
-            j_info["pos"] = gu.zero_pos()
-            j_info["quat"] = gu.identity_quat()
-            j_info["dofs_motion_ang"] = np.eye(6, 3, -3)
-            j_info["dofs_motion_vel"] = np.eye(6, 3)
-            j_info["dofs_limit"] = np.tile([-np.inf, np.inf], (6, 1))
-            j_info["dofs_stiffness"] = np.zeros(6)
-            j_info["dofs_invweight"] = np.zeros(6)
-            j_info["dofs_frictionloss"] = np.zeros(6)
-            j_info["dofs_damping"] = np.zeros(6)
+            dofs_damping = np.zeros(6)
             if isinstance(morph, gs.morphs.Drone):
                 # FIXME: This pattern not ideal because the inertial mass may be unknown at this point.
-                mass_tot = sum(l_info.get("inertial_mass") or 0.0 for l_info in l_infos)
-                j_info["dofs_damping"][3:] = mass_tot * morph.default_base_ang_damping_scale
-            j_info["dofs_armature"] = np.zeros(6)
-            j_info["dofs_act_gain"] = np.zeros((6,), dtype=gs.np_float)
-            j_info["dofs_act_bias"] = np.zeros((6, 3), dtype=gs.np_float)
-            j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (6, 1))
-            links_j_infos[0] = [j_info]
+                mass_tot = sum(l_desc.mass or 0.0 for l_desc in l_descs)
+                dofs_damping[3:] = mass_tot * morph.default_base_ang_damping_scale
+            links_j_descs[0] = [
+                JointDescription(
+                    name="root_joint",
+                    type=gs.JOINT_TYPE.FREE,
+                    init_qpos=np.concatenate([gu.zero_pos(), gu.identity_quat()]),
+                    dofs_damping=dofs_damping,
+                )
+            ]
 
             # The base link is now moving, which merges every kinematic tree connected to it into a single tree rooted
             # at it. Parser-provided root indices assume a base welded to the world, so recompute them by propagating
             # each parent's root (parents precede children); links with no parent root their own tree.
-            for i_l, l_info in enumerate(l_infos):
-                if "root_idx" in l_info:
-                    parent_idx = l_info["parent_idx"]
-                    l_info["root_idx"] = l_infos[parent_idx]["root_idx"] if parent_idx != -1 else i_l
+            for i_l, l_desc in enumerate(l_descs):
+                if l_desc.root_idx is not None:
+                    parent_idx = l_desc.parent_idx
+                    l_desc.root_idx = l_descs[parent_idx].root_idx if parent_idx != -1 else i_l
 
             # Must invalidate invweight for all child links and joints because the root joint was fixed when it was
             # initially computed. Re-initialize it to some strictly negative value to trigger recomputation in solver.
-            for i_l in range(len(l_infos)):
-                l_infos[i_l]["invweight"] = np.full((2,), fill_value=-1.0)
-                for j_info in links_j_infos[i_l]:
-                    j_info["dofs_invweight"] = np.full((j_info["n_dofs"],), fill_value=-1.0)
+            for i_l in range(len(l_descs)):
+                l_descs[i_l].invweight = np.full((2,), fill_value=-1.0)
+                for j_desc in links_j_descs[i_l]:
+                    j_desc.dofs_invweight = np.full((j_desc.n_dofs,), fill_value=-1.0)
 
         # Force recomputing inertial information based on geometry if ill-defined for some reason.
         # A moving link needs a well-defined inertia only for its own rigid body; a rigidly-attached (fixed-joint) child
         # folds its mass into the parent's composite-rigid-body inertia.
         has_links_subtree_mass = [
-            bool(link_g_infos) or (l_info.get("inertial_mass") or 0.0) > 0.0
-            for link_g_infos, l_info in zip(links_g_infos, l_infos)
+            bool(link_g_descs) or (l_desc.mass or 0.0) > 0.0 for link_g_descs, l_desc in zip(links_g_descs, l_descs)
         ]
-        for i in reversed(range(len(l_infos))):
-            parent_idx = l_infos[i]["parent_idx"]
-            if parent_idx >= 0 and all(j_info["type"] == gs.JOINT_TYPE.FIXED for j_info in links_j_infos[i]):
+        for i in reversed(range(len(l_descs))):
+            parent_idx = l_descs[i].parent_idx
+            if parent_idx >= 0 and all(j_desc.type == gs.JOINT_TYPE.FIXED for j_desc in links_j_descs[i]):
                 has_links_subtree_mass[parent_idx] |= has_links_subtree_mass[i]
 
-        for i, (l_info, link_g_infos, link_j_infos, has_link_subtree_mass) in enumerate(
-            zip(l_infos, links_g_infos, links_j_infos, has_links_subtree_mass)
+        for i, (l_desc, link_g_descs, link_j_descs, has_link_subtree_mass) in enumerate(
+            zip(l_descs, links_g_descs, links_j_descs, has_links_subtree_mass)
         ):
             # Fixed links are subsumed into their parent's composite; only moving links need a well-defined inertia.
-            if all(j_info["type"] == gs.JOINT_TYPE.FIXED for j_info in link_j_infos):
+            if all(j_desc.type == gs.JOINT_TYPE.FIXED for j_desc in link_j_descs):
                 continue
             if not (
-                (l_info.get("inertial_mass") is None or l_info["inertial_mass"] <= 0.0)
-                or (l_info.get("inertial_i") is None or (np.diag(l_info["inertial_i"]) <= 0.0).any())
+                (l_desc.mass is None or l_desc.mass <= 0.0)
+                or (l_desc.inertia is None or (np.diag(l_desc.inertia) <= 0.0).any())
             ):
                 continue
 
@@ -848,57 +876,67 @@ class KinematicEntity(Entity):
             # A geometry-less moving link whose rigidly-attached (fixed-joint) subtree carries the mass keeps its
             # (near-)zero own inertia: the composite-rigid-body inertia is finite, so leave it as parsed. Otherwise
             # recompute from its own geometry, warning only when nothing in the rigid subtree provides mass.
-            if not link_g_infos and has_link_subtree_mass:
+            if not link_g_descs and has_link_subtree_mass:
                 continue
-            if not link_g_infos:
+            if not link_g_descs:
                 gs.logger.warning(
-                    f"Moving link '{l_info['name']}' has no mass, inertia or geometry, and no rigidly-attached "
+                    f"Moving link '{l_desc.name}' has no mass, inertia or geometry, and no rigidly-attached "
                     "child provides any. Setting its mass to 'gs.EPS'."
                 )
-            elif l_info.get("inertial_mass") is not None or l_info.get("inertial_i") is not None:
+            elif l_desc.mass is not None or l_desc.inertia is not None:
                 gs.logger.debug(
-                    f"Invalid or undefined inertia for link '{l_info['name']}'. Force recomputing it based on geometry."
+                    f"Invalid or undefined inertia for link '{l_desc.name}'. Force recomputing it based on geometry."
                 )
-            l_info["inertial_i"] = None
+            l_desc.inertia = None
         if is_inertia_invalid:
-            for l_info, link_j_infos in zip(l_infos, links_j_infos):
-                l_info["invweight"] = np.full((2,), fill_value=-1.0)
-                for j_info in link_j_infos:
-                    j_info["dofs_invweight"] = np.full((j_info["n_dofs"],), fill_value=-1.0)
+            for l_desc, link_j_descs in zip(l_descs, links_j_descs):
+                l_desc.invweight = np.full((2,), fill_value=-1.0)
+                for j_desc in link_j_descs:
+                    j_desc.dofs_invweight = np.full((j_desc.n_dofs,), fill_value=-1.0)
 
         # Check if there is something weird with the options
-        non_physical_fieldnames = ("dofs_frictionloss", "dofs_damping", "dofs_armature")
-        for j_info in (
-            j_info for link_j_infos in links_j_infos for j_info in link_j_infos if j_info["type"] == gs.JOINT_TYPE.FREE
+        for j_desc in (
+            j_desc for link_j_descs in links_j_descs for j_desc in link_j_descs if j_desc.type == gs.JOINT_TYPE.FREE
         ):
-            if not all((j_info[name] < gs.EPS).all() for name in non_physical_fieldnames if name in j_info):
+            if not all(
+                (values < gs.EPS).all()
+                for values in (j_desc.dofs_frictionloss, j_desc.dofs_damping, j_desc.dofs_armature)
+            ):
                 gs.logger.warning(
                     "Some free joint has non-zero frictionloss, damping or armature parameters. Beware it is "
                     "non-physical."
                 )
 
-        # Define a flag that determines whether the link at hand is associated with a robot.
-        # Note that 0d array is used rather than native type because this algo requires mutable objects.
-        for l_info, link_j_infos in zip(l_infos, links_j_infos):
-            if not link_j_infos or all(j_info["type"] == gs.JOINT_TYPE.FIXED for j_info in link_j_infos):
-                if l_info["parent_idx"] >= 0:
-                    l_info["is_robot"] = l_infos[l_info["parent_idx"]]["is_robot"]
-                else:
-                    l_info["is_robot"] = np.array(False, dtype=np.bool_)
-            elif all(j_info["type"] == gs.JOINT_TYPE.FREE for j_info in link_j_infos):
-                l_info["is_robot"] = np.array(False, dtype=np.bool_)
+        # Define a flag that determines whether the link at hand is associated with a robot. A link whose joints are
+        # all fixed shares the flag of its parent, so one flag covers a whole run of such links. An articulated link
+        # raises the flag of its own run and of its parent's, which the links sharing either flag then read, whichever
+        # order the loop reached them in.
+        links_flag = []
+        flags_is_robot = []
+        for l_desc, link_j_descs in zip(l_descs, links_j_descs):
+            is_carried = not link_j_descs or all(j_desc.type == gs.JOINT_TYPE.FIXED for j_desc in link_j_descs)
+            if is_carried and l_desc.parent_idx >= 0:
+                links_flag.append(links_flag[l_desc.parent_idx])
             else:
-                l_info["is_robot"] = np.array(True, dtype=np.bool_)
-                if l_info["parent_idx"] >= 0:
-                    l_infos[l_info["parent_idx"]]["is_robot"][()] = True
+                links_flag.append(len(flags_is_robot))
+                flags_is_robot.append(False)
+            is_articulated = bool(link_j_descs) and not all(
+                j_desc.type in (gs.JOINT_TYPE.FIXED, gs.JOINT_TYPE.FREE) for j_desc in link_j_descs
+            )
+            if is_articulated:
+                flags_is_robot[links_flag[-1]] = True
+                if l_desc.parent_idx >= 0:
+                    flags_is_robot[links_flag[l_desc.parent_idx]] = True
+        for l_desc, i_flag in zip(l_descs, links_flag):
+            l_desc.is_robot = flags_is_robot[i_flag]
 
         # Apply morph pos and quat if specified
-        for l_info, link_j_infos in zip(l_infos, links_j_infos):
-            if l_info["parent_idx"] < 0:
+        for l_desc, link_j_descs in zip(l_descs, links_j_descs):
+            if l_desc.parent_idx < 0:
                 if morph.pos is not None or morph.quat is not None:
                     gs.logger.debug("Applying offset to base link's pose with user provided value in morph.")
-                    pos = np.asarray(l_info.get("pos", (0.0, 0.0, 0.0)))
-                    quat = np.asarray(l_info.get("quat", (1.0, 0.0, 0.0, 0.0)))
+                    pos = l_desc.pos
+                    quat = l_desc.quat
                     if morph.pos is None:
                         pos_offset = np.zeros((3,))
                     else:
@@ -907,27 +945,25 @@ class KinematicEntity(Entity):
                         quat_offset = np.array((1.0, 0.0, 0.0, 0.0))
                     else:
                         quat_offset = np.asarray(morph.quat)
-                    l_info["pos"], l_info["quat"] = gu.transform_pos_quat_by_trans_quat(
-                        pos, quat, pos_offset, quat_offset
-                    )
+                    l_desc.pos, l_desc.quat = gu.transform_pos_quat_by_trans_quat(pos, quat, pos_offset, quat_offset)
 
-                for j_info in link_j_infos:
-                    if j_info["type"] == gs.JOINT_TYPE.FREE:
-                        # in this case, l_info['pos'] and l_info['quat'] are actually not used in solver,
+                for j_desc in link_j_descs:
+                    if j_desc.type == gs.JOINT_TYPE.FREE:
+                        # in this case, l_desc.pos and l_desc.quat are actually not used in solver,
                         # but this initial value will be reflected
-                        j_info["init_qpos"] = np.concatenate([l_info["pos"], l_info["quat"]])
+                        j_desc.init_qpos = np.concatenate([l_desc.pos, l_desc.quat])
 
         # Exclude joints with 0 dofs to align with Mujoco
-        links_j_infos = [[j_info for j_info in link_j_infos if j_info["n_dofs"] > 0] for link_j_infos in links_j_infos]
+        links_j_descs = [[j_desc for j_desc in link_j_descs if j_desc.n_dofs > 0] for link_j_descs in links_j_descs]
 
-        return l_infos, links_j_infos, links_g_infos, eqs_info
+        return l_descs, links_j_descs, links_g_descs, eq_descs
 
     def _load_scene(self, morph, surface):
-        l_infos, links_j_infos, links_g_infos, _eqs_info = self._parse_scene(morph, surface)
+        l_descs, links_j_descs, links_g_descs, _eq_descs = self._parse_scene(morph, surface)
 
         # Add (link, joints, geoms) tuples sequentially
-        for l_info, link_j_infos, link_g_infos in zip(l_infos, links_j_infos, links_g_infos):
-            self._add_by_info(l_info, link_j_infos, link_g_infos, morph, surface)
+        for l_desc, link_j_descs, link_g_descs in zip(l_descs, links_j_descs, links_g_descs):
+            self._add_by_description(l_desc, link_j_descs, link_g_descs, morph, surface)
 
     def _build(self):
         for link in self._links:
@@ -972,8 +1008,8 @@ class KinematicEntity(Entity):
                     articulated = True
                     break
                 pose_in_root[link.idx] = gu.transform_pos_quat_by_trans_quat(
-                    np.asarray(link.pos, dtype=gs.np_float),
-                    np.asarray(link.quat, dtype=gs.np_float),
+                    np.asarray(link.desc.pos, dtype=gs.np_float),
+                    np.asarray(link.desc.quat, dtype=gs.np_float),
                     *pose_in_root[link.parent_idx],
                 )
                 subtree.append(link)
@@ -1047,11 +1083,11 @@ class KinematicEntity(Entity):
                         geoms = list(link.vgeoms)
                     for geom in geoms:
                         pos, quat = gu.transform_pos_quat_by_trans_quat(
-                            geom._init_pos, geom._init_quat, link_pos, link_quat
+                            geom.init_pos, geom.init_quat, link_pos, link_quat
                         )
                         pos, quat = gu.inv_transform_pos_quat_by_trans_quat(pos, quat, com_root, principal_quat)
                         pos, quat = gu.inv_transform_pos_quat_by_trans_quat(pos, quat, link_pos, link_quat)
-                        geom._init_pos, geom._init_quat = pos, quat
+                        geom.desc.pos, geom.desc.quat = pos, quat
                         geom._init_pos_tc = torch.from_numpy(pos).to(device=gs.device, dtype=gs.tc_float)
                         geom._init_quat_tc = torch.from_numpy(quat).to(device=gs.device, dtype=gs.tc_float)
 
@@ -1062,7 +1098,7 @@ class KinematicEntity(Entity):
                     # links skipped above (a geometry-less link carries only the 'gs.EPS' placeholder) must not
                     # inflate the composite.
                     real_total = sum(
-                        float(link._variant_inertial[v][0] if is_heterogeneous else link.inertial_mass)
+                        float(link._variant_inertial[v][0] if is_heterogeneous else link.desc.mass)
                         for link in composite_links
                     )
                     scale = real_total / mass_total
@@ -1075,7 +1111,8 @@ class KinematicEntity(Entity):
                         if is_heterogeneous:
                             link._variant_inertial[v] = props
                         else:
-                            link._inertial_mass, link._inertial_pos, link._inertial_quat, link._inertial_i = props
+                            desc = link.desc
+                            desc.mass, desc.inertial_pos, desc.inertial_quat, desc.inertia = props
 
                 # Fold the anchoring into the offset (relative getters keep reporting the user frame) and the root
                 # free-joint init_qpos (the body frame moves to old_pose o (com_root, principal), keeping the
@@ -1104,153 +1141,126 @@ class KinematicEntity(Entity):
                         self._offset_pos, self._offset_quat = self._links_offset_pos[0], self._links_offset_quat[0]
                     for joint in root.joints:
                         if joint.type == gs.JOINT_TYPE.FREE:
-                            new_pos = gu.transform_by_trans_quat(com_root, joint._init_qpos[:3], joint._init_qpos[3:7])
-                            new_quat = gu.transform_quat_by_quat(principal_quat, joint._init_qpos[3:7])
-                            joint._init_qpos = np.concatenate([new_pos, new_quat])
-                    root._pos = gu.transform_by_trans_quat(com_root, np.asarray(root.pos, dtype=gs.np_float), root.quat)
-                    root._quat = gu.transform_quat_by_quat(principal_quat, np.asarray(root.quat, dtype=gs.np_float))
+                            init_qpos = joint.desc.init_qpos
+                            new_pos = gu.transform_by_trans_quat(com_root, init_qpos[:3], init_qpos[3:7])
+                            new_quat = gu.transform_quat_by_quat(principal_quat, init_qpos[3:7])
+                            joint.desc.init_qpos = np.concatenate([new_pos, new_quat])
+                    root_pos = np.asarray(root.desc.pos, dtype=gs.np_float)
+                    root_quat = np.asarray(root.desc.quat, dtype=gs.np_float)
+                    root.desc.pos = gu.transform_by_trans_quat(com_root, root_pos, root_quat)
+                    root.desc.quat = gu.transform_quat_by_quat(principal_quat, root_quat)
 
         # The load-time inertial info was only needed for the build-time estimates and the anchors; drop it now that
         # the alignment lives in the persistent geometry, offset and init_qpos.
         self._links_inertial_info = []
 
-    def _create_joints(self, j_infos, link_idx, joint_start):
-        """Create RigidJoint objects from joint info dicts.
+    def _create_joints(self, j_descs, link_idx, joint_start):
+        """Create the RigidJoint objects of one link from its described joints.
 
-        Shared by KinematicEntity._add_by_info and RigidEntity._add_by_info.
+        Shared by KinematicEntity._add_by_description and RigidEntity._add_by_description.
         """
         joints = gs.List()
         self._joints.append(joints)
-        for i_j_, j_info in enumerate(j_infos):
-            n_dofs = j_info["n_dofs"]
-
-            sol_params = np.array(j_info.get("sol_params", gu.default_solver_params()), copy=True)
+        for i_j_, j_desc in enumerate(j_descs):
+            sol_params = j_desc.sol_params
             if (
                 len(sol_params.shape) == 2
                 and sol_params.shape[0] == 1
                 and (sol_params[0][3] >= 1.0 or sol_params[0][2] >= sol_params[0][3])
             ):
                 gs.logger.warning(
-                    f"Joint {j_info['name']}'s sol_params {sol_params[0]} look not right, change to default."
+                    f"Joint {j_desc.name}'s sol_params {sol_params[0]} look not right, change to default."
                 )
-                sol_params = gu.default_solver_params()
+                j_desc.sol_params = gu.default_solver_params()
 
-            dofs_motion_ang = j_info.get("dofs_motion_ang")
-            if dofs_motion_ang is None:
-                if n_dofs == 6:
-                    dofs_motion_ang = np.eye(6, 3, -3)
-                elif n_dofs == 0:
-                    dofs_motion_ang = np.zeros((0, 3))
-                else:
-                    assert False
-
-            dofs_motion_vel = j_info.get("dofs_motion_vel")
-            if dofs_motion_vel is None:
-                if n_dofs == 6:
-                    dofs_motion_vel = np.eye(6, 3)
-                elif n_dofs == 0:
-                    dofs_motion_vel = np.zeros((0, 3))
-                else:
-                    assert False
+            if j_desc.dofs_motion_ang is None or j_desc.dofs_motion_vel is None:
+                gs.raise_exception(
+                    f"Joint '{j_desc.name}' holds {j_desc.n_dofs} degrees of freedom, whose motion axes the asset "
+                    "must describe."
+                )
 
             joint = RigidJoint(
                 entity=self,
-                name=j_info["name"],
                 idx=joint_start + i_j_,
                 link_idx=link_idx,
                 q_start=self.n_qs + self._q_start,
                 dof_start=self.n_dofs + self._dof_start,
-                n_qs=j_info["n_qs"],
-                n_dofs=n_dofs,
-                type=j_info["type"],
-                pos=j_info.get("pos", gu.zero_pos()),
-                quat=j_info.get("quat", gu.identity_quat()),
-                init_qpos=j_info.get("init_qpos", np.zeros(n_dofs)),
-                sol_params=sol_params,
-                dofs_motion_ang=dofs_motion_ang,
-                dofs_motion_vel=dofs_motion_vel,
-                dofs_limit=j_info.get("dofs_limit", np.tile([[-np.inf, np.inf]], [n_dofs, 1])),
-                dofs_invweight=j_info.get("dofs_invweight", np.zeros(n_dofs)),
-                dofs_frictionloss=j_info.get("dofs_frictionloss", np.zeros(n_dofs)),
-                dofs_stiffness=j_info.get("dofs_stiffness", np.zeros(n_dofs)),
-                dofs_damping=j_info.get("dofs_damping", np.zeros(n_dofs)),
-                dofs_armature=j_info.get("dofs_armature", np.zeros(n_dofs)),
-                dofs_act_gain=j_info.get("dofs_act_gain", np.zeros(n_dofs)),
-                dofs_act_bias=j_info.get("dofs_act_bias", np.zeros((n_dofs, 3))),
-                dofs_force_range=j_info.get("dofs_force_range", np.tile([[-np.inf, np.inf]], [n_dofs, 1])),
+                desc=j_desc,
             )
             joints.append(joint)
 
         return joints
 
-    def _add_by_info(self, l_info, j_infos, g_infos, morph, surface):
-        if len(j_infos) > 1 and any(j_info["type"] in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED) for j_info in j_infos):
+    def _add_by_description(self, l_desc, j_descs, g_descs, morph, surface):
+        if len(j_descs) > 1 and any(j_desc.type in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED) for j_desc in j_descs):
             raise ValueError(
                 "Compounding joints of types 'FREE' or 'FIXED' with any other joint on the same body not supported"
             )
 
-        parent_idx = l_info["parent_idx"]
+        parent_idx = l_desc.parent_idx
         if parent_idx >= 0:
             parent_idx += self._link_start
-        root_idx = l_info.get("root_idx")
+        root_idx = l_desc.root_idx
         if root_idx is not None and root_idx >= 0:
             root_idx += self._link_start
         link_idx = self.n_links + self._link_start
         joint_start = self.n_joints + self._joint_start
 
-        cg_infos, vg_infos = self._postprocess_geoms_info(morph, g_infos, l_info.get("is_robot", False))
-        self._align_link(l_info, j_infos, cg_infos, vg_infos, morph, link_idx)
+        cg_descs, vg_descs = self._postprocess_geoms(morph, g_descs, l_desc.is_robot)
+        self._align_link(l_desc, j_descs, cg_descs, vg_descs, morph, link_idx)
 
-        joints = self._create_joints(j_infos, link_idx, joint_start)
+        joints = self._create_joints(j_descs, link_idx, joint_start)
+
+        # A kinematic link stays where the kinematics puts it, so it holds zero mass, zero inertia and zero inverse
+        # weight, whatever its asset described
+        l_desc.inertial_pos = gu.zero_pos()
+        l_desc.inertial_quat = gu.identity_quat()
+        l_desc.mass = 0.0
+        l_desc.inertia = np.zeros((3, 3), dtype=gs.np_float)
+        l_desc.invweight = np.zeros(2, dtype=gs.np_float)
 
         # Add child link
         link = KinematicLink(
             entity=self,
-            name=l_info["name"],
             idx=link_idx,
+            parent_idx=parent_idx,
+            root_idx=root_idx,
             joint_start=joint_start,
-            n_joints=len(j_infos),
+            n_joints=len(j_descs),
             vgeom_start=self.n_vgeoms + self._vgeom_start,
             vvert_start=self.n_vverts + self._vvert_start,
             vface_start=self.n_vfaces + self._vface_start,
-            pos=l_info["pos"],
-            quat=l_info["quat"],
-            parent_idx=parent_idx,
-            root_idx=root_idx,
-            aligned=l_info.get("aligned", False),
+            desc=l_desc,
         )
         self._links.append(link)
 
         # Add visual geometries
-        for g_info in vg_infos:
-            link._add_vgeom(
-                vmesh=g_info["vmesh"],
-                init_pos=g_info.get("pos", gu.zero_pos()),
-                init_quat=g_info.get("quat", gu.identity_quat()),
-            )
+        for g_desc in vg_descs:
+            link._add_vgeom(g_desc)
 
         return link, joints
 
-    def _postprocess_geoms_info(self, morph, g_infos, is_robot):
+    def _postprocess_geoms(self, morph, g_descs, is_robot):
         """
-        Split g_infos into (cg_infos, vg_infos) collision and visual lists, then
-        post-process collision meshes (convexification / decomposition).
-        Used for both normal loading and heterogeneous simulation.
+        Split the described geoms into a collision list and a visual list, and post-process the collision meshes.
+
+        Post-processing convexifies the collision meshes, decomposing the ones a single hull cannot approximate within
+        the threshold the morph carries. A plain load and a heterogeneous variant both go through here.
         """
         # An explicitly set material density overrides any asset-authored per-geom density, as material friction does
-        # for authored frictions. Dropping the keys up front keeps the align anchor, its all-or-none source check,
-        # and the build-time inertial estimate consistently uniform-density.
+        # for authored frictions. Clearing them up front keeps the align anchor, its all-or-none source check, and the
+        # build-time inertial estimate consistently uniform-density.
         if isinstance(self.material, gs.materials.Rigid) and self.material.rho is not None:
-            for g_info in g_infos:
-                g_info.pop("density", None)
+            for g_desc in g_descs:
+                g_desc.density = None
 
-        cg_infos, vg_infos = [], []
-        for g_info in g_infos:
-            is_col = g_info["contype"] or g_info["conaffinity"]
+        cg_descs, vg_descs = [], []
+        for g_desc in g_descs:
+            is_col = g_desc.contype or g_desc.conaffinity
             if morph.collision and is_col:
-                cg_infos.append(g_info)
+                cg_descs.append(g_desc)
             if morph.visualization and not is_col:
-                vg_infos.append(g_info)
+                vg_descs.append(g_desc)
 
         # Post-process all collision meshes at once.
         # Destroying the original geometries should be avoided if possible as it will change the way objects
@@ -1278,22 +1288,26 @@ class KinematicEntity(Entity):
             # whatever is left unset. Post-processing merges geoms within a call, so each set of effective options
             # gets its own call; geoms without overrides share one, preserving the whole-entity merge behavior.
             # Thresholds match under gs.EPS tolerance so float noise cannot split a group.
-            cg_infos_by_options: list[tuple[tuple, list]] = []
-            for g_info in cg_infos:
-                convexify = g_info.pop("convexify", morph.convexify)
-                decimate = g_info.pop("decimate", morph.decimate)
-                threshold = g_info.pop("decompose_error_threshold", decompose_error_threshold)
-                for options, options_cg_infos in cg_infos_by_options:
+            cg_descs_by_options: list[tuple[tuple, list]] = []
+            for g_desc in cg_descs:
+                convexify = morph.convexify if g_desc.convexify is None else g_desc.convexify
+                decimate = morph.decimate if g_desc.decimate is None else g_desc.decimate
+                threshold = (
+                    decompose_error_threshold
+                    if g_desc.decompose_error_threshold is None
+                    else g_desc.decompose_error_threshold
+                )
+                for options, options_cg_descs in cg_descs_by_options:
                     if options[:2] == (convexify, decimate) and math.isclose(options[2], threshold, abs_tol=gs.EPS):
-                        options_cg_infos.append(g_info)
+                        options_cg_descs.append(g_desc)
                         break
                 else:
-                    cg_infos_by_options.append(((convexify, decimate, threshold), [g_info]))
+                    cg_descs_by_options.append(((convexify, decimate, threshold), [g_desc]))
 
-            cg_infos = []
-            for (convexify, decimate, threshold), options_cg_infos in cg_infos_by_options:
-                cg_infos += mu.postprocess_collision_geoms(
-                    options_cg_infos,
+            cg_descs = []
+            for (convexify, decimate, threshold), options_cg_descs in cg_descs_by_options:
+                cg_descs += mu.postprocess_collision_geoms(
+                    options_cg_descs,
                     decimate,
                     morph.decimate_face_num,
                     morph.decimate_aggressiveness,
@@ -1304,14 +1318,14 @@ class KinematicEntity(Entity):
                 )
 
         # Randomize collision mesh colors. This is especially useful to check convex decomposition.
-        for g_info in cg_infos:
-            mesh = g_info["mesh"]
+        for g_desc in cg_descs:
+            mesh = g_desc.mesh
             mesh.set_color((*np.random.rand(3), 0.7))
 
-        return cg_infos, vg_infos
+        return cg_descs, vg_descs
 
     def _finalize_inertial(
-        self, explicit_mass, explicit_com, explicit_quat, explicit_inertia, cg_infos, vg_infos, is_robot
+        self, explicit_mass, explicit_com, explicit_quat, explicit_inertia, cg_descs, vg_descs, is_robot
     ):
         """Compute a link's load-time inertial data (see 'LinkInertialInfo').
 
@@ -1320,8 +1334,8 @@ class KinematicEntity(Entity):
         by 'RigidLink._build' uses the resolved material density as fallback instead, and falls back to the visual
         geoms for a link without collision geometry.
         """
-        if cg_infos:
-            hint = compose_inertial_from_g_infos(cg_infos, rho=1.0)
+        if cg_descs:
+            hint = compose_inertial_from_geoms(cg_descs, rho=1.0)
         else:
             hint = InertialProperties(0.0, np.zeros(3, dtype=gs.np_float), np.zeros((3, 3), dtype=gs.np_float))
         props = finalize_inertial(
@@ -1330,10 +1344,10 @@ class KinematicEntity(Entity):
         if explicit_mass is not None and explicit_mass > 0.0:
             is_mass_explicit = True
         else:
-            geoms_with_density = sum(g_info.get("density") is not None for g_info in cg_infos)
+            geoms_with_density = sum(g_desc.density is not None for g_desc in cg_descs)
             if geoms_with_density == 0:
                 is_mass_explicit = False
-            elif geoms_with_density == len(cg_infos):
+            elif geoms_with_density == len(cg_descs):
                 is_mass_explicit = True
             else:
                 is_mass_explicit = None
@@ -1346,16 +1360,16 @@ class KinematicEntity(Entity):
                     rho = RHO_MUJOCO
                 else:
                     rho = RHO_ROBOT if is_robot else RHO_OBJECT
-            hint_g_infos = cg_infos if cg_infos else vg_infos
-            if hint_g_infos:
-                dynamics_hint = compose_inertial_from_g_infos(hint_g_infos, rho)
+            hint_g_descs = cg_descs if cg_descs else vg_descs
+            if hint_g_descs:
+                dynamics_hint = compose_inertial_from_geoms(hint_g_descs, rho)
             else:
                 dynamics_hint = InertialProperties(
                     0.0, np.zeros(3, dtype=gs.np_float), np.zeros((3, 3), dtype=gs.np_float)
                 )
         return LinkInertialInfo(props, is_mass_explicit, dynamics_hint)
 
-    def _align_link(self, l_info, j_infos, cg_infos, vg_infos, morph, link_idx):
+    def _align_link(self, l_desc, j_descs, cg_descs, vg_descs, morph, link_idx):
         """Carry the morph pose offset into a root link and record its offset, and stash each link's finalized inertia.
 
         Only root (floating-base) links carry the morph 'offset_pos'/'offset_quat' and the 'aligned' flag; the resulting
@@ -1371,38 +1385,36 @@ class KinematicEntity(Entity):
         self._links_inertial_info.append(
             [
                 self._finalize_inertial(
-                    None if recompute else l_info.get("inertial_mass"),
-                    None if recompute else l_info.get("inertial_pos"),
-                    None if recompute else l_info.get("inertial_quat"),
-                    None if recompute else l_info.get("inertial_i"),
-                    cg_infos,
-                    vg_infos,
-                    l_info.get("is_robot", False),
+                    None if recompute else l_desc.mass,
+                    None if recompute else l_desc.inertial_pos,
+                    None if recompute else l_desc.inertial_quat,
+                    None if recompute else l_desc.inertia,
+                    cg_descs,
+                    vg_descs,
+                    l_desc.is_robot,
                 )
             ]
         )
 
-        if l_info["parent_idx"] != -1:
+        if l_desc.parent_idx != -1:
             return
 
         # Compose the morph pose offset into the root link's world pose. The solver strips the matching offset in
         # relative getters, so the user frame is unchanged.
         offset_pos = np.array(morph.offset_pos, dtype=gs.np_float)
         offset_quat = np.array(morph.offset_quat, dtype=gs.np_float)
-        l_info["pos"], l_info["quat"] = gu.transform_pos_quat_by_trans_quat(
-            offset_pos, offset_quat, l_info["pos"], l_info["quat"]
-        )
+        l_desc.pos, l_desc.quat = gu.transform_pos_quat_by_trans_quat(offset_pos, offset_quat, l_desc.pos, l_desc.quat)
 
         align = morph.align if isinstance(morph, gs.options.morphs.FileMorph) else False
         if align is None:
             # Auto: True for basic rigid objects (root with free joint only, no articulated descendants). A link
             # mixing geoms with and without an authored density (see 'LinkInertialInfo.is_mass_explicit') quietly
             # declines auto-alignment; asking for it with an explicit align=True raises at build instead.
-            geoms_with_density = sum(g_info.get("density") is not None for g_info in cg_infos)
+            geoms_with_density = sum(g_desc.density is not None for g_desc in cg_descs)
             align = (
-                not bool(l_info.get("is_robot", False))
-                and all(j_info["type"] == gs.JOINT_TYPE.FREE for j_info in j_infos)
-                and geoms_with_density in (0, len(cg_infos))
+                not bool(l_desc.is_robot)
+                and all(j_desc.type == gs.JOINT_TYPE.FREE for j_desc in j_descs)
+                and geoms_with_density in (0, len(cg_descs))
             )
 
         # A free body opting into alignment (or any primitive, which is inherently principal-axis and COM-centered) has
@@ -1410,14 +1422,14 @@ class KinematicEntity(Entity):
         # to '_align_free_roots' after build, where the finalized composite inertia of the fixed subtree is known and
         # can be applied per heterogeneous variant. Here only the morph pose offset is composed (child link poses are
         # defined relative to it); the anchoring transform is folded in later.
-        l_info["aligned"] = any(j_info["type"] == gs.JOINT_TYPE.FREE for j_info in j_infos) and (
+        l_desc.is_aligned = any(j_desc.type == gs.JOINT_TYPE.FREE for j_desc in j_descs) and (
             align or isinstance(morph, gs.options.morphs.Primitive)
         )
 
         # Refresh the free joint init_qpos to reflect the composed world pose.
-        for j_info in j_infos:
-            if j_info["type"] == gs.JOINT_TYPE.FREE:
-                j_info["init_qpos"] = np.concatenate([l_info["pos"], l_info["quat"]])
+        for j_desc in j_descs:
+            if j_desc.type == gs.JOINT_TYPE.FREE:
+                j_desc.init_qpos = np.concatenate([l_desc.pos, l_desc.quat])
 
         # Record the body-frame offset; the base link's also seeds the heterogeneous-variant offset.
         if not self._links_offset_quat:
@@ -1568,14 +1580,14 @@ class KinematicEntity(Entity):
             if link.root_idx == base_link.idx:
                 link._root_idx = parent_link.root_idx
                 link._is_fixed &= parent_link.is_fixed
-                link._invweight = None
+                link.desc.invweight = None
 
         # Apply the explicit mounting transform. Forward kinematics interprets the base link's local pose relative to
         # its (new) parent link, so overwriting it here mounts the entity at (pos, quat) in the parent link frame.
         # Compose with the morph frame offset exactly as '_align_link' does for the morph pose at load time, so the
         # relative pose getters keep stripping the offset correctly.
         if is_mounting:
-            base_link._pos, base_link._quat = gu.transform_pos_quat_by_trans_quat(
+            base_link.desc.pos, base_link.desc.quat = gu.transform_pos_quat_by_trans_quat(
                 self._offset_pos, self._offset_quat, mount_pos, mount_quat
             )
 
@@ -2547,11 +2559,11 @@ class KinematicEntity(Entity):
                 # A quaternion takes four of the coordinates of such a joint; whatever remains is a translation,
                 # carried by the first of its degrees of freedom.
                 n_translation = joint.n_qs - 4
-                q_limit_lower += [joint.dofs_limit[:n_translation, 0], -np.ones(4)]
-                q_limit_upper += [joint.dofs_limit[:n_translation, 1], np.ones(4)]
+                q_limit_lower += [joint.desc.dofs_limit[:n_translation, 0], -np.ones(4)]
+                q_limit_upper += [joint.desc.dofs_limit[:n_translation, 1], np.ones(4)]
             elif joint.type != gs.JOINT_TYPE.FIXED:
-                q_limit_lower.append(joint.dofs_limit[:, 0])
-                q_limit_upper.append(joint.dofs_limit[:, 1])
+                q_limit_lower.append(joint.desc.dofs_limit[:, 0])
+                q_limit_upper.append(joint.desc.dofs_limit[:, 1])
         if not q_limit_lower:
             # An entity that no degree of freedom moves holds no coordinate, hence a limit of width zero.
             self._q_limit = np.zeros((2, self.n_qs), dtype=gs.np_float)
@@ -2909,8 +2921,8 @@ class RigidEntity(KinematicEntity):
         scene: "Scene",
         solver: "RigidSolver",
         material: Material,
-        morph: Morph,
-        surface: Surface,
+        morph: "Morph",
+        surface: "Surface",
         idx: int,
         idx_in_solver,
         link_start: int = 0,
@@ -2931,7 +2943,7 @@ class RigidEntity(KinematicEntity):
         custom_vface_start=0,
         equality_start=0,
         visualize_contact: bool = False,
-        morph_heterogeneous: list[Morph] | None = None,
+        morph_heterogeneous: "list[Morph] | None" = None,
         name: str | None = None,
     ):
         self._geom_start = geom_start
@@ -2969,40 +2981,26 @@ class RigidEntity(KinematicEntity):
             name,
         )
 
-    def _add_heterogeneous_variant(self, link, cg_infos, vg_infos):
+    def _add_heterogeneous_variant(self, link, cg_descs, vg_descs):
         # Add collision geometries
         coup_links = self.material.coup_links
-        for g_info in cg_infos:
-            friction = self.material.friction
-            if friction is None:
-                friction = g_info.get("friction", gu.default_friction())
-            friction_torsional = self.material.friction_torsional
-            if friction_torsional is None:
-                friction_torsional = g_info.get("friction_torsional", gu.default_friction_torsional())
-            friction_rolling = self.material.friction_rolling
-            if friction_rolling is None:
-                friction_rolling = g_info.get("friction_rolling", gu.default_friction_rolling())
+        for g_desc in cg_descs:
+            # An explicitly set material friction overrides the authored one, and the geom is built from its
+            # description, so the override is written there
+            if self.material.friction is not None:
+                g_desc.friction = self.material.friction
+            if self.material.friction_torsional is not None:
+                g_desc.friction_torsional = self.material.friction_torsional
+            if self.material.friction_rolling is not None:
+                g_desc.friction_rolling = self.material.friction_rolling
             needs_coup = self.material.needs_coup and (coup_links is None or link.name in coup_links)
-            link._add_geom(
-                mesh=g_info["mesh"],
-                init_pos=g_info.get("pos", gu.zero_pos()),
-                init_quat=g_info.get("quat", gu.identity_quat()),
-                type=g_info["type"],
-                friction=friction,
-                friction_torsional=friction_torsional,
-                friction_rolling=friction_rolling,
-                sol_params=g_info["sol_params"],
-                data=g_info.get("data"),
-                needs_coup=needs_coup,
-                contype=g_info["contype"],
-                conaffinity=g_info["conaffinity"],
-            )
+            link._add_geom(g_desc, needs_coup=needs_coup)
 
         # Add visual geoms and record vgeom range via parent
-        super()._add_heterogeneous_variant(link, cg_infos, vg_infos)
+        super()._add_heterogeneous_variant(link, cg_descs, vg_descs)
 
         # Record geom range on the link (vgeom range already recorded by parent)
-        link._record_variant_geom_range(len(cg_infos))
+        link._record_variant_geom_range(len(cg_descs))
 
     def _reassign_heterogeneous_indices(self):
         """Reassign collision and visual geom indices for multi-link heterogeneous entities."""
@@ -3048,19 +3046,11 @@ class RigidEntity(KinematicEntity):
                 link._variant_geom_ranges.append((geom_cursor, geom_cursor + count))
                 geom_cursor += count
 
-    def _on_heterogeneous_scene_variant_loaded(self, link, morph, v_l_info):
-        """Store parsed inertial from the variant file for use during link._build()."""
-        if link._variant_scene_inertial is None:
-            link._variant_scene_inertial = []
-        link._variant_scene_inertial.append(
-            (
-                morph,
-                v_l_info.get("inertial_mass"),
-                v_l_info.get("inertial_pos"),
-                v_l_info.get("inertial_quat"),
-                v_l_info.get("inertial_i"),
-            )
-        )
+    def _on_heterogeneous_scene_variant_loaded(self, link, morph, v_l_desc):
+        """Store what the variant file describes this link with, for 'link._build' to resolve its inertial from."""
+        if link._variant_sources is None:
+            link._variant_sources = []
+        link._variant_sources.append(LinkVariant(morph, v_l_desc))
 
     def _load_model(self):
         self._equalities = gs.List()
@@ -3075,29 +3065,23 @@ class RigidEntity(KinematicEntity):
     def _load_scene(self, morph, surface):
         from genesis.engine.couplers import IPCCoupler
 
-        l_infos, links_j_infos, links_g_infos, eqs_info = self._parse_scene(morph, surface)
+        l_descs, links_j_descs, links_g_descs, eq_descs = self._parse_scene(morph, surface)
 
         # Make sure that the entity is not object
         if (
             isinstance(self.sim.coupler, IPCCoupler)
             and self.material.coup_type == "ipc_only"
-            and any(l_info["is_robot"] for l_info in l_infos)
+            and any(l_desc.is_robot for l_desc in l_descs)
         ):
             gs.raise_exception("`RigidMaterial.coup_type='ipc_only'` only supported by rigid non-articulated objects.")
 
         # Add (link, joints, geoms) tuples sequentially
-        for l_info, link_j_infos, link_g_infos in zip(l_infos, links_j_infos, links_g_infos):
-            self._add_by_info(l_info, link_j_infos, link_g_infos, morph, surface)
+        for l_desc, link_j_descs, link_g_descs in zip(l_descs, links_j_descs, links_g_descs):
+            self._add_by_description(l_desc, link_j_descs, link_g_descs, morph, surface)
 
         # Add equality constraints sequentially
-        for eq_info in eqs_info:
-            self._add_equality(
-                name=eq_info["name"],
-                type=eq_info["type"],
-                objs_name=eq_info["objs_name"],
-                data=eq_info["data"],
-                sol_params=eq_info["sol_params"],
-            )
+        for eq_desc in eq_descs:
+            self._add_equality(eq_desc)
 
     def _build(self):
         self._n_geoms = self.n_geoms
@@ -3123,16 +3107,16 @@ class RigidEntity(KinematicEntity):
 
         self._init_q_limit()
 
-    def _add_by_info(self, l_info, j_infos, g_infos, morph, surface):
-        if len(j_infos) > 1 and any(j_info["type"] in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED) for j_info in j_infos):
+    def _add_by_description(self, l_desc, j_descs, g_descs, morph, surface):
+        if len(j_descs) > 1 and any(j_desc.type in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED) for j_desc in j_descs):
             raise ValueError(
                 "Compounding joints of types 'FREE' or 'FIXED' with any other joint on the same body not supported"
             )
 
-        parent_idx = l_info["parent_idx"]
+        parent_idx = l_desc.parent_idx
         if parent_idx >= 0:
             parent_idx += self._link_start
-        root_idx = l_info.get("root_idx")
+        root_idx = l_desc.root_idx
         if root_idx is not None and root_idx >= 0:
             root_idx += self._link_start
         link_idx = self.n_links + self._link_start
@@ -3146,20 +3130,21 @@ class RigidEntity(KinematicEntity):
 
         # Split and convexify collision geometry. Must be done before alignment so that
         # convexified geoms are used to compute the inertia frame.
-        cg_infos, vg_infos = self._postprocess_geoms_info(morph, g_infos, l_info.get("is_robot", False))
+        cg_descs, vg_descs = self._postprocess_geoms(morph, g_descs, l_desc.is_robot)
 
         # Carry the morph pose offset into root links and align them to their collision-geometry COM/principal axes.
-        self._align_link(l_info, j_infos, cg_infos, vg_infos, morph, link_idx)
+        self._align_link(l_desc, j_descs, cg_descs, vg_descs, morph, link_idx)
 
-        joints = self._create_joints(j_infos, link_idx, joint_start)
+        joints = self._create_joints(j_descs, link_idx, joint_start)
 
         # Add child link
         link = RigidLink(
             entity=self,
-            name=l_info["name"],
             idx=link_idx,
+            parent_idx=parent_idx,
+            root_idx=root_idx,
             joint_start=joint_start,
-            n_joints=len(j_infos),
+            n_joints=len(j_descs),
             geom_start=self.n_geoms + self._geom_start,
             cell_start=self.n_cells + self._cell_start,
             vert_start=self.n_verts + self._vert_start,
@@ -3170,87 +3155,54 @@ class RigidEntity(KinematicEntity):
             vgeom_start=self.n_vgeoms + self._vgeom_start,
             vvert_start=self.n_vverts + self._vvert_start,
             vface_start=self.n_vfaces + self._vface_start,
-            pos=l_info["pos"],
-            quat=l_info["quat"],
-            inertial_pos=l_info.get("inertial_pos"),
-            inertial_quat=l_info.get("inertial_quat"),
-            inertial_i=l_info.get("inertial_i"),
-            inertial_mass=l_info.get("inertial_mass"),
-            parent_idx=parent_idx,
-            root_idx=root_idx,
-            invweight=l_info.get("invweight"),
             visualize_contact=self.visualize_contact,
-            is_robot=l_info.get("is_robot", root_idx != -1),
-            aligned=l_info.get("aligned", False),
+            desc=l_desc,
         )
         self._links.append(link)
 
         if not link.is_fixed and isinstance(morph, gs.options.morphs.FileMorph) and morph.recompute_inertia:
-            link._inertial_pos = None
-            link._inertial_quat = None
-            link._inertial_i = None
-            link._inertial_mass = None
+            l_desc.inertial_pos = None
+            l_desc.inertial_quat = None
+            l_desc.inertia = None
+            l_desc.mass = None
 
         # Add visual geometries
-        for g_info in vg_infos:
-            link._add_vgeom(
-                vmesh=g_info["vmesh"],
-                init_pos=g_info.get("pos", gu.zero_pos()),
-                init_quat=g_info.get("quat", gu.identity_quat()),
-            )
+        for g_desc in vg_descs:
+            link._add_vgeom(g_desc)
 
         # Add collision geometries
         coup_links = self.material.coup_links
-        for g_info in cg_infos:
-            friction = self.material.friction
-            if friction is None:
-                friction = g_info.get("friction", gu.default_friction())
-            friction_torsional = self.material.friction_torsional
-            if friction_torsional is None:
-                friction_torsional = g_info.get("friction_torsional", gu.default_friction_torsional())
-            friction_rolling = self.material.friction_rolling
-            if friction_rolling is None:
-                friction_rolling = g_info.get("friction_rolling", gu.default_friction_rolling())
+        for g_desc in cg_descs:
+            # An explicitly set material friction overrides the authored one, and the geom is built from its
+            # description, so the override is written there
+            if self.material.friction is not None:
+                g_desc.friction = self.material.friction
+            if self.material.friction_torsional is not None:
+                g_desc.friction_torsional = self.material.friction_torsional
+            if self.material.friction_rolling is not None:
+                g_desc.friction_rolling = self.material.friction_rolling
             needs_coup = self.material.needs_coup and (coup_links is None or link.name in coup_links)
-            link._add_geom(
-                mesh=g_info["mesh"],
-                init_pos=g_info.get("pos", gu.zero_pos()),
-                init_quat=g_info.get("quat", gu.identity_quat()),
-                type=g_info["type"],
-                friction=friction,
-                friction_torsional=friction_torsional,
-                friction_rolling=friction_rolling,
-                sol_params=g_info["sol_params"],
-                data=g_info.get("data"),
-                needs_coup=needs_coup,
-                contype=g_info["contype"],
-                conaffinity=g_info["conaffinity"],
-            )
+            link._add_geom(g_desc, needs_coup=needs_coup)
 
         return link, joints
 
-    def _add_equality(self, name, type, objs_name, data, sol_params):
-        objs_id = []
-        for obj_name in objs_name:
-            if type == gs.EQUALITY_TYPE.CONNECT:
-                obj_id = self.get_link(obj_name).idx
-            elif type == gs.EQUALITY_TYPE.JOINT:
-                obj_id = self.get_joint(obj_name).idx
-            elif type == gs.EQUALITY_TYPE.WELD:
-                obj_id = self.get_link(obj_name).idx
-            else:
-                gs.raise_exception(f"Equality type {type} not supported. Only CONNECT, JOINT, and WELD are supported.")
-            objs_id.append(obj_id)
+    def _add_equality(self, desc: EqualityDescription):
+        match desc.type:
+            case gs.EQUALITY_TYPE.CONNECT | gs.EQUALITY_TYPE.WELD:
+                objs_id = [self.get_link(obj_name).idx for obj_name in desc.objs_name]
+            case gs.EQUALITY_TYPE.JOINT:
+                objs_id = [self.get_joint(obj_name).idx for obj_name in desc.objs_name]
+            case _:
+                gs.raise_exception(
+                    f"Equality type {desc.type} not supported. Only CONNECT, JOINT, and WELD are supported."
+                )
 
         equality = RigidEquality(
             entity=self,
-            name=name,
             idx=self.n_equalities + self._equality_start,
-            type=type,
             eq_obj1id=objs_id[0],
             eq_obj2id=objs_id[1],
-            eq_data=data,
-            sol_params=sol_params,
+            desc=desc,
         )
         self._equalities.append(equality)
         return equality

@@ -268,7 +268,7 @@ def test_apply_external_wrench(xml_path, show_viewer):
         elif step == 800:
             assert_allclose(ee_pos, (-0.8 / math.sqrt(2), 0.8 / math.sqrt(2), 0.02), tol=0.02)
         assert_allclose(duck_pos, duck_init_link_pos, tol=1e-3)
-        assert_allclose(duck_quat, duck.base_link.quat, tol=1e-3)
+        assert_allclose(duck_quat, duck.base_link.desc.quat, tol=1e-3)
 
         if step >= 600:
             force = [-4.0, 4.0, 0.0]
@@ -302,8 +302,9 @@ def test_apply_external_wrench(xml_path, show_viewer):
     # A local force and a local application point are both expressed in the frame that 'ref' designates, which only
     # shows on a link whose inertial frame is rotated with respect to its own frame.
     base_link = robot.get_link("base")
-    assert not np.allclose(base_link.inertial_quat, gu.identity_quat())
-    base_inertial_quat = torch.as_tensor(base_link.inertial_quat, device=gs.device)
+    with pytest.raises(AssertionError):
+        assert_allclose(base_link.desc.inertial_quat, gu.identity_quat(), tol=gs.EPS)
+    base_inertial_quat = torch.as_tensor(base_link.desc.inertial_quat, device=gs.device)
     base_link_pos = rigid_solver.get_links_pos(base_link.idx)
     base_link_quat = rigid_solver.get_links_quat(base_link.idx)
     base_link_COM = rigid_solver.get_links_pos(base_link.idx, ref=gs.link_ref_frame.link_COM)

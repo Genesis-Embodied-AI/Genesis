@@ -341,9 +341,9 @@ def test_physics_material_friction_and_density(usd_scene, physics_material_usd):
     entities = {entity.links[0].name: entity for entity in usd_scene.entities}
 
     # Dynamic friction (0.6) is preferred over static (0.8); restitution (0.4) is dropped.
-    assert_allclose(entities["/root/material_body"].geoms[0].friction, 0.6, tol=5e-8)
+    assert_allclose(entities["/root/material_body"].geoms[0].desc.friction, 0.6, tol=5e-8)
     # An explicitly authored dynamic_friction = 0 is honored (frictionless collider).
-    assert_allclose(entities["/root/frictionless_body"].geoms[0].friction, 0.0, tol=gs.EPS)
+    assert_allclose(entities["/root/frictionless_body"].geoms[0].desc.friction, 0.0, tol=gs.EPS)
 
     # The explicitly set entity material density (rho=1000 in build_usd_scene) overrides the authored
     # per-geom densities, as material friction does for authored frictions: unit cubes weigh 1000 kg.
@@ -390,7 +390,7 @@ def test_align_anchor_with_geom_densities(density_align_usd):
     # for the rigid body and its kinematic ghost.
     assert_allclose(body.get_mass(), 400.0, tol=gs.EPS)
     assert_allclose(body.base_link.get_pos(relative=False), (0.25, 0.0, 0.0), tol=gs.EPS)
-    assert_allclose(body.base_link.inertial_pos, 0.0, tol=gs.EPS)
+    assert_allclose(body.base_link.desc.inertial_pos, 0.0, tol=gs.EPS)
     assert_allclose(ghost.base_link.get_pos(relative=False), (0.25, 0.0, 0.0), tol=gs.EPS)
 
 
@@ -544,7 +544,7 @@ def test_oriented_capsule(oriented_capsule_usd, show_viewer, tol):
     assert capsule.n_geoms >= 1
     assert capsule.n_vgeoms >= 1
     for vgeom, geom in zip(capsule.vgeoms, capsule.geoms):
-        assert_allclose(vgeom._init_quat, geom._init_quat, tol=gs.EPS)
+        assert_allclose(vgeom.init_quat, geom.init_quat, tol=gs.EPS)
         # Capsule with axis=X has identity quat — axis rotation not composed into geom_Q.
         with pytest.raises(AssertionError):
             assert_allclose(geom.get_quat(), (1.0, 0.0, 0.0, 0.0), atol=tol)

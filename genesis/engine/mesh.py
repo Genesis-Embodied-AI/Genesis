@@ -26,14 +26,6 @@ class InertialProperties(NamedTuple):
     i: Matrix3x3Type
 
 
-class MeshInertialInfo(NamedTuple):
-    """A mesh's mass properties in its own frame at unit density: the volume and the corresponding intrinsic
-    'inertial', which is None for degenerate geometry that carries no well-defined mass distribution."""
-
-    volume: float
-    inertial: "InertialProperties | None"
-
-
 class Mesh(RBC):
     """
     Genesis's own triangle mesh object.
@@ -89,11 +81,11 @@ class Mesh(RBC):
         self._unique_edges: "np.ndarray | None" = None
         self._vert_adjacency: "tuple[np.ndarray, np.ndarray, np.ndarray] | None" = None
         self._is_convex: "bool | None" = None
-        self._inertial_info: "MeshInertialInfo | None" = None
+        self._inertial: "InertialProperties | None" = None
         # A mesh sharing another's processed geometry (a cached collision template) delegates its inertia query to that
         # source, so the (convex-hull) mass-property computation runs at most once per geometry and only when an entity
         # actually needs it - never eagerly for e.g. fixed or articulated assets whose link frames are not aligned.
-        self._inertial_info_source: "Mesh | None" = None
+        self._inertial_source: "Mesh | None" = None
 
         # By default, all meshes are considered zup, unless the "FileMorph.file_meshes_are_zup" option was set to False
         self._metadata.setdefault("imported_as_zup", True)
@@ -267,8 +259,8 @@ class Mesh(RBC):
         self._unique_edges = None
         self._vert_adjacency = None
         self._is_convex = None
-        self._inertial_info = None
-        self._inertial_info_source = None
+        self._inertial = None
+        self._inertial_source = None
 
     def get_unique_edges(self):
         """
@@ -285,22 +277,22 @@ class Mesh(RBC):
 
         return self._unique_edges
 
-    def get_inertial_info(self):
+    @property
+    def inertial(self):
         """
-        Get the mass properties of the geometry in its own frame as a MeshInertialInfo.
+        Mass, center of mass and inertia tensor of the geometry in its own frame, at unit density.
 
         Non-watertight geometry is closed by its convex hull first so the volume integral is well-defined; a degenerate
-        geometry reports a zero volume and no mass distribution. The result is memoized and shared by reference across
-        entities backed by the same geometry.
+        geometry weighs nothing, and composes as a geom of no mass at the origin. The result is memoized and shared by
+        reference across entities backed by the same geometry.
         """
-        if self._inertial_info_source is not None:
-            return self._inertial_info_source.get_inertial_info()
-        if self._inertial_info is None:
+        if self._inertial_source is not None:
+            return self._inertial_source.inertial
+        if self._inertial is None:
             # A degenerate geometry (zero / ill-defined volume) makes trimesh's mass-property integral divide by zero,
             # yielding a non-finite center of mass; a more degenerate one (fewer than 4 non-coplanar vertices) makes the
-            # convex-hull closure of a non-watertight mesh raise instead. Either way the geom carries no inertia: report
-            # a zero volume so the caller skips it, rather than crashing or letting NaNs propagate into the composed
-            # inertia (and emitting a warning).
+            # convex-hull closure of a non-watertight mesh raise instead. Either way the geom carries no inertia:
+            # report no mass, rather than crashing or letting NaNs propagate into the composed inertia.
             with np.errstate(invalid="ignore", divide="ignore"):
                 try:
                     tmesh = self._mesh
@@ -321,12 +313,10 @@ class Mesh(RBC):
                 except QhullError:
                     volume, center_mass = 0.0, None
                 if volume > 0.0 and np.all(np.isfinite(center_mass)):
-                    self._inertial_info = MeshInertialInfo(
-                        volume, InertialProperties(tmesh.mass, center_mass, tmesh.moment_inertia)
-                    )
+                    self._inertial = InertialProperties(tmesh.mass, center_mass, tmesh.moment_inertia)
                 else:
-                    self._inertial_info = MeshInertialInfo(0.0, None)
-        return self._inertial_info
+                    self._inertial = InertialProperties(0.0, np.zeros(3), np.zeros((3, 3)))
+        return self._inertial
 
     def get_vert_adjacency(self):
         """
@@ -633,6 +623,13 @@ class Mesh(RBC):
         Normals of the mesh.
         """
         return self._mesh.vertex_normals
+
+    @property
+    def color(self):
+        """
+        Color of the mesh, as red, green, blue and alpha.
+        """
+        return self._color
 
     @property
     def surface(self):
