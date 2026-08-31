@@ -148,6 +148,9 @@ def test_drone_propellers_force_application(n_envs, substeps, show_viewer, tol):
     SUBSTEP_DT = 0.004
     TOTAL_SUBSTEPS = 10
     GRAVITY = -9.81
+    # The thrust kernel rounds its coefficient to float32 in every solver precision; a flat tolerance covers that
+    # rounding with orders of magnitude to spare against the asserted dynamics signals.
+    DYN_TOL = 5e-5
     CF2X_ARMS = np.array(
         (
             (0.028, -0.028, 0.0),
@@ -200,35 +203,38 @@ def test_drone_propellers_force_application(n_envs, substeps, show_viewer, tol):
     scene.reset()
 
     # Thrust held over several steps: the propeller forces set once per step act on every substep and are cleared
-    # before the next step, so the vertical response follows the implicit-damping Euler recurrence exactly. The
-    # recurrence depends only on the total number of substeps, which the sweep pins across different outer step counts.
+    # before the next step, so the vertical response follows the implicit-damping Euler recurrence exactly, with
+    # the semi-implicit position update integrating each new velocity. The recurrence depends only on the total
+    # number of substeps, which the sweep pins across different outer step counts.
+    pos_z = drone.get_dofs_position(dofs_idx_local=2)[..., 0]
     for _ in range(n_steps):
         drone.set_propellers_rpm(BASE_RPM)
         scene.step()
-    # The thrust kernel uses a 32-bit coefficient in every solver precision.
-    thrust = drone.n_propellers * float(np.float32(drone.KF)) * BASE_RPM**2
+    thrust = drone.n_propellers * drone.KF * BASE_RPM**2
     mass = drone.get_mass_mat()[..., 2, 2]
-    damping = drone.get_dofs_damping(dofs_idx_local=[2])[..., 0]
+    damping = drone.get_dofs_damping(dofs_idx_local=2)[..., 0]
     vel_z = 0.0
     for _ in range(TOTAL_SUBSTEPS):
         vel_z = (mass * vel_z + SUBSTEP_DT * (thrust + mass * GRAVITY)) / (mass + damping * SUBSTEP_DT)
-    assert_allclose(drone.get_dofs_velocity(dofs_idx_local=[2])[..., 0], vel_z, tol=tol)
-    assert_allclose(drone.get_dofs_velocity(dofs_idx_local=[3, 4, 5]), 0.0, tol=tol)
+        pos_z = pos_z + SUBSTEP_DT * vel_z
+    assert_allclose(drone.get_dofs_position(dofs_idx_local=2)[..., 0], pos_z, tol=DYN_TOL)
+    assert_allclose(drone.get_dofs_velocity(dofs_idx_local=2)[..., 0], vel_z, tol=DYN_TOL)
+    assert_allclose(drone.get_dofs_velocity(dofs_idx_local=[3, 4, 5]), 0.0, tol=DYN_TOL)
     scene.reset()
 
     # One differential-thrust step isolates the rotor-arm moment and cancels pitch and yaw torque.
     roll_rpm = tuple(BASE_RPM * scale for scale in (1 + RPM_DELTA, 1 + RPM_DELTA, 1 - RPM_DELTA, 1 - RPM_DELTA))
     drone.set_propellers_rpm(roll_rpm)
     scene.step()
-    thrust = float(np.float32(drone.KF)) * np.square(roll_rpm)
+    thrust = drone.KF * np.square(roll_rpm)
     roll_torque = np.cross(CF2X_ARMS, np.outer(thrust, (0.0, 0.0, 1.0))).sum(axis=0)[0]
     inertia = drone.get_mass_mat()[..., 3, 3]
-    damping = drone.get_dofs_damping(dofs_idx_local=[3])[..., 0]
+    damping = drone.get_dofs_damping(dofs_idx_local=3)[..., 0]
     roll_rate = 0.0
     for _ in range(substeps):
         roll_rate = (inertia * roll_rate + SUBSTEP_DT * roll_torque) / (inertia + damping * SUBSTEP_DT)
-    assert_allclose(drone.get_dofs_velocity(dofs_idx_local=[3])[..., 0], roll_rate, tol=tol)
-    assert_allclose(drone.get_dofs_velocity(dofs_idx_local=[4, 5]), 0.0, tol=tol)
+    assert_allclose(drone.get_dofs_velocity(dofs_idx_local=3)[..., 0], roll_rate, tol=DYN_TOL)
+    assert_allclose(drone.get_dofs_velocity(dofs_idx_local=[4, 5]), 0.0, tol=DYN_TOL)
 
 
 @pytest.mark.required

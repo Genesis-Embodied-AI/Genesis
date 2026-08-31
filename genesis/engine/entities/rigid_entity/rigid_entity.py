@@ -1105,7 +1105,7 @@ class KinematicEntity(Entity):
                     # links skipped above (a geometry-less link carries only the 'gs.EPS' placeholder) must not
                     # inflate the composite.
                     real_total = sum(
-                        float(link._variant_inertial[v].mass if is_heterogeneous else link.desc.mass)
+                        link._variant_inertial[v].mass if is_heterogeneous else link.desc.mass
                         for link in composite_links
                     )
                     scale = real_total / mass_total

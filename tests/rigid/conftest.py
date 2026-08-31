@@ -557,10 +557,7 @@ def implicit_inertial_origin_chain():
 
 @pytest.fixture(scope="session")
 def aligned_link_frame_urdfs():
-    """Generate two fixed-child URDF variants with nontrivial link-local frames.
-
-    Returns ``(urdfs, joint_pos, joint_rpy, variants_inertial)``.
-    """
+    """Generate two fixed-child URDF variants with nontrivial link-local frames."""
     joint_pos = (0.31, -0.09, 0.11)
     joint_rpy = (-0.2, 0.15, 0.35)
     variants_inertial = (
@@ -590,36 +587,17 @@ def aligned_link_frame_urdfs():
             mass, com, inertial_rpy, inertia = links_inertial[i_link]
             inertial = ET.SubElement(link, "inertial")
             ET.SubElement(inertial, "mass", value=str(mass))
-            ET.SubElement(
-                inertial,
-                "origin",
-                xyz=" ".join(map(str, com)),
-                rpy=" ".join(map(str, inertial_rpy)),
-            )
+            ET.SubElement(inertial, "origin", xyz=" ".join(map(str, com)), rpy=" ".join(map(str, inertial_rpy)))
             ixx, iyy, izz = inertia
-            ET.SubElement(
-                inertial,
-                "inertia",
-                ixx=str(ixx),
-                ixy="0",
-                ixz="0",
-                iyy=str(iyy),
-                iyz="0",
-                izz=str(izz),
-            )
+            ET.SubElement(inertial, "inertia", ixx=str(ixx), ixy="0", ixz="0", iyy=str(iyy), iyz="0", izz=str(izz))
 
         joint = ET.SubElement(urdf, "joint", name="fixed_joint", type="fixed")
         ET.SubElement(joint, "parent", link="base")
         ET.SubElement(joint, "child", link="child")
-        ET.SubElement(
-            joint,
-            "origin",
-            xyz=" ".join(map(str, joint_pos)),
-            rpy=" ".join(map(str, joint_rpy)),
-        )
+        ET.SubElement(joint, "origin", xyz=" ".join(map(str, joint_pos)), rpy=" ".join(map(str, joint_rpy)))
         urdfs.append(ET.tostring(urdf, encoding="unicode"))
 
-    return tuple(urdfs), joint_pos, joint_rpy, variants_inertial
+    return tuple(urdfs)
 
 
 @pytest.fixture(scope="session")
