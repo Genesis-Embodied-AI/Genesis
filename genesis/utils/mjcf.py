@@ -888,8 +888,14 @@ def parse_equalities(mj, scale):
             eq_type = gs.EQUALITY_TYPE.WELD
             eq_data[:6] *= scale
         elif mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_JOINT:
-            # y -y0 = a0 + a1 * (x-x0) + a2 * (x-x0)^2 + a3 * (x-x0)^3 + a4 * (x-x0)^4
             eq_type = gs.EQUALITY_TYPE.JOINT
+            follower_scale = scale if mj.jnt_type[objs_idx[0]] == mujoco.mjtJoint.mjJNT_SLIDE else 1.0
+            driver_scale = scale if mj.jnt_type[objs_idx[1]] == mujoco.mjtJoint.mjJNT_SLIDE else 1.0
+
+            # eq_data[0:5] stores a0..a4 in q_follower - q_follower0 = sum(a_k * (q_driver - q_driver0)^k).
+            # A model scale transforms a_k to s_f * a_k / s_d**k, where s_f and s_d are scale for prismatic
+            # coordinates and 1.0 for revolute coordinates.
+            eq_data[:5] *= follower_scale / driver_scale ** np.arange(5)
         else:
             gs.raise_exception(f"Unsupported MJCF equality type: {mj.eq_type[i_e]}")
 
