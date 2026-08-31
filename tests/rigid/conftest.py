@@ -181,17 +181,46 @@ def mimic_hinges():
 
 
 @pytest.fixture(scope="session")
+def scaled_mjcf_joint_equalities():
+    mjcf = ET.Element("mujoco", model="scaled_mjcf_joint_equalities")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    equality = ET.SubElement(mjcf, "equality")
+    for driver_type, follower_type in (
+        ("hinge", "hinge"),
+        ("slide", "slide"),
+        ("slide", "hinge"),
+        ("hinge", "slide"),
+    ):
+        pair_name = f"{driver_type}_{follower_type}"
+        driver_body = ET.SubElement(worldbody, "body", name=f"{pair_name}_driver_body")
+        ET.SubElement(driver_body, "joint", name=f"{pair_name}_driver", type=driver_type, axis="1 0 0")
+        ET.SubElement(driver_body, "geom", type="sphere", size="0.05", mass="1", contype="0", conaffinity="0")
+        follower_body = ET.SubElement(worldbody, "body", name=f"{pair_name}_follower_body")
+        ET.SubElement(follower_body, "joint", name=f"{pair_name}_follower", type=follower_type, axis="1 0 0")
+        ET.SubElement(follower_body, "geom", type="sphere", size="0.05", mass="1", contype="0", conaffinity="0")
+        ET.SubElement(
+            equality,
+            "joint",
+            name=f"{pair_name}_coupling",
+            joint1=f"{pair_name}_follower",
+            joint2=f"{pair_name}_driver",
+            polycoef="0.2 0.4 -0.3 0.2 -0.1",
+        )
+    return ET.tostring(mjcf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
 def scaled_urdf_mimic():
     robot = ET.Element("robot", name="scaled_urdf_mimic")
     ET.SubElement(robot, "link", name="base")
     joint_type_pairs = (
         ("revolute", "revolute"),
         ("prismatic", "prismatic"),
-        ("revolute", "prismatic"),
         ("prismatic", "revolute"),
+        ("revolute", "prismatic"),
     )
-    for follower_type, driver_type in joint_type_pairs:
-        pair_name = f"{follower_type}_{driver_type}"
+    for driver_type, follower_type in joint_type_pairs:
+        pair_name = f"{driver_type}_{follower_type}"
         for role in ("driver", "follower"):
             link = ET.SubElement(robot, "link", name=f"{pair_name}_{role}_link")
             inertial = ET.SubElement(link, "inertial")
