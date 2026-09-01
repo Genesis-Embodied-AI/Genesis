@@ -230,13 +230,23 @@ def build_model(
 
             # Special treatment for URDF
             if is_urdf_file:
-                # Discard placeholder inertias that were used to avoid parsing failure
+                # Restore the authored mass and inertia over the 'boundmass' / 'boundinertia' placeholder applied
+                # above, so a stated zero survives to the degeneracy check that recovers it from the geometry (see
+                # 'KinematicEntity._parse_scene').
                 for link in robot.links:
-                    if link.inertial is None:
-                        body = mj.body(link.name)
+                    inertial = link.inertial
+                    mass = (inertial.mass or 0.0) if inertial is not None else 0.0
+                    is_inertia_defined = inertial is not None and np.linalg.norm(inertial.inertia, np.inf) > 0.0
+                    if mass > 0.0 and is_inertia_defined:
+                        continue
+                    body = mj.body(link.name)
+                    body.mass[:] = mass
+                    # An inertia that was authored at all is kept, so that a malformed one is still reported.
+                    if not is_inertia_defined:
                         body.inertia[:] = 0.0
-                        body.mass[:] = 0.0
-                        body.invweight0[:] = 0.0
+                    # The inverse weight is derived from the compiled mass and inertia, so it goes stale as soon as
+                    # either of them is replaced here.
+                    body.invweight0[:] = 0.0
 
                 # Set default constraint solver time constant
                 mj.jnt_solref[:, 0] = MIN_TIMECONST
