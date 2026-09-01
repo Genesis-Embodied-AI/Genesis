@@ -42,4 +42,4 @@ description](https://github.com/frankaemika/franka_ros/tree/develop/franka_descr
 
 ## License
 
-This model is released under an [Apache-2.0 License](LICENSE).
+This model is released under an [Apache-2.0 License](https://github.com/google-deepmind/mujoco_menagerie/blob/main/franka_emika_panda/LICENSE).
