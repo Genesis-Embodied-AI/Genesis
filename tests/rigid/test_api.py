@@ -705,8 +705,7 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
     robot_aabb_init, robot_base_aabb_init = robot.get_AABB(), robot.geoms[0].get_AABB()
     cube_aabb_init, cube_base_aabb_init = cube.get_AABB(), cube.geoms[0].get_AABB()
 
-    # Velocity and acceleration describe the same point as the position. Without rotation the user frame only
-    # translates with the link origin, so both frames report the same free fall.
+    # Without rotation the user frame only translates with the link origin, so both frames report the same free fall.
     scene.step()
     assert_allclose(posed_box.get_vel(relative=True), posed_box.get_vel(relative=False), tol=tol)
     assert_allclose(posed_box.get_links_acc(relative=True), posed_box.get_links_acc(relative=False), tol=tol)
@@ -729,8 +728,7 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
         - torch.cross(omega, torch.cross(omega, offset_shift, dim=-1), dim=-1),
         tol=tol,
     )
-    # Neither transported term is vacuous: each contributes more than the tolerance on its own, and both frames
-    # genuinely disagree while the box rotates.
+    # Neither transported term is vacuous: each exceeds the tolerance on its own.
     assert (torch.cross(alpha, offset_shift, dim=-1).abs() > tol).any()
     assert (torch.cross(omega, torch.cross(omega, offset_shift, dim=-1), dim=-1).abs() > tol).any()
     with pytest.raises(AssertionError):

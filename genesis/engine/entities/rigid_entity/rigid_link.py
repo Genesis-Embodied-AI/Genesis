@@ -111,8 +111,9 @@ class KinematicLink(RBC):
         envs_idx : int or array of int, optional
             The indices of the environments to get the position. If None, get the position of all environments. Default is None.
         relative : bool, optional
-            Whether to report the position in the user frame, with the entity's morph pose offset and inertial
-            alignment stripped, rather than the world frame used by the solver. Defaults to True.
+            Whether to report the position of the authored link origin rather than of the internal link origin used by
+            the solver. The entity's morph 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
+            ('align=True') displace one from the other. Defaults to True.
         """
         return self._solver.get_links_pos(self._idx, envs_idx, relative=relative)[..., 0, :]
 
@@ -126,8 +127,9 @@ class KinematicLink(RBC):
         envs_idx : int or array of int, optional
             The indices of the environments to get the quaternion. If None, get the quaternion of all environments. Default is None.
         relative : bool, optional
-            Whether to report the orientation in the user frame, with the entity's morph pose offset and inertial
-            alignment stripped, rather than the world frame used by the solver. Defaults to True.
+            Whether to report the orientation of the authored link origin rather than of the internal link origin used
+            by the solver. The entity's morph 'offset_pos' / 'offset_quat' and the inertial alignment of a free root
+            link ('align=True') displace one from the other. Defaults to True.
         """
         return self._solver.get_links_quat(self._idx, envs_idx, relative=relative)[..., 0, :]
 
@@ -141,9 +143,10 @@ class KinematicLink(RBC):
         envs_idx : int or array of int, optional
             The indices of the environments to get the linear velocity. If None, get the linear velocity of all environments. Default is None.
         relative : bool, optional
-            Whether to report the velocity of the user-frame origin, with the entity's morph pose offset and
-            inertial alignment stripped, rather than of the link origin used by the solver. The two differ whenever
-            the link is rotating. Defaults to True.
+            Whether to report the velocity of the authored link origin rather than of the internal link origin used by
+            the solver. The entity's morph 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
+            ('align=True') displace one from the other by 'd'. Both are expressed in world coordinates and differ by the
+            transport 'omega x d'. Defaults to True.
         """
         return self._solver.get_links_vel(self._idx, envs_idx, relative=relative)[..., 0, :]
 

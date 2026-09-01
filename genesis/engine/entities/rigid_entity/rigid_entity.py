@@ -723,8 +723,9 @@ class KinematicEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         relative : bool, optional
-            Whether to report the position in the user frame, with the morph pose offset and inertial alignment
-            stripped, rather than the world frame used by the solver. Defaults to True.
+            Whether to report the position of the authored link origin rather than of the internal link origin used by
+            the solver. The morph's 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
+            ('align=True') displace one from the other. Defaults to True.
 
         Returns
         -------
@@ -743,8 +744,9 @@ class KinematicEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         relative : bool, optional
-            Whether to report the orientation in the user frame, with the morph pose offset and inertial alignment
-            stripped, rather than the world frame used by the solver. Defaults to True.
+            Whether to report the orientation of the authored link origin rather than of the internal link origin used
+            by the solver. The morph's 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
+            ('align=True') displace one from the other. Defaults to True.
 
         Returns
         -------
@@ -763,9 +765,10 @@ class KinematicEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         relative : bool, optional
-            Whether to report the velocity of the user-frame origin, with the morph pose offset and inertial
-            alignment stripped, rather than of the link origin used by the solver. The two differ whenever the link
-            is rotating. Defaults to True.
+            Whether to report the velocity of the authored link origin rather than of the internal link origin used by
+            the solver. The morph's 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
+            ('align=True') displace one from the other by 'd'. Both are expressed in world coordinates and differ by the
+            transport 'omega x d'. Defaults to True.
 
         Returns
         -------
@@ -803,8 +806,9 @@ class KinematicEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         relative : bool, optional
-            If True, return the user-frame position with the morph pose offset stripped (matching the morph 'pos'); if
-            False, return the world-frame position used by the solver. Defaults to True.
+            Whether to report the position of the authored link origin, which is where the morph 'pos' placed it, rather
+            than of the internal link origin used by the solver. The morph's 'offset_pos' / 'offset_quat' and the
+            inertial alignment of a free root link ('align=True') displace one from the other. Defaults to True.
 
         Returns
         -------
@@ -826,8 +830,10 @@ class KinematicEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         relative : bool, optional
-            If True, return the user-frame orientation with the morph pose offset stripped (matching the morph
-            'quat'/'euler'); if False, return the world-frame orientation used by the solver. Defaults to True.
+            Whether to report the orientation of the authored link origin, which is where the morph 'quat' / 'euler'
+            placed it, rather than of the internal link origin used by the solver. The morph's 'offset_pos' /
+            'offset_quat' and the inertial alignment of a free root link ('align=True') displace one from the other.
+            Defaults to True.
 
         Returns
         -------
@@ -885,9 +891,10 @@ class KinematicEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         relative : bool, optional
-            Whether to report the velocity of the user-frame origin, with the morph pose offset and inertial
-            alignment stripped, rather than of the link origin used by the solver. The two differ whenever the link
-            is rotating. Defaults to True.
+            Whether to report the velocity of the authored link origin rather than of the internal link origin used by
+            the solver. The morph's 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
+            ('align=True') displace one from the other by 'd'. Both are expressed in world coordinates and differ by the
+            transport 'omega x d'. Defaults to True.
 
         Returns
         -------
@@ -932,8 +939,9 @@ class KinematicEntity(Entity):
         zero_velocity : bool, optional
             Whether to zero the velocity of all the entity's dofs. Defaults to False.
         relative : bool, optional
-            Whether 'pos' is expressed in the user frame, with the morph pose offset and inertial alignment applied on
-            top to reach the world frame used by the solver, rather than directly in the world frame. Defaults to True.
+            Whether 'pos' places the authored link origin rather than directly the internal link origin used by the
+            solver. The morph's 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
+            ('align=True') displace one from the other. Defaults to True.
         skip_forward : bool, optional
             Whether to skip forward kinematics after setting position. Defaults to False.
         """
@@ -963,8 +971,9 @@ class KinematicEntity(Entity):
         zero_velocity : bool, optional
             Whether to zero the velocity of all the entity's dofs. Defaults to False.
         relative : bool, optional
-            Whether 'quat' is expressed in the user frame, with the morph pose offset and inertial alignment applied on
-            top to reach the world frame used by the solver, rather than directly in the world frame. Defaults to True.
+            Whether 'quat' orients the authored link origin rather than directly the internal link origin used by the
+            solver. The morph's 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
+            ('align=True') displace one from the other. Defaults to True.
         skip_forward : bool, optional
             Whether to skip forward kinematics after setting quaternion. Defaults to False.
         """
@@ -2182,9 +2191,10 @@ class RigidEntity(KinematicEntity):
             'RigidEntity' may comprise several physical sub-entities, each a kinematic sub-tree with at most one free
             joint at its root. Defaults to 'link_origin'.
         relative : bool, optional
-            If True, strip the morph pose offset to return the user-frame position; this only affects
-            ref=gs.link_ref_frame.link_origin, since the offset is defined on the link origin. If False, return the
-            world frame. Defaults to True.
+            Whether to report the position of the authored link origin rather than of the internal link origin used by
+            the solver. The morph's 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
+            ('align=True') displace one from the other. Only 'ref=gs.link_ref_frame.link_origin' is affected, since the
+            offset is defined on the link origin. Defaults to True.
 
         Returns
         -------
@@ -2211,9 +2221,10 @@ class RigidEntity(KinematicEntity):
             The reference point used to express the velocity of each link: its origin ('link_origin') or its center of
             mass ('link_COM'). Defaults to 'link_origin'.
         relative : bool, optional
-            If True, report the velocity of the user-frame origin, with the morph pose offset and inertial alignment
-            stripped; this only affects ref=gs.link_ref_frame.link_origin, since the offset is defined on the link
-            origin. The two frames differ whenever the link is rotating. Defaults to True.
+            Whether to report the velocity of the authored link origin rather than of the internal link origin used by
+            the solver. The morph's 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
+            ('align=True') displace one from the other by 'd'. Both are expressed in world coordinates and differ by the
+            transport 'omega x d'. Only 'ref=gs.link_ref_frame.link_origin' is affected. Defaults to True.
 
         Returns
         -------
@@ -2236,10 +2247,10 @@ class RigidEntity(KinematicEntity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         relative : bool, optional
-            Whether to report the acceleration of the user-frame origin, with the morph pose offset and inertial
-            alignment stripped, rather than of the link origin used by the solver. The two differ whenever the link
-            is rotating or being angularly accelerated, so a link barely turning can still read far apart between the
-            frames. Defaults to True.
+            Whether to report the acceleration of the authored link origin rather than of the internal link origin used
+            by the solver. The morph's 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
+            ('align=True') displace one from the other by 'd'. Both are expressed in world coordinates and differ by the
+            transport 'alpha x d + omega x (omega x d)'. Defaults to True.
 
         Returns
         -------
@@ -2411,8 +2422,9 @@ class RigidEntity(KinematicEntity):
             Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
             sudden change in entity pose.
         relative : bool, optional
-            Whether 'pos' is expressed in the user frame, with the morph pose offset and inertial alignment applied on
-            top to reach the world frame used by the solver, rather than directly in the world frame. Defaults to True.
+            Whether 'pos' places the authored link origin rather than directly the internal link origin used by the
+            solver. The morph's 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
+            ('align=True') displace one from the other. Defaults to True.
         skip_forward : bool, optional
             Whether to skip forward kinematics after setting position. Defaults to False.
         """
@@ -2444,8 +2456,9 @@ class RigidEntity(KinematicEntity):
             Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
             sudden change in entity pose.
         relative : bool, optional
-            Whether 'quat' is expressed in the user frame, with the morph pose offset and inertial alignment applied on
-            top to reach the world frame used by the solver, rather than directly in the world frame. Defaults to True.
+            Whether 'quat' orients the authored link origin rather than directly the internal link origin used by the
+            solver. The morph's 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
+            ('align=True') displace one from the other. Defaults to True.
         skip_forward : bool, optional
             Whether to skip forward kinematics after setting quaternion. Defaults to False.
         """
