@@ -11,6 +11,7 @@ from genesis.repr_base import RBC
 from genesis.typing import LaxPositiveFArrayType, Matrix3x3Type, UnitVec4FType, Vec3FType
 from genesis.utils import geom as gu
 from genesis.utils.description import (
+    Described,
     KinematicLinkDescription,
     RigidGeomDescription,
     RigidLinkDescription,
@@ -191,8 +192,8 @@ class LinkInertialInfo(NamedTuple):
     in '_align_free_roots': True when the mass is explicit in the asset (an explicit mass, or an authored density on
     every geom), False for a pure geometry estimate (the true mass is a uniform material-density rescale of it), and
     None when the link mixes geoms with and without an authored density (neither explicit nor uniformly rescalable).
-    'hint' is the material-density-resolved geometry estimate consumed by 'RigidLink._build' (None for kinematic
-    entities, which have no dynamics)."""
+    'hint' is the material-density-resolved geometry estimate that resolving a link description consumes (None for
+    kinematic entities, which have no dynamics)."""
 
     props: LinkInertial
     is_mass_explicit: bool | None
@@ -206,9 +207,9 @@ def finalize_inertial(
 
     Explicit values are used when given; otherwise the geometry estimate is used, and an explicit mass rescales a
     geometry-derived inertia. An omitted center of mass defaults to the link-frame origin when an explicit inertia
-    matrix is provided. The hint comes from the load-time inertial info (the geometry a link holds, weighed over the
-    parsed geom infos, feeding both 'RigidLink._build' and the align anchor) - the single resolution path keeps the
-    rigid dynamics inertia and the align anchor in lockstep.
+    matrix is provided. The hint comes from the load-time inertial info, computed from the geometry the link holds
+    and used by both the link description and the align anchor. One resolution path keeps the rigid dynamics inertia
+    and the align anchor in lockstep.
 
     With ``clamp_min_mass`` the resolved mass is floored at ``gs.EPS`` so a geometry-less moving link stays
     non-singular in the dynamics; the align stash passes ``False`` so a genuinely massless link keeps its ``0.0``
@@ -236,7 +237,7 @@ def finalize_inertial(
     )
 
 
-class KinematicLink(RBC):
+class KinematicLink(Described, RBC):
     """
     Kinematic class. One KinematicEntity consists of multiple KinematicLinks, each of which is a rigid body and could
     consist of multiple RigidVisGeoms (`link.vgeoms` for visualization).

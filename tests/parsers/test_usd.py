@@ -7,6 +7,7 @@ loaded from USD files match equivalent scenes loaded from compared files.
 
 import os
 import xml.etree.ElementTree as ET
+import zipfile
 
 import numpy as np
 import pytest
@@ -21,7 +22,9 @@ from genesis.utils.usd import UsdContext, HAS_OMNIVERSE_KIT_SUPPORT
 from ..conftest import SKIP_NO_OMNIVERSE_KIT
 
 import genesis as gs
+from genesis.engine.scene import SCENE_FORMAT
 from genesis.utils.misc import tensor_to_array
+from genesis.utils.serialization import MANIFEST_NAME
 
 from ..utils.assertions import assert_allclose, assert_equal
 from ..utils.assets import get_hf_dataset
@@ -271,7 +274,7 @@ def test_collision_only_fixed_override(usd_scene, expected_dofs):
 
 
 @pytest.mark.required
-def test_visual_collision_parsing(visual_collision_usd):
+def test_visual_collision_parsing(visual_collision_usd, tmp_path):
     usd_scene = build_usd_scene(visual_collision_usd, scale=1.0, fixed=True)
     assert len(usd_scene.entities) == 1
     entity = usd_scene.entities[0]
@@ -280,6 +283,19 @@ def test_visual_collision_parsing(visual_collision_usd):
     assert link.n_geoms == 2
     # 1 visual geom (Visual1), invisible site_marker excluded
     assert link.n_vgeoms == 1
+
+    # The export carries the descriptions the parse resolved, collision and visual geometry included. The USD
+    # context and its directory stay behind.
+    exported = tmp_path / f"stage{SCENE_FORMAT}"
+    usd_scene.export(exported)
+    with zipfile.ZipFile(exported) as archive:
+        assert os.path.dirname(visual_collision_usd) not in archive.read(MANIFEST_NAME).decode()
+    restored = gs.Scene.load(exported)
+    restored.build()
+    restored_link = restored.entities[0].base_link
+    assert (restored_link.n_geoms, restored_link.n_vgeoms) == (link.n_geoms, link.n_vgeoms)
+    assert restored.entities[0].morphs[0].usd_ctx is None
+    assert_equal(restored.entities[0].get_mass(), entity.get_mass())
 
 
 @pytest.mark.required
@@ -408,8 +424,9 @@ def test_align_anchor_with_geom_densities(density_align_usd):
 def test_align_requires_all_or_none_geom_densities(density_align_usd, align, rho):
     scene = gs.Scene()
 
-    # A density authored on only part of a link's geoms leaves an inertial estimate that is neither explicit
-    # nor a uniform material-density rescale, so an explicit align=True raises as the entity is stated.
+    # A density authored on only part of a link's geoms leaves the anchor sensitive to the density the others take.
+    # No kinematic entity holds such a density (see '_align_free_roots'), so an explicit align=True raises. The
+    # estimate is resolved as the entity is added, and it raises from there.
     if align:
         with pytest.raises(gs.GenesisException, match="with and without an authored density"):
             scene.add_entity(

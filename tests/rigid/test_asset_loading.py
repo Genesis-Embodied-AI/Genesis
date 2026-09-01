@@ -320,7 +320,7 @@ def test_urdf_parsing_inertia_defaults(
     )
     # An entity attached beneath another shares its root, so attaching that one onto a moving link makes both bases
     # movable at once. Each is estimated at the density of its own entity. The three stand consecutively, since an
-    # entity created between attached ones is refused.
+    # entity created between attached ones is rejected.
     stacked_base = scene.add_entity(
         morph=gs.morphs.Box(
             size=(0.2, 0.2, 0.2),

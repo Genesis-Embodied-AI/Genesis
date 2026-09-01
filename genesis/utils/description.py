@@ -1,4 +1,4 @@
-"""Describe a rigid entity as what it is simulated with, which is all an entity is created from.
+"""Describe a rigid entity: everything its simulation uses. That description suffices to create one.
 
 Resolving what a parse states fills these in, and an entity builds itself from them alone: every field holds
 the value it is built with, so a consumer reads a field and applies no fallback of its own. The exception is the
@@ -10,19 +10,26 @@ that object returns the value the simulation currently uses.
 """
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
 
 import numpy as np
 
 import genesis as gs
 from genesis.constants import EQUALITY_TYPE, GEOM_TYPE, JOINT_TYPE
+from genesis.engine.materials.base import Material
+from genesis.options.morphs import Morph
+from genesis.options.scene import SceneOptions
+from genesis.options.surfaces import Surface
 from genesis.utils import geom as gu
 
-if TYPE_CHECKING:
-    from genesis.engine.materials.base import Material
-    from genesis.engine.scene import SceneOptions
-    from genesis.options.morphs import Morph
-    from genesis.options.surfaces import Surface
+
+class Described:
+    """Marker base class for objects a scene export can reproduce, from the description or from the options it
+    carries.
+
+    A .gscene file carries the scene description and lets any machine rebuild the scene from that data alone.
+    'Scene.export' walks everything a scene holds and rejects whatever carries no such mark. A class opts in by
+    inheriting this marker, so an external solver plugin gains export support on its own.
+    """
 
 
 @dataclass(kw_only=True)
@@ -149,7 +156,7 @@ class KinematicLinkDescription:
 
 @dataclass(kw_only=True)
 class RigidLinkDescription(KinematicLinkDescription):
-    """Describe one link that is simulated: the frame and geoms of a kinematic link, and the dynamics it moves under.
+    """Describe one simulated link: the frame and geoms of a kinematic link, plus its dynamics.
 
     Every inertial quantity holds the simulated value: the authored one where the asset states it, the geometry
     estimate otherwise. The inverse weight holds the asset value, zeros for a link the world carries, or the sentinel
@@ -224,7 +231,15 @@ class KinematicAttachmentDescription:
 
 
 @dataclass
-class KinematicEntityDescription:
+class EntityDescription:
+    """Base class of what one entity of a scene is created from, whatever the solver simulating it.
+
+    A scene names every entity it holds as one of these, so a kind of entity described later stands there too.
+    """
+
+
+@dataclass
+class KinematicEntityDescription(EntityDescription):
     """Describe one entity as its build left it: every link it holds, and every constraint tying them together.
 
     Each description here stands as the build resolved it rather than as the asset authored it: collision meshes
@@ -239,30 +254,14 @@ class KinematicEntityDescription:
     morph the entity dispatches, the primary first, and a homogeneous entity lists exactly one.
     """
 
-    morphs: list["Morph"] = field(default_factory=list)
-    material: "Material | None" = None
-    surface: "Surface | None" = None
+    morphs: list[Morph] = field(default_factory=list)
+    material: Material | None = None
+    surface: Surface | None = None
     visualize_contact: bool = False
     name: str | None = None
     links: list[KinematicLinkDescription] = field(default_factory=list)
     variants: list[KinematicVariantDescription] = field(default_factory=list)
     attachment: KinematicAttachmentDescription | None = None
-
-
-@dataclass
-class SceneDescription:
-    """Describe one scene as its build left it: the options it was created with, and every entity added to it.
-
-    Each entity stands as its own description (see 'KinematicEntityDescription'), so a scene is created from this
-    alone. The build arguments stand here because 'Scene.load' rebuilds with the same environment layout.
-    """
-
-    options: "SceneOptions"
-    entities: list[KinematicEntityDescription] = field(default_factory=list)
-    n_envs: int = 0
-    env_spacing: tuple[float, float] = (0.0, 0.0)
-    n_envs_per_row: int | None = None
-    center_envs_at_origin: bool = True
 
 
 @dataclass
@@ -300,3 +299,15 @@ class DroneEntityDescription(RigidEntityDescription):
 
     kf: float | None = None
     km: float | None = None
+
+
+@dataclass
+class SceneDescription:
+    """Describe one scene as it was authored: the options it was created with, and every entity added to it.
+
+    Each entity stands as its own description (see 'EntityDescription'), so a scene is created from this alone. A
+    scene created from one is built by whoever loads it, with the environment layout they ask for.
+    """
+
+    options: SceneOptions
+    entities: list[EntityDescription] = field(default_factory=list)

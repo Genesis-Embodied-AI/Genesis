@@ -23,6 +23,7 @@ from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import urdf as uu
 from genesis.utils.description import (
+    Described,
     KinematicAttachmentDescription,
     KinematicEntityDescription,
     KinematicLinkDescription,
@@ -125,7 +126,7 @@ def is_link_fixed(links: Sequence[KinematicLinkDescription], idx: int) -> bool:
         idx = l_desc.parent_idx
 
 
-class KinematicEntity(Entity):
+class KinematicEntity(Described, Entity):
     """
     Base entity class for articulated rigid-body systems (morphology, FK, Jacobian, IK).
 
@@ -180,6 +181,7 @@ class KinematicEntity(Entity):
 
         self._is_built: bool = False
         self._is_attached: bool = False
+        self._is_vverts_overridden: bool = False
 
         # The base link's world<-user pose offset (see 'KinematicLinkDescription.offset_pos'), mirrored here for the
         # heterogeneous-variant seed.
@@ -373,8 +375,8 @@ class KinematicEntity(Entity):
                     gs.raise_exception("Mixing fixed and non-fixed morphs in heterogeneous entities is not supported.")
                 cg_infos, vg_infos = self._resolve_geoms(morph, g_infos, is_robot=False)
 
-                # The COM/principal-axis anchoring is deferred to '_align_free_roots' after build; compose only the
-                # morph pose offset here.
+                # The COM/principal-axis anchoring is deferred to '_align_free_roots', which runs once every variant
+                # is described. Compose only the morph pose offset here.
                 offset_pos = np.array(morph.offset_pos, dtype=gs.np_float)
                 offset_quat = np.array(morph.offset_quat, dtype=gs.np_float)
 
@@ -448,15 +450,6 @@ class KinematicEntity(Entity):
             for count in vgeom_counts:
                 link._variant_vgeom_ranges.append((vgeom_cursor, vgeom_cursor + count))
                 vgeom_cursor += count
-
-    @property
-    def desc(self) -> KinematicEntityDescription:
-        """The description this entity was built from, holding the values its resolution decided.
-
-        Every link and constraint was built from one of the descriptions here and keeps it, so a change made
-        through either is visible here.
-        """
-        return self._desc
 
     def _load_model(self):
         """Build the entity from its description, resolving that description from its morphs when it has none yet.
@@ -1140,14 +1133,14 @@ class KinematicEntity(Entity):
     def _create_joints(self, j_descs, link_idx, joint_start):
         """Create the RigidJoint objects of one link from its described joints.
 
-        Shared by every link the resolution describes and every one a build reads back.
+        Both '_add_link' overrides call this, so a kinematic and a rigid link build their joints the same way.
         """
         joints = gs.List()
         self._joints.append(joints)
         for i_j_, j_desc in enumerate(j_descs):
             if j_desc.dofs_motion_ang is None or j_desc.dofs_motion_vel is None:
                 gs.raise_exception(
-                    f"Joint '{j_desc['name']}' holds {j_desc.n_dofs} degrees of freedom, whose motion axes the asset "
+                    f"Joint '{j_desc.name}' holds {j_desc.n_dofs} degrees of freedom, whose motion axes the asset "
                     "must describe."
                 )
 
@@ -1573,6 +1566,7 @@ class KinematicEntity(Entity):
         # links of other trees declared in the same file keep their own root, as do the fixed flag and invweight.
         for link in self._solver.links:
             if link.root_idx == base_link.idx:
+                was_fixed = link.is_fixed
                 link._root_idx = parent_link.root_idx
                 link._is_fixed &= parent_link.is_fixed
 
@@ -2365,6 +2359,15 @@ class KinematicEntity(Entity):
         """All morphs of the entity (main morph + heterogeneous variants if any)."""
         return gs.List((self._morph, *self._morph_heterogeneous))
 
+    @property
+    def desc(self) -> KinematicEntityDescription:
+        """The description this entity was built from, holding the values its resolution decided.
+
+        Every link and constraint was built from one of the descriptions here and keeps it, so a change made
+        through either is visible here.
+        """
+        return self._desc
+
     def _repr_morph(self):
         if self._enable_heterogeneous:
             return f"{len(self.morphs)} morph variants"
@@ -2473,6 +2476,7 @@ class KinematicEntity(Entity):
             gs.raise_exception(
                 "'set_vverts' requires the entity's morph to be created with 'enable_custom_vverts=True'."
             )
+        self._is_vverts_overridden = True
         self._solver.set_vverts(
             self._custom_vvert_start,
             self._custom_vvert_start + self.n_vverts,
@@ -3072,7 +3076,7 @@ class RigidEntity(KinematicEntity):
             self._add_equality(e_desc)
 
     def _add_link(self, l_desc):
-        """Create one link from a description the build already resolved, with the joints and geoms it carries."""
+        """Create one link from a description the resolution completed, with the joints and geoms it carries."""
         parent_idx = l_desc.parent_idx
         if parent_idx >= 0:
             parent_idx += self._link_start

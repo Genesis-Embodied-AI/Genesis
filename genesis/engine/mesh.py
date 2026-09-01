@@ -15,6 +15,7 @@ import genesis.utils.point_cloud as pc
 from genesis.options.surfaces import Surface
 from genesis.repr_base import RBC
 from genesis.typing import Matrix3x3Type, Vec3FType
+from genesis.utils import serialization
 from genesis.utils.misc import redirect_libc_stderr
 
 
@@ -26,7 +27,7 @@ class InertialProperties(NamedTuple):
     i: Matrix3x3Type
 
 
-class Mesh(RBC):
+class Mesh(RBC, serialization.SerializationMixin):
     """
     Genesis's own triangle mesh object.
 
@@ -658,3 +659,74 @@ class Mesh(RBC):
         Volume of the mesh.
         """
         return self._mesh.volume
+
+    def export(self, exporting: serialization.Exporting) -> dict:
+        """Export the geometry, uvs, surface and metadata a mesh holds.
+
+        A mesh is written this way rather than through its fields because construction convexifies, decimates and
+        rescales it: what a file carries is the geometry as it now stands, so reading one back processes nothing.
+        """
+        # The recorded asset path belongs to the author's filesystem, so the file keeps the bare name and the
+        # geometry travels inside it.
+        metadata = self.metadata
+        if metadata.get("mesh_path") is not None:
+            metadata = {**metadata, "mesh_path": os.path.basename(metadata["mesh_path"])}
+        return {
+            "geometry": _exported_geometry(self.trimesh, exporting),
+            "uvs": None if self.uvs is None else exporting.array(self.uvs),
+            "surface": exporting.value(self.surface, Surface),
+            "metadata": exporting.value(metadata, Any),
+        }
+
+    @classmethod
+    def load(cls, raw: dict, loading: serialization.Loading) -> "Mesh":
+        """Recreate the mesh exactly as exported, processing none of its geometry again.
+
+        Meshes written from one geometry are handed the edges, the vertex adjacency and the inertia of the first of
+        them, exactly as 'postprocess_collision_geoms' hands them to the entities it builds from one asset. Each
+        keeps its own trimesh and surface, so a mesh drawn in its own colour still costs one copy of the geometry.
+        """
+        mesh = cls(
+            mesh=_loaded_geometry(raw["geometry"], loading),
+            surface=loading.value(raw["surface"], Surface),
+            uvs=None if raw["uvs"] is None else loading.array(raw["uvs"]),
+            # The metadata says what was already done to the geometry, so it is handed back rather than acted on again
+            metadata=loading.value(raw["metadata"], Any),
+        )
+        source = loading.shared.setdefault((raw["geometry"]["verts"], raw["geometry"]["faces"]), mesh)
+        if source is not mesh:
+            mesh._unique_edges = source.get_unique_edges()
+            mesh._vert_adjacency = source.get_vert_adjacency()
+            mesh._inertial_source = source
+        return mesh
+
+
+def _exported_geometry(mesh: trimesh.Trimesh, exporting: serialization.Exporting) -> dict:
+    """Export the geometry of a trimesh: its vertices, the faces joining them, their normals and their colours.
+
+    Only colours the mesh states are exported. Asking a mesh coloured by anything else for its vertex colours makes
+    trimesh invent a default one per vertex, which a file would then carry as if the author had chosen it.
+    """
+    colours = mesh.visual.vertex_colors if mesh.visual.kind == "vertex" else None
+    return {
+        "verts": exporting.array(mesh.vertices),
+        "faces": exporting.array(mesh.faces),
+        "normals": exporting.array(mesh.vertex_normals),
+        "colours": None if colours is None else exporting.array(colours),
+    }
+
+
+def _loaded_geometry(raw: dict, loading: serialization.Loading) -> trimesh.Trimesh:
+    """Recreate the trimesh as it was exported, with the vertices, faces and normals the file holds."""
+    mesh = trimesh.Trimesh(
+        vertices=loading.array(raw["verts"]),
+        faces=loading.array(raw["faces"]),
+        vertex_normals=loading.array(raw["normals"]),
+        process=False,
+    )
+    if raw["colours"] is not None:
+        mesh.visual.vertex_colors = loading.array(raw["colours"])
+    return mesh
+
+
+serialization.register(trimesh.Trimesh, _exported_geometry, _loaded_geometry)

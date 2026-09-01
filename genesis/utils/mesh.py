@@ -554,7 +554,7 @@ def postprocess_collision_geoms(
         )
         mesh._unique_edges = template.get_unique_edges()
         mesh._vert_adjacency = template.get_vert_adjacency()
-        mesh._inertial_info_source = template
+        mesh._inertial_source = template
         result.append({**g_info, "mesh": mesh})
     return result
 

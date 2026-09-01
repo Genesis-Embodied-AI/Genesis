@@ -3,6 +3,7 @@ import argparse
 import numpy as np
 
 import genesis as gs
+from genesis.engine.scene import SCENE_FORMAT
 from genesis.ext.pyrender.overlay import ImGuiOverlayPlugin
 
 
@@ -98,39 +99,44 @@ def launch(filename=None, collision=False, rotate=False, scale=1.0, show_link_fr
 def play(filename=None, collision=False, scale=1.0):
     gs.init()
 
-    scene = gs.Scene(
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(2.0, 2.0, 1.5),
-            camera_lookat=(0.0, 0.0, 0.5),
-            enable_gui=True,
-        ),
-        show_viewer=True,
-    )
-
-    if filename is None:
-        scene.add_entity(gs.morphs.Plane())
-        scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    # An exported scene carries the options it is viewed with, so it is opened as it stands rather than placed in a
+    # scene made here.
+    if filename is not None and filename.lower().endswith(SCENE_FORMAT):
+        scene = gs.Scene.load(filename, show_viewer=True)
     else:
-        filename_lower = filename.lower()
-        morphs = gs.options.morphs
-        surface = gs.surfaces.Default(vis_mode="visual" if not collision else "collision")
+        scene = gs.Scene(
+            viewer_options=gs.options.ViewerOptions(
+                camera_pos=(2.0, 2.0, 1.5),
+                camera_lookat=(0.0, 0.0, 0.5),
+                enable_gui=True,
+            ),
+            show_viewer=True,
+        )
 
-        if filename_lower.endswith(morphs.USD_FORMATS):
-            scene.add_stage(
-                morph=gs.morphs.USD(file=filename, scale=scale),
-                vis_mode=surface.vis_mode,
-            )
-        elif filename_lower.endswith(morphs.URDF_FORMAT):
-            scene.add_entity(gs.morphs.URDF(file=filename, scale=scale), surface=surface)
-        elif filename_lower.endswith(morphs.MJCF_FORMAT):
-            scene.add_entity(gs.morphs.MJCF(file=filename, scale=scale), surface=surface)
-        elif filename_lower.endswith(morphs.MESH_FORMATS):
-            scene.add_entity(gs.morphs.Mesh(file=filename, scale=scale), surface=surface)
+        if filename is None:
+            scene.add_entity(gs.morphs.Plane())
+            scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
         else:
-            gs.raise_exception(
-                f"Unsupported file format for 'gs play'. Expected {morphs.URDF_FORMAT}, "
-                f"{morphs.MJCF_FORMAT}, {morphs.MESH_FORMATS}, or {morphs.USD_FORMATS}."
-            )
+            filename_lower = filename.lower()
+            morphs = gs.options.morphs
+            surface = gs.surfaces.Default(vis_mode="visual" if not collision else "collision")
+
+            if filename_lower.endswith(morphs.USD_FORMATS):
+                scene.add_stage(
+                    morph=gs.morphs.USD(file=filename, scale=scale),
+                    vis_mode=surface.vis_mode,
+                )
+            elif filename_lower.endswith(morphs.URDF_FORMAT):
+                scene.add_entity(gs.morphs.URDF(file=filename, scale=scale), surface=surface)
+            elif filename_lower.endswith(morphs.MJCF_FORMAT):
+                scene.add_entity(gs.morphs.MJCF(file=filename, scale=scale), surface=surface)
+            elif filename_lower.endswith(morphs.MESH_FORMATS):
+                scene.add_entity(gs.morphs.Mesh(file=filename, scale=scale), surface=surface)
+            else:
+                gs.raise_exception(
+                    f"Unsupported file format for 'gs play'. Expected {morphs.URDF_FORMAT}, "
+                    f"{morphs.MJCF_FORMAT}, {morphs.MESH_FORMATS}, {morphs.USD_FORMATS}, or {SCENE_FORMAT}."
+                )
 
     scene.build()
 

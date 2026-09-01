@@ -1,7 +1,10 @@
 import collections.abc
+import dataclasses
 import os
 import sys
+import xml.etree.ElementTree as ET
 import weakref
+from collections import Counter
 from typing import TYPE_CHECKING, Callable, Iterable, Literal, overload
 
 import numpy as np
@@ -13,7 +16,10 @@ from pydantic import Field, model_validator
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
+import genesis.ext.urdfpy as urdfpy
+from genesis.engine.entities.base_entity import Entity
 from genesis.engine.force_fields import ForceField
+from genesis.engine.solvers.base_solver import Solver
 from genesis.engine.materials.base import EntityT, Material
 from genesis.engine.states.solvers import SimState
 from genesis.options import (
@@ -33,13 +39,16 @@ from genesis.options import (
     ViewerOptions,
     VisOptions,
 )
-from genesis.options.morphs import Morph
+from genesis.options.morphs import URDF_FORMAT, Morph
 from genesis.options.options import Options
 from genesis.options.recorders import RecorderOptions
 from genesis.options.renderers import Rasterizer, RendererOptions
 from genesis.options.surfaces import Surface
 from genesis.recorders import RecorderManager
 from genesis.repr_base import RBC
+from genesis.utils import serialization
+from genesis.utils.serialization import pixel_less_textures
+from genesis.utils.description import Described, SceneDescription
 from genesis.utils.misc import sanitize_index, tensor_to_array
 from genesis.utils.tools import FPSTracker
 from genesis.utils.warnings import warn_once
@@ -51,6 +60,9 @@ if TYPE_CHECKING:
     from genesis.engine.sensors.base_sensor import Sensor
     from genesis.options.sensors.options import SensorOptions, SensorT
     from genesis.recorders import Recorder
+
+
+SCENE_FORMAT = ".gscene"
 
 
 @gs.assert_initialized
@@ -157,6 +169,9 @@ class Scene(RBC):
         if show_FPS is not None:
             warn_once("Scene.show_FPS is deprecated. Please use Scene.options.profiling.show_FPS")
             self.options.profiling.show_FPS = show_FPS
+
+        # description
+        self._desc = SceneDescription(options=self.options)
 
         # simulator
         self._sim = Simulator(scene=self, options=self.options)
@@ -1424,6 +1439,165 @@ class Scene(RBC):
         self._backward_ready = False
         self._forward_ready = False
 
+    def export(self, path: str | os.PathLike) -> None:
+        """Write a portable copy of this scene to a file that anyone can open.
+
+        What is written is what the scene was authored from and what its build resolved, so the file stands on its
+        own: opening it reads no mesh, no model file and no texture from disk, and creates only the options,
+        descriptions and meshes Genesis declares. The file is therefore self-contained enough to attach to a bug
+        report.
+
+        A scene opened from a file stands at the configuration its entities were given rather than where the
+        simulation had run to, so the simulated state has to be reproduced by stepping it again. Adding an entity
+        resolves its description, so a scene is exported before it is built as readily as after.
+
+        Only a rigid or a kinematic entity carries a description. A scene
+        holding anything that alters the simulation raises, naming it: an emitter and a force field. Everything else
+        a description leaves out is written without, with a warning naming it: a camera, a recorder, a sensor, a
+        callback Genesis calls at every step, a texture read from an HDR or EXR file, and the visual vertices an
+        entity was given at runtime.
+
+        Parameters
+        ----------
+        path : str or os.PathLike
+            Where to write the file.
+        """
+        # A scene holding what alters the simulation is rejected, since a file leaving it out would restore other
+        # physics. Everything else is left out with a warning: what observes or draws the simulation, and every
+        # callable, wherever it is held. A class inherits 'Described' to declare that it travels, so a kind added
+        # later needs nothing here. Sensors and recorders sit behind an accessor, so the list names their managers.
+        # Holders overlap in the objects they reference, so each object counts once by identity.
+        observing = [self._recorder_manager, self._sim._sensor_manager]
+        if self.visualizer is not None:
+            observing += [self.visualizer, self.visualizer.raytracer, self.visualizer.batch_renderer]
+        left_out, rejected = Counter(), Counter()
+        counted = set()
+        holders = [(holder, left_out) for holder in observing if holder is not None]
+        holders += [(holder, rejected) for holder in (self, self._sim, *self._sim.solvers)]
+        for holder, stray in holders:
+            for name, value in vars(holder).items():
+                held = value.values() if isinstance(value, dict) else value if isinstance(value, (list, tuple)) else ()
+                for item in held:
+                    if not callable(item) and not (isinstance(item, RBC) and not isinstance(item, Described)):
+                        continue
+                    if id(item) in counted:
+                        continue
+                    counted.add(id(item))
+                    if isinstance(item, RBC):
+                        stray[type(item).__name__] += 1
+                    else:
+                        # A callable states no class worth naming, so the attribute holding it names it instead.
+                        left_out[name.strip("_").removesuffix("s")] += 1
+        left_out.update(type(sensor).__name__ for sensor in self._sim._sensor_manager.sensors)
+        left_out.update(type(recorder).__name__ for recorder in self._recorder_manager.recorders)
+        surfaces = [entity.surface for entity in self.entities]
+        if isinstance(self.options.renderer, gs.renderers.RayTracer) and self.options.renderer.env_surface is not None:
+            surfaces.append(self.options.renderer.env_surface)
+        left_out.update(name for surface in surfaces for name in pixel_less_textures(surface))
+        # Visual vertices written at runtime live in the solver, and a file carries what a scene was authored from.
+        # Only an entity that travels is drawn with vertices of its own.
+        left_out.update(
+            f"'{entity.name}' visual vertices"
+            for entity in self.entities
+            if isinstance(entity, Described) and entity._is_vverts_overridden
+        )
+        for stray, tell, ending in (
+            (left_out, gs.logger.warning, "is exported without it, so a scene loaded from the file holds none."),
+            (rejected, gs.raise_exception, "cannot be exported yet."),
+        ):
+            if stray:
+                named = ", ".join(
+                    f"{n} {kind}" if kind.endswith("s") else f"{n} {kind}{'s' if n > 1 else ''}"
+                    for kind, n in sorted(stray.items())
+                )
+                tell(f"A scene holding {named} {ending}")
+
+        # A USD context is a live handle onto the stage it opened, and a XACRO morph holds the model its file was
+        # parsed into. The description each produced stands for it, so the morph travels naming the asset alone.
+        desc = self.desc
+        entities = []
+        for e_desc in desc.entities:
+            morphs = []
+            for morph in e_desc.morphs:
+                update = {}
+                if isinstance(morph, gs.options.morphs.USD):
+                    update["usd_ctx"] = None
+                if isinstance(morph, gs.options.morphs.URDF) and isinstance(morph.file, urdfpy.URDF):
+                    update["file"] = f"{morph.file.name}{URDF_FORMAT}"
+                elif isinstance(morph, gs.options.morphs.FileMorph) and isinstance(morph.file, os.PathLike):
+                    update["file"] = str(morph.file)
+                if isinstance(morph, gs.options.morphs.Terrain) and isinstance(morph.height_field, torch.Tensor):
+                    update["height_field"] = tensor_to_array(morph.height_field)
+                morphs.append(morph.model_copy(update=update) if update else morph)
+            entities.append(dataclasses.replace(e_desc, morphs=morphs))
+
+        # These directories belong to the author's filesystem, and every path a parse derives sits under one, so
+        # the manifest keeps each asset's bare name only. A USD morph also names its context's source file, which
+        # holds a baked copy of the stage.
+        morphs = [morph for entity in self.entities for morph in entity.morphs]
+        asset_paths = [
+            morph.file
+            for morph in morphs
+            if isinstance(morph, gs.options.morphs.FileMorph) and isinstance(morph.file, (str, os.PathLike))
+        ]
+        asset_paths += [
+            morph.usd_ctx.stage_file
+            for morph in morphs
+            if isinstance(morph, gs.options.morphs.USD) and morph.usd_ctx is not None
+        ]
+        redact = {f"{os.path.dirname(path)}{os.sep}": "" for path in asset_paths if os.path.isabs(path)}
+
+        # A morph created from a document rather than from a file carries that document, and it names the assets it
+        # was written against. Each name travels without the directory it stood in, as the file of a morph does.
+        for morph in morphs:
+            if not (isinstance(morph, gs.options.morphs.FileMorph) and isinstance(morph.file, str)):
+                continue
+            try:
+                document = ET.fromstring(morph.file)
+            except ET.ParseError:
+                continue
+            for element in document.iter():
+                for stated in element.attrib.values():
+                    if os.path.isabs(stated):
+                        redact[stated] = os.path.basename(stated)
+
+        serialization.export(path, {"scene": dataclasses.replace(desc, entities=entities)}, redact)
+
+    @classmethod
+    def load(cls, path: str | os.PathLike, show_viewer: bool = False) -> "Scene":
+        """Create the scene a file holds, as written by 'Scene.export'.
+
+        The file names what it holds rather than carrying code to run, and Genesis creates only the options,
+        descriptions and meshes it declares, so a scene from a stranger is safe to open. The geometry travels in the
+        file, so it opens on a machine holding none of the assets the scene was authored from.
+
+        Parameters
+        ----------
+        path : str or os.PathLike
+            The file to read.
+        show_viewer : bool, optional
+            Whether to open an interactive viewer on the scene. Defaults to False.
+
+        Returns
+        -------
+        scene : Scene
+            The scene the file describes, holding every entity it was authored with and waiting to be built.
+        """
+        described = serialization.load(path, {"scene": SceneDescription})["scene"]
+        scene = cls(show_viewer=show_viewer, options=described.options)
+
+        # 'add_entity' would resolve a material and a surface the description already holds, and read the asset it
+        # replaces.
+        for desc in described.entities:
+            scene._sim._add_entity(desc=desc)
+
+        # An attachment merges two kinematic trees and renumbers the joints and degrees of freedom after them. The
+        # build sizes its arrays from those numbers, so creation and attachment both precede it.
+        for entity, desc in zip(scene.entities, described.entities):
+            if desc.attachment is not None:
+                entity.attach(scene.get_entity(desc.attachment.entity_name), desc.attachment.link_name)
+        return scene
+
     # ------------------------------------------------------------------------------------
     # ----------------------------------- utilities --------------------------------------
     # ------------------------------------------------------------------------------------
@@ -1551,6 +1725,18 @@ class Scene(RBC):
             Tuple of entity names in order of creation.
         """
         return tuple(entity.name for entity in self.entities)
+
+    @property
+    def desc(self) -> SceneDescription:
+        """Return the description this scene came from, as adding each entity to it resolved them.
+
+        It suffices to recreate the scene without any asset file.
+
+        Every entity holding a description of its own is named here by reference, so what an entity resolves and
+        what an attachment changes are both visible. What the build allocates is left out, so this describes the
+        authored scene rather than the state it has simulated to.
+        """
+        return self._desc
 
     def get_entity(self, name: str | None = None, *, uid: str | None = None) -> "Entity":
         """

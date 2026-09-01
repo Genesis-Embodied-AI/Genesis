@@ -10,16 +10,19 @@ import dataclasses
 import hashlib
 import io
 import json
+import os
 import pathlib
+import sys
 import types
 import typing
 import zipfile
-from collections.abc import Sequence, Set
+from collections.abc import Iterable, Mapping, Sequence, Set
 from enum import IntEnum
-from functools import partial
+from functools import lru_cache, partial
 from typing import Callable, NamedTuple
 
 import numpy as np
+from pydantic import TypeAdapter, ValidationError
 
 import genesis as gs
 from genesis.options.options import Options
@@ -30,28 +33,54 @@ _SOURCE_DIGEST: str | None = None
 MANIFEST_NAME = "scene.json"
 ARRAY_MEMBER = "arrays.npz"
 
+# This dict records how to write a class from another library to a file and read it back. Such a class cannot
+# declare this itself. '_class_codec' walks the method resolution order, so a subclass falls back to its base's pair.
+_REGISTERED: dict[type, tuple[Callable, Callable]] = {}
+
 
 class Exporting(NamedTuple):
-    """What a class exporting itself is given: somewhere to put an array, and the export of any value it holds."""
+    """Gives a class exporting itself somewhere to put an array and the export of any value it holds."""
 
     array: Callable[[np.ndarray], int]
     value: Callable[..., object]
 
 
+class Exported(NamedTuple):
+    """What one export writes: its arrays, the slot each set of bytes already written stands at, those arrays, and
+    every class whose values it holds.
+    """
+
+    values: list[np.ndarray]
+    slots: dict[tuple, int]
+    stored: list[np.ndarray]
+    classes: set[type]
+
+
 class Loading(NamedTuple):
-    """What a class loading itself back is given: the arrays a file holds, and the load of any value it holds."""
+    """Gives a class loading itself back the arrays a file holds and the load of any value it holds.
+
+    'shared' holds what has already been built from a given part of a file, so a class handed the same bytes twice
+    can share with the first instance what deriving it again would cost.
+    """
 
     array: Callable[[int], np.ndarray]
     value: Callable[..., object]
+    shared: dict
+
+
+class Loaded(NamedTuple):
+    """The arrays one load reads, and what the classes loading themselves have already built from them."""
+
+    values: list[np.ndarray]
+    shared: dict
 
 
 class SerializationMixin:
-    """Declares a class serialisable, the class itself saying how it travels in a file.
+    """Declares a class serialisable and lets the class itself say how it travels in a file.
 
-    A class whose declared fields hold its values needs none of this: those fields are what a file carries. Mix it in
-    where the fields are insufficient, for example geometry that belongs in an array, or a constructor that works on
-    what it is given rather than keeping it. The registry beside it does the same for a class from another library,
-    which cannot be given a base.
+    A class whose declared fields hold its values needs none of this, since a file carries those fields. Fields fall
+    short for geometry belonging in an array, or a constructor consuming rather than keeping its inputs. A separate
+    registry does the same for a class another library owns.
     """
 
     def export(self, exporting: Exporting):
@@ -72,11 +101,6 @@ class SerializationMixin:
         raise NotImplementedError
 
 
-# This dict records how to write a class from another library to a file and read it back. Such a class cannot
-# declare this itself. '_class_codec' walks the method resolution order, so a subclass falls back to its base's pair.
-_REGISTERED: dict[type, tuple[Callable, Callable]] = {}
-
-
 def register(cls: type, export: Callable, load: Callable) -> None:
     """Record how a class from another library travels in a file, which lets a file hold a class Genesis does not own.
 
@@ -85,6 +109,522 @@ def register(cls: type, export: Callable, load: Callable) -> None:
     Genesis declares mixes in 'SerializationMixin' and states the same two things as its own methods.
     """
     _REGISTERED[cls] = (export, load)
+
+
+def _class_codec(cls) -> tuple[Callable, Callable] | None:
+    """Return the export and load pair for a class.
+
+    A self-serialisable class supplies its own methods; otherwise its own or its base's registered pair applies.
+    """
+    if not isinstance(cls, type):
+        return None
+    if issubclass(cls, SerializationMixin):
+        return (cls.export, cls.load)
+    for parent in cls.__mro__:
+        if parent in _REGISTERED:
+            return _REGISTERED[parent]
+    return None
+
+
+@lru_cache(maxsize=None)
+def _field_check(cls: type, name: str) -> TypeAdapter:
+    """Returns what one field of an option admits, so a value read from a file is put through it.
+
+    What a field constrains stands beside its type rather than in it, so the two are put back together here.
+    """
+    info = cls.model_fields[name]
+    admitted = typing.Annotated[tuple([info.annotation, *info.metadata])] if info.metadata else info.annotation
+    return TypeAdapter(admitted)
+
+
+def _resolve_quoted(hint, namespace: dict):
+    """Returns a declaration holding the classes it names, where Python 3.10 left a quoted name unresolved.
+
+    Until Python 3.11, a name quoted inside a generic - 'list["Joint"]' - stays the string it was written as, and a
+    declaration read as a string states nothing about what it holds.
+    """
+    if not isinstance(hint, types.GenericAlias):
+        return hint
+    args = typing.get_args(hint)
+    return typing.get_origin(hint)[
+        tuple(namespace[arg] if isinstance(arg, str) else _resolve_quoted(arg, namespace) for arg in args)
+    ]
+
+
+def _declared_fields(cls: type) -> dict[str, type]:
+    """Return the declared type of each field of a class. Those types drive how a value loads back."""
+    if issubclass(cls, Options):
+        return {name: info.annotation for name, info in cls.model_fields.items()}
+    hints = typing.get_type_hints(cls)
+    if sys.version_info < (3, 11):
+        namespace = vars(sys.modules[cls.__module__])
+        return {name: _resolve_quoted(hint, namespace) for name, hint in hints.items()}
+    return hints
+
+
+def _unwrap_annotation(expect):
+    """Returns what a declaration asks for, stripped of wrappers that leave its meaning intact.
+
+    A file says by holding null whether an optional value is there, so 'X | None' asks for X. The payload inside
+    'Annotated' serves validation and leaves the value untouched.
+    """
+    if typing.get_origin(expect) is typing.Annotated:
+        expect = typing.get_args(expect)[0]
+    if typing.get_origin(expect) in (types.UnionType, typing.Union):
+        args = [arg for arg in typing.get_args(expect) if arg is not type(None)]
+        return _unwrap_annotation(args[0]) if len(args) == 1 else expect
+    return expect
+
+
+def _accepted_classes(expect) -> tuple:
+    """Returns the classes a declaration accepts, one for 'Mesh' and two for 'Box | Sphere', with 'None' left out.
+
+    A single-class declaration needs no class name in the file. A declaration accepting several makes the file name
+    which class it holds.
+    """
+    if typing.get_origin(expect) in (types.UnionType, typing.Union):
+        return tuple(arg for arg in typing.get_args(expect) if arg is not type(None))
+    return (expect,)
+
+
+def _classes_by_name(expect) -> dict[str, type]:
+    """Collects every class a file may name where a declaration stands, keyed by class name.
+
+    A declaration accepting 'Morph' accepts every kind of morph, so 'Morph' and everything extending it may stand
+    there. A name read back is looked up here, so a file naming a class outside the declaration is rejected.
+    """
+    by_name = {}
+    classes = [_unwrap_annotation(arg) for arg in _accepted_classes(expect)]
+    while classes:
+        cls = classes.pop()
+        by_name[cls.__name__] = cls
+        classes.extend(cls.__subclasses__())
+    return by_name
+
+
+def _deduce_union(expect, value):
+    """Returns the argument of a union declaration that holds this value, or the declaration itself.
+
+    A scale states one factor or one per axis, so only the argument the value stands in states what its items are.
+    """
+    if typing.get_origin(expect) not in (types.UnionType, typing.Union):
+        return expect
+    args = [_unwrap_annotation(arg) for arg in _accepted_classes(expect)]
+    for arg in args:
+        if _is_sequence(typing.get_origin(arg) or arg) == _is_sequence(type(value)):
+            return arg
+    return args[0]
+
+
+def _is_sequence(cls) -> bool:
+    """Tells whether instances of 'cls' travel as a JSON list. Sequences and sets qualify, and strings stay scalars."""
+    return isinstance(cls, type) and issubclass(cls, (Sequence, Set)) and not issubclass(cls, str)
+
+
+def _is_mapping(cls) -> bool:
+    """Tells whether instances of 'cls' travel as a JSON list of key and value pairs."""
+    return isinstance(cls, type) and issubclass(cls, Mapping)
+
+
+def _has_declared_fields(expect) -> bool:
+    """Tells whether every class a declaration accepts travels field by field, as dataclasses and options do."""
+    args = [_unwrap_annotation(arg) for arg in _accepted_classes(expect)]
+    return bool(args) and all(
+        isinstance(arg, type) and (dataclasses.is_dataclass(arg) or issubclass(arg, Options)) for arg in args
+    )
+
+
+def _layout(cls: type) -> list[str] | dict[str, int]:
+    """What one class is made of: the value of every member where it enumerates, its field names otherwise."""
+    if issubclass(cls, IntEnum):
+        return {member.name: member.value for member in cls}
+    return sorted(_declared_fields(cls))
+
+
+def schema(classes: set[type]) -> dict:
+    """Records what each of these classes is made of, under the name each is written as.
+
+    A field renamed or an enumeration member renumbered leaves every value in a file intact while changing what it
+    means. A file therefore carries this of the classes it holds, and a load compares it class by class. A class
+    that gained a field since keeps loading while one whose fields moved is rejected by name. Sorted by name, so what
+    a file holds follows from the classes alone rather than from the order they are met in.
+    """
+    return {cls.__name__: _layout(cls) for cls in sorted(classes, key=lambda cls: cls.__name__)}
+
+
+def declared_schema(expect: dict) -> dict:
+    """Records the layout of every class reachable from a declaration, the reference a load checks the file against.
+
+    A load holds only the declared types until it reads a value, so it takes every class a declaration admits. The
+    comparison looks up only the names the file holds, so the extra entries cost nothing.
+    """
+    layout = {}
+    for annotation in expect.values():
+        seen = set()
+        declarations = [annotation]
+        while declarations:
+            declared = _unwrap_annotation(declarations.pop())
+            # A declaration is reached through the arguments it is written with, so a list of morphs reaches Morph.
+            declarations.extend(typing.get_args(declared))
+            if not isinstance(declared, type) or declared in seen:
+                continue
+            seen.add(declared)
+            if issubclass(declared, IntEnum):
+                layout[declared.__name__] = _layout(declared)
+            elif _has_declared_fields(declared):
+                for cls in _classes_by_name(declared).values():
+                    if cls in seen and cls is not declared:
+                        continue
+                    seen.add(cls)
+                    layout[cls.__name__] = _layout(cls)
+                    declarations.extend(_declared_fields(cls).values())
+    return layout
+
+
+def _surface_textures(surface: Options) -> Iterable[tuple[str, "gs.textures.ImageTexture"]]:
+    """Yield every image texture a surface holds, under the name of the field it stands in.
+
+    A batch texture holds textures of its own, so a batch created from images yields each of them.
+    """
+    textures = [(name, value) for name, value in dict(surface).items() if isinstance(value, gs.textures.Texture)]
+    while textures:
+        name, texture = textures.pop()
+        if isinstance(texture, gs.textures.ImageTexture):
+            yield name, texture
+        elif isinstance(texture, gs.textures.BatchTexture):
+            textures.extend((name, held) for held in texture.textures if held is not None)
+
+
+def pixel_less_textures(surface: Options) -> tuple[str, ...]:
+    """Names each field of a surface holding a texture no file can carry, which is one read from an HDR or EXR file."""
+    return tuple(name for name, texture in _surface_textures(surface) if texture.image_array is None)
+
+
+def source_digest() -> str:
+    """Digest the Genesis sources this process runs, so a file says which code wrote it.
+
+    The release version alone answers for nothing between two releases, which is where a branch and a local edit both
+    live, and either changes what a scene simulates. Reading the sources answers for both, and the digest is taken
+    once per process.
+    """
+    global _SOURCE_DIGEST
+    if _SOURCE_DIGEST is None:
+        root = pathlib.Path(gs.__file__).parent
+        digest = hashlib.sha256()
+        for path in sorted(root.rglob("*.py")):
+            digest.update(path.relative_to(root).as_posix().encode())
+            digest.update(path.read_bytes())
+        _SOURCE_DIGEST = digest.hexdigest()[:16]
+    return _SOURCE_DIGEST
+
+
+def _store_array(value, exported: "Exported") -> int:
+    """Store one array with the arrays the file holds and return its index.
+
+    Bytes already stored keep the index they were given, so entities built from one asset share the geometry in the
+    file as they share it in memory. Two views onto one buffer read the same bytes, so the memory a view reads keys
+    the lookup rather than the view itself, and every keyed array is held until the export ends so no address is
+    reused meanwhile. The copy is made contiguous in row order, so the file holds the same bytes however numpy laid
+    the values out.
+    """
+    layout = value.__array_interface__
+    key = (layout["data"][0], layout["shape"], layout["strides"], layout["typestr"])
+    slot = exported.slots.get(key)
+    if slot is None:
+        slot = len(exported.values)
+        exported.slots[key] = slot
+        exported.stored.append(value)
+        exported.values.append(np.ascontiguousarray(value))
+    return slot
+
+
+def _exporting_into(exported: "Exported") -> Exporting:
+    """Builds the handle a class receives to export itself into this file."""
+    return Exporting(array=partial(_store_array, exported=exported), value=partial(_export_value, exported=exported))
+
+
+def _loading_from(loaded: "Loaded") -> Loading:
+    """Builds the handle a class receives to load itself back out of this file."""
+    return Loading(array=loaded.values.__getitem__, value=partial(_load_value, loaded=loaded), shared=loaded.shared)
+
+
+def _export_value(value, expect, exported: "Exported"):
+    """Export one value as what JSON can hold, against the type it is declared to be.
+
+    What the declaration settles is left unsaid: a field declared to hold one class says only its values, and only a
+    field whose declared type has subclasses says which one it holds.
+    """
+    expect = _unwrap_annotation(expect)
+    if value is None:
+        return None
+    # A field declared to hold anything tells nothing about its content, so the value records its own class.
+    if expect is typing.Any or expect is object:
+        return _export_any(value, exported)
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, IntEnum):
+        exported.classes.add(type(value))
+        return value.name
+    codec = _class_codec(type(value))
+    if codec is not None:
+        held = codec[0](value, _exporting_into(exported))
+        # A class saying how it travels may stand where its base is declared, so the file names which one it is.
+        if held is None or _accepted_classes(expect) == (type(value),):
+            return held
+        return {"@class": type(value).__name__, "raw": held}
+    if _has_declared_fields(expect):
+        exported.classes.add(type(value))
+        given = vars(value)
+        values = {
+            name: _export_value(given[name], annotation, exported)
+            for name, annotation in _declared_fields(type(value)).items()
+        }
+        if issubclass(type(value), Options):
+            # An option object carries the names of the fields the user gave, since rebuilding one needs them. They
+            # are sorted, so exporting the same scene twice gives the same file.
+            values = {"values": values, "given": sorted(value.model_fields_set)}
+        return values if _accepted_classes(expect) == (type(value),) else {"@": type(value).__name__, **values}
+    expect = _deduce_union(expect, value)
+    origin = typing.get_origin(expect)
+    if _is_sequence(origin):
+        args = typing.get_args(expect)
+        if issubclass(origin, tuple) and len(args) > 1 and args[1] is not Ellipsis:
+            return [_export_value(item, arg, exported) for item, arg in zip(value, args)]
+        item_type = args[0] if args else None
+        return [_export_value(item, item_type, exported) for item in value]
+    if _is_mapping(origin):
+        key, item = typing.get_args(expect) or (None, None)
+        return [[_export_value(k, key, exported), _export_value(v, item, exported)] for k, v in value.items()]
+    if isinstance(value, (bool, int, float, str)):
+        return value
+    if _is_mapping(type(value)):
+        return _export_any(value, exported)
+    gs.raise_exception(f"A Genesis file cannot hold {type(value).__name__} where {expect} was declared.")
+
+
+def _export_any(value, exported: "Exported"):
+    """Export a value declared as 'Any', which states nothing about it, such as the entries of an open mapping.
+
+    The value records its JSON kind, a named class records how it travels, and it loads back as exported.
+    """
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, np.generic):
+        return value.item()
+    if _is_mapping(type(value)):
+        return {"@dict": [[_export_any(k, exported), _export_any(v, exported)] for k, v in value.items()]}
+    if _is_sequence(type(value)):
+        return {"@list": [_export_any(item, exported) for item in value]}
+    # A value whose declaration says nothing about it records its own class name. This lets a morph carry the meshes
+    # it received rather than a path to read them from.
+    codec = _class_codec(type(value))
+    if codec is not None:
+        return {"@class": type(value).__name__, "raw": codec[0](value, _exporting_into(exported))}
+    gs.raise_exception(f"A Genesis file cannot hold {type(value).__name__} where 'Any' was declared.")
+
+
+def _load_any(raw, loaded: "Loaded"):
+    """Load back one value declared as 'Any', as what it was exported as."""
+    if not isinstance(raw, dict):
+        return raw
+    if "@list" in raw:
+        return [_load_any(item, loaded) for item in raw["@list"]]
+    if "@dict" in raw:
+        return {_load_any(k, loaded): _load_any(v, loaded) for k, v in raw["@dict"]}
+    if "@class" in raw:
+        classes = [SerializationMixin, *_REGISTERED]
+        while classes:
+            cls = classes.pop()
+            classes.extend(cls.__subclasses__())
+            if cls.__name__ == raw["@class"]:
+                return _class_codec(cls)[1](raw["raw"], _loading_from(loaded))
+        gs.raise_exception(f"A Genesis file holds a '{raw['@class']}', which no class says how it is loaded.")
+    gs.raise_exception(f"A Genesis file holds a value this version cannot load where 'Any' stands: {sorted(raw)}.")
+
+
+def _load_value(raw, expect, loaded: "Loaded"):
+    """Load back one value as the type it is declared to be, creating only what that declaration allows."""
+    if raw is None:
+        if typing.get_origin(expect) is typing.Annotated:
+            expect = typing.get_args(expect)[0]
+        if type(None) not in typing.get_args(expect) and expect is not typing.Any and expect is not object:
+            gs.raise_exception(f"A Genesis file holds nothing where a {expect} was declared.")
+        return None
+    expect = _unwrap_annotation(expect)
+    if expect is typing.Any or expect is object:
+        return _load_any(raw, loaded)
+    if isinstance(expect, type) and issubclass(expect, IntEnum):
+        return expect[raw]
+    if isinstance(raw, dict) and "@class" in raw:
+        cls = _classes_by_name(expect).get(raw["@class"])
+        codec = None if cls is None else _class_codec(cls)
+        if codec is None:
+            gs.raise_exception(f"A Genesis file holds a '{raw['@class']}' where {expect} was declared.")
+        return codec[1](raw["raw"], _loading_from(loaded))
+    codec = _class_codec(expect)
+    if codec is not None:
+        return codec[1](raw, _loading_from(loaded))
+    if _has_declared_fields(expect):
+        # A single-class declaration settles which class stands there, so only a wider one makes the file name it.
+        if "@" in raw:
+            kinds = _classes_by_name(expect)
+            cls = kinds.get(raw["@"])
+            if cls is None:
+                gs.raise_exception(
+                    f"A Genesis file holds a '{raw['@']}' where {expect} was declared, and Genesis declares no such "
+                    f"class there (it declares {', '.join(sorted(kinds))})."
+                )
+        else:
+            cls = _accepted_classes(expect)[0]
+        declared = _declared_fields(cls)
+        if issubclass(cls, Options):
+            values = {name: _load_value(raw["values"][name], declared[name], loaded) for name in raw["values"]}
+            # A file arrives from wherever it was written, so each value it states is put through what its field
+            # admits. The class itself is built past its own validation: an option resolves what it was authored
+            # with, and its validators reject the resolved form. An option standing in a field is left to the pass
+            # its own load makes. The fields marked as given are the ones the user gave then, since one option
+            # inherits from another only what the receiver left unset.
+            for name, value in values.items():
+                if isinstance(value, Options) or (
+                    isinstance(value, (list, tuple)) and any(isinstance(item, Options) for item in value)
+                ):
+                    continue
+                try:
+                    _field_check(cls, name).validate_python(value)
+                except ValidationError as e:
+                    gs.raise_exception_from(f"A Genesis file states a '{name}' that {cls.__name__} rejects.", e)
+            return cls.model_construct(_fields_set=set(raw["given"]), **values)
+        return cls(**{name: _load_value(raw[name], declared[name], loaded) for name in declared if name in raw})
+    expect = _deduce_union(expect, raw)
+    origin = typing.get_origin(expect)
+    if _is_sequence(origin):
+        args = typing.get_args(expect)
+        if issubclass(origin, tuple) and len(args) > 1 and args[1] is not Ellipsis:
+            return tuple(_load_value(item, arg, loaded) for item, arg in zip(raw, args))
+        item_type = args[0] if args else None
+        items = [_load_value(item, item_type, loaded) for item in raw]
+        # An abstract sequence declaration loads as a plain list, a concrete one as the class it names.
+        return items if origin in (list, Sequence) else origin(items)
+    if _is_mapping(origin):
+        key, item = typing.get_args(expect) or (None, None)
+        pairs = {_load_value(k, key, loaded): _load_value(v, item, loaded) for k, v in raw}
+        # An abstract mapping declaration loads as a plain dict, a concrete one as the class it names.
+        return pairs if origin in (dict, Mapping) else origin(pairs)
+    if isinstance(raw, (bool, int, float, str)):
+        # JSON holds one number kind, so a whole number stands for a float where one is declared.
+        if isinstance(expect, type) and not isinstance(raw, expect) and not (expect is float and isinstance(raw, int)):
+            gs.raise_exception(f"A Genesis file holds a {type(raw).__name__} where a {expect.__name__} was declared.")
+        return raw
+    # A value carrying its own kind loads back as that kind, and a mapping declared without key and item types
+    # travels that way. Every other declaration is settled above, so a value standing here contradicts its field.
+    if isinstance(raw, dict) and not {"@dict", "@list", "@class"}.isdisjoint(raw):
+        return _load_any(raw, loaded)
+    gs.raise_exception(f"A Genesis file holds a {type(raw).__name__} where {expect} was declared.")
+
+
+def export(path: str | os.PathLike, values: dict, redact: dict[str, str]) -> None:
+    """Export what a caller holds to a file that loads back as data alone, holding no code and reading no asset.
+
+    'values' names each value the file carries, and loading it asks for those names back. The file is a zip archive of
+    one manifest and one member holding every array, and what each value is comes from the declared type of what
+    holds it, so loading one creates the descriptions, options and meshes those declarations allow and nothing else.
+
+    'redact' names what no file may hold, each with what stands for it. A directory an asset was read from reaches
+    values a caller never sees - the identifier of a mesh, the provenance of another - so the substitution is made
+    over the whole manifest rather than value by value.
+    """
+    exported = Exported(values=[], slots={}, stored=[], classes=set())
+    # Every class the file holds is known once its values are exported, so the schema follows them.
+    held = {name: _export_value(value, type(value), exported) for name, value in values.items()}
+    manifest = {
+        "genesis": gs.__version__,
+        "source": source_digest(),
+        "schema": schema(exported.classes),
+        "held": held,
+    }
+    text = json.dumps(manifest, indent=1)
+    for held_path, stands_for in redact.items():
+        text = text.replace(json.dumps(held_path)[1:-1], json.dumps(stands_for)[1:-1])
+    member = io.BytesIO()
+    # Every array is compressed where it is written: the member holding them is itself an archive, so an archive
+    # around it would find nothing left to compress.
+    np.savez_compressed(member, **{str(index): array for index, array in enumerate(exported.values)})
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, content in ((MANIFEST_NAME, text.encode()), (ARRAY_MEMBER, member.getvalue())):
+            # Zip stamps each member with the write clock by default. A fixed timestamp makes two exports of one
+            # scene byte-identical.
+            entry = zipfile.ZipInfo(name, date_time=EPOCH)
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(entry, content)
+
+
+def load(path: str | os.PathLike, expect: dict) -> dict:
+    """Load back what 'export' wrote, each value as the type the caller says it expects.
+
+    A file arrives from wherever it was written, so anything about it may be wrong: it may be truncated, hold neither
+    of the two members a file is written as, or have been exported when a class meant something else. Each failure is
+    rejected with a message naming what was expected, so a reader knows whether to ask for the file again or for
+    another version.
+    """
+    try:
+        with zipfile.ZipFile(path) as archive:
+            manifest = json.loads(archive.read(MANIFEST_NAME))
+            member = np.load(io.BytesIO(archive.read(ARRAY_MEMBER)))
+            loaded = Loaded(values=[member[str(index)] for index in range(len(member.files))], shared={})
+    except zipfile.BadZipFile as e:
+        gs.raise_exception_from(f"'{path}' is not a Genesis file, or was truncated on its way here.", e)
+    except KeyError as e:
+        gs.raise_exception_from(
+            f"'{path}' is missing what a Genesis file is written as: a '{MANIFEST_NAME}' manifest and an "
+            f"'{ARRAY_MEMBER}' member holding its arrays.",
+            e,
+        )
+    except (json.JSONDecodeError, ValueError) as e:
+        gs.raise_exception_from(f"'{path}' holds a '{MANIFEST_NAME}' or an '{ARRAY_MEMBER}' Genesis cannot read.", e)
+    if (
+        not isinstance(manifest, dict)
+        or not isinstance(manifest.get("held"), dict)
+        or not isinstance(manifest.get("schema"), dict)
+        or not all(
+            isinstance(layout, dict) or (isinstance(layout, list) and all(isinstance(name, str) for name in layout))
+            for layout in manifest["schema"].values()
+        )
+    ):
+        gs.raise_exception(f"'{path}' holds a '{MANIFEST_NAME}' that is not the manifest Genesis writes.")
+    # Three differences change what the values in the file mean. A class the file holds may no longer exist, a
+    # field it holds may no longer be declared, and an enumeration member's value may have moved. A field or a
+    # member added since means nothing new: an option states which of its fields were given, and a description
+    # field left out stands at its declared default.
+    layout = declared_schema(expect)
+    for name, written_layout in manifest["schema"].items():
+        current = layout.get(name)
+        if current is None:
+            gs.raise_exception(f"'{path}' holds a '{name}', which this version of Genesis no longer declares.")
+        if isinstance(written_layout, dict):
+            moved = sorted(
+                f"{member}={value}" for member, value in written_layout.items() if current.get(member) != value
+            )
+            if moved:
+                gs.raise_exception(f"'{path}' was written where '{name}' stated {', '.join(moved)}, which has moved.")
+        else:
+            gone = sorted(set(written_layout) - set(current))
+            if gone:
+                gs.raise_exception(f"'{path}' holds {gone} of '{name}', which this version of Genesis no longer has.")
+    if manifest.get("source") != source_digest():
+        gs.logger.warning(
+            f"'{path}' was exported by Genesis {manifest.get('genesis')} ({manifest.get('source')}) and is being "
+            f"loaded by {gs.__version__} ({source_digest()}). What the file holds still means what it says, and the "
+            "simulation it describes may run differently."
+        )
+    missing = sorted(set(expect) - set(manifest["held"]))
+    if missing:
+        gs.raise_exception(f"'{path}' holds {sorted(manifest['held'])} rather than the {missing} asked for.")
+    # A file written elsewhere may hold anything, so a value that contradicts its declaration is rejected here
+    # rather than reaching a constructor.
+    try:
+        return {name: _load_value(manifest["held"][name], annotation, loaded) for name, annotation in expect.items()}
+    except (TypeError, KeyError, IndexError, ValueError) as e:
+        gs.raise_exception_from(f"'{path}' holds values a Genesis scene is not made of.", e)
 
 
 def _exported_array(value: np.ndarray, exporting: Exporting) -> int:
@@ -98,411 +638,3 @@ def _loaded_array(raw: int, loading: Loading) -> np.ndarray:
 
 
 register(np.ndarray, _exported_array, _loaded_array)
-
-
-def _class_codec(cls) -> tuple[Callable, Callable] | None:
-    """Return the export and load pair for a class.
-
-    A self-serialisable class supplies its own methods; otherwise its own or its base's registered pair applies.
-    """
-    if not isinstance(cls, type):
-        return None
-    if issubclass(cls, SerializationMixin):
-        return (cls.export, cls.load)
-    for held in cls.__mro__:
-        if held in _REGISTERED:
-            return _REGISTERED[held]
-    return None
-
-
-# The names the descriptions annotate their fields with that are only imported for type checking, since importing
-# them at runtime would create a cycle: a parser imports the descriptions, and the options import the parsers.
-_DEFERRED_TYPES: dict[str, type[Options]] = {}
-
-
-def _deferred_types() -> dict[str, type[Options]]:
-    """The annotation names a description module imports for type checking alone, resolved here to break the cycle."""
-    if not _DEFERRED_TYPES:
-        from genesis.engine.materials.base import Material
-        from genesis.engine.scene import SceneOptions
-        from genesis.options.morphs import Morph
-        from genesis.options.surfaces import Surface
-
-        _DEFERRED_TYPES.update(Material=Material, SceneOptions=SceneOptions, Morph=Morph, Surface=Surface)
-    return _DEFERRED_TYPES
-
-
-def _declared_fields(cls: type) -> dict[str, type]:
-    """Return the declared type of each field of a class. Those types drive how a value loads back."""
-    if issubclass(cls, Options):
-        return {name: info.annotation for name, info in cls.model_fields.items()}
-    return typing.get_type_hints(cls, localns=_deferred_types())
-
-
-def _unwrap_annotation(expect):
-    """What a declaration asks for, with the wrappers that do not change it taken off.
-
-    A file says by holding null whether an optional value is there, so 'X | None' asks for X. What 'Annotated'
-    carries is for validation, leaving what the value is untouched.
-    """
-    if typing.get_origin(expect) is typing.Annotated:
-        expect = typing.get_args(expect)[0]
-    if typing.get_origin(expect) in (types.UnionType, typing.Union):
-        stated = [arm for arm in typing.get_args(expect) if arm is not type(None)]
-        return _unwrap_annotation(stated[0]) if len(stated) == 1 else expect
-    return expect
-
-
-def _accepted_classes(expect) -> tuple:
-    """The classes a declaration accepts, which is one for 'Mesh' and two for 'Box | Sphere', 'None' left out.
-
-    A single-class declaration needs no class name in the file. A declaration accepting several makes the file name
-    which class it holds.
-    """
-    if typing.get_origin(expect) in (types.UnionType, typing.Union):
-        return tuple(arm for arm in typing.get_args(expect) if arm is not type(None))
-    return (expect,)
-
-
-def _classes_by_name(expect) -> dict[str, type]:
-    """Every class a file may name where a declaration stands, under the name it is written as.
-
-    A declaration accepting 'Morph' accepts every kind of morph, so what may stand there is 'Morph' and everything
-    extending it. A name read back is looked up here, so a file naming a class outside the declaration is refused.
-    """
-    held = {}
-    pending = [_unwrap_annotation(arm) for arm in _accepted_classes(expect)]
-    while pending:
-        cls = pending.pop()
-        held[cls.__name__] = cls
-        pending.extend(cls.__subclasses__())
-    return held
-
-
-def _is_sequence(cls) -> bool:
-    """Whether instances of 'cls' are carried as a JSON list. Sequences and sets qualify, and strings stay scalars."""
-    return isinstance(cls, type) and issubclass(cls, (Sequence, Set)) and not issubclass(cls, str)
-
-
-def _has_declared_fields(expect) -> bool:
-    """Tell whether the classes a declaration accepts travel field by field, as dataclasses and options do.
-
-    Every class the declaration accepts must qualify.
-    """
-    arms = [_unwrap_annotation(arm) for arm in _accepted_classes(expect)]
-    return bool(arms) and all(
-        isinstance(arm, type) and (dataclasses.is_dataclass(arm) or issubclass(arm, Options)) for arm in arms
-    )
-
-
-def _schema(expect, held: dict, seen: set) -> dict:
-    """What every class reachable from a declaration is made of: its field names, or its members where it enumerates.
-
-    A field renamed or an enumeration member renumbered leaves every value in a file intact while changing what it
-    means. A file therefore carries this of the classes it holds, and a load compares it class by class, so a class
-    that gained a field since keeps loading while one whose fields moved is refused by name.
-    """
-    expect = _unwrap_annotation(expect)
-    for arg in typing.get_args(expect):
-        _schema(arg, held, seen)
-    if not isinstance(expect, type) or expect in seen:
-        return held
-    seen.add(expect)
-    if issubclass(expect, IntEnum):
-        held[expect.__name__] = {member.name: member.value for member in expect}
-    elif _has_declared_fields(expect):
-        for cls in _classes_by_name(expect).values():
-            if cls in seen and cls is not expect:
-                continue
-            seen.add(cls)
-            fields = _declared_fields(cls)
-            held[cls.__name__] = sorted(fields)
-            for annotation in fields.values():
-                _schema(annotation, held, seen)
-    return held
-
-
-def schema(expect: dict) -> dict:
-    """What the classes a caller exports or loads are made of, under the name each is written as."""
-    held = {}
-    for annotation in expect.values():
-        _schema(annotation, held, set())
-    return held
-
-
-def _refuse_moved_schema(path: str, written: dict, expect: dict) -> None:
-    """Refuse a file whose classes mean something else here, naming the class and what moved in it.
-
-    A class the file holds that no longer exists, a field it holds that is no longer declared, and an enumeration
-    member whose value moved all change what the values in the file mean. A field or a member added since does not:
-    an option states which of its fields were given, and a description field left out stands at its declared default.
-    """
-    held = schema(expect)
-    for name, stated in written.items():
-        current = held.get(name)
-        if current is None:
-            gs.raise_exception(f"'{path}' holds a '{name}', which this version of Genesis no longer declares.")
-        if isinstance(stated, dict):
-            moved = sorted(f"{member}={value}" for member, value in stated.items() if current.get(member) != value)
-            if moved:
-                gs.raise_exception(f"'{path}' was written where '{name}' stated {', '.join(moved)}, which has moved.")
-        else:
-            gone = sorted(set(stated) - set(current))
-            if gone:
-                gs.raise_exception(f"'{path}' holds {gone} of '{name}', which this version of Genesis no longer has.")
-
-
-def source_digest() -> str:
-    """Digest the Genesis sources this process runs, so a file says which code wrote it.
-
-    The release version alone answers for nothing between two releases, which is where a branch and a local edit both
-    live, and either changes what a scene simulates. Reading the sources answers for both, and the digest is taken
-    once per process.
-    """
-    global _SOURCE_DIGEST
-    if _SOURCE_DIGEST is None:
-        root = pathlib.Path(gs.__file__).parent
-        held = hashlib.sha256()
-        for path in sorted(root.rglob("*.py")):
-            held.update(path.relative_to(root).as_posix().encode())
-            held.update(path.read_bytes())
-        _SOURCE_DIGEST = held.hexdigest()[:16]
-    return _SOURCE_DIGEST
-
-
-def _store_array(value, arrays: list[np.ndarray]) -> int:
-    """Store one array with the arrays the file holds and return its index.
-
-    The copy is made contiguous in row order, so the file holds the same bytes however numpy laid the values out.
-    """
-    arrays.append(np.ascontiguousarray(value))
-    return len(arrays) - 1
-
-
-def _exporting_into(arrays: list[np.ndarray]) -> Exporting:
-    """What a class is handed to export itself into this file."""
-    return Exporting(array=partial(_store_array, arrays=arrays), value=partial(_export_value, arrays=arrays))
-
-
-def _loading_from(arrays: list[np.ndarray]) -> Loading:
-    """What a class is handed to load itself back out of this file."""
-    return Loading(array=arrays.__getitem__, value=partial(_load_value, arrays=arrays))
-
-
-def _export_value(value, expect, arrays: list[np.ndarray]):
-    """Export one value as what JSON can hold, against the type it is declared to be.
-
-    What the declaration settles is left unsaid: a field declared to hold one class says only its values, and only a
-    field whose declared type has subclasses says which one it holds.
-    """
-    expect = _unwrap_annotation(expect)
-    if value is None:
-        return None
-    # A field declared to hold anything tells nothing about its content, so the value records its own class.
-    if expect is typing.Any or expect is object:
-        return _export_free_form(value, arrays)
-    if isinstance(value, (np.generic, IntEnum)):
-        return value.name if isinstance(value, IntEnum) else value.item()
-    held = _class_codec(type(value))
-    if held is not None:
-        return held[0](value, _exporting_into(arrays))
-    if _has_declared_fields(expect):
-        given = vars(value)
-        held = {
-            name: _export_value(given[name], annotation, arrays)
-            for name, annotation in _declared_fields(type(value)).items()
-        }
-        if issubclass(type(value), Options):
-            # An option object carries the names of the fields the user gave, since rebuilding one needs them. They
-            # are sorted, so exporting the same scene twice gives the same file.
-            held = {"values": held, "given": sorted(value.model_fields_set)}
-        return held if _accepted_classes(expect) == (type(value),) else {"@": type(value).__name__, **held}
-    origin = typing.get_origin(expect)
-    if _is_sequence(origin):
-        args = typing.get_args(expect)
-        if issubclass(origin, tuple) and len(args) > 1 and args[1] is not Ellipsis:
-            return [_export_value(item, arg, arrays) for item, arg in zip(value, args)]
-        held = args[0] if args else None
-        return [_export_value(item, held, arrays) for item in value]
-    if origin is dict:
-        key, item = typing.get_args(expect) or (None, None)
-        return [[_export_value(k, key, arrays), _export_value(v, item, arrays)] for k, v in value.items()]
-    if isinstance(value, (bool, int, float, str)):
-        return value
-    if isinstance(value, dict):
-        return _export_free_form(value, arrays)
-    gs.raise_exception(f"A Genesis file cannot hold {type(value).__name__} where {expect} was declared.")
-
-
-def _export_free_form(value, arrays: list[np.ndarray]):
-    """Export a value whose declaration says nothing about it, such as the entries of a free-form mapping.
-
-    The value records its JSON kind, a named class records how it travels, and it loads back as exported.
-    """
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return value
-    if isinstance(value, np.generic):
-        return value.item()
-    if isinstance(value, dict):
-        return {"@dict": [[_export_free_form(k, arrays), _export_free_form(v, arrays)] for k, v in value.items()]}
-    if _is_sequence(type(value)):
-        return {"@list": [_export_free_form(item, arrays) for item in value]}
-    # A value whose declaration says nothing about it records its own class name. This lets a morph carry the meshes
-    # it received rather than a path to read them from.
-    held = _class_codec(type(value))
-    if held is not None:
-        return {"@class": type(value).__name__, "raw": held[0](value, _exporting_into(arrays))}
-    gs.raise_exception(f"A Genesis file cannot hold {type(value).__name__} among free-form values.")
-
-
-def _load_free_form(raw, arrays: list[np.ndarray]):
-    """Load back one value a free-form mapping holds, as what it was exported as."""
-    if not isinstance(raw, dict):
-        return raw
-    if "@list" in raw:
-        return [_load_free_form(item, arrays) for item in raw["@list"]]
-    if "@dict" in raw:
-        return {_load_free_form(k, arrays): _load_free_form(v, arrays) for k, v in raw["@dict"]}
-    if "@class" in raw:
-        pending = [SerializationMixin, *_REGISTERED]
-        while pending:
-            cls = pending.pop()
-            pending.extend(cls.__subclasses__())
-            if cls.__name__ == raw["@class"]:
-                return _class_codec(cls)[1](raw["raw"], _loading_from(arrays))
-        gs.raise_exception(f"A Genesis file holds a '{raw['@class']}', which no class says how it is loaded.")
-    gs.raise_exception(f"A Genesis file holds a free-form value this version cannot load: {sorted(raw)}.")
-
-
-def _named_class(raw: dict, expect) -> type:
-    """Which class a file says it holds, refused unless the declaration accepts it."""
-    if "@" not in raw:
-        return _accepted_classes(expect)[0]
-    kinds = _classes_by_name(expect)
-    cls = kinds.get(raw["@"])
-    if cls is None:
-        gs.raise_exception(
-            f"A Genesis file holds a '{raw['@']}' where {expect} was declared, and Genesis declares no such class "
-            f"there (it declares {', '.join(sorted(kinds))})."
-        )
-    return cls
-
-
-def _load_value(raw, expect, arrays: list[np.ndarray]):
-    """Load back one value as the type it is declared to be, creating only what that declaration allows."""
-    if raw is None:
-        if typing.get_origin(expect) is typing.Annotated:
-            expect = typing.get_args(expect)[0]
-        if type(None) not in typing.get_args(expect) and expect is not typing.Any and expect is not object:
-            gs.raise_exception(f"A Genesis file holds nothing where a {expect} was declared.")
-        return None
-    expect = _unwrap_annotation(expect)
-    if expect is typing.Any or expect is object:
-        return _load_free_form(raw, arrays)
-    if isinstance(expect, type) and issubclass(expect, IntEnum):
-        return expect[raw]
-    held = _class_codec(expect)
-    if held is not None:
-        return held[1](raw, _loading_from(arrays))
-    if _has_declared_fields(expect):
-        cls = _named_class(raw, expect)
-        declared = _declared_fields(cls)
-        if issubclass(cls, Options):
-            values = {name: _load_value(raw["values"][name], declared[name], arrays) for name in raw["values"]}
-            # These values were validated when the option was authored, so they are not validated again. The fields
-            # marked as given are the ones the user gave then, since one option inherits from another only what the
-            # receiver left unset.
-            return cls.model_construct(_fields_set=set(raw["given"]), **values)
-        return cls(**{name: _load_value(raw[name], declared[name], arrays) for name in declared if name in raw})
-    origin = typing.get_origin(expect)
-    if _is_sequence(origin):
-        args = typing.get_args(expect)
-        if issubclass(origin, tuple) and len(args) > 1 and args[1] is not Ellipsis:
-            return tuple(_load_value(item, arg, arrays) for item, arg in zip(raw, args))
-        held = args[0] if args else None
-        items = [_load_value(item, held, arrays) for item in raw]
-        # An abstract sequence declaration loads as a plain list, a concrete one as the class it names.
-        return items if origin in (list, Sequence) else origin(items)
-    if origin is dict:
-        key, item = typing.get_args(expect) or (None, None)
-        return {_load_value(k, key, arrays): _load_value(v, item, arrays) for k, v in raw}
-    if isinstance(raw, (bool, int, float, str)):
-        return raw
-    return _load_free_form(raw, arrays)
-
-
-def export(path: str, held: dict, redact: dict[str, str]) -> None:
-    """Export what a caller holds to a file that loads back as data alone, holding no code and reading no asset.
-
-    'held' names each value it carries, and loading the file asks for those names back. The file is a zip archive of
-    one manifest and one member holding every array, and what each value is comes from the declared type of what
-    holds it, so loading one creates the descriptions, options and meshes those declarations allow and nothing else.
-
-    'redact' names what no file may hold, each with what stands for it. A directory an asset was read from reaches
-    values a caller never sees - the identifier of a mesh, the provenance of another - so the substitution is made
-    over the whole manifest rather than value by value.
-    """
-    arrays: list[np.ndarray] = []
-    manifest = {
-        "genesis": gs.__version__,
-        "source": source_digest(),
-        "schema": schema({name: type(value) for name, value in held.items()}),
-        "held": {name: _export_value(value, type(value), arrays) for name, value in held.items()},
-    }
-    text = json.dumps(manifest, indent=1)
-    for held_path, stands_for in redact.items():
-        text = text.replace(json.dumps(held_path)[1:-1], json.dumps(stands_for)[1:-1])
-    member = io.BytesIO()
-    # Every array is compressed where it is written: the member holding them is itself an archive, so an archive
-    # around it would find nothing left to compress.
-    np.savez_compressed(member, **{str(index): array for index, array in enumerate(arrays)})
-    with zipfile.ZipFile(path, "w") as archive:
-        for name, said in ((MANIFEST_NAME, text.encode()), (ARRAY_MEMBER, member.getvalue())):
-            # An archive stamps each member with the time it was written unless it is told one, and two exports of
-            # one scene are the same file, so the time is stated rather than taken from the clock.
-            held = zipfile.ZipInfo(name, date_time=EPOCH)
-            held.compress_type = zipfile.ZIP_DEFLATED
-            archive.writestr(held, said)
-
-
-def load(path: str, expect: dict) -> dict:
-    """Load back what 'export' wrote, each value as the type the caller says it expects.
-
-    A file arrives from wherever it was written, so anything about it may be wrong: it may be truncated, hold neither
-    of the two members a file is written as, or have been exported when a class meant something else. Each failure is
-    refused with a message naming what was expected, so a reader knows whether to ask for the file again or for
-    another version.
-    """
-    try:
-        with zipfile.ZipFile(path) as archive:
-            manifest = json.loads(archive.read(MANIFEST_NAME))
-            member = np.load(io.BytesIO(archive.read(ARRAY_MEMBER)))
-            arrays = [member[str(index)] for index in range(len(member.files))]
-    except zipfile.BadZipFile as e:
-        gs.raise_exception_from(f"'{path}' is not a Genesis file, or was truncated on its way here.", e)
-    except KeyError as e:
-        gs.raise_exception_from(
-            f"'{path}' is missing what a Genesis file is written as: a '{MANIFEST_NAME}' manifest and an "
-            f"'{ARRAY_MEMBER}' member holding its arrays.",
-            e,
-        )
-    except (json.JSONDecodeError, ValueError) as e:
-        gs.raise_exception_from(f"'{path}' holds a '{MANIFEST_NAME}' or an '{ARRAY_MEMBER}' Genesis cannot read.", e)
-    if not isinstance(manifest, dict) or not isinstance(manifest.get("held"), dict) or "schema" not in manifest:
-        gs.raise_exception(f"'{path}' holds a '{MANIFEST_NAME}' that is not the manifest Genesis writes.")
-    _refuse_moved_schema(path, manifest["schema"], expect)
-    if manifest.get("source") != source_digest():
-        gs.logger.warning(
-            f"'{path}' was exported by Genesis {manifest.get('genesis')} ({manifest.get('source')}) and is being "
-            f"loaded by {gs.__version__} ({source_digest()}). What the file holds still means what it says, and the "
-            "simulation it describes may run differently."
-        )
-    missing = sorted(set(expect) - set(manifest["held"]))
-    if missing:
-        gs.raise_exception(f"'{path}' holds {sorted(manifest['held'])} rather than the {missing} asked for.")
-    # A file written elsewhere may hold anything, so a value that contradicts its declaration is refused here
-    # rather than reaching a constructor.
-    try:
-        return {name: _load_value(manifest["held"][name], annotation, arrays) for name, annotation in expect.items()}
-    except (TypeError, KeyError, IndexError, ValueError) as e:
-        gs.raise_exception_from(f"'{path}' holds values a Genesis scene is not made of.", e)

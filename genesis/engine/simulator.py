@@ -6,6 +6,7 @@ import genesis as gs
 from genesis.options.morphs import Morph
 from genesis.options.solvers import IPCCouplerOptions, LegacyCouplerOptions, SAPCouplerOptions
 from genesis.repr_base import RBC
+from genesis.utils.description import Described, KinematicEntityDescription
 from genesis.utils.misc import indices_to_mask
 
 from .couplers import IPCCoupler, LegacyCoupler, SAPCoupler
@@ -119,16 +120,21 @@ class Simulator(RBC):
         surface=None,
         visualize_contact=False,
         name: str | None = None,
+        desc: KinematicEntityDescription | None = None,
     ):
+        if desc is not None:
+            # 'desc.morphs' is a list: the solver takes the first as the primary and dispatches the rest as variants.
+            morph, material, surface = desc.morphs, desc.material, desc.surface
+            visualize_contact, name = desc.visualize_contact, desc.name
         if isinstance(material, gs.materials.Tool):
             entity = self.tool_solver.add_entity(self.n_entities, material, morph, surface, name=name)
         elif isinstance(material, gs.materials.Rigid):
             entity = self.rigid_solver.add_entity(
-                self.n_entities, material, morph, surface, visualize_contact, name=name
+                self.n_entities, material, morph, surface, visualize_contact, name=name, desc=desc
             )
         elif isinstance(material, gs.materials.Kinematic):
             entity = self.kinematic_solver.add_entity(
-                self.n_entities, material, morph, surface, visualize_contact=False, name=name
+                self.n_entities, material, morph, surface, visualize_contact=False, name=name, desc=desc
             )
         elif isinstance(material, gs.materials.MPM.Base):
             entity = self.mpm_solver.add_entity(self.n_entities, material, morph, surface, name=name)
@@ -145,6 +151,10 @@ class Simulator(RBC):
             gs.raise_exception(f"Material not supported.: {material}")
 
         self._entities.append(entity)
+        # Only a rigid or a kinematic entity describes itself. Its description stands here by reference, so a
+        # later change to it is held as well.
+        if isinstance(entity, Described):
+            self.scene._desc.entities.append(entity.desc)
         return entity
 
     def _add_force_field(self, force_field):

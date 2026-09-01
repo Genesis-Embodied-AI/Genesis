@@ -12,7 +12,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 from genesis.repr_base import RBC
-from genesis.utils.description import RigidGeomDescription, RigidVisGeomDescription
+from genesis.utils.description import Described, RigidGeomDescription, RigidVisGeomDescription
 from genesis.utils.misc import DeprecationError, qd_to_torch, tensor_to_array
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 NUM_VERTS_VISUAL_GEOM_AABB = 200
 
 
-class RigidGeom(RBC):
+class RigidGeom(Described, RBC):
     """
     A `RigidGeom` is the basic building block of a `RigidEntity` for collision checking. It is usually constructed
     from a single mesh. This can be accessed via `link.geoms`.
@@ -856,7 +856,7 @@ class RigidGeom(RBC):
         return f"{self.__repr_name__()}: {self._uid}, idx: {self._idx} (from entity {self._entity.uid}, link {self._link.uid})"
 
 
-class RigidVisGeom(RBC):
+class RigidVisGeom(Described, RBC):
     """
     A `RigidVisGeom` is a counterpart of `RigidGeom`, but for visualization purposes. This can be accessed via `link.vis_geoms`.
     """
@@ -951,6 +951,7 @@ class RigidVisGeom(RBC):
             gs.raise_exception(
                 "'set_vverts' requires the entity's morph to be created with 'enable_custom_vverts=True'."
             )
+        self._entity._is_vverts_overridden = True
         custom_offset = self._entity._custom_vvert_start - self._entity._vvert_start
         self._entity._solver.set_vverts(
             self.vvert_start + custom_offset,

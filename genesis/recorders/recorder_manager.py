@@ -87,6 +87,10 @@ class RecorderManager:
             recorder.step(global_step)
 
     @property
+    def recorders(self) -> "list[Recorder]":
+        return gs.List(self._recorders)
+
+    @property
     def is_recording(self) -> bool:
         return self._is_recording
 

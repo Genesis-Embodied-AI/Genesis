@@ -49,7 +49,7 @@ class InteractiveScene:
         self._sensors_kwargs: list["SensorOptions"] = []
         scene.register_pre_step_callback(self._pre_step)
         # Capture the wrapped scene's construction so rebuild() can reconstruct it identically. The stored options
-        # are already merged with the simulation's; re-passing them is idempotent.
+        # are already merged with the simulation options, so passing them again changes nothing.
         self._scene_kwargs: dict[str, Any] = dict(
             options=scene.options,
             show_viewer=scene.viewer is not None,
