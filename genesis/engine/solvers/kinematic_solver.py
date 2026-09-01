@@ -265,8 +265,8 @@ class KinematicSolver(Solver):
         # the base-link inertial alignment (identity for non-base links); geoms and visual geoms carry only the morph
         # offset, since alignment re-expresses them into the aligned frame. Heterogeneous entities vary the base-link
         # offset per environment (one offset per variant), so the link offset is stored per-env when any such entity
-        # has divergent variant offsets, and as a single broadcast row otherwise. Forward offset device tensors are
-        # None when everything is identity, and the relative getters recompute the inverse on the fly.
+        # has divergent variant offsets, and as a single broadcast row otherwise. The relative getters recompute the
+        # inverse on the fly.
         links_offset_per_env = any(
             not all(
                 np.allclose(variant.offset_pos, entity._desc.variants[0].offset_pos)
@@ -305,10 +305,14 @@ class KinematicSolver(Solver):
             np.isclose(gu.quat_to_xyz(links_offset_quat), 0.0, atol=gs.EPS), axis=2
         ).all(axis=0)
         self._links_offset_pos_is_identity = np.all(np.isclose(links_offset_pos, 0.0, atol=gs.EPS), axis=2).all(axis=0)
-        self._links_offset_pos = self._links_offset_quat = None
-        if not (self._links_offset_pos_is_identity.all() and self._links_offset_quat_is_identity.all()):
-            self._links_offset_pos = torch.from_numpy(links_offset_pos).to(device=gs.device, dtype=gs.tc_float)
-            self._links_offset_quat = torch.from_numpy(links_offset_quat).to(device=gs.device, dtype=gs.tc_float)
+        # The link offset tensors are allocated even when every link is identity, so the getter kernels can take them
+        # unconditionally. '_has_links_offset' is what gates the relative paths, one broadcast row costing nothing.
+        self._has_links_offset = not (
+            self._links_offset_pos_is_identity.all() and self._links_offset_quat_is_identity.all()
+        )
+        self._is_links_offset_per_env = links_offset_per_env
+        self._links_offset_pos = torch.from_numpy(links_offset_pos).to(device=gs.device, dtype=gs.tc_float)
+        self._links_offset_quat = torch.from_numpy(links_offset_quat).to(device=gs.device, dtype=gs.tc_float)
         self._vgeoms_offset_pos = self._vgeoms_offset_quat = None
         if not (
             np.allclose(vgeoms_offset_pos, 0.0, atol=gs.EPS)
@@ -810,8 +814,9 @@ class KinematicSolver(Solver):
     def set_base_links_pos(self, pos, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False):
         if links_idx is None:
             links_idx = self._base_links_idx
-        # Without any pose offset, the user and world frames coincide, so a relative set is just an absolute one.
-        if relative and self._links_offset_pos is None:
+        # Without any pose offset, the authored and internal link origins coincide, so a relative set is just an
+        # absolute one.
+        if relative and not self._has_links_offset:
             relative = False
         pos, links_idx, envs_idx = self._sanitize_io_variables(
             pos, links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
@@ -866,8 +871,9 @@ class KinematicSolver(Solver):
     def set_base_links_quat(self, quat, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False):
         if links_idx is None:
             links_idx = self._base_links_idx
-        # Without any pose offset, the user and world frames coincide, so a relative set is just an absolute one.
-        if relative and self._links_offset_quat is None:
+        # Without any pose offset, the authored and internal link origins coincide, so a relative set is just an
+        # absolute one.
+        if relative and not self._has_links_offset:
             relative = False
         idx = links_idx if isinstance(links_idx, int) else slice(None)
         relative_pos_passthrough = relative and self._links_offset_pos_is_identity[idx].all()
@@ -1108,11 +1114,11 @@ class KinematicSolver(Solver):
         return heights
 
     def _links_offset_shift(self, links_idx, envs_idx):
-        """World-frame displacement from the user-facing link origin to the internal link origin.
+        """World-frame displacement from the authored link origin to the internal link origin.
 
-        Shaped to broadcast against a '[n_envs, n_sel, dim]' state query. The user frame is rigidly attached to the
-        link, so every relative link-origin getter is the world one transported by this displacement: the position
-        subtracts it, the velocity and acceleration apply the rigid-body transport law about it.
+        Shaped to broadcast against a '[n_envs, n_sel, dim]' state query. Both origins belong to the same rigid link,
+        so every relative link-origin getter is the internal one referenced at this displacement instead: the position
+        subtracts it, the velocity moves its reference point by it.
         """
         quat = qd_to_torch(self.dyn_state.links.quat, envs_idx, links_idx, transpose=True)
         offset_pos = _select_links_offset(self._links_offset_pos, links_idx, envs_idx)
@@ -1125,13 +1131,13 @@ class KinematicSolver(Solver):
                 None, links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
             )
         tensor = qd_to_torch(self.dyn_state.links.pos, envs_idx, links_idx, transpose=True, copy=True)
-        if relative and self._links_offset_pos is not None:
+        if relative and self._has_links_offset:
             tensor -= self._links_offset_shift(links_idx, envs_idx)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_quat(self, links_idx=None, envs_idx=None, *, relative=False):
         tensor = qd_to_torch(self.dyn_state.links.quat, envs_idx, links_idx, transpose=True, copy=True)
-        if relative and self._links_offset_quat is not None:
+        if relative and self._has_links_offset:
             offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
             tensor = gu.transform_quat_by_quat(gu.inv_quat(offset_quat), tensor)
         return tensor[0] if self.n_envs == 0 else tensor
@@ -1161,13 +1167,17 @@ class KinematicSolver(Solver):
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_vel(self, links_idx=None, envs_idx=None, *, relative=False):
+        is_relative = relative and self._has_links_offset
         if gs.use_zerocopy:
             mask = indices_to_mask(envs_idx, links_idx)
             cd_vel = qd_to_torch(self.dyn_state.links.cd_vel, transpose=True)
             cd_ang = qd_to_torch(self.dyn_state.links.cd_ang, transpose=True)
             pos = qd_to_torch(self.dyn_state.links.pos, transpose=True)
             root_COM = qd_to_torch(self.dyn_state.links.root_COM, transpose=True)
-            tensor = cd_vel[mask] + cd_ang[mask].cross(pos[mask] - root_COM[mask], dim=-1)
+            cpos = pos[mask] - root_COM[mask]
+            if is_relative:
+                cpos = cpos - self._links_offset_shift(links_idx, envs_idx)
+            tensor = cd_vel[mask] + cd_ang[mask].cross(cpos, dim=-1)
         else:
             _tensor, links_idx, envs_idx = self._sanitize_io_variables(
                 None, links_idx, self.n_links, "links_idx", envs_idx, (3,)
@@ -1176,12 +1186,17 @@ class KinematicSolver(Solver):
             tensor = _tensor[None] if self.n_envs == 0 else _tensor
             # The frame is passed as a plain int, see 'RigidSolver._sanitize_ref_frame'.
             kernel_get_links_vel(
-                links_idx, envs_idx, tensor, self.dyn_state, self.rigid_config, ref=int(gs.link_ref_frame.link_origin)
+                links_idx,
+                envs_idx,
+                tensor,
+                self._links_offset_pos,
+                self._links_offset_quat,
+                self.dyn_state,
+                self.rigid_config,
+                ref=int(gs.link_ref_frame.link_origin),
+                is_relative=is_relative,
+                is_offset_per_env=self._is_links_offset_per_env,
             )
-
-        if relative and self._links_offset_pos is not None:
-            ang = qd_to_torch(self.dyn_state.links.cd_ang, envs_idx, links_idx, transpose=True)
-            tensor -= ang.cross(self._links_offset_shift(links_idx, envs_idx), dim=-1)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_ang(self, links_idx=None, envs_idx=None):
