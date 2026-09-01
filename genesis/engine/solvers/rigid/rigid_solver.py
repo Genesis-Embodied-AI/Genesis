@@ -217,6 +217,14 @@ def _sanitize_sol_params(
     sol_params, min_timeconst: float, default_timeconst: float | None = None, *, floor_timeconst: bool = True
 ):
     timeconst, dampratio, dmin, dmax, width, mid, power = sol_params.reshape((-1, 7)).T
+    direct_mask = timeconst < 0.0
+    if direct_mask.any():
+        gs.logger.warning(
+            "Constraint solver `timeconst` is negative, which parameterizes the constraint by its stiffness and its "
+            "damping directly. Genesis does not support it for now, so the default time constant is used instead."
+        )
+        timeconst[direct_mask] = 0.0
+        dampratio[direct_mask] = gu.default_solver_params()[1]
     if (timeconst < gs.EPS).any() and default_timeconst is not None:
         gs.logger.debug(
             f"Constraint solver time constant not specified. Using default value (`{default_timeconst:0.6g}`)."
