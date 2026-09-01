@@ -1680,6 +1680,8 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
     EULER_OFFSET = (0, 0, 45)
     TOOL_MOUNT_POS = (0.0, 0.0, 0.05)
     TOOL_MOUNT_QUAT = (math.cos(math.pi / 8), math.sin(math.pi / 8), 0.0, 0.0)  # 45 deg about x
+    GHOST_MOUNT_POS = (0.0, 0.6, 0.3)
+    GHOST_MOUNT_OFFSET = (0.0, 0.0, 0.1)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -1730,8 +1732,26 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
             pos=(0.3, 0.0, 0.01),
         ),
     )
+    ghost_mount = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.05, 0.05, 0.05),
+            pos=GHOST_MOUNT_POS,
+        ),
+        material=gs.materials.Kinematic(),
+    )
+    ghost_tool = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.02, 0.02, 0.02),
+            pos=(2.0, 2.0, 2.0),
+        ),
+        material=gs.materials.Kinematic(),
+    )
     with pytest.raises(gs.GenesisException):
         franka.attach(hand, "right_finger")
+    # A merged pair is one kinematic tree, numbered within one solver, so the two entities must share one.
+    with pytest.raises(gs.GenesisException):
+        ghost_tool.attach(hand, "right_finger")
+    ghost_tool.attach(ghost_mount, ghost_mount.links[0].name, pos=GHOST_MOUNT_OFFSET)
     # Omitting the mounting transform keeps the child's morph pose acting as the mount.
     hand.attach(franka, "attachment")
     # Malformed mounting transforms (wrong shape, or a zero-length quaternion) raise before any kinematic-tree
@@ -1789,3 +1809,8 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
     )
     assert_allclose(tool.get_pos(), expected_tool_pos, tol=tol)
     assert_allclose(tool.get_quat(), expected_tool_quat, tol=tol)
+
+    # A kinematic entity attaches onto another one the same way. The mounting transform places it in the parent
+    # link frame, as for a rigid pair.
+    assert_allclose(ghost_tool.get_pos(), np.add(GHOST_MOUNT_POS, GHOST_MOUNT_OFFSET), tol=gs.EPS)
+    assert ghost_tool.desc.attachment.entity_name == ghost_mount.name

@@ -1480,6 +1480,14 @@ class KinematicEntity(Described, Entity):
         if parent_entity is self:
             gs.raise_exception("Cannot attach entity to itself.")
 
+        # The attach merges the pair into one kinematic tree. A tree is numbered within the solver that simulates
+        # it, so one solver must simulate both entities.
+        if parent_entity.solver is not self._solver:
+            gs.raise_exception(
+                f"Parent entity is simulated by '{type(parent_entity.solver).__name__}' while this entity is "
+                f"simulated by '{type(self._solver).__name__}'. Attaching across solvers is not supported."
+            )
+
         if parent_entity.idx > self.idx:
             gs.raise_exception("Parent entity must be instantiated before child entity.")
 

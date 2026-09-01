@@ -1464,6 +1464,11 @@ class KinematicSolver(Solver):
         return gs.List(joint for entity in self._entities for joint in entity.joints)
 
     @property
+    def equalities(self):
+        """The equality constraints the solver enforces, which a kinematic solver holds none of."""
+        return gs.List()
+
+    @property
     def geoms(self):
         if self.is_built:
             return self._geoms
