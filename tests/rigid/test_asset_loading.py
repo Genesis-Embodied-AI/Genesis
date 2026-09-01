@@ -1128,7 +1128,7 @@ def test_align_preserves_link_local_frames(aligned_link_frame_urdfs, show_viewer
     child_geom_quat = gu.transform_quat_by_quat(child_geom_desc.quat, child_desc.quat)
     child_world_quat = gu.transform_quat_by_quat(child_geom_quat, offset_quat)
     for entity in (plain_aligned, plain_unaligned):
-        assert_allclose(entity.get_quat(), gu.identity_quat(), tol=tol)
+        assert_allclose(gu.quat_to_xyz(entity.get_quat()), 0.0, tol=tol)
         u_pos = tensor_to_array(entity.get_pos())
         base_geom, child_geom = entity.geoms
         base_user_pos = tensor_to_array(base_geom.get_pos(relative=True))
