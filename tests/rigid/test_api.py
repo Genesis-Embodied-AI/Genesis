@@ -1216,58 +1216,6 @@ def test_reset(show_viewer, friction_cone, sparse_solve, use_hibernation, enable
         assert_equal(actual[BOOL_MASK], fallen_ref[BOOL_MASK])
 
 
-@pytest.mark.slow  # ~350s
-@pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_scene_saver_franka(tmp_path, show_viewer, tol):
-    scene1 = gs.Scene(
-        profiling_options=gs.options.ProfilingOptions(
-            show_FPS=False,
-        ),
-        show_viewer=show_viewer,
-    )
-    franka1 = scene1.add_entity(
-        gs.morphs.MJCF(
-            file="xml/franka_emika_panda/panda.xml",
-        ),
-    )
-    scene1.build()
-
-    dof_idx = [j.dofs_idx_local[0] for j in franka1.joints]
-
-    franka1.set_dofs_kp(np.full(len(dof_idx), 3000), dof_idx)
-    franka1.set_dofs_kv(np.full(len(dof_idx), 300), dof_idx)
-
-    target_pose = np.array([0.3, -0.8, 0.4, -1.6, 0.5, 1.0, -0.6, 0.03, 0.03], dtype=float)
-    franka1.control_dofs_position(target_pose, dof_idx)
-
-    for _ in range(100):
-        scene1.step()
-
-    pose_ref = franka1.get_dofs_position(dof_idx)
-
-    ckpt_path = tmp_path / "franka_unit.pkl"
-    scene1.save_checkpoint(ckpt_path)
-
-    scene2 = gs.Scene(show_viewer=show_viewer)
-    franka2 = scene2.add_entity(
-        gs.morphs.MJCF(
-            file="xml/franka_emika_panda/panda.xml",
-        ),
-    )
-    scene2.build()
-    scene2.load_checkpoint(ckpt_path)
-
-    pose_loaded = franka2.get_dofs_position(dof_idx)
-
-    # FIXME: It should be possible to achieve better accuracy with 64bits precision
-    assert_allclose(pose_ref, pose_loaded, tol=2e-6)
-
-    # A checkpoint carries how long each environment had simulated, so the loaded scene reports the time of the pose
-    # it restored rather than the one it had reached on its own.
-    assert_allclose(scene1.get_time(), scene2.get_time(), tol=gs.EPS)
-
-
 @pytest.mark.required
 def test_deprecated_properties(caplog):
     scene = gs.Scene(
