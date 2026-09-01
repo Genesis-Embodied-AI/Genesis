@@ -369,7 +369,7 @@ def _camera_read_from_image_cache(sensor, cached_image, envs_idx, *, to_numpy: b
 
     Parameters
     ----------
-    sensor : any camera sensor with _manager and _return_data_class
+    sensor : any camera sensor with _manager and _return_data_cls
     cached_image : np.ndarray | torch.Tensor
         Image cache for this camera, shaped (B, H, W, 3) or (H, W, 3) depending on n_envs.
     envs_idx : None | int | sequence
@@ -382,11 +382,11 @@ def _camera_read_from_image_cache(sensor, cached_image, envs_idx, *, to_numpy: b
 
     if envs_idx is None:
         if sensor._manager._sim.n_envs == 0:
-            return sensor._return_data_class(rgb=cached_image[0])
-        return sensor._return_data_class(rgb=cached_image)
+            return sensor._return_data_cls(rgb=cached_image[0])
+        return sensor._return_data_cls(rgb=cached_image)
     if isinstance(envs_idx, (int, np.integer)):
-        return sensor._return_data_class(rgb=cached_image[envs_idx])
-    return sensor._return_data_class(rgb=cached_image[envs_idx])
+        return sensor._return_data_cls(rgb=cached_image[envs_idx])
+    return sensor._return_data_cls(rgb=cached_image[envs_idx])
 
 
 # ========================== Rasterizer Camera Sensor ==========================
