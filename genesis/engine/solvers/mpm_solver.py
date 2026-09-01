@@ -40,7 +40,7 @@ class MPMSolver(GravityMixin, TimeBasedMixin, Solver):
         self._enable_CPIC = options.enable_CPIC
         self._constraints_initialized = False
 
-        self._n_vvert_supports = self.scene.vis_options.n_support_neighbors
+        self._n_vvert_supports = self.scene.options.vis.n_support_neighbors
 
         # `_particle_volume_scale` is used to avoid potential numerical instability, as the actual `_particle_volume` may be very small.
         # Note that the magnitude of `_particle_volume` doesn't affect MPM simulation itself, but it is used to compute particle

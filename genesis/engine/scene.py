@@ -8,6 +8,7 @@ import numpy as np
 import torch
 
 import trimesh
+from pydantic import Field, model_validator
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -16,10 +17,11 @@ from genesis.engine.force_fields import ForceField
 from genesis.engine.materials.base import EntityT, Material
 from genesis.engine.states.solvers import SimState
 from genesis.options import (
-    KinematicOptions,
+    SceneOptions,
     BaseCouplerOptions,
-    LegacyCouplerOptions,
     FEMOptions,
+    KinematicOptions,
+    LegacyCouplerOptions,
     MPMOptions,
     PBDOptions,
     ProfilingOptions,
@@ -32,22 +34,23 @@ from genesis.options import (
     VisOptions,
 )
 from genesis.options.morphs import Morph
-from genesis.options.surfaces import Surface
-from genesis.options.renderers import Rasterizer, RendererOptions
+from genesis.options.options import Options
 from genesis.options.recorders import RecorderOptions
+from genesis.options.renderers import Rasterizer, RendererOptions
+from genesis.options.surfaces import Surface
 from genesis.recorders import RecorderManager
 from genesis.repr_base import RBC
+from genesis.utils.misc import sanitize_index, tensor_to_array
 from genesis.utils.tools import FPSTracker
-from genesis.utils.misc import tensor_to_array, sanitize_index
-from genesis.vis import Visualizer
 from genesis.utils.warnings import warn_once
+from genesis.vis import Visualizer
 
 if TYPE_CHECKING:
     from genesis.engine.entities.base_entity import Entity
     from genesis.engine.entities.rigid_entity import RigidEntity
     from genesis.engine.sensors.base_sensor import Sensor
-    from genesis.recorders import Recorder
     from genesis.options.sensors.options import SensorOptions, SensorT
+    from genesis.recorders import Recorder
 
 
 @gs.assert_initialized
@@ -86,6 +89,9 @@ class Scene(RBC):
         Whether to show the interactive viewer. Set it to False if you only need headless rendering.
     show_FPS : bool
         Whether to show the FPS in the terminal.
+    options : SceneOptions
+        Every option above as one object, which is how a scene holds them. It is given alone, and passing another
+        scene's ``options`` here creates a scene from what that scene was created with.
     """
 
     def __init__(
@@ -105,33 +111,13 @@ class Scene(RBC):
         profiling_options: ProfilingOptions | None = None,
         renderer: RendererOptions | None = None,
         show_viewer: bool | None = None,
-        show_FPS: bool | None = None,  # deprecated, use profiling_options.show_FPS instead
+        show_FPS: bool | None = None,  # deprecated, use Scene.options.profiling.show_FPS instead
+        options: SceneOptions | None = None,
     ):
         # Delay simulator import to allow specifying Quadrants array type at init
         from genesis.engine.simulator import Simulator
 
-        # Handling of default arguments
-        sim_options = sim_options or SimOptions()
-        tool_options = tool_options or ToolOptions()
-        rigid_options = rigid_options or RigidOptions()
-        kinematic_options = kinematic_options or KinematicOptions()
-        mpm_options = mpm_options or MPMOptions()
-        sph_options = sph_options or SPHOptions()
-        fem_options = fem_options or FEMOptions()
-        sf_options = sf_options or SFOptions()
-        pbd_options = pbd_options or PBDOptions()
-        coupler_options = coupler_options or LegacyCouplerOptions()
-        vis_options = vis_options or VisOptions()
-        viewer_options = viewer_options or ViewerOptions()
-        profiling_options = profiling_options or ProfilingOptions()
-        renderer = renderer or Rasterizer()
-
-        if show_FPS is not None:
-            warn_once("Scene.show_FPS is deprecated. Please use Scene.profiling_options.show_FPS")
-            profiling_options.show_FPS = show_FPS
-
-        # validate options
-        self._validate_options(
+        individual_options = (
             sim_options,
             tool_options,
             rigid_options,
@@ -147,45 +133,41 @@ class Scene(RBC):
             profiling_options,
             renderer,
         )
-
-        self.sim_options = sim_options
-        self.coupler_options = coupler_options
-        self.tool_options = tool_options.model_copy_from(sim_options)
-        self.rigid_options = rigid_options.model_copy_from(sim_options)
-        self.kinematic_options = kinematic_options.model_copy_from(sim_options)
-        self.mpm_options = mpm_options.model_copy_from(sim_options)
-        self.sph_options = sph_options.model_copy_from(sim_options)
-        self.fem_options = fem_options.model_copy_from(sim_options)
-        self.sf_options = sf_options.model_copy_from(sim_options)
-        self.pbd_options = pbd_options.model_copy_from(sim_options)
-        self.profiling_options = profiling_options
-
-        self.vis_options = vis_options
-        self.viewer_options = viewer_options
-        self.renderer_options = renderer
+        if options is not None:
+            if any(option is not None for option in individual_options):
+                gs.raise_exception("`options` holds every option a scene is created with, so it is given alone.")
+            self.options = options
+        else:
+            self.options = SceneOptions(
+                sim=sim_options,
+                tool=tool_options,
+                rigid=rigid_options,
+                kinematic=kinematic_options,
+                mpm=mpm_options,
+                sph=sph_options,
+                fem=fem_options,
+                sf=sf_options,
+                pbd=pbd_options,
+                coupler=coupler_options,
+                vis=vis_options,
+                viewer=viewer_options,
+                profiling=profiling_options,
+                renderer=renderer,
+            )
+        if show_FPS is not None:
+            warn_once("Scene.show_FPS is deprecated. Please use Scene.options.profiling.show_FPS")
+            self.options.profiling.show_FPS = show_FPS
 
         # simulator
-        self._sim = Simulator(
-            scene=self,
-            options=self.sim_options,
-            tool_options=self.tool_options,
-            rigid_options=self.rigid_options,
-            kinematic_options=self.kinematic_options,
-            mpm_options=self.mpm_options,
-            sph_options=self.sph_options,
-            fem_options=self.fem_options,
-            sf_options=self.sf_options,
-            pbd_options=self.pbd_options,
-            coupler_options=self.coupler_options,
-        )
+        self._sim = Simulator(scene=self, options=self.options)
 
         # visualizer
         self._visualizer = Visualizer(
             scene=self,
             show_viewer=show_viewer,
-            vis_options=vis_options,
-            viewer_options=viewer_options,
-            renderer_options=renderer,
+            vis_options=self.options.vis,
+            viewer_options=self.options.viewer,
+            renderer_options=self.options.renderer,
         )
 
         # recorders
@@ -205,83 +187,6 @@ class Scene(RBC):
 
     def __del__(self):
         self.destroy()
-
-    def _validate_options(
-        self,
-        sim_options: SimOptions,
-        tool_options: ToolOptions,
-        rigid_options: RigidOptions,
-        kinematic_options: KinematicOptions,
-        mpm_options: MPMOptions,
-        sph_options: SPHOptions,
-        fem_options: FEMOptions,
-        sf_options: SFOptions,
-        pbd_options: PBDOptions,
-        coupler_options: BaseCouplerOptions,
-        vis_options: VisOptions,
-        viewer_options: ViewerOptions,
-        profiling_options: ProfilingOptions,
-        renderer_options: RendererOptions,
-    ):
-        if not isinstance(sim_options, SimOptions):
-            gs.raise_exception("`sim_options` should be an instance of `SimOptions`.")
-
-        if not isinstance(coupler_options, BaseCouplerOptions):
-            gs.raise_exception("`coupler_options` should be an instance of `BaseCouplerOptions`.")
-
-        if not isinstance(tool_options, ToolOptions):
-            gs.raise_exception("`tool_options` should be an instance of `ToolOptions`.")
-
-        if not isinstance(rigid_options, RigidOptions):
-            gs.raise_exception("`rigid_options` should be an instance of `RigidOptions`.")
-
-        if not isinstance(kinematic_options, KinematicOptions):
-            gs.raise_exception("`kinematic_options` should be an instance of `KinematicOptions`.")
-
-        if not isinstance(mpm_options, MPMOptions):
-            gs.raise_exception("`mpm_options` should be an instance of `MPMOptions`.")
-
-        if not isinstance(sph_options, SPHOptions):
-            gs.raise_exception("`sph_options` should be an instance of `SPHOptions`.")
-
-        if not isinstance(fem_options, FEMOptions):
-            gs.raise_exception("`fem_options` should be an instance of `FEMOptions`.")
-
-        if not isinstance(sf_options, SFOptions):
-            gs.raise_exception("`sf_options` should be an instance of `SFOptions`.")
-
-        if not isinstance(pbd_options, PBDOptions):
-            gs.raise_exception("`pbd_options` should be an instance of `PBDOptions`.")
-
-        if not isinstance(vis_options, VisOptions):
-            gs.raise_exception("`vis_options` should be an instance of `VisOptions`.")
-
-        if not isinstance(viewer_options, ViewerOptions):
-            gs.raise_exception("`viewer_options` should be an instance of `ViewerOptions`.")
-
-        if not isinstance(profiling_options, ProfilingOptions):
-            gs.raise_exception("`profiling_options` should be an instance of `ProfilingOptions`.")
-
-        if not isinstance(renderer_options, RendererOptions):
-            gs.raise_exception("`renderer` should be an instance of `gs.renderers.Renderer`.")
-
-        # Validate rigid_options against sim_options
-        if rigid_options.box_box_detection is None:
-            rigid_options.box_box_detection = not sim_options.requires_grad
-        elif rigid_options.box_box_detection and sim_options.requires_grad:
-            gs.raise_exception(
-                "`rigid_options.box_box_detection` cannot be True when `sim_options.requires_grad` is True."
-            )
-        if rigid_options.use_gjk_collision is None:
-            rigid_options.use_gjk_collision = sim_options.requires_grad
-        elif not rigid_options.use_gjk_collision and sim_options.requires_grad:
-            gs.raise_exception(
-                "`rigid_options.use_gjk_collision` cannot be False when `sim_options.requires_grad` is True."
-            )
-        if rigid_options.enable_mujoco_compatibility and sim_options.requires_grad:
-            gs.raise_exception(
-                "`rigid_options.enable_mujoco_compatibility` cannot be True when `sim_options.requires_grad` is True."
-            )
 
     def destroy(self):
         # Stop tracking this scene right away
@@ -581,7 +486,7 @@ class Scene(RBC):
         cutoff : float
             The cutoff angle of the light in degrees. Range: [0.0, 180.0].
         """
-        if not isinstance(self.renderer_options, gs.renderers.RayTracer):
+        if not isinstance(self.options.renderer, gs.renderers.RayTracer):
             gs.raise_exception(
                 "This method is only supported by RayTracer. Please use 'add_light' when using BatchRenderer."
             )
@@ -629,7 +534,7 @@ class Scene(RBC):
             The attenuation factor of the light.
             Light intensity will attenuate by distance with (1 / (1 + attenuation * distance ^ 2))
         """
-        if not isinstance(self.renderer_options, gs.renderers.BatchRenderer):
+        if not isinstance(self.options.renderer, gs.renderers.BatchRenderer):
             gs.raise_exception(
                 "This method is only supported by BatchRenderer. Please use 'add_mesh_light' when using RayTracer."
             )
@@ -912,8 +817,8 @@ class Scene(RBC):
         with gs.logger.timer("Building visualizer..."):
             self._visualizer.build()
 
-        if self.profiling_options.show_FPS:
-            self.FPS_tracker = FPSTracker(self.n_envs, alpha=self.profiling_options.FPS_tracker_alpha)
+        if self.options.profiling.show_FPS:
+            self.FPS_tracker = FPSTracker(self.n_envs, alpha=self.options.profiling.FPS_tracker_alpha)
 
         # recorders
         self._recorder_manager.build()
@@ -928,6 +833,7 @@ class Scene(RBC):
         self.n_envs = n_envs
         self.env_spacing = env_spacing
         self.n_envs_per_row = n_envs_per_row
+        self._center_envs_at_origin = center_envs_at_origin
 
         # true batch size
         self._B = max(1, self.n_envs)
@@ -1096,7 +1002,7 @@ class Scene(RBC):
             self._visualizer.update(force=not advance, auto=refresh_visualizer)
 
         if advance:
-            if self.profiling_options.show_FPS:
+            if self.options.profiling.show_FPS:
                 self.FPS_tracker.step()
             self._recorder_manager.step(self._sim.cur_step_global)
             for camera in self._visualizer.cameras:
@@ -1601,8 +1507,8 @@ class Scene(RBC):
     @property
     def show_FPS(self):
         """Whether to print the frames per second (FPS) in the terminal."""
-        warn_once("Scene.show_FPS is deprecated. Please use profiling_options.show_FPS")
-        return self.profiling_options.show_FPS
+        warn_once("Scene.show_FPS is deprecated. Please use Scene.options.profiling.show_FPS")
+        return self.options.profiling.show_FPS
 
     @property
     def viewer(self):
