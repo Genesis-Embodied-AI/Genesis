@@ -181,6 +181,68 @@ def mimic_hinges():
 
 
 @pytest.fixture(scope="session")
+def scaled_mjcf_joint_equalities():
+    mjcf = ET.Element("mujoco", model="scaled_mjcf_joint_equalities")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    equality = ET.SubElement(mjcf, "equality")
+    for driver_type, follower_type in (
+        ("hinge", "hinge"),
+        ("slide", "slide"),
+        ("slide", "hinge"),
+        ("hinge", "slide"),
+    ):
+        pair_name = f"{driver_type}_{follower_type}"
+        driver_body = ET.SubElement(worldbody, "body", name=f"{pair_name}_driver_body")
+        ET.SubElement(driver_body, "joint", name=f"{pair_name}_driver", type=driver_type, axis="1 0 0")
+        ET.SubElement(driver_body, "geom", type="sphere", size="0.05", mass="1", contype="0", conaffinity="0")
+        follower_body = ET.SubElement(worldbody, "body", name=f"{pair_name}_follower_body")
+        ET.SubElement(follower_body, "joint", name=f"{pair_name}_follower", type=follower_type, axis="1 0 0")
+        ET.SubElement(follower_body, "geom", type="sphere", size="0.05", mass="1", contype="0", conaffinity="0")
+        ET.SubElement(
+            equality,
+            "joint",
+            name=f"{pair_name}_coupling",
+            joint1=f"{pair_name}_follower",
+            joint2=f"{pair_name}_driver",
+            polycoef="0.2 0.4 -0.3 0.2 -0.1",
+        )
+    return ET.tostring(mjcf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
+def scaled_urdf_mimic():
+    robot = ET.Element("robot", name="scaled_urdf_mimic")
+    ET.SubElement(robot, "link", name="base")
+    joint_type_pairs = (
+        ("revolute", "revolute"),
+        ("prismatic", "prismatic"),
+        ("prismatic", "revolute"),
+        ("revolute", "prismatic"),
+    )
+    for driver_type, follower_type in joint_type_pairs:
+        pair_name = f"{driver_type}_{follower_type}"
+        for role in ("driver", "follower"):
+            link = ET.SubElement(robot, "link", name=f"{pair_name}_{role}_link")
+            inertial = ET.SubElement(link, "inertial")
+            ET.SubElement(inertial, "mass", value="1.0")
+            ET.SubElement(inertial, "inertia", ixx="0.01", ixy="0.0", ixz="0.0", iyy="0.01", iyz="0.0", izz="0.01")
+
+        driver = ET.SubElement(robot, "joint", name=f"{pair_name}_driver_joint", type=driver_type)
+        ET.SubElement(driver, "parent", link="base")
+        ET.SubElement(driver, "child", link=f"{pair_name}_driver_link")
+        ET.SubElement(driver, "axis", xyz="0 0 1")
+        ET.SubElement(driver, "limit", lower="-10", upper="10", effort="100", velocity="100")
+
+        follower = ET.SubElement(robot, "joint", name=f"{pair_name}_follower_joint", type=follower_type)
+        ET.SubElement(follower, "parent", link=f"{pair_name}_driver_link")
+        ET.SubElement(follower, "child", link=f"{pair_name}_follower_link")
+        ET.SubElement(follower, "axis", xyz="0 0 1")
+        ET.SubElement(follower, "limit", lower="-10", upper="10", effort="100", velocity="100")
+        ET.SubElement(follower, "mimic", joint=f"{pair_name}_driver_joint", multiplier="2.0", offset="0.25")
+    return ET.tostring(robot, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
 def box_box():
     """Generate an MJCF model for two boxes stacked on a plane."""
     mjcf = _build_plane_contact_model("box_box", condim="3", friction="1. 0.5 0.5", plane_size="40. 40. 40.")
