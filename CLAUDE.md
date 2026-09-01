@@ -113,6 +113,7 @@
 - **Never remove or weaken an existing assertion or measurement to silence a failure** (local or CI). Report the failure with the data and ask; a threshold that only holds on one machine is a calibration problem.
 - **Bug fix PRs** must include a regression test that fails on `main` and passes with the fix, added to the test already covering the capability that broke.
 - **Never write a test that pins a known defect.** Tests assert observable physics and public API behavior, never implementation details.
+- **Never test a limitation, but do test that an unsupported input is handled.** A capability Genesis does not offer gets no test. Refusing an input it cannot handle is behavior, so a test asserts the refusal wherever proceeding would corrupt what the user gets.
 - **No deprecation tests.** Do not add unit tests that verify deprecation warnings are emitted.
 - Feature tests exercise the new behavior, not the internal warning machinery.
 - **Unit tests must NOT have docstrings.** A good test name spares writing the short docstring. A code comment is acceptable only when strongly motivated, i.e. it explains something the test body cannot convey. Never state regressions or history.
