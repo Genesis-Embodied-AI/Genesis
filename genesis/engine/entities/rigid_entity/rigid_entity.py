@@ -1544,7 +1544,8 @@ class KinematicEntity(Described, Entity):
 
             base_link._n_joints = 0
             self._joints[0].clear()
-            for entity in self._solver.entities[(self.idx + 1) :]:
+            # Indexed within the solver, since a scene index counts the entities of every solver.
+            for entity in self._solver.entities[(self._idx_in_solver + 1) :]:
                 entity._joint_start -= n_base_joints
                 entity._dof_start -= n_base_dofs
                 entity._q_start -= n_base_qs

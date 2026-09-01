@@ -291,7 +291,7 @@ def test_urdf_parsing_inertia_defaults(
             batch_fixed_verts=True,
         ),
     )
-    mounted_arm.attach(carrier, parent_link_name=carrier.links[0].name, pos=(0.0, 0.0, 0.2))
+    mounted_arm.attach(carrier, parent_link_name=carrier.base_link.name, pos=(0.0, 0.0, 0.2))
     # A link with visual geometry only gets its mass from that geometry.
     mounted_drawn = scene.add_entity(
         morph=gs.morphs.URDF(
@@ -303,7 +303,7 @@ def test_urdf_parsing_inertia_defaults(
             align=False,
         ),
     )
-    mounted_drawn.attach(carrier, parent_link_name=carrier.links[0].name, pos=(0.8, 0.0, 0.2))
+    mounted_drawn.attach(carrier, parent_link_name=carrier.base_link.name, pos=(0.8, 0.0, 0.2))
     free_arm = scene.add_entity(
         morph=gs.morphs.URDF(
             file=undefined_inertia_arm,
@@ -349,8 +349,8 @@ def test_urdf_parsing_inertia_defaults(
             rho=8000.0,
         ),
     )
-    stacked_tip.attach(stacked_middle, parent_link_name=stacked_middle.links[0].name, pos=(0.0, 0.0, 0.2))
-    stacked_middle.attach(stacked_base, parent_link_name=stacked_base.links[0].name, pos=(0.0, 0.0, 0.2))
+    stacked_tip.attach(stacked_middle, parent_link_name=stacked_middle.base_link.name, pos=(0.0, 0.0, 0.2))
+    stacked_middle.attach(stacked_base, parent_link_name=stacked_base.base_link.name, pos=(0.0, 0.0, 0.2))
 
     with caplog.at_level("WARNING"):
         scene.build()
@@ -1719,19 +1719,6 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
         ),
         vis_mode="collision",
     )
-    tool = scene.add_entity(
-        gs.morphs.Sphere(
-            radius=0.005,
-            # A conflicting morph pose: the explicit mounting transform below must override it.
-            pos=(1.0, -2.0, 3.0),
-        ),
-    )
-    box = scene.add_entity(
-        gs.morphs.Box(
-            size=(0.02, 0.02, 0.02),
-            pos=(0.3, 0.0, 0.01),
-        ),
-    )
     ghost_mount = scene.add_entity(
         morph=gs.morphs.Box(
             size=(0.05, 0.05, 0.05),
@@ -1746,13 +1733,27 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
         ),
         material=gs.materials.Kinematic(),
     )
+    tool = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=0.005,
+            # A conflicting morph pose: the explicit mounting transform below must override it.
+            pos=(1.0, -2.0, 3.0),
+        ),
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.02, 0.02, 0.02),
+            pos=(0.3, 0.0, 0.01),
+        ),
+    )
     with pytest.raises(gs.GenesisException):
         franka.attach(hand, "right_finger")
     # A merged pair is one kinematic tree, numbered within one solver, so the two entities must share one.
     with pytest.raises(gs.GenesisException):
         ghost_tool.attach(hand, "right_finger")
-    ghost_tool.attach(ghost_mount, ghost_mount.links[0].name, pos=GHOST_MOUNT_OFFSET)
-    # Omitting the mounting transform keeps the child's morph pose acting as the mount.
+    ghost_tool.attach(ghost_mount, ghost_mount.base_link.name, pos=GHOST_MOUNT_OFFSET)
+    # Omitting the mounting transform keeps the child's morph pose acting as the mount. The kinematic pair above
+    # stands ahead of this one, so a mount re-indexes the entities its own solver holds after it.
     hand.attach(franka, "attachment")
     # Malformed mounting transforms (wrong shape, or a zero-length quaternion) raise before any kinematic-tree
     # mutation, leaving the entity attachable.
