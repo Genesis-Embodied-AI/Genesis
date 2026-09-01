@@ -562,6 +562,21 @@ def undefined_inertia():
 
 
 @pytest.fixture(scope="session")
+def undefined_inertia_arm():
+    """Generate a URDF of two links joined by a revolute joint, neither authoring an inertial element."""
+    urdf = ET.Element("robot", name="undefined_inertia_arm")
+    _add_sphere_link(urdf, "base_link", "0.0 0.0 0.0")
+    _add_sphere_link(urdf, "tip_link", "0.0 0.0 0.09")
+    joint = ET.SubElement(urdf, "joint", name="elbow", type="continuous")
+    ET.SubElement(joint, "origin", xyz="0.0 0.0 0.2", rpy="0.0 0.0 0.0")
+    ET.SubElement(joint, "axis", xyz="1 0 0")
+    ET.SubElement(joint, "parent", link="base_link")
+    ET.SubElement(joint, "child", link="tip_link")
+    ET.SubElement(joint, "limit", effort="100.0", velocity="30.0")
+    return ET.tostring(urdf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
 def implicit_inertial_origin():
     """Generate a URDF with an authored inertia whose origin is omitted. Its geometry is offset far enough from the
     link frame that the resolved center of mass falls outside the geometry bounding box."""

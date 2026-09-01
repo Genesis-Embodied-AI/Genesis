@@ -7,19 +7,14 @@ import fast_simplification
 import numpy as np
 import trimesh
 
-from typing import TYPE_CHECKING
-
 import genesis as gs
 from genesis.ext.isaacgym import terrain_utils as isaacgym_terrain_utils
+from genesis.options.morphs import Terrain
 
 from .mesh import get_gnd_path
 
 
-if TYPE_CHECKING:
-    from genesis.options.morphs import Terrain
-
-
-def parse_terrain(morph: "Terrain", surface):
+def parse_terrain(morph: Terrain, surface):
     """
     Generate mesh (and height field) according to configurations passed by morph.
 

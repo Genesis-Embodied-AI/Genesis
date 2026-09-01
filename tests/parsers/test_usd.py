@@ -342,6 +342,10 @@ def test_physics_material_friction_and_density(usd_scene, physics_material_usd):
 
     # Dynamic friction (0.6) is preferred over static (0.8); restitution (0.4) is dropped.
     assert_allclose(entities["/root/material_body"].geoms[0].desc.friction, 0.6, tol=5e-8)
+    # An authored density belongs to its geom and feeds the link inertial. The entity material here states a
+    # density, so the resolution drops every authored one.
+    assert entities["/root/material_body"].geoms[0].desc.density is None
+    assert entities["/root/frictionless_body"].geoms[0].desc.density is None
     # An explicitly authored dynamic_friction = 0 is honored (frictionless collider).
     assert_allclose(entities["/root/frictionless_body"].geoms[0].desc.friction, 0.0, tol=gs.EPS)
 
@@ -364,6 +368,11 @@ def test_physics_material_friction_and_density(usd_scene, physics_material_usd):
     entities = {entity.links[0].name: entity for entity in entities}
     assert_allclose(entities["/root/material_body"].get_mass(), 300.0, tol=gs.EPS)
     assert_allclose(entities["/root/density_body"].get_mass(), 500.0, tol=gs.EPS)
+    # This entity material leaves density unset, so each geom keeps its authored value. A link freed from the
+    # world then recomputes its inertial at that value rather than at the entity default.
+    assert_allclose(entities["/root/material_body"].geoms[0].desc.density, 300.0, tol=gs.EPS)
+    assert_allclose(entities["/root/density_body"].geoms[0].desc.density, 500.0, tol=gs.EPS)
+    assert entities["/root/frictionless_body"].geoms[0].desc.density is None
 
 
 @pytest.mark.required
@@ -398,6 +407,17 @@ def test_align_anchor_with_geom_densities(density_align_usd):
 @pytest.mark.parametrize("align, rho", [(True, None), (None, 1000.0), (None, None)])
 def test_align_requires_all_or_none_geom_densities(density_align_usd, align, rho):
     scene = gs.Scene()
+
+    # A density authored on only part of a link's geoms leaves an inertial estimate that is neither explicit
+    # nor a uniform material-density rescale, so an explicit align=True raises as the entity is stated.
+    if align:
+        with pytest.raises(gs.GenesisException, match="with and without an authored density"):
+            scene.add_entity(
+                gs.morphs.USD(file=density_align_usd, prim_path="/root/mixed_body", align=align),
+                material=gs.materials.Rigid(rho=rho),
+            )
+        return
+
     body = scene.add_entity(
         gs.morphs.USD(
             file=density_align_usd,
@@ -408,13 +428,6 @@ def test_align_requires_all_or_none_geom_densities(density_align_usd, align, rho
             rho=rho,
         ),
     )
-
-    # A density authored on only part of a link's geoms leaves an inertial estimate that is neither explicit
-    # nor a uniform material-density rescale, so an explicit align=True raises.
-    if align:
-        with pytest.raises(gs.GenesisException, match="with and without an authored density"):
-            scene.build()
-        return
 
     # An explicitly set material density overrides the authored per-geom density, leaving a plain
     # uniform-density body for which auto-alignment proceeds; otherwise auto-alignment quietly declines

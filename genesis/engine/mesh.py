@@ -283,7 +283,7 @@ class Mesh(RBC):
         Mass, center of mass and inertia tensor of the geometry in its own frame, at unit density.
 
         Non-watertight geometry is closed by its convex hull first so the volume integral is well-defined; a degenerate
-        geometry weighs nothing, and composes as a geom of no mass at the origin. The result is memoized and shared by
+        geometry has no mass, and composes as a geom of no mass at the origin. The result is memoized and shared by
         reference across entities backed by the same geometry.
         """
         if self._inertial_source is not None:

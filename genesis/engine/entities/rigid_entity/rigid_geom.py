@@ -12,7 +12,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 from genesis.repr_base import RBC
-from genesis.utils.description import GeomDescription
+from genesis.utils.description import RigidGeomDescription, RigidVisGeomDescription
 from genesis.utils.misc import DeprecationError, qd_to_torch, tensor_to_array
 
 if TYPE_CHECKING:
@@ -43,11 +43,10 @@ class RigidGeom(RBC):
         edge_start: int,
         verts_state_start: int,
         needs_coup: bool,
-        desc: GeomDescription,
-        center_init=None,
+        desc: RigidGeomDescription,
     ):
         mesh = desc.mesh
-        self.desc: GeomDescription = desc
+        self.desc: RigidGeomDescription = desc
         self._link: "RigidLink" = link
         self._entity: "RigidEntity" = link.entity
         self._material: "RigidMaterial" = link.entity.material
@@ -79,12 +78,10 @@ class RigidGeom(RBC):
         self._surface = mesh.surface
         self._metadata = mesh.metadata
 
-        if center_init is None:
-            self._init_center_pos = np.repeat(
-                self._init_verts.mean(0, keepdims=True), repeats=self._init_verts.shape[0], axis=0
-            )
-        else:
-            self._init_center_pos = np.array(center_init)
+        self._init_center_pos = np.repeat(
+            self._init_verts.mean(0, keepdims=True), repeats=self._init_verts.shape[0], axis=0
+        )
+
         # The solver reads a row of fixed width, so copy the described shape data into one
         self._data = np.zeros([7])
         if desc.data is not None:
@@ -451,16 +448,16 @@ class RigidGeom(RBC):
         else:
             self.desc.sol_params = sol_params
 
-    # ------------------------------------------------------------------------------------
-    # ----------------------------------- properties -------------------------------------
-    # ------------------------------------------------------------------------------------
-
     @gs.assert_built
     def get_sol_params(self):
         """
         Get the solver parameters the simulation is currently using for this geom.
         """
         return self._solver.get_sol_params(geoms_idx=self._idx, envs_idx=None)[0]
+
+    # ------------------------------------------------------------------------------------
+    # ----------------------------------- properties -------------------------------------
+    # ------------------------------------------------------------------------------------
 
     @property
     def uid(self):
@@ -864,8 +861,8 @@ class RigidVisGeom(RBC):
     A `RigidVisGeom` is a counterpart of `RigidGeom`, but for visualization purposes. This can be accessed via `link.vis_geoms`.
     """
 
-    def __init__(self, link, idx, vvert_start, vface_start, desc: GeomDescription):
-        self.desc: GeomDescription = desc
+    def __init__(self, link, idx, vvert_start, vface_start, desc: RigidVisGeomDescription):
+        self.desc: RigidVisGeomDescription = desc
         self._link = link
         self._entity = link.entity
         self._material = link.entity.material

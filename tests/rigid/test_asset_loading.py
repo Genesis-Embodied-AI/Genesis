@@ -222,7 +222,13 @@ def test_urdf_parsing(show_viewer, tol):
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_urdf_parsing_inertia_defaults(
-    undefined_inertia, implicit_inertial_origin, implicit_inertial_origin_chain, show_viewer, tol, caplog
+    undefined_inertia,
+    undefined_inertia_arm,
+    implicit_inertial_origin,
+    implicit_inertial_origin_chain,
+    show_viewer,
+    tol,
+    caplog,
 ):
     GEOM_POS = (0.0, 0.0, 0.09)
     INERTIA = (
@@ -269,11 +275,89 @@ def test_urdf_parsing_inertia_defaults(
             pos=(1.6, 0.0, 0.5),
         ),
     )
-
-    assert entity_with_implicit_origin.base_link.desc.inertial_pos is None
+    # The asset states no inertial for its base link. Attachment makes that base movable, so Genesis computes its
+    # mass from geometry at robot density, the same value the free-standing copy gets.
+    carrier = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.2, 0.2, 0.2),
+            pos=(2.4, 0.0, 1.0),
+        ),
+    )
+    mounted_arm = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=undefined_inertia_arm,
+            pos=(2.4, 0.0, 1.3),
+            fixed=True,
+            batch_fixed_verts=True,
+        ),
+    )
+    mounted_arm.attach(carrier, parent_link_name=carrier.links[0].name, pos=(0.0, 0.0, 0.2))
+    # A link with visual geometry only gets its mass from that geometry.
+    mounted_drawn = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=undefined_inertia,
+            pos=(4.0, 0.0, 1.3),
+            collision=False,
+            fixed=True,
+            batch_fixed_verts=True,
+            align=False,
+        ),
+    )
+    mounted_drawn.attach(carrier, parent_link_name=carrier.links[0].name, pos=(0.8, 0.0, 0.2))
+    free_arm = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=undefined_inertia_arm,
+            pos=(3.2, 0.0, 1.0),
+        ),
+    )
+    free_drawn = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=undefined_inertia,
+            pos=(4.8, 0.0, 1.0),
+            collision=False,
+            align=False,
+        ),
+    )
+    # An entity attached beneath another shares its root, so attaching that one onto a moving link makes both bases
+    # movable at once. Each is estimated at the density of its own entity. The three stand consecutively, since an
+    # entity created between attached ones is refused.
+    stacked_base = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.2, 0.2, 0.2),
+            pos=(6.0, 0.0, 1.0),
+        ),
+    )
+    stacked_middle = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(6.0, 0.0, 1.3),
+            fixed=True,
+            batch_fixed_verts=True,
+        ),
+        material=gs.materials.Rigid(
+            rho=2000.0,
+        ),
+    )
+    stacked_tip = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(6.0, 0.0, 1.5),
+            fixed=True,
+            batch_fixed_verts=True,
+        ),
+        material=gs.materials.Rigid(
+            rho=8000.0,
+        ),
+    )
+    stacked_tip.attach(stacked_middle, parent_link_name=stacked_middle.links[0].name, pos=(0.0, 0.0, 0.2))
+    stacked_middle.attach(stacked_base, parent_link_name=stacked_base.links[0].name, pos=(0.0, 0.0, 0.2))
 
     with caplog.at_level("WARNING"):
         scene.build()
+
+    # A 0.1 m cube of each entity's own density, rather than both taking the density of the one they hang from.
+    assert_allclose(stacked_middle.base_link.get_mass(), 2000.0 * 0.1**3, tol=gs.EPS)
+    assert_allclose(stacked_tip.base_link.get_mass(), 8000.0 * 0.1**3, tol=gs.EPS)
 
     # An omitted inertial origin places the center of mass at the link frame, whereas a link without any inertial
     # element derives it from the geometry.
@@ -302,6 +386,14 @@ def test_urdf_parsing_inertia_defaults(
         np.linalg.eigvalsh(entity_chain_merged.base_link.desc.inertia),
         rtol=5e-7,
     )
+
+    # Attachment resolves the base like any movable link, so its mass matches the same asset added free. Both
+    # collision and visual geometry feed the computation.
+    assert_allclose(mounted_arm.base_link.get_mass(), free_arm.base_link.get_mass(), tol=gs.EPS)
+    assert_allclose(mounted_drawn.get_mass(), free_drawn.get_mass(), tol=gs.EPS)
+    # Genesis applies the robot density because the asset is articulated. The convex hull of the authored sphere
+    # loses a little volume, so the measured mass lands slightly below the closed form.
+    assert_allclose(mounted_arm.base_link.get_mass(), 1500.0 * 4.0 / 3.0 * np.pi * 0.06**3, rtol=0.1)
 
     for _ in range(30):
         scene.step()
@@ -812,15 +904,31 @@ def test_mesh_primitive_COM(show_viewer):
         vis_mode="collision",
         visualize_contact=True,
     )
+    twin = scene.add_entity(
+        gs.morphs.Mesh(
+            file="meshes/bunny.obj",
+            pos=(-1.0, 1.0, 0.55),
+        ),
+    )
 
     scene.build()
+
+    # Entities built from one asset share a single copy of the collision geometry and its derived data. A convex
+    # decomposition holds hundreds of kilobytes of it, so a thousand bunnies cost the memory of one.
+    geometry, twin_geometry = bunny.geoms[0].mesh, twin.geoms[0].mesh
+    assert twin_geometry.verts is geometry.verts
+    assert twin_geometry.faces is geometry.faces
+    assert twin_geometry.get_unique_edges() is geometry.get_unique_edges()
+    assert twin_geometry.get_vert_adjacency() is geometry.get_vert_adjacency()
+    assert twin_geometry.inertial is geometry.inertial
+
     rigid = scene.sim.rigid_solver
     for _ in range(50):
         scene.step()
     scene.rigid_solver.update_vgeoms()
 
-    _, bunny_COM, cube_COM = rigid.get_links_pos(ref=gs.link_ref_frame.link_COM)
-    _, root_bunny_COM, root_cube_COM = rigid.get_links_pos(ref=gs.link_ref_frame.root_COM)
+    _, bunny_COM, cube_COM, _ = rigid.get_links_pos(ref=gs.link_ref_frame.link_COM)
+    _, root_bunny_COM, root_cube_COM, _ = rigid.get_links_pos(ref=gs.link_ref_frame.root_COM)
     assert_allclose(bunny_COM, bunny.get_links_pos(links_idx_local=[0], ref=gs.link_ref_frame.link_COM), atol=gs.EPS)
     assert_allclose(cube_COM, cube.get_links_pos(links_idx_local=[0], ref=gs.link_ref_frame.link_COM), atol=gs.EPS)
     assert_allclose(root_bunny_COM, bunny_COM, atol=gs.EPS)
@@ -1036,16 +1144,8 @@ def test_align_mixed_mass_raises():
             show_viewer=False,
             show_FPS=False,
         )
-        scene.add_entity(
-            gs.morphs.URDF(
-                file=urdf,
-                align=True,
-                merge_fixed_links=False,
-            ),
-            material=material,
-        )
         with pytest.raises(gs.GenesisException, match="geometry-estimated link masses"):
-            scene.build()
+            scene.add_entity(gs.morphs.URDF(file=urdf, align=True, merge_fixed_links=False), material=material)
 
 
 @pytest.mark.required

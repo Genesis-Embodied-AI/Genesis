@@ -110,6 +110,8 @@ class Options(RBC, BaseModel):
         gs.raise_exception_from(trace_msg, None)
 
     def model_copy_from(self, other: BaseModel, override: bool = False) -> Self:
+        # 'dict(self)' keeps a nested option object intact, where 'model_dump' recurses it into a plain dict. The
+        # construction below performs no validation, so it would keep such a dict as a dict.
         self_fields = set(self.__class__.model_fields)
         other_dump = other.model_dump()
         other_dump = {k: v for k, v in other_dump.items() if k in self_fields}

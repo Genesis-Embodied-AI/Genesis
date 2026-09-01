@@ -997,8 +997,14 @@ class MJCF(FileMorph):
             gs.raise_exception(f"Expected `{MJCF_FORMAT}` extension for MJCF file: {self.file}")
 
     def _identifier(self) -> str:
-        if isinstance(self.file, str) and (name := mju.get_model_name(self.file)):
-            return name
+        # A morph outlives the file it came from, because the entity builds only once. An unreadable file falls back
+        # to the identifier of the morph type.
+        if isinstance(self.file, str):
+            try:
+                if name := mju.get_model_name(self.file):
+                    return name
+            except (ET.ParseError, OSError):
+                pass
         return super()._identifier()
 
 

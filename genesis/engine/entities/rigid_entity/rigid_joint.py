@@ -1,12 +1,10 @@
 import numpy as np
 
-
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
 from genesis.repr_base import RBC
-from genesis.utils import array_class
-from genesis.utils.description import JointDescription
+from genesis.utils.description import RigidJointDescription
 from genesis.utils.misc import DeprecationError, tensor_to_array
 
 
@@ -15,8 +13,8 @@ class RigidJoint(RBC):
     Joint class for rigid body entities. Each RigidLink is connected to its parent link via a RigidJoint.
     """
 
-    def __init__(self, entity, idx, link_idx, q_start, dof_start, desc: JointDescription):
-        self.desc: JointDescription = desc
+    def __init__(self, entity, idx, link_idx, q_start, dof_start, desc: RigidJointDescription):
+        self.desc: RigidJointDescription = desc
         self._entity = entity
         self._solver = entity.solver
 
@@ -94,16 +92,16 @@ class RigidJoint(RBC):
         else:
             self.desc.sol_params = sol_params
 
-    # ------------------------------------------------------------------------------------
-    # ----------------------------------- properties -------------------------------------
-    # ------------------------------------------------------------------------------------
-
     @gs.assert_built
     def get_sol_params(self):
         """
         Get the solver parameters the simulation is currently using for this joint.
         """
         return self._solver.get_sol_params(joints_idx=self._idx, envs_idx=None)[..., 0, :]
+
+    # ------------------------------------------------------------------------------------
+    # ----------------------------------- properties -------------------------------------
+    # ------------------------------------------------------------------------------------
 
     @property
     def uid(self):
@@ -302,14 +300,6 @@ class RigidJoint(RBC):
         Returns all the local `q` indices of the joint in the entity.
         """
         return list(range(self.q_start - self._entity.q_start, self.q_end - self._entity.q_start))
-
-    @property
-    def dofs_motion_ang(self):
-        return self.desc.dofs_motion_ang
-
-    @property
-    def dofs_motion_vel(self):
-        return self.desc.dofs_motion_vel
 
     @property
     def dofs_length(self):
