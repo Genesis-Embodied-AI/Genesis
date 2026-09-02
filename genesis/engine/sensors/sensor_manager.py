@@ -317,17 +317,17 @@ class SensorManager:
                 self._sensors_metadata[sensor_cls], self._ground_truth_intermediate_cache[dtype][cache_slice], envs_idx
             )
 
+    @property
+    def has_past_step_reads(self) -> bool:
+        """Whether a sensor samples past steps through a delay or a history. Such reads address the return-space rings
+        by step age, so every physics step must be observed for them to stay aligned."""
+        return self._has_past_step_reads
+
     def step(self, update_sensors=True):
+        # An unobserved step leaves slot 0 of every ring at the last observed step and the shared contexts on that
+        # step's geometry, which they rebuild from on the next update (see `SharedSensorContext.update`). The simulator
+        # refuses unobserved steps whenever `has_past_step_reads` holds.
         if not update_sensors:
-            # Delay sampling and history reads address the return-space rings by step age, so a ring left untouched for
-            # a step would shift every such read by one step. Otherwise slot 0 of every ring stays the last observed
-            # step, and the shared contexts rebuild from the live geometry on the next update (see
-            # `SharedSensorContext.update`).
-            if self._has_past_step_reads:
-                gs.raise_exception(
-                    "Stepping without updating sensors requires every sensor to have delay=0, jitter=0 and "
-                    "history_length=0, since delayed and history reads address past steps."
-                )
             return
 
         # Timeline rings must rotate before `_update_shared_cache` because `_apply_transform` mutates `at(0)` of the

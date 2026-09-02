@@ -145,8 +145,6 @@ class RasterizerCameraSharedMetadata(KinematicSensorMetadataMixin, SharedSensorM
     sensors: Optional[List["RasterizerCameraSensor"]] = None
     # {sensor_idx: np.ndarray with shape (B, H, W, 3)}
     image_cache: Optional[Dict[int, np.ndarray]] = None
-    # Track when rasterizer cameras were last updated
-    last_render_timestep: int = -1
 
     def destroy(self):
         super().destroy()
@@ -174,8 +172,6 @@ class RaytracerCameraSharedMetadata(KinematicSensorMetadataMixin, SharedSensorMe
     sensors: Optional[List["RaytracerCameraSensor"]] = None
     # {sensor_idx: np.ndarray with shape (B, H, W, 3)}
     image_cache: Optional[Dict[int, np.ndarray]] = None
-    # Track when raytracer cameras were last updated
-    last_render_timestep: int = -1
 
     def destroy(self):
         super().destroy()
@@ -197,8 +193,6 @@ class BatchRendererCameraSharedMetadata(KinematicSensorMetadataMixin, SharedSens
     sensors: Optional[List["BatchRendererCameraSensor"]] = None
     # {sensor_idx: np.ndarray with shape (B, H, W, 3)}
     image_cache: Optional[Dict[int, np.ndarray]] = None
-    # Track when batch was last rendered
-    last_render_timestep: int = -1
     # MinimalVisualizerWrapper instance
     visualizer_wrapper: Optional["MinimalVisualizerWrapper"] = None
 
@@ -220,7 +214,7 @@ class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, None, SharedSensor
 
     This class centralizes:
     - Attachment handling via KinematicSensorMixin
-    - The _stale flag used for auto-render-on-read
+    - The _stale flag driving render-on-read: raised when the manager observes a step or resets, cleared by a render
     - Common Sensor cache integration (shape/dtype)
     - Shared read() method returning torch tensors
     """
@@ -259,17 +253,20 @@ class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, None, SharedSensor
         measured_data_timeline: "TensorRingBuffer | None",
         intermediate_cache: torch.Tensor,
     ):
-        # No per-step cache update for cameras (handled lazily on read()). `BaseCameraSensor` declares
-        # `uses_ring_pipeline = False`, so the manager passes both timeline rings as ``None`` here.
-        pass
+        # Cameras render lazily on `read()`, so observing a step marks the frames rendered before it as stale.
+        # `BaseCameraSensor` declares `uses_ring_pipeline = False`, so the manager passes both timeline rings as
+        # ``None``.
+        for sensor in shared_metadata.sensors:
+            sensor._stale = True
 
     @classmethod
     def reset(cls, shared_metadata: SharedSensorMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
         super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
-        # Reset can restore a different state at the last rendered timestep, so force the next read to rerender.
-        # FIXME: the frame cache keys on a single timestep for the whole batch, so a partial-env reset invalidates
-        # every environment. Extend the caching mechanism to be env-aware so envs_idx only refreshes the reset envs.
-        shared_metadata.last_render_timestep = -1
+        # Reset can restore a different state, so force the next read to rerender.
+        # FIXME: the frame cache is invalidated for the whole batch, so a partial-env reset rerenders every environment.
+        # Extend the caching mechanism to be env-aware so envs_idx only refreshes the reset envs.
+        for sensor in shared_metadata.sensors:
+            sensor._stale = True
 
     def _draw_debug(self, context: "RasterizerContext"):
         """No debug drawing for cameras."""
@@ -320,19 +317,9 @@ class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, None, SharedSensor
         return self._shared_metadata.image_cache[self._idx]
 
     def _ensure_rendered_for_current_state(self):
-        """Ensure this camera has an up-to-date render before reading.
-        Base handles staleness and timestamps; subclasses implement _render_current_state().
+        """Render this camera if the manager observed a step or a reset since its last render.
+        Base handles staleness; subclasses implement _render_current_state().
         """
-        scene = self._manager._sim.scene
-
-        # If the scene time advanced, mark all cameras as stale
-        if self._shared_metadata.last_render_timestep != scene.sim.cur_step_global:
-            if self._shared_metadata.sensors is not None:
-                for sensor in self._shared_metadata.sensors:
-                    sensor._stale = True
-            self._shared_metadata.last_render_timestep = scene.sim.cur_step_global
-
-        # If this camera is not stale, cache is considered fresh
         if not self._stale:
             return
 
@@ -780,7 +767,6 @@ class BatchRendererCameraSensor(
             self._shared_metadata.sensors = []
             self._shared_metadata.lights = gs.List()
             self._shared_metadata.image_cache = {}
-            self._shared_metadata.last_render_timestep = -1
 
             all_sensors = self._manager._sensors_by_type[type(self)]
             resolutions = [s._options.res for s in all_sensors]
@@ -843,8 +829,6 @@ class BatchRendererCameraSensor(
         for sensor, rgb_arr in zip(sensors, rgb_arrs):
             sensor._shared_metadata.image_cache[sensor._idx][:] = rgb_arr
             sensor._stale = False
-
-        self._shared_metadata.last_render_timestep = self._manager._sim.cur_step_global
 
     def _apply_camera_transform(self, camera_T: torch.Tensor):
         """Update batch renderer camera from a world transform."""

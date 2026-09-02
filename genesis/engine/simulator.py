@@ -328,6 +328,13 @@ class Simulator(RBC):
     # ------------------------------------------------------------------------------------
 
     def step(self, in_backward=False, update_sensors=True):
+        # Refused before any state moves, so a rejected call leaves the physics and the sensor timelines in agreement.
+        if not update_sensors and self._sensor_manager.has_past_step_reads:
+            gs.raise_exception(
+                "Stepping without updating sensors requires every sensor to have delay=0, jitter=0 and "
+                "history_length=0, since delayed and history reads address past steps."
+            )
+
         # Check errno at the very beginning of the step.
         # This will trigger GPU sync, but it is not a big deal at the point, since we are going to enqueue very large
         # kernel right away. Moreover, if computations are still not done at this point, then the queue will just

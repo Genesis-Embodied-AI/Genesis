@@ -549,8 +549,11 @@ def test_sensor_history_length_contact_and_imu(show_viewer, tol, n_envs):
 
     scene.build(n_envs=n_envs)
 
+    # A refused unobserved step leaves the physics untouched.
+    pos_before = box.get_pos()
     with pytest.raises(gs.GenesisException, match="history_length=0"):
         scene.step(update_sensors=False)
+    assert_equal(box.get_pos(), pos_before)
 
     def _expected_shape_with_history(shape: tuple[int, ...]):
         return (HISTORY_LEN, *shape) if n_envs == 0 else (n_envs, HISTORY_LEN, *shape)
@@ -786,11 +789,15 @@ def test_read_sensors_bulk_api(show_viewer, n_envs):
     # sqrt(2 * 0.15 / 10) = 0.17 s, i.e. 18 steps) while every reading stays at the last observed step, and the next
     # observed step picks the contact up.
     frozen_data = scene.read_sensors()
+    frozen_frame = static_cam.read().rgb.clone()
     for _ in range(20):
         scene.step(update_sensors=False)
     assert (np.atleast_1d(tensor_to_array(box_a.get_pos()))[..., 2] < 0.06).all()
     for type_tag, tensor in scene.read_sensors().items():
         assert_equal(tensor, frozen_data[type_tag])
+    # The camera renders lazily on read, so it must serve the frame of the last observed step as well.
+    assert_equal(static_cam.read().rgb, frozen_frame)
     assert not contact_a.read().any()
     scene.step()
     assert contact_a.read().all()
+    assert (static_cam.read().rgb != frozen_frame).any()
