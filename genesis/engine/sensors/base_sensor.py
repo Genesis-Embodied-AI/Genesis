@@ -137,7 +137,9 @@ class SharedSensorContext(ABC):
 
     @abstractmethod
     def update(self) -> None:
-        """Refresh the resource for the current step; manager-driven once per step. Must no-op when inactive."""
+        """Refresh the resource for the current step; manager-driven once per step. Must no-op when inactive. Runs only
+        on the steps that update sensors, so it rebuilds from the live scene state and may span several physics
+        steps."""
 
     @abstractmethod
     def reset(self, envs_idx) -> None:

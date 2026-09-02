@@ -1078,9 +1078,23 @@ class Scene(RBC):
         self._pre_step_callbacks.append(callback)
 
     @gs.assert_built
-    def step(self, update_visualizer=True, refresh_visualizer=True):
+    def step(self, update_visualizer=True, refresh_visualizer=True, update_sensors=True):
         """
         Runs a simulation step forward in time.
+
+        Parameters
+        ----------
+        update_visualizer : bool
+            Whether the visualizer is updated after the step. Defaults to True.
+        refresh_visualizer : bool
+            Whether the visualizer window is refreshed on that update. Defaults to True.
+        update_sensors : bool
+            Whether the sensors observe this step. When False, the physics advances while every sensor keeps the reading
+            and the internal state of the last observed step, so `read()` and `read_sensors()` return the same values
+            as before the call and sensor responses with memory (filters, hysteresis) integrate only over observed
+            steps. Use it to run several physics steps per control step and pay the sensor update once. Requires every
+            sensor to have `delay=0`, `jitter=0` and `history_length=0`, since those reads address past steps.
+            Defaults to True.
         """
         # Run pre-step callbacks on the stepping thread. A callback may perform deferred work and veto this
         # frame's advance by returning True. The scene treats them opaquely, without knowing what they do or who
@@ -1091,7 +1105,7 @@ class Scene(RBC):
         if advance:
             if not self._forward_ready:
                 gs.raise_exception("Forward simulation not allowed after backward pass. Please reset scene state.")
-            self._sim.step()
+            self._sim.step(update_sensors=update_sensors)
 
         if update_visualizer:
             # Force the refresh when the sim did not advance (e.g. paused) so edits made off the step loop -

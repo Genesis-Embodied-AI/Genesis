@@ -327,7 +327,7 @@ class Simulator(RBC):
     # ------------------------------------ stepping --------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def step(self, in_backward=False):
+    def step(self, in_backward=False, update_sensors=True):
         # Check errno at the very beginning of the step.
         # This will trigger GPU sync, but it is not a big deal at the point, since we are going to enqueue very large
         # kernel right away. Moreover, if computations are still not done at this point, then the queue will just
@@ -356,7 +356,7 @@ class Simulator(RBC):
         if self.rigid_solver.is_active:
             self.rigid_solver.clear_external_force()
 
-        self._sensor_manager.step()
+        self._sensor_manager.step(update_sensors=update_sensors)
 
     def _step_grad(self):
         self._steps -= 1

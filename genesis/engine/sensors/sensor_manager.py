@@ -56,6 +56,9 @@ class SensorManager:
         # (sensor class, entity_idx) -> slice within the class cache. entity_idx == -1 means static sensors.
         self._entity_slice_in_class: dict[type["Sensor"], dict[int, slice]] = {}
         self._max_history_by_class: dict[type["Sensor"], int] = {}
+        # Whether any sensor samples past steps (delay or history), which binds the manager to one update per physics
+        # step: see `step`.
+        self._has_past_step_reads = False
 
     def create_sensor(self, sensor_options: "SensorOptions") -> "Sensor":
         sensor_options.validate_scene(self._sim.scene)
@@ -149,6 +152,7 @@ class SensorManager:
         return_dtype_by_class: dict[type["Sensor"], torch.dtype] = {}
         # Deepest return-space slot delay sampling can reach, plus one.
         delay_depth_by_class: dict[type["Sensor"], int] = {}
+        self._has_past_step_reads = False
         for sensor_cls, sensors in self._sensors_by_type.items():
             intermediate_dtype = sensor_cls._get_intermediate_dtype()
             return_dtype = sensor_cls._get_cache_dtype()
@@ -168,6 +172,8 @@ class SensorManager:
                 # time; without that slot, `at()` wraps modulo the depth and returns the newest frame as the oldest.
                 cls_delay_depth = max(cls_delay_depth, sensor._delay_ts + (2 if sensor._options.delay > 0.0 else 1))
                 hist = sensor._options.history_length
+                if sensor._options.delay > 0.0 or hist > 0:
+                    self._has_past_step_reads = True
                 if hist > 0:
                     max_history_per_dtype[intermediate_dtype] = max(
                         max_history_per_dtype.get(intermediate_dtype, 0), hist
@@ -311,7 +317,19 @@ class SensorManager:
                 self._sensors_metadata[sensor_cls], self._ground_truth_intermediate_cache[dtype][cache_slice], envs_idx
             )
 
-    def step(self):
+    def step(self, update_sensors=True):
+        if not update_sensors:
+            # Delay sampling and history reads address the return-space rings by step age, so a ring left untouched for
+            # a step would shift every such read by one step. Otherwise slot 0 of every ring stays the last observed
+            # step, and the shared contexts rebuild from the live geometry on the next update (see
+            # `SharedSensorContext.update`).
+            if self._has_past_step_reads:
+                gs.raise_exception(
+                    "Stepping without updating sensors requires every sensor to have delay=0, jitter=0 and "
+                    "history_length=0, since delayed and history reads address past steps."
+                )
+            return
+
         # Timeline rings must rotate before `_update_shared_cache` because `_apply_transform` mutates `at(0)` of the
         # timeline ring and needs a fresh write slot. Return-space rings, by contrast, are read during `_post_process`
         # (past post-output values) and written afterward; their rotation is deferred to inside the per-class loop so
