@@ -1433,7 +1433,7 @@ class Terrain(Morph):
     def model_post_init(self, context: Any) -> None:
         if self.height_field is not None:
             try:
-                if np.array(self.height_field).ndim != 2:
+                if np.ndim(self.height_field) != 2:
                     gs.raise_exception("`height_field` should be a 2D array.")
             except Exception:
                 gs.raise_exception("`height_field` should be array-like to be converted to np.ndarray.")
