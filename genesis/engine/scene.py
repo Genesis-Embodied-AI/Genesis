@@ -17,7 +17,8 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 import genesis.ext.urdfpy as urdfpy
-from genesis.engine.entities.base_entity import Entity
+from genesis.engine.entities.base_entity import Entity, EntityDescription
+from genesis.engine.entities.rigid_entity import KinematicEntity
 from genesis.engine.force_fields import ForceField
 from genesis.engine.solvers.base_solver import Solver
 from genesis.engine.materials.base import EntityT, Material
@@ -48,7 +49,6 @@ from genesis.recorders import RecorderManager
 from genesis.repr_base import RBC
 from genesis.utils import serialization
 from genesis.utils.serialization import pixel_less_textures
-from genesis.utils.description import Described, SceneDescription
 from genesis.utils.misc import sanitize_index, tensor_to_array
 from genesis.utils.tools import FPSTracker
 from genesis.utils.warnings import warn_once
@@ -63,6 +63,18 @@ if TYPE_CHECKING:
 
 
 SCENE_FORMAT = ".gscene"
+
+
+@dataclasses.dataclass
+class SceneDescription:
+    """Describe one scene as it was authored: the options it was created with, and every entity added to it.
+
+    Each entity stands as its own description (see 'EntityDescription'), so a scene is created from this alone. A
+    scene created from one is built by whoever loads it, with the environment layout they ask for.
+    """
+
+    options: SceneOptions
+    entities: list[EntityDescription] = dataclasses.field(default_factory=list)
 
 
 @gs.assert_initialized
@@ -1464,53 +1476,35 @@ class Scene(RBC):
         """
         # A scene holding what alters the simulation is rejected, since a file leaving it out would restore other
         # physics. Everything else is left out with a warning: what observes or draws the simulation, and every
-        # callable, wherever it is held. A class inherits 'Described' to declare that it travels, so a kind added
-        # later needs nothing here. Sensors and recorders sit behind an accessor, so the list names their managers.
-        # Holders overlap in the objects they reference, so each object counts once by identity.
-        observing = [self._recorder_manager, self._sim._sensor_manager]
-        if self.visualizer is not None:
-            observing += [self.visualizer, self.visualizer.raytracer, self.visualizer.batch_renderer]
-        left_out, rejected = Counter(), Counter()
-        counted = set()
-        holders = [(holder, left_out) for holder in observing if holder is not None]
-        holders += [(holder, rejected) for holder in (self, self._sim, *self._sim.solvers)]
-        for holder, stray in holders:
-            for name, value in vars(holder).items():
-                held = value.values() if isinstance(value, dict) else value if isinstance(value, (list, tuple)) else ()
-                for item in held:
-                    if not callable(item) and not (isinstance(item, RBC) and not isinstance(item, Described)):
-                        continue
-                    if id(item) in counted:
-                        continue
-                    counted.add(id(item))
-                    if isinstance(item, RBC):
-                        stray[type(item).__name__] += 1
-                    else:
-                        # A callable states no class worth naming, so the attribute holding it names it instead.
-                        left_out[name.strip("_").removesuffix("s")] += 1
-        left_out.update(type(sensor).__name__ for sensor in self._sim._sensor_manager.sensors)
-        left_out.update(type(recorder).__name__ for recorder in self._recorder_manager.recorders)
+        # callback. Every solver holds the same force fields, so one solver names them all.
+        rejected_kinds = Counter(type(entity).__name__ for entity in self.entities if entity.desc is None)
+        rejected_kinds.update(type(emitter).__name__ for emitter in self._emitters)
+        rejected_kinds.update(type(force_field).__name__ for force_field in self._sim.solvers[0].force_fields)
+        omitted_kinds = Counter(type(sensor).__name__ for sensor in self._sim._sensor_manager.sensors)
+        omitted_kinds.update(type(recorder).__name__ for recorder in self._recorder_manager.recorders)
+        if self._visualizer is not None:
+            omitted_kinds.update(type(camera).__name__ for camera in self._visualizer.cameras)
+        omitted_kinds["pre_step_callback"] += len(self._pre_step_callbacks)
         surfaces = [entity.surface for entity in self.entities]
         if isinstance(self.options.renderer, gs.renderers.RayTracer) and self.options.renderer.env_surface is not None:
             surfaces.append(self.options.renderer.env_surface)
-        left_out.update(name for surface in surfaces for name in pixel_less_textures(surface))
+        omitted_kinds.update(name for surface in surfaces for name in pixel_less_textures(surface))
         # Visual vertices written at runtime live in the solver, and a file carries what a scene was authored from.
-        # Only an entity that travels is drawn with vertices of its own.
-        left_out.update(
+        omitted_kinds.update(
             f"'{entity.name}' visual vertices"
             for entity in self.entities
-            if isinstance(entity, Described) and entity._is_vverts_overridden
+            if isinstance(entity, KinematicEntity) and entity._is_vverts_overridden
         )
-        for stray, tell, ending in (
-            (left_out, gs.logger.warning, "is exported without it, so a scene loaded from the file holds none."),
-            (rejected, gs.raise_exception, "cannot be exported yet."),
+        for kinds, report, ending in (
+            (omitted_kinds, gs.logger.warning, "is exported without it, so a scene loaded from the file holds none."),
+            (rejected_kinds, gs.raise_exception, "cannot be exported yet."),
         ):
-            if stray:
-                named = ", ".join(
-                    f"{n} {kind}" if kind.endswith("s") else f"{n} {kind}{'s' if n > 1 else ''}"
-                    for kind, n in sorted(stray.items())
+            if kinds:
+                listing = ", ".join(
+                    f"{count} {kind}" if kind.endswith("s") else f"{count} {kind}{'s' if count > 1 else ''}"
+                    for kind, count in sorted(kinds.items())
                 )
-                tell(f"A scene holding {named} {ending}")
+                report(f"A scene holding {listing} {ending}")
 
         # A USD context is a live handle onto the stage it opened, and a XACRO morph holds the model its file was
         # parsed into. The description each produced stands for it, so the morph travels naming the asset alone.
@@ -1728,13 +1722,11 @@ class Scene(RBC):
 
     @property
     def desc(self) -> SceneDescription:
-        """Return the description this scene came from, as adding each entity to it resolved them.
+        """The description this scene is created from: its options and the description of each entity it holds.
 
-        It suffices to recreate the scene without any asset file.
-
-        Every entity holding a description of its own is named here by reference, so what an entity resolves and
-        what an attachment changes are both visible. What the build allocates is left out, so this describes the
-        authored scene rather than the state it has simulated to.
+        It suffices to recreate the scene without any asset file. Each entity's description stands here by reference,
+        so what an attachment changes is visible. What the build allocates is left out, so this describes the authored
+        scene rather than the state it has simulated to.
         """
         return self._desc
 

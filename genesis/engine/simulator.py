@@ -6,7 +6,6 @@ import genesis as gs
 from genesis.options.morphs import Morph
 from genesis.options.solvers import IPCCouplerOptions, LegacyCouplerOptions, SAPCouplerOptions
 from genesis.repr_base import RBC
-from genesis.utils.description import Described, KinematicEntityDescription
 from genesis.utils.misc import indices_to_mask
 
 from .couplers import IPCCoupler, LegacyCoupler, SAPCoupler
@@ -27,7 +26,7 @@ from .states.cache import QueriedStates
 from .states.solvers import SimState
 
 if TYPE_CHECKING:
-    from genesis.engine.entities.base_entity import Entity
+    from genesis.engine.entities.base_entity import Entity, EntityDescription
     from genesis.engine.scene import Scene
     from genesis.options.scene import SceneOptions
 
@@ -120,7 +119,7 @@ class Simulator(RBC):
         surface=None,
         visualize_contact=False,
         name: str | None = None,
-        desc: KinematicEntityDescription | None = None,
+        desc: "EntityDescription | None" = None,
     ):
         if desc is not None:
             # 'desc.morphs' is a list: the solver takes the first as the primary and dispatches the rest as variants.
@@ -151,9 +150,7 @@ class Simulator(RBC):
             gs.raise_exception(f"Material not supported.: {material}")
 
         self._entities.append(entity)
-        # Only a rigid or a kinematic entity describes itself. Its description stands here by reference, so a
-        # later change to it is held as well.
-        if isinstance(entity, Described):
+        if entity.desc is not None:
             self.scene._desc.entities.append(entity.desc)
         return entity
 

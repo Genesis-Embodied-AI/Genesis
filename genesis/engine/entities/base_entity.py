@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import torch
@@ -8,6 +9,14 @@ from genesis.repr_base import RBC
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
     from genesis.engine.sensors.base_sensor import Sensor
+
+
+@dataclass
+class EntityDescription:
+    """Base class of what one entity of a scene is created from, whatever the solver simulating it.
+
+    A scene names every entity it holds as one of these, so a kind of entity described later stands there too.
+    """
 
 
 class Entity(RBC):
@@ -82,6 +91,15 @@ class Entity(RBC):
     @property
     def morph(self):
         return self._morph
+
+    @property
+    def desc(self) -> EntityDescription | None:
+        """The description this entity was created from, or None for a kind of entity no description carries.
+
+        'Scene.export' writes every entity as its description and rejects a scene holding an entity without one. A
+        kind of entity gains export support by returning its description here.
+        """
+        return None
 
     @property
     def material(self):

@@ -17,19 +17,10 @@ import genesis as gs
 from genesis.constants import EQUALITY_TYPE, GEOM_TYPE, JOINT_TYPE
 from genesis.engine.materials.base import Material
 from genesis.options.morphs import Morph
-from genesis.options.scene import SceneOptions
 from genesis.options.surfaces import Surface
 from genesis.utils import geom as gu
 
-
-class Described:
-    """Marker base class for objects a scene export can reproduce, from the description or from the options it
-    carries.
-
-    A .gscene file carries the scene description and lets any machine rebuild the scene from that data alone.
-    'Scene.export' walks everything a scene holds and rejects whatever carries no such mark. A class opts in by
-    inheriting this marker, so an external solver plugin gains export support on its own.
-    """
+from ..base_entity import EntityDescription
 
 
 @dataclass(kw_only=True)
@@ -231,14 +222,6 @@ class KinematicAttachmentDescription:
 
 
 @dataclass
-class EntityDescription:
-    """Base class of what one entity of a scene is created from, whatever the solver simulating it.
-
-    A scene names every entity it holds as one of these, so a kind of entity described later stands there too.
-    """
-
-
-@dataclass
 class KinematicEntityDescription(EntityDescription):
     """Describe one entity as its build left it: every link it holds, and every constraint tying them together.
 
@@ -299,15 +282,3 @@ class DroneEntityDescription(RigidEntityDescription):
 
     kf: float | None = None
     km: float | None = None
-
-
-@dataclass
-class SceneDescription:
-    """Describe one scene as it was authored: the options it was created with, and every entity added to it.
-
-    Each entity stands as its own description (see 'EntityDescription'), so a scene is created from this alone. A
-    scene created from one is built by whoever loads it, with the environment layout they ask for.
-    """
-
-    options: SceneOptions
-    entities: list[EntityDescription] = field(default_factory=list)

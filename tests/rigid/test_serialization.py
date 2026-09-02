@@ -506,5 +506,5 @@ def test_export_rejects_unsupported_physics(tmp_path, show_viewer):
         morph=gs.morphs.Box(pos=(0.5, 0.5, 0.8), size=(0.1, 0.1, 0.1)), material=gs.materials.MPM.Elastic()
     )
     unsupported.add_force_field(gs.force_fields.Wind(direction=(1.0, 0.0, 0.0)))
-    with pytest.raises(gs.GenesisException, match="1 Elastic, 1 MPMEntity, 1 Wind cannot be exported"):
+    with pytest.raises(gs.GenesisException, match="1 MPMEntity, 1 Wind cannot be exported"):
         unsupported.export(tmp_path / f"wind{SCENE_FORMAT}")

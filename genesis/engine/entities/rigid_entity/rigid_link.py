@@ -10,8 +10,7 @@ from genesis.engine.mesh import InertialProperties
 from genesis.repr_base import RBC
 from genesis.typing import LaxPositiveFArrayType, Matrix3x3Type, UnitVec4FType, Vec3FType
 from genesis.utils import geom as gu
-from genesis.utils.description import (
-    Described,
+from .description import (
     KinematicLinkDescription,
     RigidGeomDescription,
     RigidLinkDescription,
@@ -237,7 +236,7 @@ def finalize_inertial(
     )
 
 
-class KinematicLink(Described, RBC):
+class KinematicLink(RBC):
     """
     Kinematic class. One KinematicEntity consists of multiple KinematicLinks, each of which is a rigid body and could
     consist of multiple RigidVisGeoms (`link.vgeoms` for visualization).

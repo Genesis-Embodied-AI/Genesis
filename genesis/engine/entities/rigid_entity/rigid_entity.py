@@ -22,8 +22,7 @@ from genesis.utils import geom as gu
 from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import urdf as uu
-from genesis.utils.description import (
-    Described,
+from .description import (
     KinematicAttachmentDescription,
     KinematicEntityDescription,
     KinematicLinkDescription,
@@ -126,7 +125,7 @@ def is_link_fixed(links: Sequence[KinematicLinkDescription], idx: int) -> bool:
         idx = l_desc.parent_idx
 
 
-class KinematicEntity(Described, Entity):
+class KinematicEntity(Entity):
     """
     Base entity class for articulated rigid-body systems (morphology, FK, Jacobian, IK).
 

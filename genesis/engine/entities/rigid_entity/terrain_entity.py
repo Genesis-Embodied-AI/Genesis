@@ -4,8 +4,8 @@ import torch
 import genesis as gs
 from genesis.utils import geom as gu
 from genesis.utils import terrain as tu
-from genesis.utils.description import TerrainEntityDescription
 
+from .description import TerrainEntityDescription
 from .rigid_entity import RigidEntity
 
 

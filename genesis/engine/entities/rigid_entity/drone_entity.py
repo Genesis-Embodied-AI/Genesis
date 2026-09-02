@@ -4,9 +4,9 @@ import xml.etree.ElementTree as ET
 import torch
 
 import genesis as gs
-from genesis.utils.description import DroneEntityDescription
 from genesis.utils.misc import get_assets_dir
 
+from .description import DroneEntityDescription
 from .rigid_entity import RigidEntity
 
 

@@ -13,7 +13,6 @@ import genesis.utils.array_class as array_class
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.states import QueriedStates
 from genesis.repr_base import RBC
-from genesis.utils.description import Described
 from genesis.utils.misc import (
     assign_indexed_tensor,
     broadcast_tensor,
@@ -309,7 +308,7 @@ class GravityMixin:
         return tensor[0] if self._sim.n_envs == 0 else tensor
 
 
-class Solver(Described, RBC):
+class Solver(RBC):
     def __init__(self, scene: "Scene", sim: "Simulator", options):
         self._uid = gs.UID()
         self._sim = sim
@@ -383,6 +382,10 @@ class Solver(Described, RBC):
     @property
     def n_entities(self):
         return len(self._entities)
+
+    @property
+    def force_fields(self) -> list:
+        return self._ffs
 
     def _repr_brief(self):
         repr_str = f"{self.__repr_name__()}: {self._uid}, n_entities: {self.n_entities}"
