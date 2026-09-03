@@ -21,15 +21,16 @@ import genesis.utils.misc as mu
 import genesis.utils.urdf as uu
 import genesis.ext.urdfpy as urdfpy
 from genesis.typing import (
+    FGridArrayType,
     FrozenDictType,
     NonNegativeInt,
     PositiveFloat,
     PositiveInt,
+    PositiveVec2FType,
     StrArrayType,
     UnitVec3FType,
     UnitVec4FType,
     Vec2IType,
-    PositiveVec2FType,
     Vec3FType,
 )
 
@@ -1387,7 +1388,7 @@ class Terrain(Morph):
         ["pyramid_sloped_terrain", "discrete_obstacles_terrain", "wave_terrain"],
         ["random_uniform_terrain", "pyramid_stairs_terrain", "sloped_terrain"],
     ]
-    height_field: Any = None
+    height_field: FGridArrayType | None = None
     name: str | None = None
     subterrain_parameters: dict[str, dict] | None = None
 
