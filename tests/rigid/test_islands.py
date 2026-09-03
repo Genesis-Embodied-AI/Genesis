@@ -854,8 +854,16 @@ def test_hibernation_wakes_on_collision(show_viewer, n_envs, broadphase_traversa
     # The bodies that landed first sleep while the one still falling does not.
     assert all(link_asleep(link) for link in multibody_bases[:-1])
     assert not link_asleep(late)
+    # The sleepers stay frozen while the env keeps solving the body still falling: zero velocity, and forces held at
+    # their values from the moment they fell asleep, since their island is left out of the solve.
+    sleepers_force = [box.get_dofs_force() for box in (box_rest, box_hit)]
+    sleepers_contact_force = [box.get_links_net_contact_force() for box in (box_rest, box_hit)]
     for _ in range(40):
         scene.step()
+    for box, force, contact_force in zip((box_rest, box_hit), sleepers_force, sleepers_contact_force):
+        assert_equal(box.get_dofs_velocity(), 0.0)
+        assert_equal(box.get_dofs_force(), force)
+        assert_equal(box.get_links_net_contact_force(), contact_force)
     rest_x0 = box_rest.get_pos()[..., 0]
 
     box_hit.set_dofs_velocity([-2.0, 0.0, 0.0, 0.0, 0.0, 0.0])
