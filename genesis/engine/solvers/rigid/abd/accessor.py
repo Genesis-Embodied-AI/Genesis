@@ -340,7 +340,9 @@ def kernel_wake_up_entities_on_new_contact(
     _B = collider_state.n_contacts.shape[0]
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
-        for i_c in range(collider_state.n_contacts[i_b]):
+        # The kept contacts are read through the permutation, see has_prunable_contacts in array_class.py.
+        for i_c_ in range(collider_state.n_contacts[i_b]):
+            i_c = collider_state.contact_sort_idx[i_c_, i_b]
             i_la = collider_state.contact_data.link_a[i_c, i_b]
             i_lb = collider_state.contact_data.link_b[i_c, i_b]
             I_la = [i_la, i_b] if qd.static(rigid_config.batch_links_info) else i_la
