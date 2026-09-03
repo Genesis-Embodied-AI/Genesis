@@ -9,6 +9,7 @@ import xacro
 
 import genesis as gs
 import genesis.utils.gltf as gltf_utils
+from genesis.constants import GLTF_FORMATS, XACRO_FORMAT
 from genesis.ext import urdfpy
 
 from . import geom as gu
@@ -131,7 +132,11 @@ def order_links_depth_first(l_infos, j_infos, links_g_infos=None):
 
 
 def parse_urdf(morph, surface):
-    if isinstance(morph.file, (str, Path)):
+    if morph.is_format(XACRO_FORMAT):
+        # Expanded by the parser reading it, so the morph keeps the file provided by the user (see 'parse_xml' in mjcf.py)
+        parent_dir = os.getcwd()
+        robot = load_xacro(morph.file, morph.xacro_args)
+    elif isinstance(morph.file, (str, Path)):
         # Inline XML content parses directly; a file path does not and falls back to reading from disk.
         try:
             node = ET.fromstring(morph.file)
@@ -199,7 +204,7 @@ def parse_urdf(morph, surface):
                 mesh_path = urdfpy.utils.get_filename(parent_dir, geometry.filename)
                 tmeshes = geometry.meshes
                 metadatas = [{"mesh_path": mesh_path} for _ in tmeshes]
-                if mesh_path.lower().endswith(gs.options.morphs.GLTF_FORMATS):
+                if mesh_path.lower().endswith(GLTF_FORMATS):
                     meshes = gltf_utils.parse_mesh_glb(
                         mesh_path, group_by_material=False, scale=None, is_mesh_zup=True, surface=surface
                     )

@@ -258,13 +258,12 @@ class ImageTexture(Texture, SerializationMixin):
     def export(self, exporting: Exporting) -> dict | None:
         """Return the pixels of the image and how they are read, or None where a file can hold none of it.
 
-        A texture read from an HDR or EXR file keeps its path rather than its pixels, so nothing of it travels. The
-        name of the image is all a file keeps of where it was read from, since the directory belongs to its author.
+        A texture read from an HDR or EXR file keeps its path rather than its pixels, so nothing of it travels.
         """
         if self.image_array is None:
             return None
         return {
-            "image_path": None if self.image_path is None else os.path.basename(self.image_path),
+            "image_path": self.image_path,
             "image_array": exporting.array(self.image_array),
             "image_color": exporting.value(self.image_color, UnitIntervalArrayType),
             "encoding": self.encoding,

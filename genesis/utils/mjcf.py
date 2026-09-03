@@ -13,6 +13,7 @@ from trimesh.visual.texture import TextureVisuals
 from PIL import Image
 
 import genesis as gs
+from genesis.constants import XACRO_FORMAT
 from genesis.ext import urdfpy
 
 from . import geom as gu
@@ -256,10 +257,13 @@ def parse_xml(morph, surface, rigid_options=None):
         merge_fixed_links = morph.merge_fixed_links
         links_to_keep = morph.links_to_keep
 
-    # Build model from XML (either URDF or MJCF)
+    # Build model from XML (either URDF or MJCF). A XACRO file is expanded into its URDF model here, by the parser
+    # reading it, so that the morph keeps the file provided by the user: an option holds what it was created with, and
+    # the expanded model is only ever read by the parsers.
     exclude_ground_plane = isinstance(morph, gs.morphs.MJCF) and morph.exclude_ground_plane
+    file = uu.load_xacro(morph.file, morph.xacro_args) if morph.is_format(XACRO_FORMAT) else morph.file
     mj = build_model(
-        morph.file,
+        file,
         not morph.visualization,
         morph.default_armature,
         merge_fixed_links,
@@ -273,7 +277,7 @@ def parse_xml(morph, surface, rigid_options=None):
     #     gs.logger.warning("(MJCF) Tendon not supported")
 
     # Parse all geometries grouped by parent joint (or world)
-    links_g_infos = parse_geoms(mj, morph.scale, surface, morph.file)
+    links_g_infos = parse_geoms(mj, morph.scale, surface, file)
 
     # Parse all bodies (links and joints)
     l_infos, links_j_infos = parse_links(mj, morph.scale)

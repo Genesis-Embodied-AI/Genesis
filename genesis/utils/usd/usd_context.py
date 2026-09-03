@@ -1,3 +1,4 @@
+import contextvars
 import io
 import logging
 import os
@@ -5,8 +6,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
-from typing import NamedTuple
+from typing import Iterator, NamedTuple
 
 import filelock
 import numpy as np
@@ -15,6 +17,7 @@ from pxr import Sdf, Usd, UsdGeom, UsdPhysics, UsdShade
 
 import genesis as gs
 import genesis.utils.mesh as mu
+from genesis.constants import USD_FORMATS
 
 from .usd_material import parse_material_preview_surface
 from .usd_utils import extract_scale
@@ -37,7 +40,7 @@ def decompress_usdz(usdz_path: str):
     zip_files = Sdf.ZipFile.Open(usdz_path)
     zip_filelist = zip_files.GetFileNames()
     root_file = zip_filelist[0]
-    if not root_file.lower().endswith(gs.options.morphs.USD_FORMATS[:-1]):
+    if not root_file.lower().endswith(USD_FORMATS[:-1]):
         gs.raise_exception(f"Invalid usdz root file: {root_file}")
     root_path = os.path.join(usdz_folder, root_file)
 
@@ -63,6 +66,30 @@ class PhysicsMaterial(NamedTuple):
     dynamic_friction: float | None = None
     restitution: float | None = None
     density: float | None = None
+
+
+# The context every USD parse made inside a 'usd_context' block reads from (see 'get_current_usd_context').
+_ACTIVE_CONTEXT: contextvars.ContextVar["UsdContext | None"] = contextvars.ContextVar("usd_context", default=None)
+
+
+@contextmanager
+def usd_context(stage_file: str) -> Iterator["UsdContext"]:
+    """Open a stage once for every parse made inside the block.
+
+    A stage split into several entities is parsed once per entity, and each parse composes the stage and walks its
+    materials anew. Inside this block they all read the one context opened here (see 'get_current_usd_context').
+    """
+    context = UsdContext(stage_file)
+    token = _ACTIVE_CONTEXT.set(context)
+    try:
+        yield context
+    finally:
+        _ACTIVE_CONTEXT.reset(token)
+
+
+def get_current_usd_context() -> "UsdContext | None":
+    """The context of the enclosing 'usd_context' block, or None outside of one."""
+    return _ACTIVE_CONTEXT.get()
 
 
 class UsdContext:
@@ -92,7 +119,7 @@ class UsdContext:
 
     def __init__(self, stage_file: str, use_bake_cache: bool = True):
         # decompress usdz
-        if stage_file.lower().endswith(gs.options.morphs.USD_FORMATS[-1]):
+        if stage_file.lower().endswith(USD_FORMATS[-1]):
             stage_file = decompress_usdz(stage_file)
 
         # detect if baking is needed

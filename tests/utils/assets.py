@@ -15,7 +15,7 @@ from huggingface_hub.errors import LocalEntryNotFoundError
 from PIL import Image, UnidentifiedImageError
 from requests.exceptions import HTTPError
 
-from genesis.options.morphs import GLTF_FORMATS, MESH_FORMATS, MJCF_FORMAT, URDF_FORMAT, USD_FORMATS
+from genesis.constants import GLTF_FORMATS, MESH_FORMATS, MJCF_FORMAT, URDF_FORMAT, USD_FORMATS
 
 REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"

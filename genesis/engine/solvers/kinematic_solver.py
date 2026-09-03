@@ -7,6 +7,7 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.engine.entities.rigid_entity import KinematicEntity
+from genesis.engine.materials import Kinematic
 from genesis.engine.solvers.rigid.abd.inverse_kinematics import (
     kernel_forward_kinematics_query,
     kernel_get_jacobian,
@@ -15,6 +16,7 @@ from genesis.engine.solvers.rigid.abd.inverse_kinematics import (
     kernel_set_ik_targets,
 )
 from genesis.engine.states.solvers import KinematicSolverState
+from genesis.options.morphs import Morph
 from genesis.options.solvers import KinematicOptions
 from genesis.utils.misc import (
     assign_indexed_tensor,
@@ -162,6 +164,10 @@ class KinematicSolver(Solver):
     RigidSolver extends this with physics (collision, constraints, dynamics).
     """
 
+    material_cls = Kinematic
+    # The kinds of entity this solver builds, each with the morph class it is built from, the most specific first
+    _entity_classes = ((Morph, KinematicEntity),)
+
     def __init__(self, scene: "Scene", sim: "Simulator", options: "KinematicOptions") -> None:
         super().__init__(scene, sim, options)
 
@@ -187,38 +193,30 @@ class KinematicSolver(Solver):
     def add_entity(
         self, idx, material, morph, surface, visualize_contact=False, name=None, desc=None
     ) -> "KinematicEntity":
-        morph_heterogeneous = []
-        if isinstance(morph, (tuple, list)):
-            morph, *morph_heterogeneous = morph
-            self._enable_heterogeneous |= bool(morph_heterogeneous)
+        """Create an entity from its description.
 
-        if isinstance(morph, gs.morphs.Terrain):
-            gs.raise_exception("Kinematic material is not supported for terrain morph for now.")
-
-        morph._enable_mujoco_compatibility = self._enable_mujoco_compatibility
-
-        entity = KinematicEntity(
-            scene=self._scene,
-            solver=self,
-            material=material,
-            morph=morph,
-            surface=surface,
-            idx=idx,
-            idx_in_solver=self.n_entities,
-            link_start=self.n_links,
-            joint_start=self.n_joints,
-            q_start=self.n_qs,
-            dof_start=self.n_dofs,
-            vgeom_start=self.n_vgeoms,
-            vvert_start=self.n_vverts,
-            vface_start=self.n_vfaces,
-            custom_vvert_start=self.n_custom_vverts,
-            custom_vface_start=self.n_custom_vfaces,
-            morph_heterogeneous=morph_heterogeneous,
-            name=name,
-            desc=desc,
-        )
+        Given no description, one is resolved from the other arguments (see 'KinematicEntityDescription'), the morph
+        deciding the kind of entity among those the solver builds ('_entity_classes'). The class of a given description
+        says which kind it holds. Creation from a description reads no asset.
+        """
+        if desc is None:
+            morphs = (morph,) if isinstance(morph, Morph) else tuple(morph)
+            entity_cls = next(cls for morph_cls, cls in self._entity_classes if isinstance(morphs[0], morph_cls))
+            desc = entity_cls._description_cls.resolve(
+                morphs, material, surface, self._options, self._enable_mujoco_compatibility, visualize_contact, name
+            )
+        else:
+            for _, entity_cls in self._entity_classes:
+                if entity_cls._description_cls is type(desc):
+                    break
+            else:
+                gs.raise_exception(f"{type(self).__name__} simulates no entity described by {type(desc).__name__}.")
+        self._enable_heterogeneous |= bool(desc.variants)
+        entity = entity_cls(self._scene, self, idx, desc)
         self._entities.append(entity)
+        # An attachment names an entity added before this one, which 'attach' requires, so it is restored here
+        if desc.attachment is not None:
+            entity.attach(self._scene.get_entity(desc.attachment.entity_name), desc.attachment.link_name)
         return entity
 
     # ------------------------------------------------------------------------------------

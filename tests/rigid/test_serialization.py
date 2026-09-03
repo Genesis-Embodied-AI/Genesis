@@ -262,8 +262,8 @@ def test_export_and_load_rigid(
     # A texture holding a path rather than pixels stands for nothing, in the surface and in the meshes drawn with it
     assert restored.entities[14].surface.normal_texture is None
     assert restored.entities[14].vgeoms[0].vmesh.surface.normal_texture is None
-    # A morph holding a parsed model travels naming the asset, since the description stands for the model itself
-    assert restored.entities[15].morph.file == "xacro_chain.urdf"
+    # A morph names the asset it was created from, since the description stands for what was parsed out of it
+    assert restored.entities[15].morph.file == "two_link.urdf.xacro"
     # A mesh states the asset it was read from by name, wherever that asset stood
     assert restored.entities[16].geoms[0].mesh.metadata["mesh_path"] == "sphere.obj"
     # The document that entity was created from names that mesh as well, and the name travels without its directory
@@ -506,5 +506,5 @@ def test_export_rejects_unsupported_physics(tmp_path, show_viewer):
         morph=gs.morphs.Box(pos=(0.5, 0.5, 0.8), size=(0.1, 0.1, 0.1)), material=gs.materials.MPM.Elastic()
     )
     unsupported.add_force_field(gs.force_fields.Wind(direction=(1.0, 0.0, 0.0)))
-    with pytest.raises(gs.GenesisException, match="1 Elastic, 1 MPMEntity, 1 Wind cannot be exported"):
+    with pytest.raises(gs.GenesisException, match="1 MPMEntity, 1 Wind cannot be exported"):
         unsupported.export(tmp_path / f"wind{SCENE_FORMAT}")

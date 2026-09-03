@@ -14,7 +14,9 @@ import genesis.utils.geom as gu
 from genesis.constants import link_ref_frame
 from genesis.engine.entities import DroneEntity, RigidEntity, TerrainEntity
 from genesis.engine.entities.base_entity import Entity
+from genesis.engine.materials import Rigid
 from genesis.engine.states import QueriedStates, RigidSolverState
+from genesis.options.morphs import Drone, Morph, Terrain
 from genesis.options.solvers import RigidOptions
 from genesis.utils.misc import (
     DeprecationError,
@@ -257,6 +259,8 @@ def _sanitize_sol_params(
 
 
 class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
+    material_cls = Rigid
+    _entity_classes = ((Drone, DroneEntity), (Terrain, TerrainEntity), (Morph, RigidEntity))
     # override typing
     _entities: list[RigidEntity] = gs.List()
 
@@ -353,58 +357,6 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
 
     def init_ckpt(self):
         pass
-
-    def add_entity(
-        self, idx, material, morph, surface, visualize_contact, name: str | None = None, desc=None
-    ) -> RigidEntity:
-        # Handle heterogeneous morphs (list/tuple of morphs)
-        morph_heterogeneous = []
-        if isinstance(morph, (tuple, list)):
-            morph, *morph_heterogeneous = morph
-            self._enable_heterogeneous |= bool(morph_heterogeneous)
-
-        if isinstance(morph, gs.morphs.Drone):
-            EntityClass = DroneEntity
-        elif isinstance(morph, gs.morphs.Terrain):
-            EntityClass = TerrainEntity
-        else:
-            EntityClass = RigidEntity
-
-        morph._enable_mujoco_compatibility = self._enable_mujoco_compatibility
-
-        entity = EntityClass(
-            scene=self._scene,
-            solver=self,
-            material=material,
-            morph=morph,
-            surface=surface,
-            idx=idx,
-            idx_in_solver=self.n_entities,
-            link_start=self.n_links,
-            joint_start=self.n_joints,
-            q_start=self.n_qs,
-            dof_start=self.n_dofs,
-            geom_start=self.n_geoms,
-            cell_start=self.n_cells,
-            vert_start=self.n_verts,
-            free_verts_state_start=self.n_free_verts,
-            fixed_verts_state_start=self.n_fixed_verts,
-            face_start=self.n_faces,
-            edge_start=self.n_edges,
-            vgeom_start=self.n_vgeoms,
-            vvert_start=self.n_vverts,
-            vface_start=self.n_vfaces,
-            custom_vvert_start=self.n_custom_vverts,
-            custom_vface_start=self.n_custom_vfaces,
-            visualize_contact=visualize_contact,
-            morph_heterogeneous=morph_heterogeneous,
-            name=name,
-            desc=desc,
-        )
-        assert isinstance(entity, RigidEntity)
-        self._entities.append(entity)
-
-        return entity
 
     def build(self):
         self._n_geoms = self.n_geoms
