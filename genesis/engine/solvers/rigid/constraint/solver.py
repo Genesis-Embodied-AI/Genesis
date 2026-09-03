@@ -303,7 +303,11 @@ class ConstraintSolver:
             self.noslip()
 
         func_update_contact_force(
-            self._solver.dyn_state, self._collider._collider_state, self.constraint_state, self._solver.rigid_config
+            self._solver.dyn_state,
+            self._collider._collider_state,
+            self.constraint_state,
+            self._solver.dyn_info,
+            self._solver.rigid_config,
         )
 
     def noslip(self):
@@ -7141,6 +7145,7 @@ def func_update_contact_force(
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
     n_links = dyn_state.links.contact_force.shape[0]
@@ -7188,6 +7193,11 @@ def func_update_contact_force(
                             * constraint_state.efc_force[i_c * rows_per_contact + i_dir + const_start, i_b]
                         )
 
+            # An inert contact keeps the force of the last solve it took part in, so a resting sleeper keeps reporting
+            # the support force it is at rest under.
+            if qd.static(rigid_config.use_hibernation):
+                if _is_contact_inert(contact_data_link_a, contact_data_link_b, i_b, dyn_state, dyn_info, rigid_config):
+                    force = collider_state.contact_data.force[i_col, i_b]
             collider_state.contact_data.force[i_col, i_b] = force
 
             dyn_state.links.contact_force[contact_data_link_a, i_b] = (
