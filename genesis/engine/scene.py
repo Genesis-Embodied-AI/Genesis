@@ -312,26 +312,8 @@ class Scene(RBC):
                 gs.raise_exception(
                     "Heterogeneous morphs (iterable of morphs) are only supported for Rigid and Kinematic materials."
                 )
-            if not all(
-                isinstance(m, (gs.morphs.Primitive, gs.morphs.Mesh, gs.morphs.URDF, gs.morphs.MJCF)) for m in morph
-            ):
-                gs.raise_exception("Heterogeneous morphs only support Primitive, Mesh, URDF and MJCF types.")
-            if len(set(isinstance(m, (gs.morphs.URDF, gs.morphs.MJCF)) for m in morph)) > 1:
-                gs.raise_exception(
-                    "Heterogeneous morphs must be consistent: either all articulated robots (ie URDF, MJCF) or all "
-                    "basic objects (ie Primitive, Mesh)."
-                )
         else:
             morph_for_checks = morph
-
-        if isinstance(material, gs.materials.Rigid):
-            # small sdf res is sufficient for primitives regardless of size
-            if isinstance(morph_for_checks, gs.morphs.Primitive):
-                material.sdf_max_res = 32
-
-        # some morph should not smooth surface normal
-        if isinstance(morph_for_checks, (gs.morphs.Box, gs.morphs.Cylinder, gs.morphs.Terrain)):
-            surface.smooth = False
 
         if isinstance(morph_for_checks, (gs.morphs.URDF, gs.morphs.MJCF, gs.morphs.USD, gs.morphs.Terrain)):
             if not isinstance(material, (gs.materials.Kinematic, gs.materials.Hybrid)):
@@ -410,29 +392,6 @@ class Scene(RBC):
 
         else:
             gs.raise_exception()
-
-        # Set material-dependent default options
-        morphs_to_configure = morph if is_heterogeneous else (morph,)
-        for morph_variant in morphs_to_configure:
-            if isinstance(morph_variant, gs.morphs.FileMorph):
-                # Rigid entities will convexify geom by default
-                if morph_variant.convexify is None:
-                    morph_variant.convexify = isinstance(material, gs.materials.Rigid)
-                # Decimation simplifies away the very surface detail that a non-convex collision mesh is kept for, so
-                # it defaults off when convexify is off and on otherwise. Only applies to meshes that skip
-                # watertightening (already-watertight inputs); watertighten does its own feature-preserving QEM.
-                if morph_variant.decimate is None:
-                    morph_variant.decimate = morph_variant.convexify
-                # Genesis fills in a default rotor armature for joints whose armature is not specified in the model
-                # file, while MuJoCo's own default may differ. Under MuJoCo compatibility, the default is dropped
-                # unless set manually, deferring to MuJoCo. USD keeps the Genesis default since MuJoCo is not
-                # involved in its parsing.
-                if (
-                    isinstance(morph_variant, (gs.morphs.MJCF, gs.morphs.URDF, gs.morphs.Drone))
-                    and "default_armature" not in morph_variant.model_fields_set
-                    and self._sim.rigid_solver._enable_mujoco_compatibility
-                ):
-                    morph_variant.default_armature = None
 
         entity = self._sim._add_entity(morph, material, surface, visualize_contact, name)
 
@@ -1583,13 +1542,7 @@ class Scene(RBC):
         # 'add_entity' would resolve a material and a surface the description already holds, and read the asset it
         # replaces.
         for desc in described.entities:
-            scene._sim._add_entity(desc=desc)
-
-        # An attachment merges two kinematic trees and renumbers the joints and degrees of freedom after them. The
-        # build sizes its arrays from those numbers, so creation and attachment both precede it.
-        for entity, desc in zip(scene.entities, described.entities):
-            if desc.attachment is not None:
-                entity.attach(scene.get_entity(desc.attachment.entity_name), desc.attachment.link_name)
+            scene._sim._add_entity_from_desc(desc)
         return scene
 
     # ------------------------------------------------------------------------------------

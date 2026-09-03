@@ -112,28 +112,16 @@ class Simulator(RBC):
         # sensors
         self._sensor_manager = SensorManager(self)
 
-    def _add_entity(
-        self,
-        morph: Morph | None = None,
-        material=None,
-        surface=None,
-        visualize_contact=False,
-        name: str | None = None,
-        desc: "EntityDescription | None" = None,
-    ):
-        if desc is not None:
-            # 'desc.morphs' is a list: the solver takes the first as the primary and dispatches the rest as variants.
-            morph, material, surface = desc.morphs, desc.material, desc.surface
-            visualize_contact, name = desc.visualize_contact, desc.name
+    def _add_entity(self, morph: Morph, material, surface, visualize_contact=False, name: str | None = None):
         if isinstance(material, gs.materials.Tool):
             entity = self.tool_solver.add_entity(self.n_entities, material, morph, surface, name=name)
         elif isinstance(material, gs.materials.Rigid):
             entity = self.rigid_solver.add_entity(
-                self.n_entities, material, morph, surface, visualize_contact, name=name, desc=desc
+                self.n_entities, material, morph, surface, visualize_contact, name=name
             )
         elif isinstance(material, gs.materials.Kinematic):
             entity = self.kinematic_solver.add_entity(
-                self.n_entities, material, morph, surface, visualize_contact=False, name=name, desc=desc
+                self.n_entities, material, morph, surface, visualize_contact=False, name=name
             )
         elif isinstance(material, gs.materials.MPM.Base):
             entity = self.mpm_solver.add_entity(self.n_entities, material, morph, surface, name=name)
@@ -152,6 +140,16 @@ class Simulator(RBC):
         self._entities.append(entity)
         if entity.desc is not None:
             self.scene._desc.entities.append(entity.desc)
+        return entity
+
+    def _add_entity_from_desc(self, desc: "EntityDescription"):
+        if isinstance(desc.material, gs.materials.Rigid):
+            entity = self.rigid_solver.add_entity_from_desc(self.n_entities, desc)
+        elif isinstance(desc.material, gs.materials.Kinematic):
+            entity = self.kinematic_solver.add_entity_from_desc(self.n_entities, desc)
+        else:
+            gs.raise_exception(f"No solver creates an entity from a {type(desc).__name__}.")
+        self._entities.append(entity)
         return entity
 
     def _add_force_field(self, force_field):

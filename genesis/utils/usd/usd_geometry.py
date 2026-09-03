@@ -13,7 +13,7 @@ from .usd_utils import AXES_T, AXES_VECTOR, usd_attr_array_to_numpy, usd_primvar
 
 
 # UsdPhysics.MeshCollisionAPI 'approximation' tokens -> per-geom collision post-processing overrides
-# consumed by KinematicEntity._resolve_geoms. 'boundingCube'/'boundingSphere' are handled
+# consumed by KinematicEntityDescription._resolve_geoms. 'boundingCube'/'boundingSphere' are handled
 # separately by fitting a primitive geom in the parser.
 _APPROXIMATION_OVERRIDES = {
     "convexHull": {"convexify": True, "decompose_error_threshold": float("inf")},  # single hull, no decomposition
