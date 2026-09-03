@@ -17,6 +17,7 @@ from pxr import Sdf, Usd, UsdGeom, UsdPhysics, UsdShade
 
 import genesis as gs
 import genesis.utils.mesh as mu
+from genesis.constants import USD_FORMATS
 
 from .usd_material import parse_material_preview_surface
 from .usd_utils import extract_scale
@@ -39,7 +40,7 @@ def decompress_usdz(usdz_path: str):
     zip_files = Sdf.ZipFile.Open(usdz_path)
     zip_filelist = zip_files.GetFileNames()
     root_file = zip_filelist[0]
-    if not root_file.lower().endswith(gs.options.morphs.USD_FORMATS[:-1]):
+    if not root_file.lower().endswith(USD_FORMATS[:-1]):
         gs.raise_exception(f"Invalid usdz root file: {root_file}")
     root_path = os.path.join(usdz_folder, root_file)
 
@@ -118,7 +119,7 @@ class UsdContext:
 
     def __init__(self, stage_file: str, use_bake_cache: bool = True):
         # decompress usdz
-        if stage_file.lower().endswith(gs.options.morphs.USD_FORMATS[-1]):
+        if stage_file.lower().endswith(USD_FORMATS[-1]):
             stage_file = decompress_usdz(stage_file)
 
         # detect if baking is needed

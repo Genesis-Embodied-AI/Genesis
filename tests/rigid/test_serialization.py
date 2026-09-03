@@ -262,8 +262,8 @@ def test_export_and_load_rigid(
     # A texture holding a path rather than pixels stands for nothing, in the surface and in the meshes drawn with it
     assert restored.entities[14].surface.normal_texture is None
     assert restored.entities[14].vgeoms[0].vmesh.surface.normal_texture is None
-    # A morph holding a parsed model travels naming the asset, since the description stands for the model itself
-    assert restored.entities[15].morph.file == "xacro_chain.urdf"
+    # A morph names the asset it was created from, since the description stands for what was parsed out of it
+    assert restored.entities[15].morph.file == "two_link.urdf.xacro"
     # A mesh states the asset it was read from by name, wherever that asset stood
     assert restored.entities[16].geoms[0].mesh.metadata["mesh_path"] == "sphere.obj"
     # The document that entity was created from names that mesh as well, and the name travels without its directory

@@ -15,11 +15,19 @@ import numpy as np
 from pydantic import Field, StrictBool, StrictInt, model_validator
 
 import genesis as gs
+import genesis.ext.urdfpy as urdfpy
 import genesis.utils.geom as gu
 import genesis.utils.mjcf as mju
 import genesis.utils.misc as mu
 import genesis.utils.urdf as uu
-import genesis.ext.urdfpy as urdfpy
+from genesis.constants import (
+    GLTF_FORMATS,
+    MJCF_FORMAT,
+    URDF_FORMAT,
+    USD_FORMATS,
+    XACRO_FORMAT,
+    XML_ROOT_TAG_TO_FORMAT,
+)
 from genesis.typing import (
     FGridArrayType,
     FrozenDictType,
@@ -33,19 +41,10 @@ from genesis.typing import (
     Vec2IType,
     Vec3FType,
 )
+from genesis.utils import serialization
 
 from .misc import CoacdOptions
 from .options import Options
-
-URDF_FORMAT = ".urdf"
-XACRO_FORMAT = ".xacro"
-MJCF_FORMAT = ".xml"
-
-# Root tags identifying the format of inline XML content passed as 'FileMorph.file'.
-XML_ROOT_TAG_TO_FORMAT = {"mujoco": MJCF_FORMAT, "robot": URDF_FORMAT}
-GLTF_FORMATS = (".glb", ".gltf")
-MESH_FORMATS = (".obj", ".stl", ".dae", *GLTF_FORMATS)
-USD_FORMATS = (".usd", ".usda", ".usdc", ".usdz")
 
 
 class TetGenMixin(Options):
@@ -618,6 +617,8 @@ class FileMorph(Morph):
             data["coacd_options"] = CoacdOptions()
 
         file = data.get("file", "")
+        if isinstance(file, os.PathLike):
+            file = data["file"] = str(file)
         if isinstance(file, str) and file:
             # Inline XML content (a description built in-memory) parses directly and is passed through untouched to the
             # loader. A path string does not parse as XML and is resolved against the working and assets directories.
@@ -1141,9 +1142,7 @@ class URDF(FileMorph):
         return data
 
     def model_post_init(self, context: Any) -> None:
-        if self.is_format(XACRO_FORMAT):
-            self.file = uu.load_xacro(self.file, self.xacro_args)
-        elif not self.is_format(URDF_FORMAT):
+        if not (self.is_format(URDF_FORMAT) or self.is_format(XACRO_FORMAT)):
             gs.raise_exception(f"Expected `{URDF_FORMAT}` or `{XACRO_FORMAT}` extension for URDF file: {self.file}")
 
     def is_format(self, format):
@@ -1360,7 +1359,7 @@ class Terrain(Morph):
     subterrain_types : str or 2D list of str, optional
         The types of subterrains to generate. If a string, it will be repeated for all subterrains.
         If a 2D list, it should have the same shape as `n_subterrains`.
-    height_field : array-like, optional
+    height_field : array-like or torch.Tensor, optional
         The height field to generate the terrain. If specified, all other configurations will be ignored.
         Defaults to None.
     name : str, optional
@@ -1433,11 +1432,6 @@ class Terrain(Morph):
 
     def model_post_init(self, context: Any) -> None:
         if self.height_field is not None:
-            try:
-                if np.ndim(self.height_field) != 2:
-                    gs.raise_exception("`height_field` should be a 2D array.")
-            except Exception:
-                gs.raise_exception("`height_field` should be array-like to be converted to np.ndarray.")
             return
 
         if not isinstance(self.subterrain_types, str):
@@ -1725,3 +1719,17 @@ class USD(FileMorph):
 
     def __repr_name__(self):
         return f"{super().__repr_name__()[:-1]}, prim_path='{self.prim_path}')>"
+
+
+def _exported_urdf(robot: urdfpy.URDF, exporting: serialization.Exporting) -> str:
+    """Export a URDF model built in memory as the document it stands for."""
+    return ET.tostring(robot._unparse(mu.get_assets_dir()), encoding="unicode")
+
+
+def _loaded_urdf(raw: str, loading: serialization.Loading) -> urdfpy.URDF:
+    """Recreate the URDF model from its document, as an inline document is read."""
+    node = ET.fromstring(raw)
+    return urdfpy.URDF._from_xml(node, node, os.getcwd())
+
+
+serialization.register(urdfpy.URDF, _exported_urdf, _loaded_urdf)

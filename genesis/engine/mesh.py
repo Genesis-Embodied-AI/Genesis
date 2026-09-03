@@ -11,6 +11,7 @@ import genesis as gs
 import genesis.utils.gltf as gltf_utils
 import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
+from genesis.constants import GLTF_FORMATS, MESH_FORMATS
 import genesis.utils.point_cloud as pc
 from genesis.options.surfaces import Surface
 from genesis.repr_base import RBC
@@ -502,8 +503,8 @@ class Mesh(RBC, serialization.SerializationMixin):
         morphs yield a single mesh.
         """
         if isinstance(morph, gs.options.morphs.Mesh):
-            if morph.is_format(gs.options.morphs.MESH_FORMATS):
-                if morph.is_format(gs.options.morphs.GLTF_FORMATS):
+            if morph.is_format(MESH_FORMATS):
+                if morph.is_format(GLTF_FORMATS):
                     meshes = gltf_utils.parse_mesh_glb(
                         morph.file, morph.group_by_material, morph.scale, morph.file_meshes_are_zup, surface
                     )
