@@ -2,7 +2,6 @@ import collections.abc
 import dataclasses
 import os
 import sys
-import xml.etree.ElementTree as ET
 import weakref
 from collections import Counter
 from typing import TYPE_CHECKING, Callable, Iterable, Literal, overload
@@ -11,16 +10,13 @@ import numpy as np
 import torch
 
 import trimesh
-from pydantic import Field, model_validator
 
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
-import genesis.ext.urdfpy as urdfpy
 from genesis.engine.entities.base_entity import Entity, EntityDescription
 from genesis.engine.entities.rigid_entity import KinematicEntity
 from genesis.engine.force_fields import ForceField
-from genesis.engine.solvers.base_solver import Solver
 from genesis.engine.materials.base import EntityT, Material
 from genesis.engine.states.solvers import SimState
 from genesis.options import (
@@ -28,7 +24,6 @@ from genesis.options import (
     BaseCouplerOptions,
     FEMOptions,
     KinematicOptions,
-    LegacyCouplerOptions,
     MPMOptions,
     PBDOptions,
     ProfilingOptions,
@@ -40,10 +35,9 @@ from genesis.options import (
     ViewerOptions,
     VisOptions,
 )
-from genesis.options.morphs import URDF_FORMAT, Morph
-from genesis.options.options import Options
+from genesis.options.morphs import Morph
 from genesis.options.recorders import RecorderOptions
-from genesis.options.renderers import Rasterizer, RendererOptions
+from genesis.options.renderers import RendererOptions
 from genesis.options.surfaces import Surface
 from genesis.recorders import RecorderManager
 from genesis.repr_base import RBC
@@ -303,21 +297,16 @@ class Scene(RBC):
             # assign a local surface, otherwise modification will apply on global default surface
             surface = gs.surfaces.Default()
 
-        # Handle heterogeneous morphs (any iterable of morphs, excluding Morph objects)
-        is_heterogeneous = isinstance(morph, collections.abc.Iterable) and not isinstance(morph, Morph)
-        if is_heterogeneous:
+        # Handle heterogeneous morphs (any iterable of morphs, excluding Morph objects). Whether a morph, or several,
+        # can be built from is for the entity created from it to say.
+        if isinstance(morph, collections.abc.Iterable) and not isinstance(morph, Morph):
             morph = tuple(morph)
-            morph_for_checks = morph[0]
-            if not isinstance(material, (gs.materials.Rigid, gs.materials.Kinematic)):
-                gs.raise_exception(
-                    "Heterogeneous morphs (iterable of morphs) are only supported for Rigid and Kinematic materials."
-                )
-        else:
-            morph_for_checks = morph
 
-        if isinstance(morph_for_checks, (gs.morphs.URDF, gs.morphs.MJCF, gs.morphs.USD, gs.morphs.Terrain)):
-            if not isinstance(material, (gs.materials.Kinematic, gs.materials.Hybrid)):
-                gs.raise_exception(f"Unsupported material for morph: {material} and {morph_for_checks}.")
+        # some morph should not smooth surface normal
+        if isinstance(
+            morph[0] if isinstance(morph, tuple) else morph, (gs.morphs.Box, gs.morphs.Cylinder, gs.morphs.Terrain)
+        ):
+            surface.smooth = False
 
         if surface.double_sided is None:
             surface.double_sided = isinstance(material, (gs.materials.PBD.Cloth, gs.materials.FEM.Cloth))
@@ -429,19 +418,15 @@ class Scene(RBC):
         entities : List[genesis.Entity]
             The created entities.
         """
-        entity_morphs = []
-        if isinstance(morph, gs.morphs.USD):
-            from genesis.utils.usd import parse_usd_stage
-
-            # Return a list of `gs.morphs.USD` for each parsed rigid entity in the stage.
-            entity_morphs = parse_usd_stage(morph)
-        else:
+        if not isinstance(morph, gs.morphs.USD):
             gs.raise_exception(f"Unsupported morph: {morph}.")
+        from genesis.utils.usd import parse_usd_stage
 
-        entities = []
-        for entity_morph in entity_morphs:
-            entities.append(self.add_entity(entity_morph, material, surface, visualize_contact, vis_mode))
-
+        # One `gs.morphs.USD` per rigid entity of the stage, added while the stage it was split from stays open.
+        with parse_usd_stage(morph) as entity_morphs:
+            entities = []
+            for entity_morph in entity_morphs:
+                entities.append(self.add_entity(entity_morph, material, surface, visualize_contact, vis_mode))
         return entities
 
     @gs.assert_unbuilt
@@ -1465,56 +1450,7 @@ class Scene(RBC):
                 )
                 report(f"A scene holding {listing} {ending}")
 
-        # A USD context is a live handle onto the stage it opened, and a XACRO morph holds the model its file was
-        # parsed into. The description each produced stands for it, so the morph travels naming the asset alone.
-        desc = self.desc
-        entities = []
-        for e_desc in desc.entities:
-            morphs = []
-            for morph in e_desc.morphs:
-                update = {}
-                if isinstance(morph, gs.options.morphs.USD):
-                    update["usd_ctx"] = None
-                if isinstance(morph, gs.options.morphs.URDF) and isinstance(morph.file, urdfpy.URDF):
-                    update["file"] = f"{morph.file.name}{URDF_FORMAT}"
-                elif isinstance(morph, gs.options.morphs.FileMorph) and isinstance(morph.file, os.PathLike):
-                    update["file"] = str(morph.file)
-                if isinstance(morph, gs.options.morphs.Terrain) and isinstance(morph.height_field, torch.Tensor):
-                    update["height_field"] = tensor_to_array(morph.height_field)
-                morphs.append(morph.model_copy(update=update) if update else morph)
-            entities.append(dataclasses.replace(e_desc, morphs=morphs))
-
-        # These directories belong to the author's filesystem, and every path a parse derives sits under one, so
-        # the manifest keeps each asset's bare name only. A USD morph also names its context's source file, which
-        # holds a baked copy of the stage.
-        morphs = [morph for entity in self.entities for morph in entity.morphs]
-        asset_paths = [
-            morph.file
-            for morph in morphs
-            if isinstance(morph, gs.options.morphs.FileMorph) and isinstance(morph.file, (str, os.PathLike))
-        ]
-        asset_paths += [
-            morph.usd_ctx.stage_file
-            for morph in morphs
-            if isinstance(morph, gs.options.morphs.USD) and morph.usd_ctx is not None
-        ]
-        redact = {f"{os.path.dirname(path)}{os.sep}": "" for path in asset_paths if os.path.isabs(path)}
-
-        # A morph created from a document rather than from a file carries that document, and it names the assets it
-        # was written against. Each name travels without the directory it stood in, as the file of a morph does.
-        for morph in morphs:
-            if not (isinstance(morph, gs.options.morphs.FileMorph) and isinstance(morph.file, str)):
-                continue
-            try:
-                document = ET.fromstring(morph.file)
-            except ET.ParseError:
-                continue
-            for element in document.iter():
-                for stated in element.attrib.values():
-                    if os.path.isabs(stated):
-                        redact[stated] = os.path.basename(stated)
-
-        serialization.export(path, {"scene": dataclasses.replace(desc, entities=entities)}, redact)
+        serialization.export(path, {"scene": self.desc})
 
     @classmethod
     def load(cls, path: str | os.PathLike, show_viewer: bool = False) -> "Scene":
@@ -1542,7 +1478,7 @@ class Scene(RBC):
         # 'add_entity' would resolve a material and a surface the description already holds, and read the asset it
         # replaces.
         for desc in described.entities:
-            scene._sim._add_entity_from_desc(desc)
+            scene._sim._add_entity(desc=desc)
         return scene
 
     # ------------------------------------------------------------------------------------

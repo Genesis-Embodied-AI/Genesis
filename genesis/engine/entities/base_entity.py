@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING
 import torch
 
 import genesis as gs
+from genesis.engine.materials.base import Material
+from genesis.options.morphs import Morph
 from genesis.repr_base import RBC
 
 if TYPE_CHECKING:
@@ -15,8 +17,11 @@ if TYPE_CHECKING:
 class EntityDescription:
     """Base class of what one entity of a scene is created from, whatever the solver simulating it.
 
-    A scene names every entity it holds as one of these, so a kind of entity described later stands there too.
+    A scene names every entity it holds as one of these, so a kind of entity described later stands there too. The
+    material is what every description holds, since the simulator picks the solver from it.
     """
+
+    material: Material
 
 
 class Entity(RBC):
@@ -34,6 +39,9 @@ class Entity(RBC):
         surface,
         name: str | None = None,
     ):
+        # An entity is created from one morph. A kind of entity built from several passes the primary one here.
+        if not isinstance(morph, Morph):
+            gs.raise_exception(f"An entity is created from one morph, got {type(morph).__name__}.")
         uid = gs.UID()
         while any(entity.uid.match(uid, short_only=True) for entity in scene.entities):
             uid = gs.UID()
