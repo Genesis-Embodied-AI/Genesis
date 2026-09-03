@@ -667,16 +667,11 @@ class Mesh(RBC, serialization.SerializationMixin):
         A mesh is written this way rather than through its fields because construction convexifies, decimates and
         rescales it: what a file carries is the geometry as it now stands, so reading one back processes nothing.
         """
-        # The recorded asset path belongs to the author's filesystem, so the file keeps the bare name and the
-        # geometry travels inside it.
-        metadata = self.metadata
-        if metadata.get("mesh_path") is not None:
-            metadata = {**metadata, "mesh_path": os.path.basename(metadata["mesh_path"])}
         return {
             "geometry": _exported_geometry(self.trimesh, exporting),
             "uvs": None if self.uvs is None else exporting.array(self.uvs),
             "surface": exporting.value(self.surface, Surface),
-            "metadata": exporting.value(metadata, Any),
+            "metadata": exporting.value(self.metadata, Any),
         }
 
     @classmethod
