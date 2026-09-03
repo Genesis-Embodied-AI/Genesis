@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
@@ -15,7 +15,7 @@ from genesis.engine.solvers.rigid.abd.inverse_kinematics import (
     kernel_set_ik_targets,
 )
 from genesis.engine.states.solvers import KinematicSolverState
-from genesis.options.solvers import KinematicOptions, RigidOptions
+from genesis.options.solvers import KinematicOptions
 from genesis.utils.misc import (
     assign_indexed_tensor,
     broadcast_tensor,
@@ -118,10 +118,13 @@ def _fill_base_link_geom_offsets(offset_pos, offset_quat, entity, geoms, ranges)
     """
     for geom in geoms:
         if ranges is None:
-            link_off_pos = entity._links_offset_pos.get(geom.link.idx - entity._link_start)
-            if link_off_pos is None:
+            # An identity link offset leaves the geom frame in place, so the conjugation is skipped
+            link_off_pos = geom.link.desc.offset_pos
+            link_off_quat = geom.link.desc.offset_quat
+            if np.allclose(link_off_pos, 0.0, atol=gs.EPS) and np.allclose(
+                link_off_quat, gu.identity_quat(), atol=gs.EPS
+            ):
                 continue
-            link_off_quat = entity._links_offset_quat[geom.link.idx - entity._link_start]
             morph = entity._morph
         else:
             # 'ranges' only cover the heterogeneous base link's variant geoms; geoms on other (child) links carry no
@@ -129,8 +132,8 @@ def _fill_base_link_geom_offsets(offset_pos, offset_quat, entity, geoms, ranges)
             i_variant = next((i for i, (start, end) in enumerate(ranges) if start <= geom.idx < end), None)
             if i_variant is None:
                 continue
-            link_off_pos = entity._variant_offset_pos[i_variant]
-            link_off_quat = entity._variant_offset_quat[i_variant]
+            link_off_pos = entity._desc.variants[i_variant].offset_pos
+            link_off_quat = entity._desc.variants[i_variant].offset_quat
             morph = entity._morph if i_variant == 0 else entity._morph_heterogeneous[i_variant - 1]
         frame_pos, frame_quat = gu.transform_pos_quat_by_trans_quat(
             geom.init_pos, geom.init_quat, link_off_pos, link_off_quat
@@ -181,11 +184,16 @@ class KinematicSolver(Solver):
     # ----------------------------------- add_entity -------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def add_entity(self, idx, material, morph, surface, visualize_contact=False, name=None) -> "KinematicEntity":
+    def add_entity(
+        self, idx, material, morph, surface, visualize_contact=False, name=None, desc=None
+    ) -> "KinematicEntity":
         morph_heterogeneous = []
         if isinstance(morph, (tuple, list)):
             morph, *morph_heterogeneous = morph
             self._enable_heterogeneous |= bool(morph_heterogeneous)
+
+        if isinstance(morph, gs.morphs.Terrain):
+            gs.raise_exception("Kinematic material is not supported for terrain morph for now.")
 
         morph._enable_mujoco_compatibility = self._enable_mujoco_compatibility
 
@@ -208,6 +216,7 @@ class KinematicSolver(Solver):
             custom_vface_start=self.n_custom_vfaces,
             morph_heterogeneous=morph_heterogeneous,
             name=name,
+            desc=desc,
         )
         self._entities.append(entity)
         return entity
@@ -261,10 +270,10 @@ class KinematicSolver(Solver):
         # has divergent variant offsets, and as a single broadcast row otherwise. Forward offset device tensors are
         # None when everything is identity, and the relative getters recompute the inverse on the fly.
         links_offset_per_env = any(
-            entity._variant_offset_pos is not None
-            and not all(
-                np.allclose(pos, entity._variant_offset_pos[0]) and np.allclose(quat, entity._variant_offset_quat[0])
-                for pos, quat in zip(entity._variant_offset_pos, entity._variant_offset_quat)
+            not all(
+                np.allclose(variant.offset_pos, entity._desc.variants[0].offset_pos)
+                and np.allclose(variant.offset_quat, entity._desc.variants[0].offset_quat)
+                for variant in entity._desc.variants
             )
             for entity in self._entities
         )
@@ -274,21 +283,21 @@ class KinematicSolver(Solver):
         vgeoms_offset_pos = np.zeros((self.n_vgeoms, 3), dtype=gs.np_float)
         vgeoms_offset_quat = np.tile(gu.identity_quat(), (self.n_vgeoms, 1))
         for entity in self._entities:
-            if links_offset_per_env and entity._variant_offset_pos is not None:
-                variant_idx = _balanced_variant_mapping(len(entity._variant_offset_pos), self._B)
+            if links_offset_per_env and entity._desc.variants:
+                variant_idx = _balanced_variant_mapping(len(entity._desc.variants), self._B)
                 links_offset_pos[np.arange(self._B), entity.base_link_idx] = np.stack(
-                    [entity._variant_offset_pos[v] for v in variant_idx]
+                    [entity._desc.variants[v].offset_pos for v in variant_idx]
                 )
                 links_offset_quat[np.arange(self._B), entity.base_link_idx] = np.stack(
-                    [entity._variant_offset_quat[v] for v in variant_idx]
+                    [entity._desc.variants[v].offset_quat for v in variant_idx]
                 )
                 vgeoms_ranges = entity.base_link._variant_vgeom_ranges
             else:
                 # Each root link carries its own offset; children inherit it through the kinematic chain and stay
                 # identity. Visual geoms get the morph offset conjugated into their own frame.
-                for local_idx, link_offset_pos in entity._links_offset_pos.items():
-                    links_offset_pos[:, entity._link_start + local_idx] = link_offset_pos
-                    links_offset_quat[:, entity._link_start + local_idx] = entity._links_offset_quat[local_idx]
+                for local_idx, link in enumerate(entity.links):
+                    links_offset_pos[:, entity._link_start + local_idx] = link.desc.offset_pos
+                    links_offset_quat[:, entity._link_start + local_idx] = link.desc.offset_quat
                 vgeoms_ranges = None
             _fill_base_link_geom_offsets(vgeoms_offset_pos, vgeoms_offset_quat, entity, entity.vgeoms, vgeoms_ranges)
         # Per-link identity masks gate the relative set/backward paths: a relative set on a link whose offset is
@@ -445,14 +454,9 @@ class KinematicSolver(Solver):
                 np.array([link.geom_end for link in links], dtype=gs.np_int),
                 np.array([link.vgeom_start for link in links], dtype=gs.np_int),
                 np.array([link.vgeom_end for link in links], dtype=gs.np_int),
-                np.array([link.desc.invweight for link in links], dtype=gs.np_float),
                 np.array([link.is_fixed for link in links], dtype=gs.np_bool),
                 np.array([link.desc.pos for link in links], dtype=gs.np_float),
                 np.array([link.desc.quat for link in links], dtype=gs.np_float),
-                np.array([link.desc.inertial_pos for link in links], dtype=gs.np_float),
-                np.array([link.desc.inertial_quat for link in links], dtype=gs.np_float),
-                np.array([link.desc.inertia for link in links], dtype=gs.np_float),
-                np.array([link.desc.mass for link in links], dtype=gs.np_float),
                 self.dyn_state,
                 self.dyn_info,
                 self.rigid_info,
@@ -484,13 +488,13 @@ class KinematicSolver(Solver):
 
             # Dispatch per-variant init_qpos for heterogeneous entities
             for entity in self.entities:
-                if entity._variant_init_qpos is None:
+                if not entity._desc.variants:
                     continue
-                n_variants = len(entity._variant_init_qpos)
+                n_variants = len(entity._desc.variants)
                 variant_idx = _balanced_variant_mapping(n_variants, self._B)
                 q_s, q_e = entity.q_start, entity.q_start + entity.n_qs
                 for i_b in range(self._B):
-                    init_qpos[q_s:q_e, i_b] = entity._variant_init_qpos[variant_idx[i_b]]
+                    init_qpos[q_s:q_e, i_b] = entity._desc.variants[variant_idx[i_b]].init_qpos
 
             self.qpos0.from_numpy(init_qpos)
             is_init_qpos_out_of_bounds = False
@@ -1458,6 +1462,11 @@ class KinematicSolver(Solver):
         if self.is_built:
             return self._joints
         return gs.List(joint for entity in self._entities for joint in entity.joints)
+
+    @property
+    def equalities(self):
+        """The equality constraints the solver enforces, which a kinematic solver holds none of."""
+        return gs.List()
 
     @property
     def geoms(self):

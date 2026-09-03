@@ -600,7 +600,7 @@ class RigidOptions(GravityMixin, TimeBasedMixin):
     enable_adjacent_collision: StrictBool = False
     disable_constraint: StrictBool = False
     max_collision_pairs: NonNegativeInt = 150
-    max_contacts: PositiveInt | None = None
+    max_contacts: NonNegativeInt | None = None
     multiplier_collision_broad_phase: PositiveInt = 8
     integrator: gs.integrator = gs.integrator.approximate_implicitfast
     IK_max_targets: PositiveInt = 6

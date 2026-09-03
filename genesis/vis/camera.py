@@ -694,7 +694,7 @@ class Camera(RBC):
         # started. The framerate the video is encoded at was settled when its stream was opened.
         viewer = self._visualizer.viewer
         realtime_factor = (
-            viewer.realtime_factor if viewer is not None else self._visualizer.scene.viewer_options.realtime_factor
+            viewer.realtime_factor if viewer is not None else self._visualizer.scene.options.viewer.realtime_factor
         ) or 1.0
         self._recorded_steps_per_frame = max(
             1, round(realtime_factor / (self._recorded_fps * self._visualizer.scene.dt))
@@ -766,7 +766,7 @@ class Camera(RBC):
         # A realtime factor left unset means running as fast as possible, which carries no time scale to honor.
         viewer = self._visualizer.viewer
         realtime_factor = (
-            viewer.realtime_factor if viewer is not None else self._visualizer.scene.viewer_options.realtime_factor
+            viewer.realtime_factor if viewer is not None else self._visualizer.scene.options.viewer.realtime_factor
         ) or 1.0
         dt = self._visualizer.scene.dt
         steps_per_frame = realtime_factor / (fps * dt)

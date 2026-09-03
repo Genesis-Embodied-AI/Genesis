@@ -10,14 +10,19 @@ from genesis.engine.mesh import InertialProperties
 from genesis.repr_base import RBC
 from genesis.typing import LaxPositiveFArrayType, Matrix3x3Type, UnitVec4FType, Vec3FType
 from genesis.utils import geom as gu
-from genesis.utils.description import GeomDescription, LinkDescription
+from genesis.utils.description import (
+    Described,
+    KinematicLinkDescription,
+    RigidGeomDescription,
+    RigidLinkDescription,
+    RigidVisGeomDescription,
+)
 from genesis.utils.misc import DeprecationError, qd_to_torch
 
 from .rigid_geom import RigidGeom, RigidVisGeom
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid import RigidSolver
-    from genesis.options.morphs import Morph
 
     from .rigid_entity import KinematicEntity, RigidEntity
     from .rigid_joint import RigidJoint
@@ -40,7 +45,7 @@ def get_local_inertial_from_geom(
 
     Primitive types use the analytic formula on `data`; MESH defers to the mesh's cached unit-density mass properties
     (`Mesh.inertial`) scaled by `rho`. This is the load-time computation available to kinematic and rigid
-    entities alike (it operates on the description, not on a geom object), so the anchor it feeds matches the finalized
+    entities alike (it operates on the parsed info, not on a geom object), so the anchor it feeds matches the finalized
     geom-derived inertia exactly.
     """
     geom_com_local = np.zeros(3)
@@ -132,35 +137,39 @@ def compose_inertial_properties(geoms_inertial_info: Sequence[GeomInertialInfo])
     return InertialProperties(global_mass, global_com, global_inertia)
 
 
-def compose_inertial_from_geoms(g_descs: Sequence[GeomDescription], rho: float) -> InertialProperties:
-    """
-    Compose inertial properties (mass, center of mass, inertia tensor) from parsed geom infos.
+def compose_inertial_from_g_infos(g_infos: Sequence[dict], rho: float) -> InertialProperties:
+    """Compose the inertial of the geoms one link holds, at 'rho' where a geom states no density of its own.
 
-    Handles all primitive collision geometry types analytically (SPHERE, ELLIPSOID, CYLINDER, CAPSULE, BOX) and defers
-    to the mesh's cached unit-density mass properties for MESH type. Visual-only infos are treated as their visual
-    mesh.
+    Every primitive collision type is handled analytically, and a mesh defers to its cached unit-density mass
+    properties. A geom the link is only drawn with is taken as its visual mesh, so one call covers either kind.
 
     Parameters
     ----------
-    g_descs : list[GeomDescription]
-        Described geoms to compute inertial from.
+    g_infos : Sequence[dict]
+        Parsed geom infos to compose the inertial from.
     rho : float
         Material density (kg/m^3), used for every geom info without its own authored density.
+
+    Returns
+    -------
+    inertial : InertialProperties
+        Mass, center of mass and inertia tensor of the geoms together, in the frame they are stated in.
     """
-    geoms_inertial_info = tuple(
-        GeomInertialInfo(
-            get_local_inertial_from_geom(
-                gs.GEOM_TYPE.MESH if g_desc.vmesh is not None else g_desc.type,
-                g_desc.data,
-                g_desc.vmesh if g_desc.vmesh is not None else g_desc.mesh,
-                rho if g_desc.density is None else g_desc.density,
-            ),
-            np.asarray(g_desc.pos, dtype=gs.np_float),
-            np.asarray(g_desc.quat, dtype=gs.np_float),
+    return compose_inertial_properties(
+        tuple(
+            GeomInertialInfo(
+                get_local_inertial_from_geom(
+                    gs.GEOM_TYPE.MESH if "vmesh" in g_info else g_info["type"],
+                    None if "vmesh" in g_info else g_info.get("data"),
+                    g_info["vmesh"] if "vmesh" in g_info else g_info["mesh"],
+                    rho if g_info.get("density") is None else g_info["density"],
+                ),
+                np.asarray(g_info.get("pos", gu.zero_pos()), dtype=gs.np_float),
+                np.asarray(g_info.get("quat", gu.identity_quat()), dtype=gs.np_float),
+            )
+            for g_info in g_infos
         )
-        for g_desc in g_descs
     )
-    return compose_inertial_properties(geoms_inertial_info)
 
 
 class LinkInertial(NamedTuple):
@@ -177,13 +186,6 @@ class LinkInertial(NamedTuple):
     retain their authored ``com`` and ``quat``."""
 
 
-class LinkVariant(NamedTuple):
-    """One heterogeneous variant of a link: the morph it was loaded from, and what that asset described it with."""
-
-    morph: "Morph"
-    desc: LinkDescription
-
-
 class LinkInertialInfo(NamedTuple):
     """A link's (or variant's) load-time inertial data.
 
@@ -192,8 +194,8 @@ class LinkInertialInfo(NamedTuple):
     in '_align_free_roots': True when the mass is explicit in the asset (an explicit mass, or an authored density on
     every geom), False for a pure geometry estimate (the true mass is a uniform material-density rescale of it), and
     None when the link mixes geoms with and without an authored density (neither explicit nor uniformly rescalable).
-    'hint' is the material-density-resolved geometry estimate consumed by 'RigidLink._build' (None for kinematic
-    entities, which have no dynamics)."""
+    'hint' is the material-density-resolved geometry estimate that resolving a link description consumes (None for
+    kinematic entities, which have no dynamics)."""
 
     props: LinkInertial
     is_mass_explicit: bool | None
@@ -207,9 +209,9 @@ def finalize_inertial(
 
     Explicit values are used when given; otherwise the geometry estimate is used, and an explicit mass rescales a
     geometry-derived inertia. An omitted center of mass defaults to the link-frame origin when an explicit inertia
-    matrix is provided. The hint comes from the load-time inertial info ('compose_inertial_from_geoms' over the
-    parsed geom infos, feeding both 'RigidLink._build' and the align anchor) - the single resolution path keeps the
-    rigid dynamics inertia and the align anchor in lockstep.
+    matrix is provided. The hint comes from the load-time inertial info, computed from the geometry the link holds
+    and used by both the link description and the align anchor. One resolution path keeps the rigid dynamics inertia
+    and the align anchor in lockstep.
 
     With ``clamp_min_mass`` the resolved mass is floored at ``gs.EPS`` so a geometry-less moving link stays
     non-singular in the dynamics; the align stash passes ``False`` so a genuinely massless link keeps its ``0.0``
@@ -237,7 +239,7 @@ def finalize_inertial(
     )
 
 
-class KinematicLink(RBC):
+class KinematicLink(Described, RBC):
     """
     Kinematic class. One KinematicEntity consists of multiple KinematicLinks, each of which is a rigid body and could
     consist of multiple RigidVisGeoms (`link.vgeoms` for visualization).
@@ -254,9 +256,9 @@ class KinematicLink(RBC):
         vgeom_start: int,
         vvert_start: int,
         vface_start: int,
-        desc: LinkDescription,
+        desc: KinematicLinkDescription,
     ):
-        self.desc: LinkDescription = desc
+        self.desc: KinematicLinkDescription = desc
         self._entity: "KinematicEntity" = entity
         self._solver: "RigidSolver" = entity.solver
         self._entity_idx_in_solver = entity._idx_in_solver
@@ -304,7 +306,7 @@ class KinematicLink(RBC):
         for vgeom in self._vgeoms:
             vgeom._build()
 
-    def _add_vgeom(self, desc: GeomDescription):
+    def _add_vgeom(self, desc: RigidVisGeomDescription):
         vgeom = RigidVisGeom(
             link=self,
             idx=self.n_vgeoms + self._vgeom_start,
@@ -637,7 +639,7 @@ class RigidLink(KinematicLink):
         vvert_start: int,
         vface_start: int,
         visualize_contact: bool,
-        desc: LinkDescription,
+        desc: RigidLinkDescription,
     ):
         super().__init__(
             entity, idx, parent_idx, root_idx, joint_start, n_joints, vgeom_start, vvert_start, vface_start, desc
@@ -655,18 +657,6 @@ class RigidLink(KinematicLink):
         self._edge_start: int = edge_start
         self._verts_state_start: int = verts_state_start
 
-        # Normalize the inertial values in the description the link reads them from: arrays for the offsets and the
-        # inertia, a float for the mass, and the identity quaternion for an orientation the asset leaves unset
-        if desc.inertial_pos is not None:
-            desc.inertial_pos = np.asarray(desc.inertial_pos, dtype=gs.np_float)
-        desc.inertial_quat = np.asarray(
-            (1.0, 0.0, 0.0, 0.0) if desc.inertial_quat is None else desc.inertial_quat, dtype=gs.np_float
-        )
-        if desc.mass is not None:
-            desc.mass = float(desc.mass)
-        if desc.inertia is not None:
-            desc.inertia = np.asarray(desc.inertia, dtype=gs.np_float)
-
         self._visualize_contact = visualize_contact
 
         self._geoms: list[RigidGeom] = gs.List()
@@ -678,7 +668,6 @@ class RigidLink(KinematicLink):
         """Start tracking heterogeneous variants. Records first variant from current state."""
         super()._init_variant_tracking()
         self._variant_geom_ranges = [(self._geom_start, self._geom_start + self.n_geoms)]
-        self._variant_sources: list[LinkVariant] | None = None
 
     def _record_variant_geom_range(self, n_new_geoms):
         """Record a new variant's geom range."""
@@ -691,149 +680,18 @@ class RigidLink(KinematicLink):
         for geom in self._geoms:
             geom._build()
 
-        # Estimate the spatial inertia of the link. It will be used as a guess if not specified in morph, or as baseline
-        # to proof-check the provided values. The estimate was resolved at load from the described geoms (primary
-        # variant), the only time their authored per-geom densities are available.
-        hint_mass = 0.0
-        hint_com = np.zeros(3, dtype=gs.np_float)
-        hint_inertia = np.zeros((3, 3), dtype=gs.np_float)
-        aabb_min = np.full((3,), float("inf"), dtype=gs.np_float)
-        aabb_max = np.full((3,), float("-inf"), dtype=gs.np_float)
-        if not self._is_fixed:
-            hint_mass, hint_com, hint_inertia = self.entity._links_inertial_info[self.idx - self.entity._link_start][
-                0
-            ].hint
-
-            # Compute the bounding box of the links using both visual and collision geometries to be conservative
-            for geoms, is_visual in zip((self._geoms, self._vgeoms), (False, True)):
-                for geom in geoms:
-                    verts = geom.init_vverts if is_visual else geom.init_verts
-                    verts = gu.transform_by_trans_quat(verts, geom.init_pos, geom.init_quat)
-                    aabb_min = np.minimum(aabb_min, verts.min(axis=0))
-                    aabb_max = np.maximum(aabb_max, verts.max(axis=0))
-
-        # The consistency-check block below rescales its working copy of the geometry estimate; keep the raw hint for
-        # the shared inertial resolution.
-        hint_mass_raw, hint_inertia_raw = hint_mass, np.array(hint_inertia)
-
-        # Make sure that provided spatial inertia is consistent with the estimate from the geometries if not fixed
-        if (self.desc.mass or hint_mass) > MASS_EPS and hint_mass > gs.EPS:
-            # An omitted center of mass is resolved to the link frame origin whenever the inertia tensor is authored
-            # (see 'finalize_inertial'), so it must undergo the same consistency check as an authored one.
-            inertial_pos = self.desc.inertial_pos
-            if inertial_pos is None and self.desc.inertia is not None:
-                inertial_pos = gu.zero_pos()
-            if inertial_pos is not None:
-                tol = (aabb_max - aabb_min) * AABB_EPS + AABB_EPS
-                if not ((aabb_min - tol < inertial_pos) & (inertial_pos < aabb_max + tol)).all():
-                    com_str: list[str] = []
-                    aabb_str: list[str] = []
-                    for name, pos, axis_min, axis_max in zip(("x", "y", "z"), inertial_pos, aabb_min, aabb_max):
-                        com_str.append(f"{name}={pos:0.3f}")
-                        aabb_str.append(f"{name}=({axis_min:0.3f}, {axis_max:0.3f})")
-                    gs.logger.warning(
-                        f"Link '{self.desc.name}' has dubious center of mass [{', '.join(com_str)}] compared to the "
-                        f"bounding box from geometry [{', '.join(aabb_str)}]."
-                    )
-
-            if self.desc.mass is not None:
-                if not (hint_mass / INERTIA_RATIO_MAX <= self.desc.mass <= INERTIA_RATIO_MAX * hint_mass):
-                    gs.logger.warning(
-                        f"Link '{self.desc.name}' has dubious mass {self.desc.mass:0.3f} compared to the estimate "
-                        f"from geometry {hint_mass:0.3f}."
-                    )
-                hint_inertia *= self.desc.mass / hint_mass
-                hint_mass = self.desc.mass
-
-            if self.desc.inertia is not None:
-                inertia_diag = np.diag(self.desc.inertia)
-                hint_inertia_diag = np.diag(hint_inertia)
-                if not (
-                    (hint_inertia_diag / INERTIA_RATIO_MAX <= inertia_diag)
-                    & (inertia_diag <= INERTIA_RATIO_MAX * hint_inertia_diag)
-                ).all():
-                    inertias_str = []
-                    for data in (inertia_diag, hint_inertia_diag):
-                        inertia_str = ",".join(f"{name}={val:0.3e}" for name, val in zip(("ixx", "iyy", "izz"), data))
-                        inertias_str.append(inertia_str)
-                    gs.logger.warning(
-                        f"Link '{self.desc.name}' has dubious inertia ["
-                        + inertias_str[0]
-                        + "] compared to the estimate "
-                        "from geometry [" + inertias_str[1] + "]."
-                    )
-
-        if self.desc.mass is None or self.desc.inertia is None:
-            if not self._is_fixed and self._vgeoms and not self._geoms:
-                gs.logger.info(
-                    f"Mass is not specified and collision geoms can not be found for link '{self.name}'. "
-                    f"Using visual geoms to compute inertial properties."
-                )
-            if self.desc.inertial_pos is not None and self.desc.inertia is None:
-                gs.logger.warning(
-                    f"Ignoring center of mass of link '{self.name}' because inertia matrix is not specified."
-                )
-            self.desc.invweight = None
-
-        # Resolve the final inertial from the explicit values and the geometry estimate, sharing finalize_inertial with
-        # the load-time inertial info so the dynamics inertia and the align anchor stay in lockstep.
-        inertial = finalize_inertial(
-            self.desc.mass,
-            self.desc.inertial_pos,
-            self.desc.inertial_quat,
-            self.desc.inertia,
-            hint_mass_raw,
-            hint_com,
-            hint_inertia_raw,
-        )
-        self.desc.mass, self.desc.inertial_pos = inertial.mass, inertial.com
-        self.desc.inertial_quat, self.desc.inertia = inertial.quat, inertial.inertia
-
-        # Postpone computation of inverse weight if not specified
-        if self.desc.invweight is None:
-            self.desc.invweight = np.full((2,), fill_value=-1.0, dtype=gs.np_float)
-
-        # override invweight if fixed
-        if self._is_fixed:
-            self.desc.invweight = np.zeros((2,), dtype=gs.np_float)
-
         # Compute per-variant inertial for heterogeneous links
         if self._variant_geom_ranges is not None:
-            self._variant_inertial = []
-            for v in range(len(self._variant_geom_ranges)):
-                if v == 0:
-                    # Primary variant: use the link's own parsed/computed inertial
-                    self._variant_inertial.append(
-                        LinkInertial(
-                            self.desc.mass,
-                            np.asarray(self.desc.inertial_pos, dtype=gs.np_float),
-                            (
-                                np.asarray(self.desc.inertial_quat, dtype=gs.np_float)
-                                if self.desc.inertial_quat is not None
-                                else gu.identity_quat()
-                            ),
-                            np.asarray(self.desc.inertia, dtype=gs.np_float),
-                        )
-                    )
-                    continue
+            self._variant_inertial = [
+                LinkInertial(self.desc.mass, self.desc.inertial_pos, self.desc.inertial_quat, self.desc.inertia)
+            ]
+            for variant in self.entity._desc.variants[1:]:
+                v_l_desc = variant.links[self.idx - self.entity._link_start]
+                self._variant_inertial.append(
+                    LinkInertial(v_l_desc.mass, v_l_desc.inertial_pos, v_l_desc.inertial_quat, v_l_desc.inertia)
+                )
 
-                # Resolve the inertial parsed from the variant file (index v-1 because variant 0 is the primary)
-                # against this variant's own geometry estimate. Going through the shared resolution path is what makes
-                # a variant behave like the same asset loaded on its own, whatever it leaves unspecified. A
-                # Primitive/Mesh variant has no parsed inertial, and 'recompute_inertia' discards it on purpose, so
-                # both fall back to the estimate alone.
-                v_mass, v_pos, v_quat, v_i = None, None, None, None
-                if self._variant_sources is not None:
-                    variant = self._variant_sources[v - 1]
-                    if not (variant.morph.recompute_inertia and not self._is_fixed):
-                        v_mass = variant.desc.mass
-                        v_pos = variant.desc.inertial_pos
-                        v_quat = variant.desc.inertial_quat
-                        v_i = variant.desc.inertia
-                hint = self.entity._links_inertial_info[self.idx - self.entity._link_start][v].hint
-                self._variant_inertial.append(finalize_inertial(v_mass, v_pos, v_quat, v_i, *hint))
-
-    def _add_geom(self, desc: GeomDescription, center_init=None, needs_coup=False):
+    def _add_geom(self, desc: RigidGeomDescription, needs_coup=False):
         geom = RigidGeom(
             link=self,
             idx=self.n_geoms + self._geom_start,
@@ -844,7 +702,6 @@ class RigidLink(KinematicLink):
             verts_state_start=self.n_verts + self._verts_state_start,
             needs_coup=needs_coup,
             desc=desc,
-            center_init=center_init,
         )
         self._geoms.append(geom)
 

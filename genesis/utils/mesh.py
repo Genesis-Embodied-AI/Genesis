@@ -3,7 +3,6 @@ import marshal
 import math
 import os
 import pickle as pkl
-from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
 
@@ -19,7 +18,6 @@ from PIL import Image
 import genesis as gs
 
 from . import geom as gu
-from .description import GeomDescription
 from .misc import (
     SizeCappedCache,
     get_assets_dir,
@@ -472,7 +470,7 @@ _COLLISION_GEOMS_CACHE = SizeCappedCache(max_bytes=512 * 1024 * 1024)
 
 
 def postprocess_collision_geoms(
-    g_descs: list[GeomDescription],
+    g_infos,
     decimate,
     decimate_face_num,
     decimate_aggressiveness,
@@ -486,9 +484,9 @@ def postprocess_collision_geoms(
     # entity. The result is memoized on the geometry of the input collision meshes and on every option / per-geom field
     # that can change the outcome. The processed meshes are immutable (their vertices are only read downstream,
     # alignment is folded into the link frame), so the cached ones are shared across entities, which also collapses
-    # their memory footprint. Only fresh g_desc dicts are handed back so the caller can re-express the per-geom pose in
+    # their memory footprint. Only fresh g_info dicts are handed back so the caller can re-express the per-geom pose in
     # place without corrupting the template.
-    if not g_descs:
+    if not g_infos:
         return []
 
     # Keyed on the vertices themselves rather than matched within a tolerance the way the on-disk caches are: one
@@ -504,30 +502,30 @@ def postprocess_collision_geoms(
         -1 if watertighten is None else int(watertighten),
         coacd_options.model_dump(),
     ]
-    for g_desc in g_descs:
-        mesh = g_desc.mesh
-        geom_type = g_desc.type
-        friction = g_desc.friction
-        density = g_desc.density
-        sol_params = g_desc.sol_params
+    for g_info in g_infos:
+        mesh = g_info["mesh"]
+        geom_type = g_info.get("type")
+        friction = g_info.get("friction")
+        density = g_info.get("density")
+        sol_params = g_info.get("sol_params")
         key_parts += [
             np.ascontiguousarray(mesh.verts),
             np.ascontiguousarray(mesh.faces),
             -1 if geom_type is None else int(geom_type),
-            int(g_desc.contype),
-            int(g_desc.conaffinity),
+            int(g_info.get("contype", 0)),
+            int(g_info.get("conaffinity", 0)),
             float("nan") if friction is None else float(friction),
             float("nan") if density is None else float(density),
             np.zeros(0) if sol_params is None else np.ascontiguousarray(sol_params, dtype=np.float64),
-            np.ascontiguousarray(g_desc.pos, dtype=np.float64),
-            np.ascontiguousarray(g_desc.quat, dtype=np.float64),
+            np.ascontiguousarray(g_info.get("pos", gu.zero_pos()), dtype=np.float64),
+            np.ascontiguousarray(g_info.get("quat", gu.identity_quat()), dtype=np.float64),
         ]
     key = get_hashkey(*key_parts)
 
     cached = _COLLISION_GEOMS_CACHE.get(key)
     if cached is None:
         cached = _postprocess_collision_geoms_impl(
-            g_descs,
+            g_infos,
             decimate,
             decimate_face_num,
             decimate_aggressiveness,
@@ -536,7 +534,7 @@ def postprocess_collision_geoms(
             coacd_options,
             watertighten,
         )
-        n_bytes = sum(g_desc.mesh.verts.nbytes + g_desc.mesh.faces.nbytes for g_desc in cached)
+        n_bytes = sum(g_info["mesh"].verts.nbytes + g_info["mesh"].faces.nbytes for g_info in cached)
         _COLLISION_GEOMS_CACHE.put(key, cached, n_bytes)
 
     # Hand back per-entity geoms that share the cached geometry and its derived data (edges, vertex adjacency, inertia)
@@ -545,8 +543,8 @@ def postprocess_collision_geoms(
     # shared. Edges and adjacency are always needed, so they are populated up front; inertia is queried lazily through
     # the template (only entities that align their link frame need it) to avoid eager convex-hull work.
     result = []
-    for g_desc in cached:
-        template = g_desc.mesh
+    for g_info in cached:
+        template = g_info["mesh"]
         template_tmesh = template.trimesh
         mesh = gs.Mesh(
             mesh=trimesh.Trimesh(vertices=template_tmesh.vertices, faces=template_tmesh.faces, process=False),
@@ -557,12 +555,12 @@ def postprocess_collision_geoms(
         mesh._unique_edges = template.get_unique_edges()
         mesh._vert_adjacency = template.get_vert_adjacency()
         mesh._inertial_source = template
-        result.append(replace(g_desc, mesh=mesh))
+        result.append({**g_info, "mesh": mesh})
     return result
 
 
 def _postprocess_collision_geoms_impl(
-    g_descs: list[GeomDescription],
+    g_infos,
     decimate,
     decimate_face_num,
     decimate_aggressiveness,
@@ -572,13 +570,13 @@ def _postprocess_collision_geoms_impl(
     watertighten,
 ):
     # Early return if there is no geometry to process
-    if not g_descs:
+    if not g_infos:
         return []
 
     # Check whether the geometries are authored, ie they are all watertight and convex, as a cheap proxy
     is_authored = all(
-        (tmesh := g_desc.mesh.trimesh).is_winding_consistent and tmesh.is_watertight and tmesh.is_convex
-        for g_desc in g_descs
+        (tmesh := g_info["mesh"].trimesh).is_winding_consistent and tmesh.is_watertight and tmesh.is_convex
+        for g_info in g_infos
     )
 
     # Weld coincident vertices of non-convex collision meshes onto a separate copy. Formats that store unshared
@@ -589,16 +587,16 @@ def _postprocess_collision_geoms_impl(
     # is swapped for the welded copy, leaving the visual vertices untouched. Already-shared meshes (OBJ, glTF) weld to
     # no fewer vertices and keep their original geom.
     if not is_authored and not convexify:
-        for g_desc in g_descs:
-            if g_desc.type != gs.GEOM_TYPE.MESH:
+        for g_info in g_infos:
+            if g_info["type"] != gs.GEOM_TYPE.MESH:
                 continue
-            welded = g_desc.mesh.trimesh.copy()
+            welded = g_info["mesh"].trimesh.copy()
             welded.merge_vertices()
-            if len(welded.vertices) < len(g_desc.mesh.trimesh.vertices):
-                g_desc.mesh = gs.Mesh.from_trimesh(
+            if len(welded.vertices) < len(g_info["mesh"].trimesh.vertices):
+                g_info["mesh"] = gs.Mesh.from_trimesh(
                     mesh=welded,
                     surface=gs.surfaces.Collision(),
-                    metadata=g_desc.mesh.metadata.copy(),
+                    metadata=g_info["mesh"].metadata.copy(),
                 )
 
     # Try the repair meshes that seems to be "broken" but not beyond repair.
@@ -606,10 +604,10 @@ def _postprocess_collision_geoms_impl(
     # repair, to avoid altering the original mesh without actual benefit. Moreover, only duplicate faces are removed,
     # which is less aggressive than `Trimesh.process(validate=True)`.
     if not is_authored:
-        for g_desc in g_descs:
-            mesh = g_desc.mesh
+        for g_info in g_infos:
+            mesh = g_info["mesh"]
             tmesh = mesh.trimesh
-            if g_desc.type != gs.GEOM_TYPE.MESH:
+            if g_info["type"] != gs.GEOM_TYPE.MESH:
                 continue
             if tmesh.is_winding_consistent and not tmesh.is_watertight:
                 tmesh_repaired = tmesh.copy()
@@ -628,15 +626,15 @@ def _postprocess_collision_geoms_impl(
                     tmesh.visual._cache.clear()
 
     # Check which geometries can be convexified without decomposition
-    geoms_must_decompose = [False] * len(g_descs)
+    geoms_must_decompose = [False] * len(g_infos)
     volume_err_max = 0.0
     if not is_authored and convexify:
-        for i_g, g_desc in enumerate(g_descs):
-            mesh = g_desc.mesh
+        for i_g, g_info in enumerate(g_infos):
+            mesh = g_info["mesh"]
             tmesh = mesh.trimesh
 
             # Skip geometries that do not corresponds to mesh or have no enclosed volume
-            if g_desc.type != gs.GEOM_TYPE.MESH:
+            if g_info["type"] != gs.GEOM_TYPE.MESH:
                 continue
             cmesh = trimesh.convex.convex_hull(tmesh)
             if abs(cmesh.volume) < gs.EPS:
@@ -671,27 +669,22 @@ def _postprocess_collision_geoms_impl(
     # scan and roughly one contact set per link instead of per geom. All geom types can be merged except planes and
     # terrains. On the nonconvex path, sub-groups are systematically fused unless watertightening is disabled; on the
     # convex path, only when one of their members requires decomposition.
-    geoms_is_fused = [False] * len(g_descs)
-    if len(g_descs) > 1 and ((not convexify and watertighten is not None) or (not is_authored and must_decompose)):
+    geoms_is_fused = [False] * len(g_infos)
+    if len(g_infos) > 1 and ((not convexify and watertighten is not None) or (not is_authored and must_decompose)):
         fusion_groups: list[list[int]] = []
-        for i, g_desc in enumerate(g_descs):
+        for i, g_info in enumerate(g_infos):
             # Join the first existing sub-group with a matching collision group and contact params, else open a new one.
-            if g_desc.type not in (gs.GEOM_TYPE.PLANE, gs.GEOM_TYPE.TERRAIN):
+            if g_info["type"] not in (gs.GEOM_TYPE.PLANE, gs.GEOM_TYPE.TERRAIN):
                 for fusion_group in fusion_groups:
-                    first_g_desc = g_descs[fusion_group[0]]
+                    first_g_info = g_infos[fusion_group[0]]
                     if (
-                        first_g_desc.type not in (gs.GEOM_TYPE.PLANE, gs.GEOM_TYPE.TERRAIN)
-                        and (first_g_desc.contype, first_g_desc.conaffinity) == (g_desc.contype, g_desc.conaffinity)
-                        # A fused mesh carries a single density, so geoms with different authored densities must stay
-                        # separate for the density-weighted link inertial to survive fusion. What no geom of the pair
-                        # authored matches, since both fall back to the same value later on.
+                        first_g_info["type"] not in (gs.GEOM_TYPE.PLANE, gs.GEOM_TYPE.TERRAIN)
+                        and all(first_g_info.get(name) == g_info.get(name) for name in ("contype", "conaffinity"))
                         and all(
-                            (first is None) == (second is None) and (first is None or np.allclose(first, second))
-                            for first, second in (
-                                (first_g_desc.friction, g_desc.friction),
-                                (first_g_desc.sol_params, g_desc.sol_params),
-                                (first_g_desc.density, g_desc.density),
-                            )
+                            np.allclose(first_g_info.get(name, np.nan), g_info.get(name, np.nan), equal_nan=True)
+                            # A fused mesh carries a single density, so geoms with different authored densities must
+                            # stay separate for the density-weighted link inertial to survive fusion.
+                            for name in ("friction", "sol_params", "density")
                         )
                     ):
                         fusion_group.append(i)
@@ -701,22 +694,26 @@ def _postprocess_collision_geoms_impl(
             else:
                 fusion_groups.append([i])
 
-        fused_descs = []
+        fused_infos = []
         geoms_is_fused = []
         for fusion_group in fusion_groups:
             if len(fusion_group) == 1 or (convexify and not any(geoms_must_decompose[i] for i in fusion_group)):
-                fused_descs.extend(g_descs[i] for i in fusion_group)
+                fused_infos.extend(g_infos[i] for i in fusion_group)
                 geoms_is_fused.extend([False] * len(fusion_group))
                 continue
-            first_g_desc = g_descs[fusion_group[0]]
-            T_first_inv = np.linalg.inv(gu.trans_quat_to_T(first_g_desc.pos, first_g_desc.quat))
+            first_g_info = g_infos[fusion_group[0]]
+            T_first_inv = np.linalg.inv(
+                gu.trans_quat_to_T(first_g_info.get("pos", gu.zero_pos()), first_g_info.get("quat", gu.identity_quat()))
+            )
             tmeshes = []
-            metadata = set(first_g_desc.mesh.metadata.items())
+            metadata = set(first_g_info["mesh"].metadata.items())
             for i in fusion_group:
-                g_desc = g_descs[i]
-                mesh = g_desc.mesh
+                g_info = g_infos[i]
+                mesh = g_info["mesh"]
                 tmesh = mesh.trimesh
-                T_rel = T_first_inv @ gu.trans_quat_to_T(g_desc.pos, g_desc.quat)
+                T_rel = T_first_inv @ gu.trans_quat_to_T(
+                    g_info.get("pos", gu.zero_pos()), g_info.get("quat", gu.identity_quat())
+                )
                 if not np.allclose(T_rel, np.eye(4)):
                     tmesh = tmesh.copy()
                     tmesh.apply_transform(T_rel)
@@ -726,16 +723,16 @@ def _postprocess_collision_geoms_impl(
             mesh = gs.Mesh.from_trimesh(
                 mesh=tmesh, surface=gs.surfaces.Collision(), metadata=dict(metadata) | {"merged": True}
             )
-            fused_descs.append(replace(first_g_desc, type=gs.GEOM_TYPE.MESH, data=None, mesh=mesh))
+            fused_infos.append({**first_g_info, **dict(type=gs.GEOM_TYPE.MESH, data=None, mesh=mesh)})
             geoms_is_fused.append(True)
-        g_descs = fused_descs
+        g_infos = fused_infos
 
         # A genuinely fused mesh (a sub-group of more than one geom) re-enters the pipeline so its convex hull /
         # decomposition is recomputed on the union; requiring an actual merge stops infinite recursion once every
         # sub-group is either a singleton or accurate enough to skip decomposition.
         if convexify and any(geoms_is_fused):
             return _postprocess_collision_geoms_impl(
-                g_descs,
+                g_infos,
                 decimate,
                 decimate_face_num,
                 decimate_aggressiveness,
@@ -750,11 +747,11 @@ def _postprocess_collision_geoms_impl(
     if not convexify and watertighten is not None:
         from .watertighten import watertighten_mesh
 
-        for g_desc, is_fused in zip(g_descs, geoms_is_fused):
+        for g_info, is_fused in zip(g_infos, geoms_is_fused):
             # Fused geoms are always watertightened, as their sub-meshes may overlap while being individually
             # watertight. Other geoms are skipped if they are not generic meshes or already watertight or convex.
-            tmesh = g_desc.mesh.trimesh
-            if not is_fused and (g_desc.type != gs.GEOM_TYPE.MESH or tmesh.is_watertight or tmesh.is_convex):
+            tmesh = g_info["mesh"].trimesh
+            if not is_fused and (g_info["type"] != gs.GEOM_TYPE.MESH or tmesh.is_watertight or tmesh.is_convex):
                 continue
 
             # On-disk cache keyed by (vertices, faces, aggressiveness): a repeated build on the same geom is a file read
@@ -766,9 +763,9 @@ def _postprocess_collision_geoms_impl(
                 cache.save(cached_mesh)
             v_out, f_out = cached_mesh
             fused = trimesh.Trimesh(vertices=v_out, faces=f_out, process=False)
-            metadata = g_desc.mesh.metadata.copy()
+            metadata = g_info["mesh"].metadata.copy()
             metadata["watertightened"] = True
-            g_desc.mesh = gs.Mesh.from_trimesh(mesh=fused, surface=gs.surfaces.Collision(), metadata=metadata)
+            g_info["mesh"] = gs.Mesh.from_trimesh(mesh=fused, surface=gs.surfaces.Collision(), metadata=metadata)
 
     if not is_authored and must_decompose:
         if math.isinf(volume_err_max):
@@ -781,11 +778,11 @@ def _postprocess_collision_geoms_impl(
                 f"Convex hull is not accurate enough for collision detection ({volume_err_max:.3f}). Falling back to "
                 "more expensive convex decomposition (see FileMorph options)."
             )
-        _g_descs = []
-        for g_desc in g_descs:
-            mesh = g_desc.mesh
+        _g_infos = []
+        for g_info in g_infos:
+            mesh = g_info["mesh"]
             tmesh = mesh.trimesh
-            if g_desc.type != gs.GEOM_TYPE.MESH:
+            if g_info["type"] != gs.GEOM_TYPE.MESH:
                 volume_err = 0.0
             elif not tmesh.is_winding_consistent:
                 volume_err = float("inf")
@@ -802,15 +799,15 @@ def _postprocess_collision_geoms_impl(
                     )
                     for tmesh in tmeshes
                 ]
-                _g_descs += [replace(g_desc, mesh=mesh) for mesh in meshes]
+                _g_infos += [{**g_info, **dict(mesh=mesh)} for mesh in meshes]
             else:
-                _g_descs.append(g_desc)
-        g_descs = _g_descs
+                _g_infos.append(g_info)
+        g_infos = _g_infos
 
     # Process of meshes sequentially
-    _g_descs = []
-    for g_desc in g_descs:
-        mesh = g_desc.mesh
+    _g_infos = []
+    for g_info in g_infos:
+        mesh = g_info["mesh"]
         tmesh = mesh.trimesh
 
         num_faces = len(tmesh.faces)
@@ -843,9 +840,9 @@ def _postprocess_collision_geoms_impl(
             surface=gs.surfaces.Collision(),
             metadata=mesh.metadata.copy(),
         )
-        _g_descs.append(replace(g_desc, mesh=mesh))
+        _g_infos.append({**g_info, **dict(mesh=mesh)})
 
-    return _g_descs
+    return _g_infos
 
 
 @lru_cache(maxsize=32)

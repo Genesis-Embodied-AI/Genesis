@@ -207,14 +207,9 @@ def kernel_init_link_fields(
     links_geom_end: qd.types.ndarray(),
     links_vgeom_start: qd.types.ndarray(),
     links_vgeom_end: qd.types.ndarray(),
-    links_invweight: qd.types.ndarray(),
     links_is_fixed: qd.types.ndarray(),
     links_pos: qd.types.ndarray(),
     links_quat: qd.types.ndarray(),
-    links_inertial_pos: qd.types.ndarray(),
-    links_inertial_quat: qd.types.ndarray(),
-    links_inertial_i: qd.types.ndarray(),
-    links_inertial_mass: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -223,7 +218,7 @@ def kernel_init_link_fields(
     n_links = links_parent_idx.shape[0]
     _B = dyn_state.links.pos.shape[1]
 
-    for I_l in qd.grouped(dyn_info.links.invweight):
+    for I_l in qd.grouped(dyn_info.links.parent_idx):
         i_l = I_l[0]
 
         dyn_info.links.parent_idx[I_l] = links_parent_idx[i_l]
@@ -242,20 +237,11 @@ def kernel_init_link_fields(
         dyn_info.links.vgeom_start[I_l] = links_vgeom_start[i_l]
         dyn_info.links.vgeom_end[I_l] = links_vgeom_end[i_l]
 
-        for j in qd.static(range(2)):
-            dyn_info.links.invweight[I_l][j] = links_invweight[i_l, j]
-
         for j in qd.static(range(4)):
             dyn_info.links.quat[I_l][j] = links_quat[i_l, j]
-            dyn_info.links.inertial_quat[I_l][j] = links_inertial_quat[i_l, j]
 
         for j in qd.static(range(3)):
             dyn_info.links.pos[I_l][j] = links_pos[i_l, j]
-            dyn_info.links.inertial_pos[I_l][j] = links_inertial_pos[i_l, j]
-
-        dyn_info.links.inertial_mass[I_l] = links_inertial_mass[i_l]
-        for j1, j2 in qd.static(qd.ndrange(3, 3)):
-            dyn_info.links.inertial_i[I_l][j1, j2] = links_inertial_i[i_l, j1, j2]
 
     for i_l, i_b in qd.ndrange(n_links, _B):
         I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
@@ -277,6 +263,34 @@ def kernel_init_link_fields(
         qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
         for i_b in range(_B):
             rigid_info.n_awake_links[i_b] = n_links
+
+
+@qd.kernel(fastcache=True)
+def kernel_init_link_dynamics(
+    links_invweight: qd.types.ndarray(),
+    links_inertial_pos: qd.types.ndarray(),
+    links_inertial_quat: qd.types.ndarray(),
+    links_inertial_i: qd.types.ndarray(),
+    links_inertial_mass: qd.types.ndarray(),
+    # Quadrants variables
+    dyn_info: array_class.DynInfo,
+):
+    """Write each simulated link's inertial frame, inertia, mass and inverse weight."""
+    for I_l in qd.grouped(dyn_info.links.invweight):
+        i_l = I_l[0]
+
+        for j in qd.static(range(2)):
+            dyn_info.links.invweight[I_l][j] = links_invweight[i_l, j]
+
+        for j in qd.static(range(4)):
+            dyn_info.links.inertial_quat[I_l][j] = links_inertial_quat[i_l, j]
+
+        for j in qd.static(range(3)):
+            dyn_info.links.inertial_pos[I_l][j] = links_inertial_pos[i_l, j]
+
+        dyn_info.links.inertial_mass[I_l] = links_inertial_mass[i_l]
+        for j1, j2 in qd.static(qd.ndrange(3, 3)):
+            dyn_info.links.inertial_i[I_l][j1, j2] = links_inertial_i[i_l, j1, j2]
 
 
 @qd.kernel(fastcache=True)

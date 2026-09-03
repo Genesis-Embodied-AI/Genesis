@@ -1,15 +1,15 @@
 import genesis as gs
 from genesis.repr_base import RBC
-from genesis.utils.description import EqualityDescription
+from genesis.utils.description import Described, RigidEqualityDescription
 
 
-class RigidEquality(RBC):
+class RigidEquality(Described, RBC):
     """
     Equality class for rigid body entities.
     """
 
-    def __init__(self, entity, idx, eq_obj1id, eq_obj2id, desc: EqualityDescription):
-        self.desc: EqualityDescription = desc
+    def __init__(self, entity, idx, eq_obj1id, eq_obj2id, desc: RigidEqualityDescription):
+        self.desc: RigidEqualityDescription = desc
         self._entity = entity
         self._solver = entity.solver
 
