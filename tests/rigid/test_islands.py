@@ -492,7 +492,7 @@ def test_hibernation_with_pruning(show_viewer, n_envs):
     for duck, z in zip(ducks, z_rest):
         assert_allclose(duck.get_pos()[..., 2], z, atol=1e-5)
         # A sleeper resting on the ground keeps reporting the support force balancing its weight.
-        assert_allclose(duck.get_links_net_contact_force()[..., 0, 2], -GRAVITY * duck.get_mass(), tol=1e-2)
+        assert_allclose(duck.get_links_net_contact_force()[..., 0, 2], -GRAVITY * duck.get_mass(), tol=2e-3)
 
     # Resetting wakes every body: the restored state is a discontinuity, so a body left hibernated would stay frozen
     # and never be resimulated. After reset the ducks are awake again, with their flags cleared and awake counter zeroed.
@@ -873,7 +873,7 @@ def test_hibernation_wakes_on_collision(show_viewer, n_envs, broadphase_traversa
         assert_equal(box.get_dofs_velocity(), 0.0)
         assert_equal(box.get_dofs_force(), force)
         assert_equal(box.get_links_net_contact_force(), contact_force)
-        assert_allclose(contact_force[..., 0, 2], -GRAVITY * box.get_mass(), tol=1e-2)
+        assert_allclose(contact_force[..., 0, 2], -GRAVITY * box.get_mass(), tol=2e-3)
     rest_x0 = box_rest.get_pos()[..., 0]
 
     box_hit.set_dofs_velocity([-2.0, 0.0, 0.0, 0.0, 0.0, 0.0])
