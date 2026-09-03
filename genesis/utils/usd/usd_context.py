@@ -381,8 +381,11 @@ class UsdContext:
         # Note that it is necessary to call 'bake_usd_material' as a subprocess to ensure proper isolation of omniverse
         # kit, otherwise the global conversion registry of some Python bindings will be conflicting with each other,
         # ultimately leading to segfault...
+        # The fault handler dumps the Python stack of the child on a native crash, which is otherwise silent
         commands = [
             sys.executable,
+            "-X",
+            "faulthandler",
             os.path.join(os.path.dirname(os.path.abspath(__file__)), "usd_bake.py"),
             "--input_file",
             self._stage_file,
@@ -404,22 +407,27 @@ class UsdContext:
         # bake operations across parallel processes (e.g. pytest-xdist workers).
         lock_path = os.path.join(tempfile.gettempdir(), "genesis_usd_bake.lock")
         with filelock.FileLock(lock_path, timeout=600):
+            # The output is logged before the exit status is examined: Kit's own log and the crash stack live in it,
+            # and raising on a bad exit would skip past them.
             try:
-                result = subprocess.run(commands, capture_output=True, check=True, text=True, env=env)
+                result = subprocess.run(commands, capture_output=True, text=True, env=env)
+            except OSError as e:
+                gs.logger.warning(f"Baking process could not be started: {e}")
+            else:
                 if result.stdout:
                     gs.logger.debug(result.stdout)
                 if result.stderr:
                     gs.logger.warning(result.stderr)
-            except (subprocess.CalledProcessError, OSError) as e:
-                gs.logger.warning(
-                    f"Baking process failed: {e} A few possible reasons:"
-                    "\n\t1. The first launch may require accepting the Omniverse EULA. "
-                    "Set `OMNI_KIT_ACCEPT_EULA=yes` to accept it automatically."
-                    "\n\t2. The first launch may install additional dependencies, which can cause a timeout."
-                    "\n\t3. If you have multiple Python environments (especially with different Python versions), "
-                    "Omniverse Kit extensions may conflict across environments. Try to remove the shared omniverse "
-                    "extension folder (e.g. `~/.local/share/ov/data/ext` in Linux) and try again."
-                )
+                if result.returncode != 0:
+                    gs.logger.warning(
+                        f"Baking process failed with exit status {result.returncode}. A few possible reasons:"
+                        "\n\t1. The first launch may require accepting the Omniverse EULA. "
+                        "Set `OMNI_KIT_ACCEPT_EULA=yes` to accept it automatically."
+                        "\n\t2. The first launch may install additional dependencies, which can cause a timeout."
+                        "\n\t3. If you have multiple Python environments (especially with different Python versions), "
+                        "Omniverse Kit extensions may conflict across environments. Try to remove the shared omniverse "
+                        "extension folder (e.g. `~/.local/share/ov/data/ext` in Linux) and try again."
+                    )
 
         if os.path.exists(self._bake_stage_file):
             gs.logger.warning(f"USD materials baked to file {self._bake_stage_file}")
