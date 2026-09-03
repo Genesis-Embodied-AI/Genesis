@@ -7,19 +7,15 @@ import fast_simplification
 import numpy as np
 import trimesh
 
-from typing import TYPE_CHECKING
-
 import genesis as gs
 from genesis.ext.isaacgym import terrain_utils as isaacgym_terrain_utils
+from genesis.options.morphs import Terrain
 
 from .mesh import get_gnd_path
+from .misc import tensor_to_array
 
 
-if TYPE_CHECKING:
-    from genesis.options.morphs import Terrain
-
-
-def parse_terrain(morph: "Terrain", surface):
+def parse_terrain(morph: Terrain, surface):
     """
     Generate mesh (and height field) according to configurations passed by morph.
 
@@ -171,7 +167,7 @@ def parse_terrain(morph: "Terrain", surface):
             with open(gnd_file_path, "wb") as file:
                 pkl.dump(heightfield, file)
 
-    heightfield = np.asarray(heightfield, dtype=gs.np_float)
+    heightfield = tensor_to_array(heightfield, dtype=gs.np_float)
     need_uvs = getattr(surface, "diffuse_texture", None) is not None
     tmesh, sdf_tmesh = convert_heightfield_to_watertight_trimesh(
         heightfield,

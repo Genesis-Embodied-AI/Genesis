@@ -6,7 +6,7 @@
 * Never add attributes on the fly to external / non-owned instances.
 * Keep interop data as torch tensors or numpy arrays from the start instead of Quadrants kernels operating on CPU numpy arrays. Numpy implementations must be fully vectorized. Use Numba (single thread, CPU backend) for computation-heavy "kernels".
 * Allocate the exact memory size needed. Preallocation based on max size is prohibited.
-* Plain dicts for packing attributes are prohibited. Use strongly typed named data structures instead, either dataclasses or simple NamedTuples.
+* Plain dicts for packing attributes are prohibited. Use strongly typed named data structures instead, either dataclasses or simple NamedTuples. The one exception is the parsed info a rigid asset parser produces: what a format states is unstructured and incomplete until the resolution completes it, so it travels as a plain dict, confined to the parser and the resolution that consumes it. No built object holds one.
 * Local imports in functions are prohibited, unless strictly necessary to avoid circular dependencies.
 * No commented-out prints. Convert them to logging debug traces.
 * No code duplication.
@@ -85,7 +85,7 @@
 - **Never document a contract the code does not offer.** No array shape and no memory layout in a docstring unless the API guarantees it.
 - **Compare floats with a tolerance.** `==` and `!=` on floating-point values are prohibited, host-side values included: use `np.allclose(a, b, atol=gs.EPS)` or an explicit bound.
 - **Never write to a third-party object's private state.** Keep our own record beside the object and expose it through a property.
-- **State what IS, never what is NOT.** In comments, docstrings, and reports, drop "not X", "unlike Y", "does not ...", "it is X, not Y" unless the negation was explicitly asked for or is the literal spec. If a property is not mentioned, it does not exist - defending against an unraised concern is noise. Say the positive fact and stop.
+- **State what IS, never what is NOT.** In comments, docstrings, and reports, drop "not X", "unlike Y", "does not ...", "it is X, not Y" unless the negation was explicitly asked for or is the literal spec. If a property is not mentioned, it does not exist - defending against an unraised concern is noise. Say the positive fact and stop. The one exception is an expectation the reader would naively hold: where the naive reading is the wrong one, saying so is the fact, and the negation earns its place.
 - **Function-level description goes in a docstring, never a block of leading `#` comments** at the top of the body. Reserve inline comments for non-obvious implementation details at their point of use (e.g. a constraint-layout invariant a few lines rely on). A getter/method that opens with a paragraph of `#` prose is wrong; that prose is its docstring.
 - **Comments go on their own line above the code they annotate, never trailing inline, whenever possible.**
 - **No local imports** unless strictly necessary (e.g., circular dependency avoidance). All imports at module top level.
@@ -113,6 +113,7 @@
 - **Never remove or weaken an existing assertion or measurement to silence a failure** (local or CI). Report the failure with the data and ask; a threshold that only holds on one machine is a calibration problem.
 - **Bug fix PRs** must include a regression test that fails on `main` and passes with the fix, added to the test already covering the capability that broke.
 - **Never write a test that pins a known defect.** Tests assert observable physics and public API behavior, never implementation details.
+- **Never test a limitation, but do test that an unsupported input is handled.** A capability Genesis does not offer gets no test. Refusing an input it cannot handle is behavior, so a test asserts the refusal wherever proceeding would corrupt what the user gets.
 - **No deprecation tests.** Do not add unit tests that verify deprecation warnings are emitted.
 - Feature tests exercise the new behavior, not the internal warning machinery.
 - **Unit tests must NOT have docstrings.** A good test name spares writing the short docstring. A code comment is acceptable only when strongly motivated, i.e. it explains something the test body cannot convey. Never state regressions or history.

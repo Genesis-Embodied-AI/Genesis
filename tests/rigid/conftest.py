@@ -163,6 +163,25 @@ def tet_meshball():
 
 
 @pytest.fixture(scope="session")
+def urdf_with_external_mesh(asset_tmp_path):
+    """Generate a URDF naming a mesh by an absolute path outside the directory the model itself sits in."""
+    meshes = asset_tmp_path / "external_meshes"
+    meshes.mkdir(exist_ok=True)
+    mesh_file = meshes / "sphere.obj"
+    if not mesh_file.exists():
+        mesh_file.symlink_to(os.path.join(get_assets_dir(), "meshes", "sphere.obj"))
+    robot = ET.Element("robot", name="external_mesh")
+    link = ET.SubElement(robot, "link", name="base_link")
+    inertial = ET.SubElement(link, "inertial")
+    ET.SubElement(inertial, "mass", value="1.0")
+    ET.SubElement(inertial, "inertia", ixx="0.01", ixy="0", ixz="0", iyy="0.01", iyz="0", izz="0.01")
+    for tag in ("visual", "collision"):
+        geometry = ET.SubElement(ET.SubElement(link, tag), "geometry")
+        ET.SubElement(geometry, "mesh", filename=str(mesh_file), scale="0.05 0.05 0.05")
+    return ET.tostring(robot, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
 def mimic_hinges():
     mjcf = ET.Element("mujoco", model="mimic_hinges")
     ET.SubElement(mjcf, "compiler", angle="degree")
@@ -558,6 +577,21 @@ def undefined_inertia():
     """Generate a URDF with a single link that has no inertial element."""
     urdf = ET.Element("robot", name="undefined_inertia")
     _add_sphere_link(urdf, "base_link", "0.0 0.0 0.09")
+    return ET.tostring(urdf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
+def undefined_inertia_arm():
+    """Generate a URDF of two links joined by a revolute joint, neither authoring an inertial element."""
+    urdf = ET.Element("robot", name="undefined_inertia_arm")
+    _add_sphere_link(urdf, "base_link", "0.0 0.0 0.0")
+    _add_sphere_link(urdf, "tip_link", "0.0 0.0 0.09")
+    joint = ET.SubElement(urdf, "joint", name="elbow", type="continuous")
+    ET.SubElement(joint, "origin", xyz="0.0 0.0 0.2", rpy="0.0 0.0 0.0")
+    ET.SubElement(joint, "axis", xyz="1 0 0")
+    ET.SubElement(joint, "parent", link="base_link")
+    ET.SubElement(joint, "child", link="tip_link")
+    ET.SubElement(joint, "limit", effort="100.0", velocity="30.0")
     return ET.tostring(urdf, encoding="unicode")
 
 

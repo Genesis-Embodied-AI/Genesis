@@ -954,7 +954,7 @@ def test_many_objects_collision(convexify, show_viewer, tol):
         power = (force * v_rel).sum(dim=-1)
         keys = zip(link_a.tolist(), link_b.tolist(), map(tuple, (pos / 2e-3).round().tolist()))
         for key, contact_power in zip(keys, power.tolist()):
-            contact_energy[key] = contact_energy.get(key, 0.0) + contact_power * scene.sim_options.dt
+            contact_energy[key] = contact_energy.get(key, 0.0) + contact_power * scene.options.sim.dt
         energy_trace.append(tensor_to_array(scene.rigid_solver.get_total_energy()))
         if show_viewer:
             vmax_trace.append(com_vel.norm(dim=-1).max())

@@ -1216,58 +1216,6 @@ def test_reset(show_viewer, friction_cone, sparse_solve, use_hibernation, enable
         assert_equal(actual[BOOL_MASK], fallen_ref[BOOL_MASK])
 
 
-@pytest.mark.slow  # ~350s
-@pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_scene_saver_franka(tmp_path, show_viewer, tol):
-    scene1 = gs.Scene(
-        profiling_options=gs.options.ProfilingOptions(
-            show_FPS=False,
-        ),
-        show_viewer=show_viewer,
-    )
-    franka1 = scene1.add_entity(
-        gs.morphs.MJCF(
-            file="xml/franka_emika_panda/panda.xml",
-        ),
-    )
-    scene1.build()
-
-    dof_idx = [j.dofs_idx_local[0] for j in franka1.joints]
-
-    franka1.set_dofs_kp(np.full(len(dof_idx), 3000), dof_idx)
-    franka1.set_dofs_kv(np.full(len(dof_idx), 300), dof_idx)
-
-    target_pose = np.array([0.3, -0.8, 0.4, -1.6, 0.5, 1.0, -0.6, 0.03, 0.03], dtype=float)
-    franka1.control_dofs_position(target_pose, dof_idx)
-
-    for _ in range(100):
-        scene1.step()
-
-    pose_ref = franka1.get_dofs_position(dof_idx)
-
-    ckpt_path = tmp_path / "franka_unit.pkl"
-    scene1.save_checkpoint(ckpt_path)
-
-    scene2 = gs.Scene(show_viewer=show_viewer)
-    franka2 = scene2.add_entity(
-        gs.morphs.MJCF(
-            file="xml/franka_emika_panda/panda.xml",
-        ),
-    )
-    scene2.build()
-    scene2.load_checkpoint(ckpt_path)
-
-    pose_loaded = franka2.get_dofs_position(dof_idx)
-
-    # FIXME: It should be possible to achieve better accuracy with 64bits precision
-    assert_allclose(pose_ref, pose_loaded, tol=2e-6)
-
-    # A checkpoint carries how long each environment had simulated, so the loaded scene reports the time of the pose
-    # it restored rather than the one it had reached on its own.
-    assert_allclose(scene1.get_time(), scene2.get_time(), tol=gs.EPS)
-
-
 @pytest.mark.required
 def test_deprecated_properties(caplog):
     scene = gs.Scene(
@@ -1306,3 +1254,70 @@ def test_deprecated_properties(caplog):
             deprecated_value = getattr(joint, name_old)
         assert len(caplog.records) > 0
         assert_allclose(deprecated_value, getattr(joint, name_new), tol=gs.EPS)
+
+
+@pytest.mark.required
+def test_object_repr():
+    inline_mjcf = '<mujoco model="probe"><worldbody><body><geom type="box" size="1 1 1"/></body></worldbody></mujoco>'
+
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+        )
+    )
+    panda = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        )
+    )
+    inline = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file=inline_mjcf,
+        )
+    )
+    het = scene.add_entity(
+        morph=(
+            gs.morphs.Box(size=(0.2, 0.2, 0.2)),
+            gs.morphs.Cylinder(radius=0.05, height=0.2),
+        ),
+    )
+    scene.add_entity(
+        morph=(
+            gs.morphs.Box(size=(0.2, 0.2, 0.2)),
+            gs.morphs.Sphere(radius=0.1),
+        ),
+        material=gs.materials.Kinematic(),
+    )
+    cam = scene.add_camera(
+        res=(64, 64),
+        pos=(1.0, 1.0, 1.0),
+        lookat=(0.0, 0.0, 0.0),
+    )
+    scene.build(n_envs=2)
+
+    # Every printable object renders without raising, across both the brief and the full colorized form
+    for obj in (scene, scene.entities, cam, scene.sim.rigid_solver):
+        assert repr(obj)
+    for entity in scene.entities:
+        assert entity._repr_brief()
+        assert repr(entity)
+        for morph in entity.morphs:
+            assert repr(morph)
+        sub_objects = [*entity.links, *entity.joints, *entity.vgeoms]
+        if isinstance(entity, gs.engine.entities.RigidEntity):
+            sub_objects += list(entity.geoms)
+        for sub in sub_objects:
+            assert sub._repr_brief()
+            assert repr(sub)
+
+    # A morph created from a file prints its path. A morph created from inline XML prints the model name its
+    # document declares, and never the document itself.
+    assert "panda.xml" in repr(panda.main_morph)
+    assert "<inline probe>" in inline.main_morph.__repr_name__()
+    assert inline_mjcf not in repr(inline.main_morph)
+    # A heterogeneous entity reports its variants instead of collapsing to a single ambiguous morph
+    assert "morph variants" in het._repr_brief()

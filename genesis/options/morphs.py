@@ -997,8 +997,14 @@ class MJCF(FileMorph):
             gs.raise_exception(f"Expected `{MJCF_FORMAT}` extension for MJCF file: {self.file}")
 
     def _identifier(self) -> str:
-        if isinstance(self.file, str) and (name := mju.get_model_name(self.file)):
-            return name
+        # A morph outlives the file it came from, because the entity builds only once. An unreadable file falls back
+        # to the identifier of the morph type.
+        if isinstance(self.file, str):
+            try:
+                if name := mju.get_model_name(self.file):
+                    return name
+            except (ET.ParseError, OSError):
+                pass
         return super()._identifier()
 
 
@@ -1427,7 +1433,7 @@ class Terrain(Morph):
     def model_post_init(self, context: Any) -> None:
         if self.height_field is not None:
             try:
-                if np.array(self.height_field).ndim != 2:
+                if np.ndim(self.height_field) != 2:
                     gs.raise_exception("`height_field` should be a 2D array.")
             except Exception:
                 gs.raise_exception("`height_field` should be array-like to be converted to np.ndarray.")
