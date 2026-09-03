@@ -49,7 +49,7 @@ class PBDSolver(GravityMixin, TimeBasedMixin, Solver):
         self._max_density_solver_iterations = options.max_density_solver_iterations
         self._max_viscosity_solver_iterations = options.max_viscosity_solver_iterations
 
-        self._n_vvert_supports = self.scene.vis_options.n_support_neighbors
+        self._n_vvert_supports = self.scene.options.vis.n_support_neighbors
 
         # -Neighbours_Setting-
         self.dist_scale = self.particle_radius / 0.4  # @Zhenjia: double check this

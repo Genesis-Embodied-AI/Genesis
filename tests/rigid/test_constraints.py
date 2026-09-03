@@ -29,6 +29,68 @@ def test_equality_joint(gs_sim, mj_sim, gs_solver, tol):
 
 
 @pytest.mark.required
+def test_equality_joint_scaling(show_viewer, scaled_mjcf_joint_equalities, tol):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+            enable_joint_limit=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    SCALE = 2.0
+    entity = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file=scaled_mjcf_joint_equalities,
+            scale=SCALE,
+        ),
+    )
+    scene.build()
+
+    COEFFICIENTS = (0.2, 0.4, -0.3, 0.2, -0.1)
+    DRIVER_POSITION = 0.5
+    FOLLOWER_POSITION = (
+        COEFFICIENTS[0]
+        + COEFFICIENTS[1] * DRIVER_POSITION
+        + COEFFICIENTS[2] * DRIVER_POSITION**2
+        + COEFFICIENTS[3] * DRIVER_POSITION**3
+        + COEFFICIENTS[4] * DRIVER_POSITION**4
+    )
+    JOINT_PAIRS = (
+        ("hinge_hinge", "hinge", "hinge"),
+        ("slide_slide", "slide", "slide"),
+        ("slide_hinge", "slide", "hinge"),
+        ("hinge_slide", "hinge", "slide"),
+    )
+    qpos = entity.get_qpos()
+    for name, driver_type, follower_type in JOINT_PAIRS:
+        (driver_idx,) = entity.get_joint(f"{name}_driver").qs_idx_local
+        (follower_idx,) = entity.get_joint(f"{name}_follower").qs_idx_local
+        qpos[..., driver_idx] = DRIVER_POSITION * (SCALE if driver_type == "slide" else 1.0)
+        qpos[..., follower_idx] = FOLLOWER_POSITION * (SCALE if follower_type == "slide" else 1.0)
+    entity.set_qpos(qpos)
+    scene.step()
+
+    qpos = entity.get_qpos()
+    for name, driver_type, follower_type in JOINT_PAIRS:
+        (driver_idx,) = entity.get_joint(f"{name}_driver").qs_idx_local
+        (follower_idx,) = entity.get_joint(f"{name}_follower").qs_idx_local
+        driver_scale = SCALE if driver_type == "slide" else 1.0
+        follower_scale = SCALE if follower_type == "slide" else 1.0
+        driver_position = qpos[..., driver_idx] / driver_scale
+        expected_follower_position = (
+            COEFFICIENTS[0]
+            + COEFFICIENTS[1] * driver_position
+            + COEFFICIENTS[2] * driver_position**2
+            + COEFFICIENTS[3] * driver_position**3
+            + COEFFICIENTS[4] * driver_position**4
+        )
+        assert_allclose(qpos[..., follower_idx] / follower_scale, expected_follower_position, tol=tol)
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("xml_path", ["xml/four_bar_linkage_weld.xml", "weld.xml", "connect.xml"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
@@ -199,26 +261,56 @@ def test_dynamic_weld_scene_reset():
 
 
 @pytest.mark.required
-def test_urdf_mimic(show_viewer, tol):
-    # create and build the scene
-    scene = gs.Scene(show_viewer=show_viewer)
+def test_urdf_mimic(show_viewer, tol, scaled_urdf_mimic):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.0, -1.0, 0.5),
+            camera_lookat=(0.0, 0.0, 0.0),
+        ),
+        show_viewer=show_viewer,
+    )
     hand = scene.add_entity(
         gs.morphs.URDF(
             file="urdf/panda_bullet/hand.urdf",
             fixed=True,
         ),
     )
+    mimic = scene.add_entity(
+        gs.morphs.URDF(
+            file=scaled_urdf_mimic,
+            scale=2.0,
+            fixed=True,
+        ),
+    )
     scene.build()
-    assert scene.rigid_solver.n_equalities == 1
+    assert scene.rigid_solver.n_equalities == 5
 
-    qvel = scene.rigid_solver.dyn_state.dofs.vel.to_numpy()
-    qvel[-1] = 1
-    scene.rigid_solver.dyn_state.dofs.vel.from_numpy(qvel)
-    for i in range(200):
+    JOINT_NAMES = (
+        "revolute_revolute_driver_joint",
+        "revolute_revolute_follower_joint",
+        "prismatic_prismatic_driver_joint",
+        "prismatic_prismatic_follower_joint",
+        "prismatic_revolute_driver_joint",
+        "prismatic_revolute_follower_joint",
+        "revolute_prismatic_driver_joint",
+        "revolute_prismatic_follower_joint",
+    )
+    qs_idx_local = [idx for name in JOINT_NAMES for idx in mimic.get_joint(name).qs_idx_local]
+    hand.set_dofs_velocity((0.0, 1.0))
+    for _ in range(80):
         scene.step()
 
-    gs_qpos = scene.rigid_solver.qpos.to_numpy()[:, 0]
-    assert_allclose(gs_qpos[-1], gs_qpos[-2], tol=tol)
+    qpos = mimic.get_qpos(qs_idx_local=qs_idx_local)
+    assert_allclose(qpos[..., 1] - 2.0 * qpos[..., 0], 0.25, tol=tol)
+    assert_allclose(qpos[..., 3] - 2.0 * qpos[..., 2], 0.5, tol=tol)
+    assert_allclose(qpos[..., 5] - qpos[..., 4], 0.25, tol=tol)
+    assert_allclose(qpos[..., 7] - 4.0 * qpos[..., 6], 0.5, tol=tol)
+
+    hand_qpos = hand.get_qpos()
+    assert_allclose(hand_qpos[..., -1], hand_qpos[..., -2], tol=tol)
 
 
 @pytest.mark.slow  # ~200s

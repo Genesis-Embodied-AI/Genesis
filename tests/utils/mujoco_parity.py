@@ -378,17 +378,16 @@ def check_mujoco_model_consistency(
     mj_dof_dof_frictionloss = mj_sim.model.dof_frictionloss
     assert_allclose(gs_dof_dof_frictionloss[gs_dofs_idx], mj_dof_dof_frictionloss[mj_dofs_idx], tol=tol)
 
-    # Solver parameters carry an environment axis wherever the joint info is batched, while the model states one
-    # value per joint, so compare the first environment against it.
-    joints_idx = range(gs_sim.rigid_solver.n_joints)
-    gs_joints_solparams = tensor_to_array(gs_sim.rigid_solver.get_sol_params(joints_idx=joints_idx))
+    # Batched joint info carries a leading environment axis, and the MuJoCo model states one value per joint, so
+    # compare the first environment against it.
+    gs_joints_solparams = tensor_to_array(gs_sim.rigid_solver.get_sol_params(joints_idx=slice(None)))
     gs_joint_solparams = gs_joints_solparams[0] if gs_joints_solparams.ndim == 3 else gs_joints_solparams
     mj_joint_solparams = np.concatenate((mj_sim.model.jnt_solref, mj_sim.model.jnt_solimp), axis=-1)
     _sanitize_sol_params(
         mj_joint_solparams, gs_sim.rigid_solver._sol_min_timeconst, gs_sim.rigid_solver._sol_default_timeconst
     )
     assert_allclose(gs_joint_solparams[gs_joints_idx], mj_joint_solparams[mj_joints_idx], tol=tol)
-    gs_geoms_solparams = tensor_to_array(gs_sim.rigid_solver.get_sol_params(geoms_idx=None))
+    gs_geoms_solparams = tensor_to_array(gs_sim.rigid_solver.get_sol_params())
     gs_geom_solparams = gs_geoms_solparams[0] if gs_geoms_solparams.ndim == 3 else gs_geoms_solparams
     mj_geom_solparams = np.concatenate((mj_sim.model.geom_solref, mj_sim.model.geom_solimp), axis=-1)
     # Geom time constants are compared as the model states them: a contact mixes the two geoms' values and the floor is

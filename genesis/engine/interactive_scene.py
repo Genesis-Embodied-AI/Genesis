@@ -48,23 +48,10 @@ class InteractiveScene:
         self._entities_kwargs: dict[str, dict[str, Any]] = {}
         self._sensors_kwargs: list["SensorOptions"] = []
         scene.register_pre_step_callback(self._pre_step)
-        # Capture the wrapped scene's construction so rebuild() can reconstruct it identically. The stored option
-        # objects are already merged with sim_options; re-passing them is idempotent.
+        # Capture the wrapped scene's construction so rebuild() can reconstruct it identically. The stored options
+        # are already merged with the simulation options, so passing them again changes nothing.
         self._scene_kwargs: dict[str, Any] = dict(
-            sim_options=scene.sim_options,
-            coupler_options=scene.coupler_options,
-            tool_options=scene.tool_options,
-            rigid_options=scene.rigid_options,
-            kinematic_options=scene.kinematic_options,
-            mpm_options=scene.mpm_options,
-            sph_options=scene.sph_options,
-            fem_options=scene.fem_options,
-            sf_options=scene.sf_options,
-            pbd_options=scene.pbd_options,
-            vis_options=scene.vis_options,
-            viewer_options=scene.viewer_options,
-            profiling_options=scene.profiling_options,
-            renderer=scene.renderer_options,
+            options=scene.options,
             show_viewer=scene.viewer is not None,
         )
         self._build_kwargs: dict[str, Any] = dict(

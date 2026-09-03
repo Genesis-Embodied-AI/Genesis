@@ -12,7 +12,7 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.constants import link_ref_frame
-from genesis.engine.entities import DroneEntity, RigidEntity
+from genesis.engine.entities import DroneEntity, RigidEntity, TerrainEntity
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.states import QueriedStates, RigidSolverState
 from genesis.options.solvers import RigidOptions
@@ -31,7 +31,12 @@ from genesis.utils.misc import (
 from genesis.utils.sdf import SDF
 
 from ..base_solver import GravityMixin, MutatedLinks, Solver, StateChange, TimeBasedMixin, mutates
-from ..kinematic_solver import KinematicSolver, _fill_base_link_geom_offsets, _offset_world_shift, _select_links_offset
+from ..kinematic_solver import (
+    KinematicSolver,
+    _fill_base_link_geom_offsets,
+    _offset_world_shift,
+    _select_links_offset,
+)
 from .collider import Collider
 from .constraint import ConstraintSolver
 from .constraint.backward import (
@@ -43,6 +48,7 @@ from .constraint.backward import (
     kernel_manual_add_joint_limit_constraints_bw,
 )
 from .abd.misc import (
+    kernel_init_link_dynamics,
     func_add_safe_backward,
     func_apply_coupling_force,
     func_atomic_add_if,
@@ -60,7 +66,6 @@ from .abd.misc import (
     kernel_init_equality_fields,
     kernel_init_geom_fields,
     kernel_init_joint_fields,
-    kernel_init_link_fields,
     kernel_init_vert_fields,
     kernel_init_vgeom_fields,
     kernel_init_vvert_fields,
@@ -210,6 +215,14 @@ def _sanitize_sol_params(
     sol_params, min_timeconst: float, default_timeconst: float | None = None, *, floor_timeconst: bool = True
 ):
     timeconst, dampratio, dmin, dmax, width, mid, power = sol_params.reshape((-1, 7)).T
+    direct_mask = timeconst < 0.0
+    if direct_mask.any():
+        gs.logger.warning(
+            "Constraint solver `timeconst` is negative, which parameterizes the constraint by its stiffness and its "
+            "damping directly. Genesis does not support it for now, so the default time constant is used instead."
+        )
+        timeconst[direct_mask] = 0.0
+        dampratio[direct_mask] = gu.default_solver_params()[1]
     if (timeconst < gs.EPS).any() and default_timeconst is not None:
         gs.logger.debug(
             f"Constraint solver time constant not specified. Using default value (`{default_timeconst:0.6g}`)."
@@ -339,7 +352,9 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
     def init_ckpt(self):
         pass
 
-    def add_entity(self, idx, material, morph, surface, visualize_contact, name: str | None = None) -> RigidEntity:
+    def add_entity(
+        self, idx, material, morph, surface, visualize_contact, name: str | None = None, desc=None
+    ) -> RigidEntity:
         # Handle heterogeneous morphs (list/tuple of morphs)
         morph_heterogeneous = []
         if isinstance(morph, (tuple, list)):
@@ -348,6 +363,8 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
 
         if isinstance(morph, gs.morphs.Drone):
             EntityClass = DroneEntity
+        elif isinstance(morph, gs.morphs.Terrain):
+            EntityClass = TerrainEntity
         else:
             EntityClass = RigidEntity
 
@@ -380,6 +397,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             visualize_contact=visualize_contact,
             morph_heterogeneous=morph_heterogeneous,
             name=name,
+            desc=desc,
         )
         assert isinstance(entity, RigidEntity)
         self._entities.append(entity)
@@ -465,7 +483,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         geoms_offset_pos = np.zeros((self.n_geoms, 3), dtype=gs.np_float)
         geoms_offset_quat = np.tile(gu.identity_quat(), (self.n_geoms, 1))
         for entity in self._entities:
-            ranges = entity.base_link._variant_geom_ranges if entity._variant_offset_pos is not None else None
+            ranges = entity.base_link._variant_geom_ranges if entity._desc.variants else None
             _fill_base_link_geom_offsets(geoms_offset_pos, geoms_offset_quat, entity, entity.geoms, ranges)
         self._geoms_offset_pos = self._geoms_offset_quat = None
         if not (
@@ -935,7 +953,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                         lower.append(armature_d + sub_mass)
                         upper.append(armature_d + sub_mass)
                     elif joint.type == gs.JOINT_TYPE.REVOLUTE and is_sole_joint:
-                        axis = joint.dofs_motion_ang[i_d]
+                        axis = joint.desc.dofs_motion_ang[i_d]
                         lever = np.cross(axis, offset_com)
                         rot_self = axis @ inertia_com @ axis + link.desc.mass * np.dot(lever, lever)
                         lower.append(armature_d + rot_self)
@@ -1116,6 +1134,22 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 active_envs_mask = (vgeom_starts <= vgeom.idx) & (vgeom.idx < vgeom_ends)
                 vgeom.active_envs_mask = torch.tensor(active_envs_mask, device=gs.device)
                 (vgeom.active_envs_idx,) = np.where(active_envs_mask)
+
+    def _init_link_fields(self):
+        # The base initialization ends by dispatching each heterogeneous variant's inertial per environment, which
+        # must write last, so this runs first.
+        if self.links:
+            links = self.links
+            kernel_init_link_dynamics(
+                np.array([link.desc.invweight for link in links], dtype=gs.np_float),
+                np.array([link.desc.inertial_pos for link in links], dtype=gs.np_float),
+                np.array([link.desc.inertial_quat for link in links], dtype=gs.np_float),
+                np.array([link.desc.inertia for link in links], dtype=gs.np_float),
+                np.array([link.desc.mass for link in links], dtype=gs.np_float),
+                self.dyn_info,
+            )
+
+        super()._init_link_fields()
 
     def _init_vert_fields(self):
         if self.n_verts > 0:

@@ -163,6 +163,25 @@ def tet_meshball():
 
 
 @pytest.fixture(scope="session")
+def urdf_with_external_mesh(asset_tmp_path):
+    """Generate a URDF naming a mesh by an absolute path outside the directory the model itself sits in."""
+    meshes = asset_tmp_path / "external_meshes"
+    meshes.mkdir(exist_ok=True)
+    mesh_file = meshes / "sphere.obj"
+    if not mesh_file.exists():
+        mesh_file.symlink_to(os.path.join(get_assets_dir(), "meshes", "sphere.obj"))
+    robot = ET.Element("robot", name="external_mesh")
+    link = ET.SubElement(robot, "link", name="base_link")
+    inertial = ET.SubElement(link, "inertial")
+    ET.SubElement(inertial, "mass", value="1.0")
+    ET.SubElement(inertial, "inertia", ixx="0.01", ixy="0", ixz="0", iyy="0.01", iyz="0", izz="0.01")
+    for tag in ("visual", "collision"):
+        geometry = ET.SubElement(ET.SubElement(link, tag), "geometry")
+        ET.SubElement(geometry, "mesh", filename=str(mesh_file), scale="0.05 0.05 0.05")
+    return ET.tostring(robot, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
 def mimic_hinges():
     mjcf = ET.Element("mujoco", model="mimic_hinges")
     ET.SubElement(mjcf, "compiler", angle="degree")
@@ -178,6 +197,68 @@ def mimic_hinges():
     equality = ET.SubElement(mjcf, "equality")
     ET.SubElement(equality, "joint", name="joint_equality", joint1="joint1", joint2="joint2")
     return mjcf
+
+
+@pytest.fixture(scope="session")
+def scaled_mjcf_joint_equalities():
+    mjcf = ET.Element("mujoco", model="scaled_mjcf_joint_equalities")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    equality = ET.SubElement(mjcf, "equality")
+    for driver_type, follower_type in (
+        ("hinge", "hinge"),
+        ("slide", "slide"),
+        ("slide", "hinge"),
+        ("hinge", "slide"),
+    ):
+        pair_name = f"{driver_type}_{follower_type}"
+        driver_body = ET.SubElement(worldbody, "body", name=f"{pair_name}_driver_body")
+        ET.SubElement(driver_body, "joint", name=f"{pair_name}_driver", type=driver_type, axis="1 0 0")
+        ET.SubElement(driver_body, "geom", type="sphere", size="0.05", mass="1", contype="0", conaffinity="0")
+        follower_body = ET.SubElement(worldbody, "body", name=f"{pair_name}_follower_body")
+        ET.SubElement(follower_body, "joint", name=f"{pair_name}_follower", type=follower_type, axis="1 0 0")
+        ET.SubElement(follower_body, "geom", type="sphere", size="0.05", mass="1", contype="0", conaffinity="0")
+        ET.SubElement(
+            equality,
+            "joint",
+            name=f"{pair_name}_coupling",
+            joint1=f"{pair_name}_follower",
+            joint2=f"{pair_name}_driver",
+            polycoef="0.2 0.4 -0.3 0.2 -0.1",
+        )
+    return ET.tostring(mjcf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
+def scaled_urdf_mimic():
+    robot = ET.Element("robot", name="scaled_urdf_mimic")
+    ET.SubElement(robot, "link", name="base")
+    joint_type_pairs = (
+        ("revolute", "revolute"),
+        ("prismatic", "prismatic"),
+        ("prismatic", "revolute"),
+        ("revolute", "prismatic"),
+    )
+    for driver_type, follower_type in joint_type_pairs:
+        pair_name = f"{driver_type}_{follower_type}"
+        for role in ("driver", "follower"):
+            link = ET.SubElement(robot, "link", name=f"{pair_name}_{role}_link")
+            inertial = ET.SubElement(link, "inertial")
+            ET.SubElement(inertial, "mass", value="1.0")
+            ET.SubElement(inertial, "inertia", ixx="0.01", ixy="0.0", ixz="0.0", iyy="0.01", iyz="0.0", izz="0.01")
+
+        driver = ET.SubElement(robot, "joint", name=f"{pair_name}_driver_joint", type=driver_type)
+        ET.SubElement(driver, "parent", link="base")
+        ET.SubElement(driver, "child", link=f"{pair_name}_driver_link")
+        ET.SubElement(driver, "axis", xyz="0 0 1")
+        ET.SubElement(driver, "limit", lower="-10", upper="10", effort="100", velocity="100")
+
+        follower = ET.SubElement(robot, "joint", name=f"{pair_name}_follower_joint", type=follower_type)
+        ET.SubElement(follower, "parent", link=f"{pair_name}_driver_link")
+        ET.SubElement(follower, "child", link=f"{pair_name}_follower_link")
+        ET.SubElement(follower, "axis", xyz="0 0 1")
+        ET.SubElement(follower, "limit", lower="-10", upper="10", effort="100", velocity="100")
+        ET.SubElement(follower, "mimic", joint=f"{pair_name}_driver_joint", multiplier="2.0", offset="0.25")
+    return ET.tostring(robot, encoding="unicode")
 
 
 @pytest.fixture(scope="session")
@@ -496,6 +577,21 @@ def undefined_inertia():
     """Generate a URDF with a single link that has no inertial element."""
     urdf = ET.Element("robot", name="undefined_inertia")
     _add_sphere_link(urdf, "base_link", "0.0 0.0 0.09")
+    return ET.tostring(urdf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
+def undefined_inertia_arm():
+    """Generate a URDF of two links joined by a revolute joint, neither authoring an inertial element."""
+    urdf = ET.Element("robot", name="undefined_inertia_arm")
+    _add_sphere_link(urdf, "base_link", "0.0 0.0 0.0")
+    _add_sphere_link(urdf, "tip_link", "0.0 0.0 0.09")
+    joint = ET.SubElement(urdf, "joint", name="elbow", type="continuous")
+    ET.SubElement(joint, "origin", xyz="0.0 0.0 0.2", rpy="0.0 0.0 0.0")
+    ET.SubElement(joint, "axis", xyz="1 0 0")
+    ET.SubElement(joint, "parent", link="base_link")
+    ET.SubElement(joint, "child", link="tip_link")
+    ET.SubElement(joint, "limit", effort="100.0", velocity="30.0")
     return ET.tostring(urdf, encoding="unicode")
 
 

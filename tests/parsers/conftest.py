@@ -292,8 +292,8 @@ def compare_joints(compared_joints, usd_joints):
             assert_joint_allclose(compared_joint.desc.dofs_limit, usd_joint.desc.dofs_limit)
 
             # Compare dof motion properties
-            assert_joint_allclose(compared_joint.dofs_motion_ang, usd_joint.dofs_motion_ang)
-            assert_joint_allclose(compared_joint.dofs_motion_vel, usd_joint.dofs_motion_vel)
+            assert_joint_allclose(compared_joint.desc.dofs_motion_ang, usd_joint.desc.dofs_motion_ang)
+            assert_joint_allclose(compared_joint.desc.dofs_motion_vel, usd_joint.desc.dofs_motion_vel)
             assert_joint_allclose(compared_joint.desc.dofs_frictionloss, usd_joint.desc.dofs_frictionloss)
             assert_joint_allclose(compared_joint.desc.dofs_stiffness, usd_joint.desc.dofs_stiffness)
             assert_joint_allclose(compared_joint.desc.dofs_force_range, usd_joint.desc.dofs_force_range)
