@@ -1,3 +1,4 @@
+import contextvars
 import io
 import logging
 import os
@@ -5,8 +6,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
-from typing import NamedTuple
+from typing import Iterator, NamedTuple
 
 import filelock
 import numpy as np
@@ -63,6 +65,30 @@ class PhysicsMaterial(NamedTuple):
     dynamic_friction: float | None = None
     restitution: float | None = None
     density: float | None = None
+
+
+# The context every USD parse made inside a 'usd_context' block reads from (see 'get_current_usd_context').
+_ACTIVE_CONTEXT: contextvars.ContextVar["UsdContext | None"] = contextvars.ContextVar("usd_context", default=None)
+
+
+@contextmanager
+def usd_context(stage_file: str) -> Iterator["UsdContext"]:
+    """Open a stage once for every parse made inside the block.
+
+    A stage split into several entities is parsed once per entity, and each parse composes the stage and walks its
+    materials anew. Inside this block they all read the one context opened here (see 'get_current_usd_context').
+    """
+    context = UsdContext(stage_file)
+    token = _ACTIVE_CONTEXT.set(context)
+    try:
+        yield context
+    finally:
+        _ACTIVE_CONTEXT.reset(token)
+
+
+def get_current_usd_context() -> "UsdContext | None":
+    """The context of the enclosing 'usd_context' block, or None outside of one."""
+    return _ACTIVE_CONTEXT.get()
 
 
 class UsdContext:

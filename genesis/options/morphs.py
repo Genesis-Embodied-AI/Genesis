@@ -1653,8 +1653,6 @@ class USD(FileMorph):
     ----------------
     prim_path : str, optional
         The parsing target prim path. Defaults to None.
-    usd_ctx : Any, optional
-        The parser context. Defaults to None.
     """
 
     # Mesh Options
@@ -1706,7 +1704,6 @@ class USD(FileMorph):
     visual_mesh_prim_patterns: StrArrayType = (r"^([vV]isual).*",)
 
     # USD specific Options
-    usd_ctx: Any = None
     prim_path: str | None = None
 
     def __init__(self, **data):
@@ -1718,13 +1715,8 @@ class USD(FileMorph):
                 "USD file has independent metadata `up_axis` for up axis specification."
             )
 
-        if self.usd_ctx is None:
-            from genesis.utils.usd import UsdContext
-
-            if not self.is_format(USD_FORMATS):
-                gs.raise_exception(f"Expected `{USD_FORMATS}` extension for USD file: {self.file}")
-
-            self.usd_ctx = UsdContext(self.file)
+        if not self.is_format(USD_FORMATS):
+            gs.raise_exception(f"Expected `{USD_FORMATS}` extension for USD file: {self.file}")
 
     def _identifier(self) -> str:
         if self.prim_path:

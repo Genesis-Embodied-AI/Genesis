@@ -1,7 +1,7 @@
 import io
 import os
 import xml.etree.ElementTree as ET
-from functools import partial
+from functools import partial, partialmethod
 
 import numpy as np
 import pygltflib
@@ -420,10 +420,7 @@ def build_usd_scene(
 
     kwargs = dict(
         morph=gs.morphs.USD(
-            usd_ctx=UsdContext(
-                usd_file,
-                use_bake_cache=False,
-            ),
+            file=usd_file,
             scale=scale,
             fixed=fixed,
             convexify=False,
@@ -437,10 +434,13 @@ def build_usd_scene(
         vis_mode=vis_mode,
     )
 
-    if is_stage:
-        scene.add_stage(**kwargs)
-    else:
-        scene.add_entity(**kwargs)
+    # A stage is read as authored rather than through baked assets an earlier run left on disk
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(UsdContext, "__init__", partialmethod(UsdContext.__init__, use_bake_cache=False))
+        if is_stage:
+            scene.add_stage(**kwargs)
+        else:
+            scene.add_entity(**kwargs)
 
     # Note that it is necessary to build the scene because spatial inertia of some geometries may not be specified.
     # In such a case, it will be estimated from the geometry during build (RigidLink._build to be specific).
