@@ -489,6 +489,8 @@ def test_hibernation_with_pruning(show_viewer, n_envs):
     assert asleep()
     for duck, z in zip(ducks, z_rest):
         assert_allclose(duck.get_pos()[..., 2], z, atol=1e-5)
+        # A sleeper resting on the ground keeps reporting the support force balancing its weight.
+        assert_allclose(duck.get_links_net_contact_force()[..., 0, 2], 9.81 * duck.get_mass(), tol=1e-2)
 
     # Resetting wakes every body: the restored state is a discontinuity, so a body left hibernated would stay frozen
     # and never be resimulated. After reset the ducks are awake again, with their flags cleared and awake counter zeroed.
