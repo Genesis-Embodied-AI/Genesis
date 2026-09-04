@@ -667,18 +667,19 @@ def aligned_link_frame_urdfs():
         ),
     )
     links_geoms = (
-        ("base", "0.04 -0.02 0.03", "0.2 -0.1 0.3"),
-        ("child", "0.08 0.01 -0.02", "-0.3 0.2 0.1"),
+        ("base", ("0.04 -0.02 0.03", "0.2 -0.1 0.3"), ("-0.05 0.03 0.06", "0.4 0.1 -0.2")),
+        ("child", ("0.08 0.01 -0.02", "-0.3 0.2 0.1"), ("0.02 -0.06 0.05", "0.1 -0.4 0.3")),
     )
     urdfs = []
     for i_variant, links_inertial in enumerate(variants_inertial):
         urdf = ET.Element("robot", name=f"fixed_child_inertial_frame_{i_variant}")
-        for i_link, (link_name, geom_pos, geom_rpy) in enumerate(links_geoms):
+        for i_link, (link_name, geom_origin, vgeom_origin) in enumerate(links_geoms):
             link = ET.SubElement(urdf, "link", name=link_name)
-            collision = ET.SubElement(link, "collision")
-            geometry = ET.SubElement(collision, "geometry")
-            ET.SubElement(geometry, "box", size="0.3 0.2 0.15")
-            ET.SubElement(collision, "origin", xyz=geom_pos, rpy=geom_rpy)
+            for group_tag, (origin_xyz, origin_rpy) in (("collision", geom_origin), ("visual", vgeom_origin)):
+                group = ET.SubElement(link, group_tag)
+                geometry = ET.SubElement(group, "geometry")
+                ET.SubElement(geometry, "box", size="0.3 0.2 0.15")
+                ET.SubElement(group, "origin", xyz=origin_xyz, rpy=origin_rpy)
 
             mass, com, inertial_rpy, inertia = links_inertial[i_link]
             inertial = ET.SubElement(link, "inertial")

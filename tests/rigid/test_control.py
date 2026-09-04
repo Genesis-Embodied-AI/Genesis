@@ -148,8 +148,8 @@ def test_drone_propellers_force_application(n_envs, substeps, show_viewer, tol):
     SUBSTEP_DT = 0.004
     TOTAL_SUBSTEPS = 10
     GRAVITY = -9.81
-    # The thrust kernel rounds its coefficient to float32 in every solver precision; a flat tolerance covers that
-    # rounding with orders of magnitude to spare against the asserted dynamics signals.
+    # The thrust kernel takes its coefficient as float32 in every solver precision, so the expected dynamics carry
+    # that rounding and the fp64 'tol' fixture sits below it. A flat tolerance covers it with margin to spare.
     DYN_TOL = 5e-5
     CF2X_ARMS = np.array(
         (
@@ -182,7 +182,6 @@ def test_drone_propellers_force_application(n_envs, substeps, show_viewer, tol):
             pos=(0.0, 0.0, 1.0),
             file="urdf/drones/cf2x.urdf",
         ),
-        vis_mode="collision",
     )
     scene.build(n_envs=n_envs)
 
@@ -211,11 +210,12 @@ def test_drone_propellers_force_application(n_envs, substeps, show_viewer, tol):
         drone.set_propellers_rpm(BASE_RPM)
         scene.step()
     thrust = drone.n_propellers * drone.KF * BASE_RPM**2
+    weight = drone.get_mass() * GRAVITY
     mass = drone.get_mass_mat()[..., 2, 2]
     damping = drone.get_dofs_damping(dofs_idx_local=2)[..., 0]
     vel_z = 0.0
     for _ in range(TOTAL_SUBSTEPS):
-        vel_z = (mass * vel_z + SUBSTEP_DT * (thrust + mass * GRAVITY)) / (mass + damping * SUBSTEP_DT)
+        vel_z = (mass * vel_z + SUBSTEP_DT * (thrust + weight)) / (mass + damping * SUBSTEP_DT)
         pos_z = pos_z + SUBSTEP_DT * vel_z
     assert_allclose(drone.get_dofs_position(dofs_idx_local=2)[..., 0], pos_z, tol=DYN_TOL)
     assert_allclose(drone.get_dofs_velocity(dofs_idx_local=2)[..., 0], vel_z, tol=DYN_TOL)
