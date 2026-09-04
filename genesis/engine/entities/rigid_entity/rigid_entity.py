@@ -21,7 +21,6 @@ from .description import (
     RigidEqualityDescription,
     RigidLinkDescription,
 )
-from .inertial import MASS_EPS, RHO_MUJOCO, RHO_OBJECT, RHO_ROBOT, compose_inertial_from_g_infos, finalize_inertial
 from .rigid_equality import RigidEquality
 from .rigid_geom import RigidGeom
 from .rigid_joint import RigidJoint
@@ -408,37 +407,12 @@ class KinematicEntity(Entity):
         # links of other trees declared in the same file keep their own root, as do the fixed flag and invweight.
         for link in self._solver.links:
             if link.root_idx == base_link.idx:
-                was_fixed = link.is_fixed
                 link._root_idx = parent_link.root_idx
                 link._is_fixed &= parent_link.is_fixed
 
                 # The attach moves this link into another kinematic tree, so its old tree's inverse weight no longer
                 # applies. The sentinel makes the solver recompute it during its refresh.
                 link.desc.invweight = np.full((2,), fill_value=-1.0, dtype=gs.np_float)
-
-                # Inertial resolution skips the geometry estimate for a world-carried link, so a link that starts
-                # moving recomputes it from its geoms at the entity's simulated density. Values the asset states
-                # still win over the estimate.
-                if was_fixed and not link.is_fixed and isinstance(link.desc, RigidLinkDescription):
-                    desc = link.desc
-                    # An entity attached beneath this one shares its root, so the density comes from the link's own
-                    # entity rather than from this one.
-                    rho = link.entity.material.rho
-                    if rho is None:
-                        if self._solver._enable_mujoco_compatibility:
-                            rho = RHO_MUJOCO
-                        else:
-                            rho = RHO_ROBOT if desc.is_robot else RHO_OBJECT
-
-                    # A geom description holds the fields a parse states it with, so one composition serves either.
-                    hint = compose_inertial_from_g_infos([vars(g_desc) for g_desc in (desc.geoms or desc.vgeoms)], rho)
-                    stated_mass = desc.mass if desc.mass > MASS_EPS else None
-                    stated_inertia = desc.inertia if desc.inertia is not None and desc.inertia.any() else None
-                    stated_com = desc.inertial_pos if stated_inertia is not None else None
-                    stated_quat = desc.inertial_quat if stated_inertia is not None else None
-                    desc.mass, desc.inertial_pos, desc.inertial_quat, desc.inertia = finalize_inertial(
-                        stated_mass, stated_com, stated_quat, stated_inertia, *hint
-                    )
 
         # Apply the explicit mounting transform. Forward kinematics interprets the base link's local pose relative to
         # its (new) parent link, so overwriting it here mounts the entity at (pos, quat) in the parent link frame.

@@ -207,12 +207,12 @@ def build_model(
                 autolimits="true",
             )
 
-            # Bound mass and inertia if necessary
-            if not all(link.inertial is not None for link in robot.links):
-                compiler.attrib |= dict(
-                    boundmass=str(MIN_TIMECONST),
-                    boundinertia=str(MIN_TIMECONST),
-                )
+            # MuJoCo rejects a moving body whose mass or inertia is below 'mjMINVAL'. Bounding both at that value keeps
+            # a zero or missing inertial compilable, and the placeholder is discarded below.
+            compiler.attrib |= dict(
+                boundmass=str(mujoco.mjMINVAL),
+                boundinertia=str(mujoco.mjMINVAL),
+            )
 
             # Resolve relative mesh paths
             for elem in root.findall(".//mesh"):
@@ -232,11 +232,18 @@ def build_model(
             if is_urdf_file:
                 # Discard placeholder inertias that were used to avoid parsing failure
                 for link in robot.links:
-                    if link.inertial is None:
-                        body = mj.body(link.name)
+                    inertial = link.inertial
+                    mass = (inertial.mass or 0.0) if inertial is not None else 0.0
+                    is_inertia_defined = inertial is not None and np.linalg.norm(inertial.inertia, np.inf) > 0.0
+                    if mass > 0.0 and is_inertia_defined:
+                        continue
+                    body = mj.body(link.name)
+                    body.mass[:] = mass
+                    # Keep non-zero authored inertia with invalid diagonal so the consistency check reports it
+                    if not is_inertia_defined:
                         body.inertia[:] = 0.0
-                        body.mass[:] = 0.0
-                        body.invweight0[:] = 0.0
+                    # invweight0 derives from placeholder mass and inertia; zero triggers recomputation
+                    body.invweight0[:] = 0.0
 
                 # Set default constraint solver time constant
                 mj.jnt_solref[:, 0] = MIN_TIMECONST

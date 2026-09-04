@@ -221,21 +221,28 @@ def test_urdf_parsing(show_viewer, tol):
 
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
-def test_urdf_parsing_inertia_defaults(
+def test_parsing_inertia_defaults(
     undefined_inertia,
     undefined_inertia_arm,
-    implicit_inertial_origin,
+    degenerate_inertials,
+    zero_density_marker_mjcf,
     implicit_inertial_origin_chain,
     show_viewer,
     tol,
     caplog,
 ):
     GEOM_POS = (0.0, 0.0, 0.09)
+    INERTIAL_POS = (0.0, 0.0, 0.11)
+    TIP_MASS = 1e-5
+    BOB_INERTIA_PER_MASS = 1e-3
     INERTIA = (
         (0.11, 0.01, 0.02),
         (0.01, 0.22, 0.03),
         (0.02, 0.03, 0.30),
     )
+    # Principal moments per unit mass of the two geometries a recovered inertia is derived from.
+    SPHERE_INERTIA_PER_MASS = 2.0 * 0.06**2 / 5.0
+    BOX_INERTIA_PER_MASS = 2.0 * 0.2**2 / 12.0
     GRAVITY = (0.0, 0.0, -9.81)
 
     scene = gs.Scene(
@@ -244,40 +251,46 @@ def test_urdf_parsing_inertia_defaults(
             gravity=GRAVITY,
         ),
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(0.5, 0.5, 0.5),
-            camera_lookat=(0.0, 0.0, 0.0),
+            camera_pos=(1.5, -3.5, 1.5),
+            camera_lookat=(0.0, 0.0, 0.2),
         ),
         show_viewer=show_viewer,
     )
     scene.add_entity(gs.morphs.Plane())
 
-    # Anchoring a root link on its center of mass erases the inertial frame under test, so it is disabled for the
-    # single-link entities. The chain keeps it enabled, comparing the composite inertia that anchoring preserves.
-    entity_without_inertia = scene.add_entity(
+    # merge_fixed_links=False keeps every fixed link as a link of its own, so the test can check its inertial.
+    entity = scene.add_entity(
         morph=gs.morphs.URDF(
-            file=undefined_inertia,
-            pos=(-0.3, 0.0, 0.1),
-            align=False,
+            file=degenerate_inertials,
+            pos=(0.0, 0.0, 0.1),
+            merge_fixed_links=False,
         ),
     )
-    entity_with_implicit_origin = scene.add_entity(
+    # The same asset welded to the world resolves every link exactly as the free copy does.
+    entity_welded = scene.add_entity(
         morph=gs.morphs.URDF(
-            file=implicit_inertial_origin,
-            pos=(0.0, 0.0, 0.1),
-            align=False,
+            file=degenerate_inertials,
+            pos=(0.0, -4.0, 0.1),
+            fixed=True,
+            merge_fixed_links=False,
+        ),
+    )
+    entity_zero_density = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file=zero_density_marker_mjcf,
         ),
     )
     entity_chain_unmerged = scene.add_entity(
         morph=gs.morphs.URDF(
             file=implicit_inertial_origin_chain,
-            pos=(0.8, 0.0, 0.5),
+            pos=(0.0, 2.0, 0.5),
             merge_fixed_links=False,
         ),
     )
     entity_chain_merged = scene.add_entity(
         morph=gs.morphs.URDF(
             file=implicit_inertial_origin_chain,
-            pos=(1.6, 0.0, 0.5),
+            pos=(0.8, 2.0, 0.5),
         ),
     )
     entity_chain_unmerged_unaligned = scene.add_entity(
@@ -379,23 +392,53 @@ def test_urdf_parsing_inertia_defaults(
     assert_allclose(stacked_middle.base_link.get_mass(), 2000.0 * 0.1**3, tol=gs.EPS)
     assert_allclose(stacked_tip.base_link.get_mass(), 8000.0 * 0.1**3, tol=gs.EPS)
 
-    # An omitted inertial origin places the center of mass at the link frame, whereas a link without any inertial
-    # element derives it from the geometry.
-    assert_allclose(entity_without_inertia.base_link.desc.inertial_pos, GEOM_POS, tol=tol)
-    assert_allclose(entity_with_implicit_origin.base_link.desc.inertial_pos, 0.0, tol=gs.EPS)
-    assert_allclose(entity_with_implicit_origin.base_link.desc.mass, 2.5, tol=gs.EPS)
-    # The tensor is stored in its principal frame, whose parsed quaternion is markedly less accurate than the tensor
-    # itself, so compare the rotation-invariant principal moments rather than the tensor rotated back.
-    assert_allclose(
-        np.linalg.eigvalsh(entity_with_implicit_origin.base_link.desc.inertia),
-        np.linalg.eigvalsh(INERTIA),
-        tol=tol,
-    )
+    # The link 'no_inertial' has no inertial element, so its whole inertial is the geometry estimate. Every link carries
+    # the same sphere, so this mass is the reference for the recovered masses below.
+    estimate = entity.get_link("no_inertial").desc
+    assert_allclose(estimate.inertial_pos, GEOM_POS, tol=tol)
+    assert_allclose(np.linalg.eigvalsh(estimate.inertia) / estimate.mass, SPHERE_INERTIA_PER_MASS, tol=tol)
+
+    # The tensors are stored in their principal frame, whose parsed quaternion is markedly less accurate than the
+    # tensor itself, so compare the rotation-invariant principal moments rather than the tensor rotated back.
+    for link, expected_mass, expected_com, expected_inertia_per_mass in (
+        # The root states a zero mass and a valid inertia, and the geometry estimate replaces both. Its fixed child
+        # 'massless_marker' keeps its zero mass, so the root has no mass-bearing child.
+        (entity.base_link, estimate.mass, GEOM_POS, SPHERE_INERTIA_PER_MASS),
+        (entity.get_link("massless_marker"), gs.EPS, GEOM_POS, 0.0),
+        # An omitted inertial origin places the center of mass at the link frame.
+        (entity.get_link("implicit_origin"), 2.5, (0.0, 0.0, 0.0), np.linalg.eigvalsh(INERTIA) / 2.5),
+        # Geometry supplies the inertia scaled to the authored mass, and the link keeps its authored center of mass.
+        (entity.get_link("zero_inertia"), 2.5, INERTIAL_POS, SPHERE_INERTIA_PER_MASS),
+        # The fixed link 'tip' contributes to its parent composite, so geometry recovers its zero inertia at the
+        # authored mass.
+        (entity.get_link("tip"), TIP_MASS, GEOM_POS, SPHERE_INERTIA_PER_MASS),
+        # The fixed child 'bob' carries the mass, so 'connector' keeps a zero inertia and a zero mass floored at gs.EPS.
+        (entity.get_link("connector"), gs.EPS, GEOM_POS, 0.0),
+        (entity.get_link("bob"), 1.0, GEOM_POS, BOB_INERTIA_PER_MASS),
+        # The geom of 'marker' has a zero density and 'hull' carries the mass, so the marker keeps a zero mass.
+        (entity_zero_density.get_link("hull"), 8.0, (0.0, 0.0, 0.0), BOX_INERTIA_PER_MASS),
+        (entity_zero_density.get_link("marker"), gs.EPS, (0.0, 0.0, 0.0), 0.0),
+    ):
+        assert_allclose(link.desc.mass, expected_mass, rtol=1e-6, err_msg=link.name)
+        assert_allclose(link.desc.inertial_pos, expected_com, tol=tol, err_msg=link.name)
+        assert_allclose(
+            np.linalg.eigvalsh(link.desc.inertia) / link.desc.mass,
+            expected_inertia_per_mass,
+            tol=tol,
+            err_msg=link.name,
+        )
+    for link, link_welded in zip(entity.links, entity_welded.links):
+        assert_allclose(link_welded.desc.mass, link.desc.mass, tol=gs.EPS, err_msg=link.name)
+        assert_allclose(link_welded.desc.inertial_pos, link.desc.inertial_pos, tol=gs.EPS, err_msg=link.name)
+        assert_allclose(link_welded.desc.inertia, link.desc.inertia, tol=gs.EPS, err_msg=link.name)
+
+    # Every asset above is parsed by MuJoCo, a zero or missing inertial included.
+    assert not any("legacy URDF parser" in record.getMessage() for record in caplog.records)
 
     # Resolving the center of mass to the link frame can place it outside the geometry, which stays worth reporting.
-    # Only the link whose geometry is offset qualifies; a geometry-derived center of mass never does.
+    # Only the link whose geometry is offset qualifies, once per copy of the robot.
     dubious_com_records = [record for record in caplog.records if "dubious center of mass" in record.getMessage()]
-    assert len(dubious_com_records) == 1
+    assert len(dubious_com_records) == 2
 
     # Every link of an aligned free body keeps its own mass, so each link reads its authored mass. The two totals are
     # accumulated by independent code paths, so their agreement is bounded by that cross-path floor.
@@ -474,10 +517,12 @@ def test_urdf_parsing_inertia_defaults(
     # loses a little volume, so the measured mass lands slightly below the closed form.
     assert_allclose(mounted_arm.base_link.get_mass(), 1500.0 * 4.0 / 3.0 * np.pi * 0.06**3, rtol=0.1)
 
-    for _ in range(30):
+    # The rest on the spheres after the fall checks that the recovered inertias give stable dynamics. The position
+    # tolerance covers the steady-state penetration of the soft contact.
+    for _ in range(40):
         scene.step()
-    assert_allclose(entity_without_inertia.get_pos(), (-0.3, 0.0, -0.03), tol=1e-3)
-    assert_allclose(entity_with_implicit_origin.get_pos(), (0.0, 0.0, -0.03), tol=1e-3)
+    assert_allclose(entity.get_dofs_velocity(), 0.0, atol=1e-4)
+    assert_allclose(entity.get_pos(), (0.0, 0.0, -0.03), atol=5e-4)
 
 
 @pytest.mark.slow  # ~200s
