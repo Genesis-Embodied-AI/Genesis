@@ -148,9 +148,6 @@ def test_drone_propellers_force_application(n_envs, substeps, show_viewer, tol):
     SUBSTEP_DT = 0.004
     TOTAL_SUBSTEPS = 10
     GRAVITY = -9.81
-    # The thrust kernel takes its coefficient as float32 in every solver precision, so the expected dynamics carry
-    # that rounding and the fp64 'tol' fixture sits below it. A flat tolerance covers it with margin to spare.
-    DYN_TOL = 5e-5
     CF2X_ARMS = np.array(
         (
             (0.028, -0.028, 0.0),
@@ -217,9 +214,9 @@ def test_drone_propellers_force_application(n_envs, substeps, show_viewer, tol):
     for _ in range(TOTAL_SUBSTEPS):
         vel_z = (mass * vel_z + SUBSTEP_DT * (thrust + weight)) / (mass + damping * SUBSTEP_DT)
         pos_z = pos_z + SUBSTEP_DT * vel_z
-    assert_allclose(drone.get_dofs_position(dofs_idx_local=2)[..., 0], pos_z, tol=DYN_TOL)
-    assert_allclose(drone.get_dofs_velocity(dofs_idx_local=2)[..., 0], vel_z, tol=DYN_TOL)
-    assert_allclose(drone.get_dofs_velocity(dofs_idx_local=[3, 4, 5]), 0.0, tol=DYN_TOL)
+    assert_allclose(drone.get_dofs_position(dofs_idx_local=2)[..., 0], pos_z, tol=tol)
+    assert_allclose(drone.get_dofs_velocity(dofs_idx_local=2)[..., 0], vel_z, tol=tol)
+    assert_allclose(drone.get_dofs_velocity(dofs_idx_local=[3, 4, 5]), 0.0, tol=tol)
     scene.reset()
 
     # One differential-thrust step isolates the rotor-arm moment and cancels pitch and yaw torque.
@@ -233,8 +230,8 @@ def test_drone_propellers_force_application(n_envs, substeps, show_viewer, tol):
     roll_rate = 0.0
     for _ in range(substeps):
         roll_rate = (inertia * roll_rate + SUBSTEP_DT * roll_torque) / (inertia + damping * SUBSTEP_DT)
-    assert_allclose(drone.get_dofs_velocity(dofs_idx_local=3)[..., 0], roll_rate, tol=DYN_TOL)
-    assert_allclose(drone.get_dofs_velocity(dofs_idx_local=[4, 5]), 0.0, tol=DYN_TOL)
+    assert_allclose(drone.get_dofs_velocity(dofs_idx_local=3)[..., 0], roll_rate, tol=tol)
+    assert_allclose(drone.get_dofs_velocity(dofs_idx_local=[4, 5]), 0.0, tol=tol)
 
 
 @pytest.mark.required
