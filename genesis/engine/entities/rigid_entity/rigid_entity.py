@@ -723,8 +723,9 @@ class KinematicEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         relative : bool, optional
-            Whether to report the position in the user frame, with the morph pose offset and inertial alignment
-            stripped, rather than the world frame used by the solver. Defaults to True.
+            Whether to report the position of the authored link origin rather than of the internal link origin used by
+            the solver. The internal link origin is the authored one moved by the morph 'offset_pos' / 'offset_quat'
+            and, on a free root link with 'align=True', by the inertial alignment. Defaults to True.
 
         Returns
         -------
@@ -743,8 +744,9 @@ class KinematicEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         relative : bool, optional
-            Whether to report the orientation in the user frame, with the morph pose offset and inertial alignment
-            stripped, rather than the world frame used by the solver. Defaults to True.
+            Whether to report the orientation of the authored link origin rather than of the internal link origin used
+            by the solver. The internal link origin is the authored one moved by the morph 'offset_pos' / 'offset_quat'
+            and, on a free root link with 'align=True', by the inertial alignment. Defaults to True.
 
         Returns
         -------
@@ -754,7 +756,7 @@ class KinematicEntity(Entity):
         return self._solver.get_links_quat(self.base_link_idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
-    def get_vel(self, envs_idx=None):
+    def get_vel(self, envs_idx=None, *, relative=True):
         """
         Returns linear velocity of the entity's base link.
 
@@ -762,13 +764,19 @@ class KinematicEntity(Entity):
         ----------
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
+        relative : bool, optional
+            Whether to report the velocity of the authored link origin rather than of the internal link origin used by
+            the solver. The internal link origin is the authored one moved by the world-frame vector 'd'. That
+            displacement composes the morph 'offset_pos' / 'offset_quat' and, on a free root link with 'align=True', the
+            inertial alignment. Both readings are expressed in world coordinates and differ by the transport 'omega x
+            d'. Defaults to True.
 
         Returns
         -------
         vel : torch.Tensor, shape (3,) or (n_envs, 3)
             The linear velocity of the entity's base link.
         """
-        return self._solver.get_links_vel(self.base_link_idx, envs_idx)[..., 0, :]
+        return self._solver.get_links_vel(self.base_link_idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
     def get_ang(self, envs_idx=None):
@@ -799,8 +807,10 @@ class KinematicEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         relative : bool, optional
-            If True, return the user-frame position with the morph pose offset stripped (matching the morph 'pos'); if
-            False, return the world-frame position used by the solver. Defaults to True.
+            Whether to report the position of the authored link origin, which is where the morph 'pos' placed it, rather
+            than of the internal link origin used by the solver. The internal link origin is the authored one moved by
+            the morph 'offset_pos' / 'offset_quat' and, on a free root link with 'align=True', by the inertial
+            alignment. Defaults to True.
 
         Returns
         -------
@@ -822,8 +832,10 @@ class KinematicEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         relative : bool, optional
-            If True, return the user-frame orientation with the morph pose offset stripped (matching the morph
-            'quat'/'euler'); if False, return the world-frame orientation used by the solver. Defaults to True.
+            Whether to report the orientation of the authored link origin, which is where the morph 'quat' / 'euler'
+            placed it, rather than of the internal link origin used by the solver. The internal link origin is the
+            authored one moved by the morph 'offset_pos' / 'offset_quat' and, on a free root link with 'align=True', by
+            the inertial alignment. Defaults to True.
 
         Returns
         -------
@@ -870,7 +882,7 @@ class KinematicEntity(Entity):
         return torch.stack((aabbs[..., 0, :].min(dim=-2).values, aabbs[..., 1, :].max(dim=-2).values), dim=-2)
 
     @gs.assert_built
-    def get_links_vel(self, links_idx_local=None, envs_idx=None):
+    def get_links_vel(self, links_idx_local=None, envs_idx=None, *, relative=True):
         """
         Returns linear velocity of all the entity's links expressed at a given reference position in world coordinates.
 
@@ -880,6 +892,12 @@ class KinematicEntity(Entity):
             The indices of the links. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
+        relative : bool, optional
+            Whether to report the velocity of the authored link origin rather than of the internal link origin used by
+            the solver. The internal link origin is the authored one moved by the world-frame vector 'd'. That
+            displacement composes the morph 'offset_pos' / 'offset_quat' and, on a free root link with 'align=True', the
+            inertial alignment. Both readings are expressed in world coordinates and differ by the transport 'omega x
+            d'. Defaults to True.
 
         Returns
         -------
@@ -887,7 +905,7 @@ class KinematicEntity(Entity):
             The linear velocity of all the entity's links.
         """
         links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
-        return self._solver.get_links_vel(links_idx, envs_idx)
+        return self._solver.get_links_vel(links_idx, envs_idx, relative=relative)
 
     @gs.assert_built
     def get_links_ang(self, links_idx_local=None, envs_idx=None):
@@ -924,8 +942,9 @@ class KinematicEntity(Entity):
         zero_velocity : bool, optional
             Whether to zero the velocity of all the entity's dofs. Defaults to False.
         relative : bool, optional
-            Whether 'pos' is expressed in the user frame, with the morph pose offset and inertial alignment applied on
-            top to reach the world frame used by the solver, rather than directly in the world frame. Defaults to True.
+            Whether 'pos' places the authored link origin rather than directly the internal link origin used by the
+            solver. The internal link origin is the authored one moved by the morph 'offset_pos' / 'offset_quat' and, on
+            a free root link with 'align=True', by the inertial alignment. Defaults to True.
         skip_forward : bool, optional
             Whether to skip forward kinematics after setting position. Defaults to False.
         """
@@ -955,8 +974,9 @@ class KinematicEntity(Entity):
         zero_velocity : bool, optional
             Whether to zero the velocity of all the entity's dofs. Defaults to False.
         relative : bool, optional
-            Whether 'quat' is expressed in the user frame, with the morph pose offset and inertial alignment applied on
-            top to reach the world frame used by the solver, rather than directly in the world frame. Defaults to True.
+            Whether 'quat' orients the authored link origin rather than directly the internal link origin used by the
+            solver. The internal link origin is the authored one moved by the morph 'offset_pos' / 'offset_quat' and, on
+            a free root link with 'align=True', by the inertial alignment. Defaults to True.
         skip_forward : bool, optional
             Whether to skip forward kinematics after setting quaternion. Defaults to False.
         """
@@ -2174,9 +2194,11 @@ class RigidEntity(KinematicEntity):
             'RigidEntity' may comprise several physical sub-entities, each a kinematic sub-tree with at most one free
             joint at its root. Defaults to 'link_origin'.
         relative : bool, optional
-            If True, strip the morph pose offset to return the user-frame position; this only affects
-            ref=gs.link_ref_frame.link_origin, since the offset is defined on the link origin. If False, return the
-            world frame. Defaults to True.
+            Whether to report the position of the authored link origin rather than of the internal link origin used by
+            the solver. The internal link origin is the authored one moved by the morph 'offset_pos' / 'offset_quat'
+            and, on a free root link with 'align=True', by the inertial alignment. Only
+            'ref=gs.link_ref_frame.link_origin' is affected, since the offset is defined on the link origin. Defaults to
+            True.
 
         Returns
         -------
@@ -2187,7 +2209,9 @@ class RigidEntity(KinematicEntity):
         return self._solver.get_links_pos(links_idx, envs_idx, ref=ref, relative=relative)
 
     @gs.assert_built
-    def get_links_vel(self, links_idx_local=None, envs_idx=None, *, ref: link_ref_frame = link_ref_frame.link_origin):
+    def get_links_vel(
+        self, links_idx_local=None, envs_idx=None, *, ref: link_ref_frame = link_ref_frame.link_origin, relative=True
+    ):
         """
         Returns linear velocity of all the entity's links expressed at a given reference position in world coordinates.
 
@@ -2200,6 +2224,12 @@ class RigidEntity(KinematicEntity):
         ref: gs.link_ref_frame, optional
             The reference point used to express the velocity of each link: its origin ('link_origin') or its center of
             mass ('link_COM'). Defaults to 'link_origin'.
+        relative : bool, optional
+            Whether to report the velocity of the authored link origin rather than of the internal link origin used by
+            the solver. The internal link origin is the authored one moved by the world-frame vector 'd'. That
+            displacement composes the morph 'offset_pos' / 'offset_quat' and, on a free root link with 'align=True', the
+            inertial alignment. Both readings are expressed in world coordinates and differ by the transport 'omega x
+            d'. Only 'ref=gs.link_ref_frame.link_origin' is affected. Defaults to True.
 
         Returns
         -------
@@ -2207,12 +2237,33 @@ class RigidEntity(KinematicEntity):
             The linear velocity of all the entity's links.
         """
         links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
-        return self._solver.get_links_vel(links_idx, envs_idx, ref=ref)
+        return self._solver.get_links_vel(links_idx, envs_idx, ref=ref, relative=relative)
 
     @gs.assert_built
-    def get_links_acc(self, links_idx_local=None, envs_idx=None):
+    def get_links_acc(self, links_idx_local=None, envs_idx=None, *, relative=True):
+        """
+        Returns classical linear acceleration of all the entity's links expressed at their origin in world coordinates.
+
+        Parameters
+        ----------
+        links_idx_local : None | array_like
+            The indices of the links. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        relative : bool, optional
+            Whether to report the acceleration of the authored link origin rather than of the internal link origin used
+            by the solver. The internal link origin is the authored one moved by the world-frame vector 'd'. That
+            displacement composes the morph 'offset_pos' / 'offset_quat' and, on a free root link with 'align=True', the
+            inertial alignment. Both readings are expressed in world coordinates and differ by the transport 'alpha x d
+            + omega x (omega x d)'. Defaults to True.
+
+        Returns
+        -------
+        acc : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
+            The classical linear acceleration of all the entity's links.
+        """
         links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
-        return self._solver.get_links_acc(links_idx, envs_idx)
+        return self._solver.get_links_acc(links_idx, envs_idx, relative=relative)
 
     @gs.assert_built
     def get_links_acc_ang(self, links_idx_local=None, envs_idx=None):
@@ -2376,8 +2427,9 @@ class RigidEntity(KinematicEntity):
             Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
             sudden change in entity pose.
         relative : bool, optional
-            Whether 'pos' is expressed in the user frame, with the morph pose offset and inertial alignment applied on
-            top to reach the world frame used by the solver, rather than directly in the world frame. Defaults to True.
+            Whether 'pos' places the authored link origin rather than directly the internal link origin used by the
+            solver. The internal link origin is the authored one moved by the morph 'offset_pos' / 'offset_quat' and, on
+            a free root link with 'align=True', by the inertial alignment. Defaults to True.
         skip_forward : bool, optional
             Whether to skip forward kinematics after setting position. Defaults to False.
         """
@@ -2409,8 +2461,9 @@ class RigidEntity(KinematicEntity):
             Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
             sudden change in entity pose.
         relative : bool, optional
-            Whether 'quat' is expressed in the user frame, with the morph pose offset and inertial alignment applied on
-            top to reach the world frame used by the solver, rather than directly in the world frame. Defaults to True.
+            Whether 'quat' orients the authored link origin rather than directly the internal link origin used by the
+            solver. The internal link origin is the authored one moved by the morph 'offset_pos' / 'offset_quat' and, on
+            a free root link with 'align=True', by the inertial alignment. Defaults to True.
         skip_forward : bool, optional
             Whether to skip forward kinematics after setting quaternion. Defaults to False.
         """
