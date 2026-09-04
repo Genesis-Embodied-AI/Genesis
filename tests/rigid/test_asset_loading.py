@@ -236,8 +236,13 @@ def test_urdf_parsing_inertia_defaults(
         (0.01, 0.22, 0.03),
         (0.02, 0.03, 0.30),
     )
+    GRAVITY = (0.0, 0.0, -9.81)
 
     scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+            gravity=GRAVITY,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.5, 0.5, 0.5),
             camera_lookat=(0.0, 0.0, 0.0),
@@ -273,6 +278,21 @@ def test_urdf_parsing_inertia_defaults(
         morph=gs.morphs.URDF(
             file=implicit_inertial_origin_chain,
             pos=(1.6, 0.0, 0.5),
+        ),
+    )
+    entity_chain_unmerged_unaligned = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=implicit_inertial_origin_chain,
+            pos=(0.8, 1.0, 0.5),
+            align=False,
+            merge_fixed_links=False,
+        ),
+    )
+    entity_chain_merged_unaligned = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=implicit_inertial_origin_chain,
+            pos=(1.6, 1.0, 0.5),
+            align=False,
         ),
     )
     # The asset states no inertial for its base link. Attachment makes that base movable, so Genesis computes its
@@ -377,15 +397,74 @@ def test_urdf_parsing_inertia_defaults(
     dubious_com_records = [record for record in caplog.records if "dubious center of mass" in record.getMessage()]
     assert len(dubious_com_records) == 1
 
-    # Folding a fixed-jointed subtree into its parent must not change the composite rigid-body inertia, which the
-    # merging path normalizes the omitted origin for on its own. The two composites are accumulated by independent
-    # code paths, so their agreement is bounded by that cross-path floor rather than by the storage precision.
+    # Every link of an aligned free body keeps its own mass, so each link reads its authored mass. The two totals are
+    # accumulated by independent code paths, so their agreement is bounded by that cross-path floor.
+    assert_allclose(entity_chain_unmerged.get_links_mass(), (2.5, 1.5), tol=gs.EPS)
     assert_allclose(entity_chain_unmerged.get_mass(), entity_chain_merged.get_mass(), rtol=5e-7)
-    assert_allclose(
-        np.linalg.eigvalsh(entity_chain_unmerged.base_link.desc.inertia),
-        np.linalg.eigvalsh(entity_chain_merged.base_link.desc.inertia),
-        rtol=5e-7,
+
+    # Merged and unmerged copies are the same rigid body, so one step from rest under the same wrench gives both the
+    # same motion. This holds with the frame anchored on the center of mass and with the frame at the link origin. The
+    # wrench acts on the last link, the fixed child when kept, at one world point above the base. Armature, damping and
+    # a velocity servo sit on every free-joint DOF.
+    ARMATURE = (0.5, 0.4, 0.3, 0.01, 0.02, 0.015)
+    DAMPING = (2.0, 1.0, 3.0, 0.05, 0.1, 0.02)
+    KV = (4.0, 3.0, 5.0, 0.2, 0.3, 0.1)
+    VEL_TARGET = (0.5, -0.2, 0.3, 1.0, -2.0, 0.5)
+    FORCE, TORQUE = (3.0, 0.0, 0.0), (0.4, -0.2, 0.1)
+    for entity_chain in (
+        entity_chain_unmerged,
+        entity_chain_merged,
+        entity_chain_unmerged_unaligned,
+        entity_chain_merged_unaligned,
+    ):
+        entity_chain.set_dofs_armature(ARMATURE)
+        entity_chain.set_dofs_damping(DAMPING)
+        entity_chain.set_dofs_kv(KV)
+        entity_chain.control_dofs_velocity(VEL_TARGET)
+        entity_chain.apply_links_external_wrench(
+            force=FORCE,
+            torque=TORQUE,
+            links_idx_local=entity_chain.n_links - 1,
+            pos=(*entity_chain.morph.pos[:2], 0.8),
+        )
+    # From rest, one implicit step solves the augmented mass matrix against the generalized force. Both are written in
+    # the coordinates of the free joint: origin velocity along the world axes, angular velocity along the link axes. The
+    # single unaligned link is the case with every coupling in it.
+    desc = entity_chain_merged_unaligned.base_link.desc
+    link_R = gu.quat_to_R(tensor_to_array(entity_chain_merged_unaligned.get_quat()))
+    com = link_R @ desc.inertial_pos
+    inertia = link_R @ gu.quat_to_R(desc.inertial_quat) @ desc.inertia @ gu.quat_to_R(desc.inertial_quat).T @ link_R.T
+    com_skew = np.array([[0.0, -com[2], com[1]], [com[2], 0.0, -com[0]], [-com[1], com[0], 0.0]])
+    mass_mat = np.block(
+        [
+            [desc.mass * np.eye(3), -desc.mass * com_skew @ link_R],
+            [desc.mass * link_R.T @ com_skew, link_R.T @ (inertia - desc.mass * com_skew @ com_skew) @ link_R],
+        ]
     )
+    mass_mat += np.diag(ARMATURE) + scene.dt * np.diag(np.add(DAMPING, KV))
+    origin = tensor_to_array(entity_chain_merged_unaligned.get_pos())
+    arm = np.array((*entity_chain_merged_unaligned.morph.pos[:2], 0.8)) - origin
+    force = np.concatenate([FORCE + desc.mass * np.array(GRAVITY), link_R.T @ (TORQUE + np.cross(arm, FORCE))])
+    force += np.multiply(KV, VEL_TARGET)
+    scene.step()
+    # The midpoint rule takes the velocity products at the midpoint velocity, the implicit update at the initial one.
+    # From rest the two differ by h * |dv|^2 / 4, the tolerance here.
+    assert_allclose(
+        entity_chain_merged_unaligned.get_dofs_velocity(), scene.dt * np.linalg.solve(mass_mat, force), tol=1e-5
+    )
+    # The two copies compose the same body through independent code paths, so their agreement is bounded by that
+    # cross-path floor, or by the working precision when coarser.
+    for entity_chain, entity_chain_ref in (
+        (entity_chain_unmerged, entity_chain_merged),
+        (entity_chain_unmerged_unaligned, entity_chain_merged_unaligned),
+    ):
+        assert_allclose(entity_chain.get_dofs_velocity(), entity_chain_ref.get_dofs_velocity(), tol=max(tol, 5e-7))
+        assert_allclose(entity_chain.get_quat(), entity_chain_ref.get_quat(), tol=max(tol, 5e-7))
+        assert_allclose(
+            entity_chain.get_pos() - torch.tensor(entity_chain.morph.pos),
+            entity_chain_ref.get_pos() - torch.tensor(entity_chain_ref.morph.pos),
+            tol=max(tol, 5e-7),
+        )
 
     # Attachment resolves the base like any movable link, so its mass matches the same asset added free. Both
     # collision and visual geometry feed the computation.
@@ -1501,7 +1580,7 @@ def test_align_heterogeneous_inertial(show_viewer, tol):
         material=gs.materials.Rigid(),
     )
     # Free bodies whose root link is empty and whose mass lives on a fixed child (merge_fixed_links=False keeps the
-    # wrapper). Alignment folds the child's mass onto the root; the subsumed child keeps only the gs.EPS placeholder.
+    # wrapper). The empty root reads the gs.EPS placeholder and the child its authored mass.
     WRAP_MASS_A, WRAP_MASS_B = 0.5, 0.25
     wrapped_morph = (
         gs.morphs.URDF(
@@ -1637,15 +1716,12 @@ def test_align_heterogeneous_inertial(show_viewer, tol):
     with pytest.raises(AssertionError):
         assert_allclose(inertial_i[0, 0], inertial_i[2, 0], tol=tol)
 
-    # Empty-free-root wrapping a fixed massive child: alignment folds the composite mass onto the root (link 0),
-    # leaving the subsumed child (link 1) with only the gs.EPS placeholder. The root must carry exactly the child's
-    # mass; a prior bug summed the root's own gs.EPS placeholder into the composite, inflating it by one gs.EPS
-    # (hence the sub-EPS tolerance below). Envs are dispatched as [A, A, B, B].
-    wrapped_idx = slice(free_wrapped.link_start, free_wrapped.link_end)
-    wrapped_mass = qd_to_numpy(scene.rigid_solver.dyn_info.links.inertial_mass, None, wrapped_idx, transpose=True)
-    assert_allclose(wrapped_mass[[0, 1], 0], WRAP_MASS_A, atol=gs.EPS * 0.5)
-    assert_allclose(wrapped_mass[[2, 3], 0], WRAP_MASS_B, atol=gs.EPS * 0.5)
-    assert_allclose(wrapped_mass[:, 1], gs.EPS, atol=gs.EPS * 1e-3)
+    # The root (link 0) reads the gs.EPS placeholder of a geometry-free link, the child (link 1) its authored mass. The
+    # environments hold [A, A, B, B].
+    wrapped_mass = free_wrapped.get_links_mass()
+    assert_allclose(wrapped_mass[:, 0], gs.EPS, tol=gs.EPS)
+    assert_allclose(wrapped_mass[[0, 1], 1], WRAP_MASS_A, tol=gs.EPS)
+    assert_allclose(wrapped_mass[[2, 3], 1], WRAP_MASS_B, tol=gs.EPS)
 
     # Check contacts
     for i in range(4):

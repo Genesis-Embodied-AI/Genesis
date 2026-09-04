@@ -2254,6 +2254,19 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         # tensor of one number repeated: no inertia of any body.
         if shape and np.shape(values)[-len(shape) :] != shape:
             gs.raise_exception(f"{name} is {shape} per link, and {np.shape(values)} cannot be read as that.")
+        # The anchor check below reads the written indices as given, in any form the sanitizer accepts. A tensor on a
+        # GPU device is read back in debug mode only, since that stalls the GPU.
+        links_idx_ = None
+        if links_idx is None:
+            links_idx_ = range(self.n_links)
+        elif not isinstance(links_idx, torch.Tensor) or gs.debug or links_idx.device.type == "cpu":
+            (links_idx_,) = indices_to_mask(links_idx, keepdim=False, to_torch=False, boolean_mask=False)
+            if isinstance(links_idx_, slice):
+                links_idx_ = range(*links_idx_.indices(self.n_links))
+            elif isinstance(links_idx_, torch.Tensor):
+                links_idx_ = tensor_to_array(links_idx_)
+            if np.ndim(links_idx_) == 0:
+                links_idx_ = (links_idx_,)
         values, links_idx, envs_idx = self._sanitize_io_variables(
             values,
             links_idx,
@@ -2264,24 +2277,45 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             batched=self._options.batch_links_info,
             skip_allocation=True,
         )
-        if name != "mass":
-            # TODO: An aligned link is anchored on its own center of mass and principal axes, which is what makes its
-            # mass block diagonal (see _init_mass_mat), so writing either one leaves the anchoring behind. Following
-            # the value instead means moving the frame, which shifts the local pose of every geom of the fixed subtree
-            # ('GeomsInfo.pos' / 'quat', one entry per geom, shared by all environments), so a per-environment value
-            # has no frame to go to. It also moves 'qpos', which is quoted in the anchored frame, and the origin a
-            # fixed child reports. Lifting this takes geom info batched per environment.
-            aligned_idx = next((i_l for i_l in tensor_to_array(links_idx) if self.links[i_l].aligned), None)
-            if aligned_idx is not None:
-                link = self.links[aligned_idx]
+        if links_idx_ is not None:
+            # TODO: the anchor of an aligned root keeps its mass block diagonal (see _init_mass_mat). A center of mass
+            # or an inertia written on any link of the body moves the anchor. A mass write keeps it only as one rescale
+            # of every link of the body, inertia included. A frame move shifts the local pose of every geom
+            # ('GeomsInfo.pos' / 'quat', one entry per geom for all environments). It also shifts 'qpos', quoted in the
+            # anchored frame, and the origin a fixed child reports. A per-environment value has no frame to go to, so
+            # the guard stays until 'GeomsInfo' gets a batch dimension.
+            links_anchor = []
+            for link in self.links:
+                anchor = link
+                while anchor.parent_idx != -1 and all(joint.type == gs.JOINT_TYPE.FIXED for joint in anchor.joints):
+                    anchor = self.links[anchor.parent_idx]
+                links_anchor.append(anchor if anchor.aligned else None)
+            values_idx_by_link = {i_l: i_col for i_col, i_l in enumerate(links_idx_)}
+            for i_l in values_idx_by_link:
+                anchor = links_anchor[i_l]
+                if anchor is None:
+                    continue
+                links_idx_body = [link.idx for link in self.links if links_anchor[link.idx] is anchor]
+                if name == "mass" and len(links_idx_body) == 1:
+                    continue
+                if name == "mass" and scale_inertia and all(i_b in values_idx_by_link for i_b in links_idx_body):
+                    # The rescale check reads the values back and stalls the GPU, so it runs in debug mode only.
+                    if not gs.debug:
+                        continue
+                    ratios = values[..., [values_idx_by_link[i_b] for i_b in links_idx_body]]
+                    ratios = ratios / self.get_links_mass(links_idx_body, envs_idx)
+                    if torch.allclose(ratios, ratios[..., :1], rtol=gs.EPS, atol=gs.EPS):
+                        continue
+                link = self.links[i_l]
                 remedy = (
                     "Load the entity with 'align=False' to write inertial properties at runtime."
                     if isinstance(link.entity.main_morph, gs.options.morphs.FileMorph)
                     else "Writing the inertial properties of a primitive morph is not supported yet."
                 )
+                what = {"mass": "mass", "COM": "center of mass", "inertia": "inertia"}[name]
                 gs.raise_exception(
-                    f"Cannot set the {'center of mass' if name == 'COM' else 'inertia'} of link '{link.name}': its "
-                    f"frame is anchored on the center of mass and principal axes of its body. {remedy}"
+                    f"Cannot set the {what} of link '{link.name}': the frame of its body is anchored on the center of "
+                    f"mass and principal axes of all its links. Set the mass of the whole entity instead. {remedy}"
                 )
 
         envs_idx = envs_idx if self._options.batch_links_info else self._scene._envs_idx

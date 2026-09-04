@@ -43,7 +43,6 @@ from .inertial import (
     RHO_OBJECT,
     RHO_ROBOT,
     GeomInertialInfo,
-    LinkInertial,
     LinkInertialInfo,
     compose_inertial_from_g_infos,
     compose_inertial_properties,
@@ -1085,21 +1084,20 @@ class KinematicEntityDescription(EntityDescription):
                 )
                 subtree.append(i_l)
             if is_articulated:
+                root.is_aligned = False
                 continue
 
             # Each variant anchors on its own resolved inertia and geoms, which kinematic and rigid entities both
             # have. The anchor composes the fixed subtree's inertia and moves the body frame to its center of mass
-            # and principal axes. It re-expresses the variant's geoms, so the world geometry stays put. The composite
-            # folds into the variant's dynamics inertia (rigid only) and into its offset and init_qpos.
+            # and principal axes. It re-expresses the variant geoms, so the geometry keeps its world pose, and folds
+            # into the variant offset and init_qpos.
             for i_v in range(len(resolution.links_inertial_info[i_root])):
                 inertial_info = []
                 explicit_mass_flags = set()
-                composite_locals = []
                 for i_l in subtree:
                     props, is_mass_explicit, _ = resolution.links_inertial_info[i_l][i_v]
                     if props.mass < gs.EPS:
                         continue
-                    composite_locals.append(i_l)
                     explicit_mass_flags.add(is_mass_explicit)
                     rot = gu.quat_to_R(props.quat)
                     inertia_in_link = rot @ props.inertia @ rot.T
@@ -1125,14 +1123,16 @@ class KinematicEntityDescription(EntityDescription):
                         "densities) and geometry-estimated link masses. Specify the mass or density of all of its "
                         "links or none of them."
                     )
+                # A body without inertia gets no anchor and keeps its frame, like the articulated body above. The solver
+                # and the setters then read it as unaligned (see 'func_midpoint_is_aligned' and '_init_mass_mat').
                 if not inertial_info:
+                    root.is_aligned = False
                     continue
                 mass_total, com_root, inertia_root = compose_inertial_properties(inertial_info)
                 if mass_total <= gs.EPS:
+                    root.is_aligned = False
                     continue
-                principal_R = uu.principal_axes_rot(inertia_root)
-                principal_quat = gu.R_to_quat(principal_R)
-                inertia_diag = principal_R.T @ inertia_root @ principal_R
+                principal_quat = gu.R_to_quat(uu.principal_axes_rot(inertia_root))
 
                 # Re-express the variant's geoms across the subtree so the body frame can move to (com_root, principal
                 # axes) while the world geometry stays fixed. The static link poses are shared across heterogeneous
@@ -1151,29 +1151,15 @@ class KinematicEntityDescription(EntityDescription):
                     for geom in geoms:
                         geom.pos, geom.quat = gu.transform_pos_quat_by_trans_quat(geom.pos, geom.quat, pos, quat)
 
-                # Fold the composite (diagonal, COM-centered) into the dynamics inertia.
-                # Rescale the unit-density estimate to the link masses.
+                # Every link keeps its own mass and inertia. The inertial frame moves with the geoms into the anchored
+                # frame: getters and wrenches read it as 'link_COM', and the inverse weight derives from it. The solver
+                # composes the body from its links each step, so the composite is diagonal there (see '_init_mass_mat').
                 if isinstance(root, RigidLinkDescription):
-                    # Sum the dynamics masses of exactly the links that contributed to 'mass_total'; the massless
-                    # links skipped above (a geometry-less link carries only the 'gs.EPS' placeholder) must not
-                    # inflate the composite.
-                    real_total = sum(
-                        (links[i_l] if i_v == 0 else variants[i_v].links[i_l]).mass for i_l in composite_locals
-                    )
-                    scale = real_total / mass_total
                     for i_l in subtree:
                         desc = links[i_l] if i_v == 0 else variants[i_v].links[i_l]
-                        if i_l == i_root:
-                            props = LinkInertial(real_total, gu.zero_pos(), gu.identity_quat(), scale * inertia_diag)
-                        else:
-                            # A fixed child keeps its authored inertial frame, re-expressed like its geoms: it is the
-                            # public 'link_COM' reference of the getters and external wrenches, and the inverse weight
-                            # of the link derives from it. Only its mass and inertia fold into the composite.
-                            pos, quat = gu.transform_pos_quat_by_trans_quat(
-                                desc.inertial_pos, desc.inertial_quat, *alignment_inv_in_link[i_l]
-                            )
-                            props = LinkInertial(gs.EPS, pos, quat, np.zeros((3, 3), dtype=gs.np_float))
-                        desc.mass, desc.inertial_pos, desc.inertial_quat, desc.inertia = props
+                        desc.inertial_pos, desc.inertial_quat = gu.transform_pos_quat_by_trans_quat(
+                            desc.inertial_pos, desc.inertial_quat, *alignment_inv_in_link[i_l]
+                        )
 
                 # Fold the anchoring into the offset (relative getters keep reporting the authored frame) and the root
                 # free-joint init_qpos (the body frame moves to old_pose o (com_root, principal), keeping the

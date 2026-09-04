@@ -209,7 +209,7 @@ def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_vi
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["double_ball_pendulum"])
-def test_apply_external_wrench(xml_path, show_viewer):
+def test_apply_external_wrench(xml_path, show_viewer, tol):
     GRAVITY = 2.0
 
     scene = gs.Scene(
@@ -359,10 +359,25 @@ def test_apply_external_wrench(xml_path, show_viewer):
     with pytest.raises(gs.GenesisException, match="'pos' requires 'force'"):
         rigid_solver.apply_links_external_wrench(torque=(0, 0, 0), links_idx=duck_link_idx, pos=lever_arm)
 
+    # Armature on a free joint adds to the inertia the solver turns the body with. A torque from rest spins the body up
+    # by that augmented inertia under the implicit integrators too. The torque is given in the inertial frame, which
+    # holds the inertia tensor, and the angular velocity is read in the link frame.
+    ARMATURE, TORQUE = 0.002, (0.02, -0.01, 0.015)
+    duck_inertia = duck.base_link.desc.inertia + ARMATURE * np.eye(3)
+    duck_inertial_R = gu.quat_to_R(duck.base_link.desc.inertial_quat)
+    duck_ang = duck.get_dofs_velocity()[3:]
+    duck.set_dofs_armature(ARMATURE, dofs_idx_local=[3, 4, 5])
+    duck.base_link.apply_external_torque(TORQUE, ref=gs.link_ref_frame.link_COM, local=True)
+    scene.step()
+    duck_spin = duck_inertial_R @ np.linalg.solve(duck_inertia, np.array(TORQUE) * scene.dt)
+    assert_allclose(duck.get_dofs_velocity()[3:] - duck_ang, duck_spin, tol=1e-4)
+
 
 @pytest.mark.required
 @pytest.mark.parametrize("integrator", [gs.integrator.Euler, gs.integrator.approximate_implicitfast])
-def test_energy_analytical_and_conservation(spring_double_pendulum, show_viewer, tol, integrator):
+def test_energy_analytical_and_conservation(
+    spring_double_pendulum, implicit_inertial_origin_chain, show_viewer, tol, integrator
+):
     g = 9.81
     dt = 0.001
     h0 = 0.5
@@ -402,9 +417,25 @@ def test_energy_analytical_and_conservation(spring_double_pendulum, show_viewer,
             file=spring_double_pendulum,
         ),
     )
+    # Three copies of a tumbling free body, high enough to fall for the whole horizon: one link, a root with a fixed
+    # child, and one link with armature on its angular DOFs.
+    tumblers = [
+        scene.add_entity(
+            gs.morphs.URDF(
+                file=implicit_inertial_origin_chain,
+                pos=(x, 1.0, 2.0),
+                merge_fixed_links=merge_fixed_links,
+            ),
+        )
+        for x, merge_fixed_links in ((1.0, True), (1.6, False), (2.2, True))
+    ]
     scene.build()
 
     arm.set_dofs_position([0.5, -0.8])
+    ARMATURE = 0.05
+    for tumbler in tumblers:
+        tumbler.set_dofs_velocity([0.0, 0.0, 0.0, 3.0, 1.0, 2.0])
+    tumblers[2].set_dofs_armature(ARMATURE, dofs_idx_local=[3, 4, 5])
 
     # Nearly undamped contact for sphere_a: small dampratio gives very stiff elastic spring with minimal damping.
     # Contact sol_params are averaged: 0.5*(geom_a + geom_b), so both geoms must share the same params.
@@ -414,11 +445,12 @@ def test_energy_analytical_and_conservation(spring_double_pendulum, show_viewer,
     mass = sphere_a.get_links_mass()
     te_initial = sphere_a.get_total_energy()
 
-    ke_a, pe_a, ke_b, pe_b, te_arm = [], [], [], [], []
+    ke_a, pe_a, ke_b, pe_b, te_arm, ke_tumblers = [], [], [], [], [], []
     impact_step = -1
     for i in range(n_steps):
         scene.step()
         te_arm.append(arm.get_total_energy())
+        ke_tumblers.append(torch.stack([tumbler.get_kinetic_energy() for tumbler in tumblers]))
         ke_a.append(sphere_a.get_kinetic_energy())
         pe_a.append(sphere_a.get_potential_energy())
         ke_b.append(sphere_b.get_kinetic_energy())
@@ -452,6 +484,15 @@ def test_energy_analytical_and_conservation(spring_double_pendulum, show_viewer,
     # The springs must carry a real share of that energy, otherwise the check above would hold with no spring term
     spring_energy = 0.5 * torch.sum(arm.get_dofs_stiffness() * arm.get_dofs_position() ** 2)
     assert spring_energy > 0.1 * te_arm[-1]
+
+    # Gravity exerts no torque about the center of mass, so the rotational energy of a tumbling body is a constant of
+    # its motion. The midpoint rule keeps it, with armature the augmented energy w^T (I + A) w / 2. Each Newton solve
+    # leaves a residual at the working precision, and the horizon accumulates them.
+    tumblers_mass = torch.stack([tumbler.get_mass() for tumbler in tumblers])
+    steps = torch.arange(1, n_steps + 1, dtype=gs.tc_float, device=gs.device)
+    ke_rot = torch.stack(ke_tumblers) - 0.5 * tumblers_mass * (steps[:, None] * g * dt) ** 2
+    if integrator != gs.integrator.Euler:
+        assert_allclose(ke_rot, ke_rot[0], tol=10.0 * tol)
 
 
 @pytest.mark.slow  # ~250s
