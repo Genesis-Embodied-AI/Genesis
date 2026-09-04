@@ -326,7 +326,7 @@ def _store_array(value, exported: "Exported") -> int:
     file as they share it in memory. Two views onto one buffer read the same bytes, so the memory a view reads keys
     the lookup rather than the view itself, and every keyed array is held until the export ends so no address is
     reused meanwhile. The copy is made contiguous in row order, so the file holds the same bytes however numpy laid
-    the values out.
+    the values out, and keeps the shape it was given: an array holding one value and no axis loads back as such.
     """
     layout = value.__array_interface__
     key = (layout["data"][0], layout["shape"], layout["strides"], layout["typestr"])
@@ -335,7 +335,7 @@ def _store_array(value, exported: "Exported") -> int:
         slot = len(exported.values)
         exported.slots[key] = slot
         exported.stored.append(value)
-        exported.values.append(np.ascontiguousarray(value))
+        exported.values.append(np.require(value, requirements="C"))
     return slot
 
 
