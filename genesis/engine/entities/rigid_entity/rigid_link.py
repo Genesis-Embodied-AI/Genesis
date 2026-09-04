@@ -327,10 +327,9 @@ class KinematicLink(RBC):
     @property
     def aligned(self) -> bool:
         """
-        Whether the link opts into center-of-mass / principal-axis reframing (the 'align' option, set for a free body
-        that opts in or is a primitive). The reframing - and the resulting exactly-diagonal joint-space mass block it
-        enables - is applied only when the body is a single rigid body (a free root with no DOF-bearing descendant);
-        callers relying on the diagonal mass must check that condition too, as the solver does.
+        Whether the build anchored the link frame on the center of mass and principal axes of its body (the 'align'
+        option, on a free body that opts in or is a primitive). Only a single rigid body gets the anchor: a free root
+        with an inertia and no DOF-bearing descendant. Its joint-space mass block is then exactly diagonal.
         """
         return self.desc.is_aligned
 

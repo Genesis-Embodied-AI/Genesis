@@ -865,7 +865,9 @@ def test_normalized_quat(show_viewer, tol):
 
 
 @pytest.mark.required
-def test_inertial_property_setters(sliding_ball_pair, free_bodies_in_one_model, show_viewer, tol):
+def test_inertial_property_setters(
+    sliding_ball_pair, free_bodies_in_one_model, implicit_inertial_origin_chain, show_viewer, tol
+):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
@@ -907,6 +909,13 @@ def test_inertial_property_setters(sliding_ball_pair, free_bodies_in_one_model, 
             file=free_bodies_in_one_model,
             pos=(0.0, 10.0, 8.0),
             align=False,
+        ),
+    )
+    chain = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=implicit_inertial_origin_chain,
+            pos=(0.0, -3.0, 0.5),
+            merge_fixed_links=False,
         ),
     )
     scene.build(n_envs=4)
@@ -1014,6 +1023,22 @@ def test_inertial_property_setters(sliding_ball_pair, free_bodies_in_one_model, 
         solver.set_links_COM([OFFSET, 0.0, 0.0], links_idx=free_bodies.links[0].idx)
     with pytest.raises(gs.GenesisException, match="not supported yet"):
         solver.set_links_inertia(SKEWED_INERTIA, links_idx=het_link.idx)
+    # The anchor covers fixed children too, so the setters hold their center of mass and inertia like the root's. A mass
+    # written on one link alone moves the anchor, so the setter rejects it. A mass set on the whole entity keeps the
+    # anchor and the mass ratios.
+    root, child = chain.links
+    with pytest.raises(gs.GenesisException, match="align=False"):
+        child.set_COM([OFFSET, 0.0, 0.0])
+    with pytest.raises(gs.GenesisException, match="align=False"):
+        child.set_inertia(SKEWED_INERTIA)
+    with pytest.raises(gs.GenesisException, match="align=False"):
+        child.set_mass(1.0)
+    with pytest.raises(gs.GenesisException, match="align=False"):
+        root.set_mass(1.0)
+    with pytest.raises(gs.GenesisException, match="align=False"):
+        chain.set_links_mass([1.0, 1.0])
+    chain.set_mass(2.0)
+    assert_allclose(chain.get_links_mass(), [[1.25, 0.75]] * 4, tol=tol)
 
     # An inertial property belongs to the model, so a reset restores the configuration the scene was built at and
     # leaves the mass it now runs with alone.

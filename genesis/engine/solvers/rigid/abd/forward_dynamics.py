@@ -1907,28 +1907,35 @@ def func_midpoint_eligible(
     i_b,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
-    """Whether the link is a standalone free body eligible for midpoint integration this step.
+    """Whether the link is a free rigid body eligible for midpoint integration this step.
 
-    Eligible: a 6-DOF free-joint link that is its own whole kinematic tree (no parent, and no descendant
-    contributing mass, detected as crb equal to the link's own spatial inertia), and unconstrained this step (no
-    contact touching it and no connect/weld equality involving it, per the assembly-written involvement flag; see
-    is_constrained in array_class.py). The flag covers dynamically registered welds; entities merged at build time
-    via attach are excluded by the tree tests. A constrained body must keep the standard update: the constraint
-    impulse is resolved by the solver at the current configuration and would double-count inside the discrete free
-    rigid-body equation.
+    Eligible: a 6-DOF free-joint link that is its own whole kinematic tree (no parent, and no DOF-bearing descendant, so
+    its mass block holds its own DOFs alone, see dofs_mass_block_start in array_class.py), and unconstrained this step
+    (no contact touching the body, fixed children included, and no connect/weld equality involving it, per the
+    assembly-written involvement flag; see is_constrained in array_class.py). The flag covers dynamically registered
+    welds; entities merged at build time via attach are excluded by the tree tests. A constrained body must keep the
+    standard update: the constraint impulse is resolved by the solver at the current configuration and would
+    double-count inside the discrete free rigid-body equation.
     """
     I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
     is_eligible = False
     if dyn_info.links.n_dofs[I_l] == 6 and dyn_info.links.parent_idx[I_l] == -1:
         i_j = dyn_info.links.joint_start[I_l]
         I_j = [i_j, i_b] if qd.static(rigid_config.batch_joints_info) else i_j
+        dof_start = dyn_info.links.dof_start[I_l]
         is_eligible = (
             dyn_info.joints.type[I_j] == gs.JOINT_TYPE.FREE
-            and dyn_state.links.crb_mass[i_l, i_b] == dyn_state.links.cinr_mass[i_l, i_b]
-            and not dyn_state.links.is_constrained[i_l, i_b]
+            and rigid_info.dofs_mass_block_end[dof_start] <= dyn_info.links.dof_end[I_l]
         )
+        if is_eligible:
+            # The assembly marks the link a constraint acts on, a fixed child included, so the whole body is scanned.
+            for j_l in range(i_l, rigid_info.links_tree_end[i_l]):
+                J_l = [j_l, i_b] if qd.static(rigid_config.batch_links_info) else j_l
+                if dyn_info.links.root_idx[J_l] == i_l and dyn_state.links.is_constrained[j_l, i_b]:
+                    is_eligible = False
         if is_eligible:
             # A position/velocity servo folds its stabilizing gain into the implicit velocity update; treating it
             # explicitly inside the midpoint solve diverges at practical gains, so a servoed body keeps the
@@ -1940,6 +1947,50 @@ def func_midpoint_eligible(
 
 
 @qd.func
+def func_midpoint_has_fixed_children(
+    i_l,
+    i_b,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+):
+    """Whether the body of the free root holds links other than the root itself."""
+    has_fixed_children = False
+    for j_l in range(i_l + 1, rigid_info.links_tree_end[i_l]):
+        J_l = [j_l, i_b] if qd.static(rigid_config.batch_links_info) else j_l
+        if dyn_info.links.root_idx[J_l] == i_l:
+            has_fixed_children = True
+    return has_fixed_children
+
+
+@qd.func
+def func_midpoint_is_aligned(
+    i_l,
+    i_b,
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+):
+    """Whether the center of mass of the free body sits at its joint origin.
+
+    Alignment moves the frame of an aligned free body onto its center of mass at load, and the build shrinks the mass
+    block of such a body to single DOFs, which no other body gets. A body made of one link reads its own inertial
+    position. Such a body keeps the standard translation update, so the position update and the velocity recovery
+    both read this (see func_midpoint_free_body).
+    """
+    I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
+    dof_start = dyn_info.links.dof_start[I_l]
+    is_aligned = False
+    if rigid_info.dofs_mass_block_end[dof_start] == dof_start + 1:
+        is_aligned = True
+    elif not func_midpoint_has_fixed_children(i_l, i_b, dyn_info, rigid_info, rigid_config):
+        ipos = dyn_info.links.inertial_pos[I_l]
+        is_aligned = ipos[0] == 0.0 and ipos[1] == 0.0 and ipos[2] == 0.0
+    return is_aligned
+
+
+@qd.func
 def func_midpoint_free_body(
     i_l,
     i_b,
@@ -1948,15 +1999,15 @@ def func_midpoint_free_body(
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
-    """Advance one standalone free body with the implicit midpoint rule (matching MuJoCo's midpoint integration).
+    """Advance one free rigid body with the implicit midpoint rule (matching MuJoCo's midpoint integration).
 
     Solves the free rigid-body equation I * (w_new - w) / h = tau - w_mid x (I * w_mid) for the midpoint angular
-    velocity w_mid = (w + w_new) / 2 by Newton iteration with backtracking, in the link's inertial
-    (center-of-mass) frame where I is constant. The midpoint rule preserves the quadratic invariants of torque-free
-    tumbling (kinetic energy, squared angular momentum), which the velocity-implicit integrators lose because they
-    omit the gyroscopic derivative. When the center of mass coincides with the joint origin the translation keeps
-    its standard update; otherwise the coupled midpoint center-of-mass velocity has a closed-form solution, with
-    gravity applied in the accelerating frame.
+    velocity w_mid = (w + w_new) / 2 by Newton iteration with backtracking, in a frame attached to the body where the
+    inertia I is constant: the inertial frame of a lone link, or the link frame of a composite. The midpoint rule
+    preserves the quadratic invariants of torque-free tumbling (kinetic energy, squared angular momentum), which the
+    velocity-implicit integrators lose because they omit the gyroscopic derivative. When the center of mass coincides
+    with the joint origin the translation keeps its standard update; otherwise the coupled midpoint center-of-mass
+    velocity has a closed-form solution, with gravity applied in the accelerating frame.
 
     Writes acc[dofs] = (new - old) / h and vel_next[dofs] = (new + old) / 2: the position update integrates with
     the midpoint velocity, and the caller recovers the true next velocity from it afterwards.
@@ -1971,19 +2022,34 @@ def func_midpoint_free_body(
     dof_start = dyn_info.links.dof_start[I_l]
 
     iquat = dyn_info.links.inertial_quat[I_l]
-    inv_iquat = gu.qd_inv_quat(iquat)
     ipos = dyn_info.links.inertial_pos[I_l]
     inertia = dyn_info.links.inertial_i[I_l]
     mass = dyn_info.links.inertial_mass[I_l]
     xquat = dyn_state.links.quat[i_l, i_b]
 
+    # Fixed children make the link a composite. The composite inertia is constant in the link frame, so it replaces the
+    # own inertial for the integration.
+    if func_midpoint_has_fixed_children(i_l, i_b, dyn_info, rigid_info, rigid_config):
+        rot_x = gu.qd_quat_to_R(xquat, EPS)
+        iquat = gu.qd_identity_quat()
+        ipos = rot_x.transpose() @ (dyn_state.links.root_COM[i_l, i_b] - dyn_state.links.pos[i_l, i_b])
+        inertia = rot_x.transpose() @ dyn_state.links.crb_inertial[i_l, i_b] @ rot_x
+        mass = dyn_state.links.crb_mass[i_l, i_b]
+    inv_iquat = gu.qd_inv_quat(iquat)
+    rot_x2i = gu.qd_quat_mul(inv_iquat, gu.qd_inv_quat(xquat))
+
     # Angular velocity and total torque (applied + passive + constraint + external link loads) in the inertial frame.
-    # The stored bias force is re-added to make the gyroscopic and gravity terms explicit, but it also carries the
-    # external link and coupling loads (see func_bias_force): those are stripped back out so they keep their
-    # standard-path sign, leaving the midpoint equation and its accelerating-frame gravity term to regenerate only
-    # the velocity products and gravity. The free joint's angular DOFs are body-frame.
-    ext_ang = dyn_state.links.cfrc_applied_ang[i_l, i_b] + dyn_state.links.cfrc_coupling_ang[i_l, i_b]
-    ext_vel = dyn_state.links.cfrc_applied_vel[i_l, i_b] + dyn_state.links.cfrc_coupling_vel[i_l, i_b]
+    # The free joint's angular DOFs are body-frame. The stored bias force is re-added to make the gyroscopic and gravity
+    # terms explicit. It also carries the external link and coupling loads of every link of the tree (see
+    # func_bias_force), which are stripped back out so they keep their standard-path sign: the midpoint equation and its
+    # accelerating-frame gravity term regenerate only the velocity products and gravity.
+    ext_ang = qd.Vector.zero(gs.qd_float, 3)
+    ext_vel = qd.Vector.zero(gs.qd_float, 3)
+    for j_l in range(i_l, rigid_info.links_tree_end[i_l]):
+        J_l = [j_l, i_b] if qd.static(rigid_config.batch_links_info) else j_l
+        if dyn_info.links.root_idx[J_l] == i_l:
+            ext_ang += dyn_state.links.cfrc_applied_ang[j_l, i_b] + dyn_state.links.cfrc_coupling_ang[j_l, i_b]
+            ext_vel += dyn_state.links.cfrc_applied_vel[j_l, i_b] + dyn_state.links.cfrc_coupling_vel[j_l, i_b]
     w_body = gs.qd_vec3(
         [
             dyn_state.dofs.vel[dof_start + 3, i_b],
@@ -2000,9 +2066,8 @@ def func_midpoint_free_body(
     tau_com = gu.qd_transform_by_quat(tau_body, inv_iquat)
 
     # A center of mass at the joint origin decouples rotation from translation
-    is_aligned = ipos[0] == 0.0 and ipos[1] == 0.0 and ipos[2] == 0.0
+    is_aligned = func_midpoint_is_aligned(i_l, i_b, dyn_state, dyn_info, rigid_info, rigid_config)
 
-    rot_x2i = gu.qd_quat_mul(inv_iquat, gu.qd_inv_quat(xquat))
     force = qd.Vector.zero(gs.qd_float, 3)
     r_com = qd.Vector.zero(gs.qd_float, 3)
     if not is_aligned:
@@ -2115,7 +2180,7 @@ def func_integrate(
             ):
                 if func_check_index_range(i_1, 0, rigid_info.n_awake_links[i_b], rigid_config.use_hibernation):
                     i_l = rigid_info.awake_links[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
-                    if func_midpoint_eligible(i_l, i_b, dyn_state, dyn_info, rigid_config):
+                    if func_midpoint_eligible(i_l, i_b, dyn_state, dyn_info, rigid_info, rigid_config):
                         func_midpoint_free_body(i_l, i_b, dyn_state, dyn_info, rigid_info, rigid_config)
 
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
@@ -2206,13 +2271,12 @@ def func_integrate(
             ):
                 if func_check_index_range(i_1, 0, rigid_info.n_awake_links[i_b], rigid_config.use_hibernation):
                     i_l = rigid_info.awake_links[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
-                    if func_midpoint_eligible(i_l, i_b, dyn_state, dyn_info, rigid_config):
+                    if func_midpoint_eligible(i_l, i_b, dyn_state, dyn_info, rigid_info, rigid_config):
                         I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
                         # Linear DOFs are midpoint-integrated only when the center of mass is off the joint origin
                         # (see func_midpoint_free_body)
-                        ipos = dyn_info.links.inertial_pos[I_l]
                         j_start = 3
-                        if not (ipos[0] == 0.0 and ipos[1] == 0.0 and ipos[2] == 0.0):
+                        if not func_midpoint_is_aligned(i_l, i_b, dyn_state, dyn_info, rigid_info, rigid_config):
                             j_start = 0
                         for j in range(j_start, 6):
                             i_d = dyn_info.links.dof_start[I_l] + j
