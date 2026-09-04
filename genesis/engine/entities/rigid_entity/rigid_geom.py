@@ -401,8 +401,8 @@ class RigidGeom(RBC):
         """
         Get the position of the geom.
 
-        When 'relative' is True (default), the position is reported in the user frame, with the entity's morph pose
-        offset stripped, rather than the world frame used by the solver.
+        When 'relative' is True (default), the position reported is that of the authored geom origin. The internal geom
+        origin used by the solver is the authored one moved by the entity's morph 'offset_pos' / 'offset_quat'.
         """
         return self._solver.get_geoms_pos(self._idx, envs_idx, relative=relative)[..., 0, :]
 
@@ -411,8 +411,8 @@ class RigidGeom(RBC):
         """
         Get the quaternion of the geom.
 
-        When 'relative' is True (default), the orientation is reported in the user frame, with the entity's morph pose
-        offset stripped, rather than the world frame used by the solver.
+        When 'relative' is True (default), the orientation reported is that of the authored geom origin. The internal
+        geom origin used by the solver is the authored one moved by the entity's morph 'offset_pos' / 'offset_quat'.
         """
         return self._solver.get_geoms_quat(self._idx, envs_idx, relative=relative)[..., 0, :]
 
@@ -902,8 +902,8 @@ class RigidVisGeom(RBC):
         """
         Get the position of the visual geom.
 
-        When 'relative' is True (default), the position is reported in the user frame, with the entity's morph pose
-        offset stripped, rather than the world frame used by the solver.
+        When 'relative' is True (default), the position reported is that of the authored geom origin. The internal geom
+        origin used by the solver is the authored one moved by the entity's morph 'offset_pos' / 'offset_quat'.
         """
         return self._solver.get_vgeoms_pos(self._idx, envs_idx, relative=relative)[..., 0, :]
 
@@ -912,8 +912,8 @@ class RigidVisGeom(RBC):
         """
         Get the quaternion of the visual geom.
 
-        When 'relative' is True (default), the orientation is reported in the user frame, with the entity's morph pose
-        offset stripped, rather than the world frame used by the solver.
+        When 'relative' is True (default), the orientation reported is that of the authored geom origin. The internal
+        geom origin used by the solver is the authored one moved by the entity's morph 'offset_pos' / 'offset_quat'.
         """
         return self._solver.get_vgeoms_quat(self._idx, envs_idx, relative=relative)[..., 0, :]
 

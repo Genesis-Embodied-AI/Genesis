@@ -468,7 +468,7 @@ class KinematicEntityDescription(EntityDescription):
                     cg_vg_infos.append((cg_infos, vg_infos))
 
                 # Extract variant's init_qpos from parsed joint infos, composing the morph offset into the free joint so
-                # relative getters report the variant's user frame.
+                # relative getters report the variant's authored frame.
                 variant_init_qpos_parts = []
                 for v_l_info, v_j_infos in zip(v_l_infos, v_links_j_infos):
                     is_root = v_l_info["parent_idx"] == -1
@@ -1175,7 +1175,7 @@ class KinematicEntityDescription(EntityDescription):
                             props = LinkInertial(gs.EPS, pos, quat, np.zeros((3, 3), dtype=gs.np_float))
                         desc.mass, desc.inertial_pos, desc.inertial_quat, desc.inertia = props
 
-                # Fold the anchoring into the offset (relative getters keep reporting the user frame) and the root
+                # Fold the anchoring into the offset (relative getters keep reporting the authored frame) and the root
                 # free-joint init_qpos (the body frame moves to old_pose o (com_root, principal), keeping the
                 # re-expressed geoms in world).
                 if variants:
@@ -1403,7 +1403,7 @@ class KinematicEntityDescription(EntityDescription):
             return inertial_info
 
         # Compose the morph pose offset into the root link's world pose. The solver strips the matching offset in
-        # relative getters, so the user frame is unchanged.
+        # relative getters, so the authored frame is unchanged.
         offset_pos = np.array(morph.offset_pos, dtype=gs.np_float)
         offset_quat = np.array(morph.offset_quat, dtype=gs.np_float)
         l_info["pos"], l_info["quat"] = gu.transform_pos_quat_by_trans_quat(
