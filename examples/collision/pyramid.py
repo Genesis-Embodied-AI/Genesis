@@ -8,7 +8,7 @@ def main():
     parser.add_argument(
         "--pile-type",
         type=str,
-        default="falling",
+        default="static",
         choices=("static", "falling"),
         help="Whether the pile starts settled or falls into place",
     )
