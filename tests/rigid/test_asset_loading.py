@@ -1142,56 +1142,151 @@ def test_align_mixed_mass_raises():
 
 
 @pytest.mark.required
-def test_align_relative_offset_on_link_relative_geoms(show_viewer, tol):
-    # To exercise the geom-frame offset strip the geoms MUST sit at non-identity poses relative to their link (explicit
-    # collision/visual <origin>) AND the morph offset MUST be a rotation that does not commute with them - otherwise the
-    # conjugation degenerates to the plain morph offset and a naive (corrupted) strip would still pass. A convex-
-    # decomposed mesh is useless here: its sub-geoms keep an identity frame (geometry lives in the vertices).
-    robot = ET.Element("robot", name="posed_geoms")
-    link = ET.SubElement(robot, "link", name="body")
-    for origin_rpy, origin_xyz in (
-        ("0 0 1.5708", "0.1 0 0"),
-        ("0.7854 0 0", "0 0.1 0.05"),
-        ("0 1.0472 0.5", "0 0 0.1"),
-    ):
-        for group_tag in ("collision", "visual"):
-            group = ET.SubElement(link, group_tag)
-            geom_el = ET.SubElement(group, "geometry")
-            ET.SubElement(geom_el, "box", size="0.05 0.1 0.15")
-            ET.SubElement(group, "origin", rpy=origin_rpy, xyz=origin_xyz)
-    urdf = urdfpy.URDF._from_xml(robot, robot, get_assets_dir())
-
-    BODY_POS = (0.0, 0.0, 0.2)
-    OFFSET_EULER = (20.0, 35.0, 50.0)  # a generic rotation that does not commute with the geom poses
+def test_align_preserves_link_local_frames(aligned_link_frame_urdfs, show_viewer, tol):
+    TORQUE = (0.3, 0.8, -0.5)
+    OFFSET_EULER = (20.0, 35.0, 50.0)
     scene = gs.Scene(
-        show_viewer=show_viewer,
-        show_FPS=False,
-    )
-    body = scene.add_entity(
-        gs.morphs.URDF(
-            file=urdf,
-            pos=BODY_POS,
-            offset_euler=OFFSET_EULER,
-            align=True,
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.0, -4.0, 2.0),
+            camera_lookat=(1.0, 0.0, 0.5),
         ),
-        material=gs.materials.Rigid(),
+        show_viewer=show_viewer,
     )
-    scene.build()
+    entity_aligned = scene.add_entity(
+        morph=gs.morphs.URDF(
+            pos=(0.0, 0.0, 0.5),
+            offset_euler=OFFSET_EULER,
+            file=aligned_link_frame_urdfs[1],
+            align=True,
+            merge_fixed_links=False,
+        ),
+        vis_mode="collision",
+    )
+    entity_unaligned = scene.add_entity(
+        morph=gs.morphs.URDF(
+            pos=(1.0, 0.0, 0.5),
+            offset_euler=OFFSET_EULER,
+            file=aligned_link_frame_urdfs[1],
+            align=False,
+            merge_fixed_links=False,
+        ),
+        vis_mode="collision",
+    )
+    entity_heterogeneous_aligned = scene.add_entity(
+        morph=tuple(
+            gs.morphs.URDF(
+                pos=(2.0, 0.0, 0.5),
+                offset_euler=OFFSET_EULER,
+                file=file,
+                align=True,
+                merge_fixed_links=False,
+            )
+            for file in aligned_link_frame_urdfs
+        ),
+        vis_mode="collision",
+    )
+    # The unaligned twin of each aligned entity pins the authored behavior that alignment must preserve.
+    entity_heterogeneous_unaligned = scene.add_entity(
+        morph=tuple(
+            gs.morphs.URDF(
+                pos=(3.0, 0.0, 0.5),
+                offset_euler=OFFSET_EULER,
+                file=file,
+                align=False,
+                merge_fixed_links=False,
+            )
+            for file in aligned_link_frame_urdfs
+        ),
+        vis_mode="collision",
+    )
+    # A heterogeneous entity needs one environment per morph variant.
+    scene.build(n_envs=2)
 
-    assert len(body.geoms) > 1, "expected multiple geoms posed relative to the link"
-
-    # The user orientation is identity, so the world<-user offset rotates each geom about the link origin:
+    # The fixture geoms sit at non-identity poses relative to their links and the morph offset is a rotation that
+    # does not commute with them. Otherwise the geom-frame conjugation would degenerate to the plain morph offset
+    # and a corrupted re-expression would still pass. A convex-decomposed mesh is useless here: its sub-geoms keep
+    # an identity frame (geometry lives in the vertices). The user orientation is identity, so the world<-user offset
+    # rotates each base-link geom about the link origin:
     # geom_world_pos = U_pos + R(offset) * (geom_user_pos - U_pos) and geom_world_quat = offset * geom_user_quat.
-    assert_allclose(body.get_quat(relative=True), gu.identity_quat(), tol=tol)
-    u_pos = tensor_to_array(body.get_pos(relative=True))
+    # Child-link geoms carry no user-frame offset (morph offsets belong to floating base links), so their world
+    # pose is pinned from the authored chain of the unaligned twin's description instead.
     offset_quat = gu.xyz_to_quat(np.array(OFFSET_EULER), rpy=True, degrees=True)
-    for geom in body.geoms:
-        geom_user_pos = tensor_to_array(geom.get_pos(relative=True))
-        geom_user_quat = tensor_to_array(geom.get_quat(relative=True))
-        expected_world_pos = u_pos + gu.transform_by_quat(geom_user_pos - u_pos, offset_quat)
-        expected_world_quat = gu.transform_quat_by_quat(geom_user_quat, offset_quat)
-        assert_allclose(geom.get_pos(relative=False), expected_world_pos, tol=tol)
-        assert_allclose(geom.get_quat(relative=False), expected_world_quat, tol=tol)
+    # 'transform_quat_by_quat' requires operands of matching shapes.
+    batched_offset_quat = np.tile(offset_quat, (scene.n_envs, 1))
+    base_desc, child_desc = (link.desc for link in entity_unaligned.links)
+    child_geom_desc = entity_unaligned.geoms[1].desc
+    child_geom_user_pos = child_desc.pos + gu.transform_by_quat(child_geom_desc.pos, child_desc.quat)
+    child_geom_quat = gu.transform_quat_by_quat(child_geom_desc.quat, child_desc.quat)
+    child_world_quat = gu.transform_quat_by_quat(child_geom_quat, offset_quat)
+    for entity in (entity_aligned, entity_unaligned):
+        assert_allclose(gu.quat_to_xyz(entity.get_quat()), 0.0, tol=tol)
+        u_pos = tensor_to_array(entity.get_pos())
+        base_geom, child_geom = entity.geoms
+        base_user_pos = tensor_to_array(base_geom.get_pos(relative=True))
+        base_user_quat = tensor_to_array(base_geom.get_quat(relative=True))
+        base_world_pos = u_pos + gu.transform_by_quat(base_user_pos - u_pos, offset_quat)
+        base_world_quat = gu.transform_quat_by_quat(base_user_quat, batched_offset_quat)
+        assert_allclose(base_geom.get_pos(relative=False), base_world_pos, tol=tol)
+        assert_allclose(base_geom.get_quat(relative=False), base_world_quat, tol=tol)
+        child_world_pos = u_pos + gu.transform_by_quat(child_geom_user_pos, offset_quat)
+        assert_allclose(child_geom.get_pos(relative=False), child_world_pos, tol=tol)
+        assert_allclose(child_geom.get_quat(relative=False), child_world_quat, tol=tol)
+    # Alignment must not move any collision or visual geom in the world: the aligned twin matches the unaligned one.
+    for aligned_geom, unaligned_geom in zip(
+        (*entity_aligned.geoms, *entity_aligned.vgeoms),
+        (*entity_unaligned.geoms, *entity_unaligned.vgeoms),
+        strict=True,
+    ):
+        assert_allclose(
+            aligned_geom.get_pos(relative=False) - entity_aligned.get_pos(),
+            unaligned_geom.get_pos(relative=False) - entity_unaligned.get_pos(),
+            tol=tol,
+        )
+        assert_allclose(aligned_geom.get_quat(relative=False), unaligned_geom.get_quat(relative=False), tol=tol)
+
+    # The child COM stays at its authored point while alignment moves the root to the composite COM. The authored
+    # values come from the unaligned twin's description, since the aligned description is the quantity under test.
+    child_com_user = child_desc.pos + gu.transform_by_quat(child_desc.inertial_pos, child_desc.quat)
+    com_offset = gu.transform_by_quat(child_com_user, offset_quat)
+    composite_user = base_desc.mass * base_desc.inertial_pos + child_desc.mass * child_com_user
+    composite_user /= base_desc.mass + child_desc.mass
+    anchor_offset = gu.transform_by_quat(composite_user, offset_quat)
+    for entity, expected_anchor in ((entity_aligned, anchor_offset), (entity_unaligned, 0.0)):
+        entity_pos = tensor_to_array(entity.get_pos())
+        child_com = entity.get_links_pos(links_idx_local=1, ref=gs.link_ref_frame.link_COM)[..., 0, :]
+        assert_allclose(child_com, entity_pos + com_offset, tol=tol)
+        assert_allclose(entity.get_pos(relative=False), entity_pos + expected_anchor, tol=tol)
+    # Per-environment variants: alignment must preserve the unaligned twin's COM offsets and composite anchor.
+    aligned_com, unaligned_com = (
+        entity.get_links_pos(links_idx_local=1, ref=gs.link_ref_frame.link_COM)[..., 0, :] - entity.get_pos()
+        for entity in (entity_heterogeneous_aligned, entity_heterogeneous_unaligned)
+    )
+    assert_allclose(aligned_com, unaligned_com, tol=tol)
+    masses = entity_heterogeneous_unaligned.get_links_mass()
+    coms = entity_heterogeneous_unaligned.get_links_pos(ref=gs.link_ref_frame.link_COM)
+    composite = (masses[..., None] * coms).sum(dim=-2) / masses.sum(dim=-1)[..., None]
+    assert_allclose(
+        entity_heterogeneous_aligned.get_pos(relative=False),
+        composite - entity_heterogeneous_unaligned.get_pos() + entity_heterogeneous_aligned.get_pos(),
+        tol=tol,
+    )
+    # The inverse weight of a link derives from its COM, so the child's must match the unaligned twin as well.
+    twins = ((entity_aligned, entity_unaligned), (entity_heterogeneous_aligned, entity_heterogeneous_unaligned))
+    for aligned_entity, unaligned_entity in twins:
+        assert_allclose(
+            aligned_entity.get_links_invweight(links_idx_local=1),
+            unaligned_entity.get_links_invweight(links_idx_local=1),
+            tol=tol,
+        )
+
+    # A pure local torque isolates the inertial-frame orientation because it has no application-point arm.
+    for entity in scene.entities:
+        entity.apply_links_external_wrench(torque=TORQUE, links_idx_local=1, ref=gs.link_ref_frame.link_COM, local=True)
+    scene.step()
+    for aligned_entity, unaligned_entity in twins:
+        assert_allclose(
+            aligned_entity.get_links_ang(links_idx_local=1), unaligned_entity.get_links_ang(links_idx_local=1), tol=tol
+        )
 
 
 def _build_two_link_revolute_urdf(

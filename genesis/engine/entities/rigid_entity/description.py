@@ -1135,19 +1135,21 @@ class KinematicEntityDescription(EntityDescription):
                 inertia_diag = principal_R.T @ inertia_root @ principal_R
 
                 # Re-express the variant's geoms across the subtree so the body frame can move to (com_root, principal
-                # axes) while the world geometry stays fixed: bring each geom to the root frame, undo the anchoring
-                # there, bring it back to its link frame. The static link poses are not moved (they are shared across
-                # heterogeneous variants). A kinematic link has only visual geoms; a rigid link has both.
+                # axes) while the world geometry stays fixed. The static link poses are shared across heterogeneous
+                # variants, so the anchoring is undone by a transform conjugated into each link frame, reused below for
+                # the inertial frame of a fixed child. A kinematic link has only visual geoms; a rigid link has both.
+                alignment_inv_in_link = {}
                 for i_l in subtree:
                     link_pos, link_quat = pose_in_root[i_l]
+                    pos, quat = gu.inv_transform_pos_quat_by_trans_quat(link_pos, link_quat, com_root, principal_quat)
+                    pos, quat = gu.inv_transform_pos_quat_by_trans_quat(pos, quat, link_pos, link_quat)
+                    alignment_inv_in_link[i_l] = (pos, quat)
                     link_desc = links[i_l] if i_v == 0 else variants[i_v].links[i_l]
                     geoms = list(link_desc.vgeoms)
                     if isinstance(link_desc, (RigidLinkDescription, RigidVariantLinkDescription)):
                         geoms += link_desc.geoms
                     for geom in geoms:
-                        pos, quat = gu.transform_pos_quat_by_trans_quat(geom.pos, geom.quat, link_pos, link_quat)
-                        pos, quat = gu.inv_transform_pos_quat_by_trans_quat(pos, quat, com_root, principal_quat)
-                        geom.pos, geom.quat = gu.inv_transform_pos_quat_by_trans_quat(pos, quat, link_pos, link_quat)
+                        geom.pos, geom.quat = gu.transform_pos_quat_by_trans_quat(geom.pos, geom.quat, pos, quat)
 
                 # Fold the composite (diagonal, COM-centered) into the dynamics inertia.
                 # Rescale the unit-density estimate to the link masses.
@@ -1159,13 +1161,18 @@ class KinematicEntityDescription(EntityDescription):
                         (links[i_l] if i_v == 0 else variants[i_v].links[i_l]).mass for i_l in composite_locals
                     )
                     scale = real_total / mass_total
-                    zero_pos, identity_quat = gu.zero_pos(), gu.identity_quat()
                     for i_l in subtree:
-                        if i_l == i_root:
-                            props = LinkInertial(real_total, zero_pos, identity_quat, scale * inertia_diag)
-                        else:
-                            props = LinkInertial(gs.EPS, zero_pos, identity_quat, np.zeros((3, 3), dtype=gs.np_float))
                         desc = links[i_l] if i_v == 0 else variants[i_v].links[i_l]
+                        if i_l == i_root:
+                            props = LinkInertial(real_total, gu.zero_pos(), gu.identity_quat(), scale * inertia_diag)
+                        else:
+                            # A fixed child keeps its authored inertial frame, re-expressed like its geoms: it is the
+                            # public 'link_COM' reference of the getters and external wrenches, and the inverse weight
+                            # of the link derives from it. Only its mass and inertia fold into the composite.
+                            pos, quat = gu.transform_pos_quat_by_trans_quat(
+                                desc.inertial_pos, desc.inertial_quat, *alignment_inv_in_link[i_l]
+                            )
+                            props = LinkInertial(gs.EPS, pos, quat, np.zeros((3, 3), dtype=gs.np_float))
                         desc.mass, desc.inertial_pos, desc.inertial_quat, desc.inertia = props
 
                 # Fold the anchoring into the offset (relative getters keep reporting the user frame) and the root

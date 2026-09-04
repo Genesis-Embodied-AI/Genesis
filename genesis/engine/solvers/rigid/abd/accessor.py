@@ -1235,13 +1235,13 @@ def kernel_get_dofs_control_force(
 @qd.kernel(fastcache=True)
 def kernel_set_drone_rpm(
     propellers_link_idx: qd.types.ndarray(),
+    kf: float,
+    km: float,
     propellers_rpm: qd.types.ndarray(),
     propellers_spin: qd.types.ndarray(),
-    KF: qd.float32,
-    KM: qd.float32,
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
-    invert: qd.i32,
+    invert: qd.template(),
 ):
     """
     Set the RPM of propellers of a drone entity.
@@ -1256,11 +1256,11 @@ def kernel_set_drone_rpm(
         for i_prop in range(n_propellers):
             i_l = propellers_link_idx[i_prop]
 
-            force = qd.Vector([0.0, 0.0, propellers_rpm[i_b, i_prop] ** 2 * KF], dt=gs.qd_float)
+            force = qd.Vector([0.0, 0.0, propellers_rpm[i_b, i_prop] ** 2 * kf], dt=gs.qd_float)
             torque = qd.Vector(
-                [0.0, 0.0, propellers_rpm[i_b, i_prop] ** 2 * KM * propellers_spin[i_prop]], dt=gs.qd_float
+                [0.0, 0.0, propellers_rpm[i_b, i_prop] ** 2 * km * propellers_spin[i_prop]], dt=gs.qd_float
             )
-            if invert:
+            if qd.static(invert):
                 torque = -torque
 
             func_apply_link_external_wrench(
