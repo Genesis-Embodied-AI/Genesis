@@ -258,11 +258,20 @@ def test_parsing_inertia_defaults(
     )
     scene.add_entity(gs.morphs.Plane())
 
-    # The fixed-jointed branches must survive parsing for their own inertial to be under test.
+    # merge_fixed_links=False keeps every fixed link as a link of its own, so the test can check its inertial.
     entity = scene.add_entity(
         morph=gs.morphs.URDF(
             file=degenerate_inertials,
             pos=(0.0, 0.0, 0.1),
+            merge_fixed_links=False,
+        ),
+    )
+    # The same asset welded to the world resolves every link exactly as the free copy does.
+    entity_welded = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=degenerate_inertials,
+            pos=(0.0, -4.0, 0.1),
+            fixed=True,
             merge_fixed_links=False,
         ),
     )
@@ -383,8 +392,8 @@ def test_parsing_inertia_defaults(
     assert_allclose(stacked_middle.base_link.get_mass(), 2000.0 * 0.1**3, tol=gs.EPS)
     assert_allclose(stacked_tip.base_link.get_mass(), 8000.0 * 0.1**3, tol=gs.EPS)
 
-    # A link with no inertial element at all derives its whole inertial from geometry. Its mass is the material
-    # density applied to the sphere every branch below carries, so the recovered masses are measured against it.
+    # The link 'no_inertial' has no inertial element, so its whole inertial is the geometry estimate. Every link carries
+    # the same sphere, so this mass is the reference for the recovered masses below.
     estimate = entity.get_link("no_inertial").desc
     assert_allclose(estimate.inertial_pos, GEOM_POS, tol=tol)
     assert_allclose(np.linalg.eigvalsh(estimate.inertia) / estimate.mass, SPHERE_INERTIA_PER_MASS, tol=tol)
@@ -392,20 +401,21 @@ def test_parsing_inertia_defaults(
     # The tensors are stored in their principal frame, whose parsed quaternion is markedly less accurate than the
     # tensor itself, so compare the rotation-invariant principal moments rather than the tensor rotated back.
     for link, expected_mass, expected_com, expected_inertia_per_mass in (
-        # A stated zero mass is as undefined as a stated zero inertia, so the geometry supplies the whole inertial.
-        # The fixed child holding geometry does not stand in the way, since its own stated zero stands.
+        # The root states a zero mass and a valid inertia, and the geometry estimate replaces both. Its fixed child
+        # 'massless_marker' keeps its zero mass, so the root has no mass-bearing child.
         (entity.base_link, estimate.mass, GEOM_POS, SPHERE_INERTIA_PER_MASS),
         (entity.get_link("massless_marker"), gs.EPS, GEOM_POS, 0.0),
         # An omitted inertial origin places the center of mass at the link frame.
         (entity.get_link("implicit_origin"), 2.5, (0.0, 0.0, 0.0), np.linalg.eigvalsh(INERTIA) / 2.5),
-        # A stated zero inertia is recovered from the geometry, while the authored center of mass stands.
+        # Geometry supplies the inertia scaled to the authored mass, and the link keeps its authored center of mass.
         (entity.get_link("zero_inertia"), 2.5, INERTIAL_POS, SPHERE_INERTIA_PER_MASS),
-        # A fixed child's own inertia makes up its parent's composite, so a zero stated there is recovered too.
+        # The fixed link 'tip' contributes to its parent composite, so geometry recovers its zero inertia at the
+        # authored mass.
         (entity.get_link("tip"), TIP_MASS, GEOM_POS, SPHERE_INERTIA_PER_MASS),
-        # A zero stated where a fixed child carries the mass is the connector idiom, so the geometry supplies neither.
+        # The fixed child 'bob' carries the mass, so 'connector' keeps a zero inertia and a zero mass floored at gs.EPS.
         (entity.get_link("connector"), gs.EPS, GEOM_POS, 0.0),
         (entity.get_link("bob"), 1.0, GEOM_POS, BOB_INERTIA_PER_MASS),
-        # A zero-density geom weighs nothing by design, and the composite holding it is finite without it.
+        # The geom of 'marker' has a zero density and 'hull' carries the mass, so the marker keeps a zero mass.
         (entity_zero_density.get_link("hull"), 8.0, (0.0, 0.0, 0.0), BOX_INERTIA_PER_MASS),
         (entity_zero_density.get_link("marker"), gs.EPS, (0.0, 0.0, 0.0), 0.0),
     ):
@@ -417,11 +427,18 @@ def test_parsing_inertia_defaults(
             tol=tol,
             err_msg=link.name,
         )
+    for link, link_welded in zip(entity.links, entity_welded.links):
+        assert_allclose(link_welded.desc.mass, link.desc.mass, tol=gs.EPS, err_msg=link.name)
+        assert_allclose(link_welded.desc.inertial_pos, link.desc.inertial_pos, tol=gs.EPS, err_msg=link.name)
+        assert_allclose(link_welded.desc.inertia, link.desc.inertia, tol=gs.EPS, err_msg=link.name)
+
+    # Every asset above is parsed by MuJoCo, a zero or missing inertial included.
+    assert not any("legacy URDF parser" in record.getMessage() for record in caplog.records)
 
     # Resolving the center of mass to the link frame can place it outside the geometry, which stays worth reporting.
-    # Only the link whose geometry is offset qualifies; a geometry-derived center of mass never does.
+    # Only the link whose geometry is offset qualifies, once per copy of the robot.
     dubious_com_records = [record for record in caplog.records if "dubious center of mass" in record.getMessage()]
-    assert len(dubious_com_records) == 1
+    assert len(dubious_com_records) == 2
 
     # Every link of an aligned free body keeps its own mass, so each link reads its authored mass. The two totals are
     # accumulated by independent code paths, so their agreement is bounded by that cross-path floor.
@@ -500,9 +517,8 @@ def test_parsing_inertia_defaults(
     # loses a little volume, so the measured mass lands slightly below the closed form.
     assert_allclose(mounted_arm.base_link.get_mass(), 1500.0 * 4.0 / 3.0 * np.pi * 0.06**3, rtol=0.1)
 
-    # A recovered inertia has to hold up in the dynamics, so the robot comes to rest on the spheres of its branches.
-    # The tolerance covers the steady-state penetration of the soft contact constraint, which is how far below the
-    # height they touch the ground at the robot settles.
+    # The rest on the spheres after the fall checks that the recovered inertias give stable dynamics. The position
+    # tolerance covers the steady-state penetration of the soft contact.
     for _ in range(40):
         scene.step()
     assert_allclose(entity.get_dofs_velocity(), 0.0, atol=1e-4)

@@ -207,12 +207,12 @@ def build_model(
                 autolimits="true",
             )
 
-            # Bound mass and inertia if necessary
-            if not all(link.inertial is not None for link in robot.links):
-                compiler.attrib |= dict(
-                    boundmass=str(MIN_TIMECONST),
-                    boundinertia=str(MIN_TIMECONST),
-                )
+            # MuJoCo rejects a moving body whose mass or inertia is below 'mjMINVAL'. Bounding both at that value keeps
+            # a zero or missing inertial compilable, and the placeholder is discarded below.
+            compiler.attrib |= dict(
+                boundmass=str(mujoco.mjMINVAL),
+                boundinertia=str(mujoco.mjMINVAL),
+            )
 
             # Resolve relative mesh paths
             for elem in root.findall(".//mesh"):
@@ -230,9 +230,7 @@ def build_model(
 
             # Special treatment for URDF
             if is_urdf_file:
-                # Restore the authored mass and inertia over the 'boundmass' / 'boundinertia' placeholder applied
-                # above, so a stated zero survives to the degeneracy check that recovers it from the geometry (see
-                # 'KinematicEntity._parse_scene').
+                # Discard placeholder inertias that were used to avoid parsing failure
                 for link in robot.links:
                     inertial = link.inertial
                     mass = (inertial.mass or 0.0) if inertial is not None else 0.0
@@ -241,11 +239,10 @@ def build_model(
                         continue
                     body = mj.body(link.name)
                     body.mass[:] = mass
-                    # An inertia that was authored at all is kept, so that a malformed one is still reported.
+                    # Keep non-zero authored inertia with invalid diagonal so the consistency check reports it
                     if not is_inertia_defined:
                         body.inertia[:] = 0.0
-                    # The inverse weight is derived from the compiled mass and inertia, so it goes stale as soon as
-                    # either of them is replaced here.
+                    # invweight0 derives from placeholder mass and inertia; zero triggers recomputation
                     body.invweight0[:] = 0.0
 
                 # Set default constraint solver time constant

@@ -143,8 +143,8 @@ def test_massapi_invalid_defaults_mjcf_vs_usd(asset_tmp_path, scale):
     # principalAxes (0, 0, 0, 0), diagonalInertia (0, 0, 0), mass (0) - that must be treated as unset and
     # recomputed from geometry, matching an MJCF scene without inertial element. Leaving only 'centerOfMass' at
     # its sentinel keeps the authored mass and inertia and places the center of mass at the link frame, matching an
-    # MJCF body whose inertial frame is the body origin. Leaving only 'diagonalInertia' at its sentinel is the
-    # mirror image: the authored center of mass places the inertia the geometry supplies.
+    # MJCF body whose inertial frame is the body origin. Leaving only 'diagonalInertia' at its sentinel keeps the
+    # authored mass and center of mass and takes the inertia from geometry.
     MASS = 64.0
     HALF_EXTENT = 0.2
     COM = (0.1, 0.0, 0.0)

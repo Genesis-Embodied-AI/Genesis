@@ -642,11 +642,11 @@ def free_bodies_in_one_model():
 
 @pytest.fixture(scope="session")
 def degenerate_inertials():
-    """Generate a URDF stating a degenerate inertial on all but three of its links: a zero mass on the root, a zero
+    """Generate a URDF stating a degenerate inertial on several of its links: a zero mass on the root, a zero
     mass beside geometry on a fixed child, a zero mass above a fixed child that carries all of it, a zero inertia
-    beside an authored center of mass, and a zero inertia on a fixed child. One link states no inertial element at
-    all, so the parser bounds every stated zero. MuJoCo rejects a moving body whose rigid subtree carries no inertia,
-    so each degenerate branch either roots the robot or holds a fixed child that authors one."""
+    beside an authored center of mass, and a zero inertia on a fixed child. MuJoCo rejects a moving body whose rigid
+    subtree carries no inertia, so each degenerate branch either roots the robot or holds a fixed child that authors
+    one."""
     urdf = ET.Element("robot", name="degenerate_inertials")
     _add_sphere_link(urdf, "base_link", "0.0 0.0 0.09", mass=0.0, inertia=(0.11, 0.01, 0.02, 0.22, 0.03, 0.30))
     _add_sphere_link(urdf, "massless_marker", "0.0 0.0 0.09", mass=0.0, inertia=(0.0,) * 6)
@@ -683,8 +683,8 @@ def degenerate_inertials():
 
 @pytest.fixture(scope="session")
 def zero_density_marker_mjcf():
-    """Generate an MJCF whose jointless child body carries a zero-density geom, weighing nothing beside the hull that
-    holds it. The two share a frame, so the marker's center of mass stays inside its own geometry."""
+    """Generate an MJCF with a free body holding a jointless child body whose geom has a zero density. The two bodies
+    share one frame, so the center of mass of the child lies inside its own geometry."""
     mjcf = ET.Element("mujoco", model="zero_density_marker")
     worldbody = ET.SubElement(mjcf, "worldbody")
     hull = ET.SubElement(worldbody, "body", name="hull", pos="0.0 -2.0 0.5")

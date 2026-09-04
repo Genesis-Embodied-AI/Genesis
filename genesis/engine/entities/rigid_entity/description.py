@@ -942,9 +942,8 @@ class KinematicEntityDescription(EntityDescription):
 
         # Force recomputing inertial information based on geometry if ill-defined for some reason.
         # A moving link needs a well-defined inertia only for its own rigid body; a rigidly-attached (fixed-joint) child
-        # folds its mass into the parent's composite-rigid-body inertia. A link contributes to that composite only
-        # through the mass it ends up with, and an authored non-positive mass stands for a rigidly-attached link, so
-        # its geometry adds nothing.
+        # folds its mass into the parent's composite-rigid-body inertia. An authored mass counts only when positive, and
+        # a link without an authored mass counts when it has geometry.
         has_links_subtree_mass = [
             bool(link_g_infos) if l_info.get("inertial_mass") is None else l_info["inertial_mass"] > 0.0
             for link_g_infos, l_info in zip(links_g_infos, l_infos)
@@ -959,13 +958,18 @@ class KinematicEntityDescription(EntityDescription):
         for l_info, link_g_infos, link_j_infos, has_link_subtree_mass, has_link_fixed_child_mass in zip(
             l_infos, links_g_infos, links_j_infos, has_links_subtree_mass, has_links_fixed_child_mass
         ):
-            # A fixed link contributes its own inertia to its parent's composite, so recover it when it has geometry.
             is_fixed_link = all(j_info["type"] == gs.JOINT_TYPE.FIXED for j_info in link_j_infos)
-            if not link_g_infos and is_fixed_link:
-                continue
+            is_fixed_child = is_fixed_link and l_info["parent_idx"] >= 0
             is_mass_degenerate = (l_info.get("inertial_mass") or 0.0) <= 0.0
             inertia = l_info.get("inertial_i")
             is_inertia_degenerate = inertia is None or (np.diag(inertia) <= 0.0).any()
+            # The world or the parent carries a fixed link without geometry, so its values stay as authored.
+            if is_fixed_link and not link_g_infos:
+                continue
+            # A fixed child keeps its authored mass, zero included. Its inertia contributes to the parent composite, so a
+            # degenerate inertia is recovered from geometry.
+            if is_fixed_child and not is_inertia_degenerate:
+                continue
             if not (is_mass_degenerate or is_inertia_degenerate):
                 continue
 
@@ -977,8 +981,6 @@ class KinematicEntityDescription(EntityDescription):
             # (near-)zero own inertia: the composite-rigid-body inertia is finite, so leave it as parsed.
             if not link_g_infos and has_link_subtree_mass:
                 continue
-            # Without geometry there is nothing to recover an inertial from, so the parsed values stand as they are
-            # and a non-positive mass ends up floored at 'gs.EPS' when the link is built.
             if not link_g_infos:
                 gs.logger.warning(
                     f"Moving link '{l_info['name']}' has no mass, inertia or geometry, and no rigidly-attached "
@@ -989,12 +991,12 @@ class KinematicEntityDescription(EntityDescription):
                 gs.logger.debug(
                     f"Invalid or undefined inertia for link '{l_info['name']}'. Force recomputing it based on geometry."
                 )
-            # A stated zero mass stands for a rigidly-attached link, and for a moving link whose rigidly-attached
-            # children carry mass, since the composite is finite in both cases. Anywhere else it leaves the link
-            # singular, so the geometry supplies the mass too.
-            if is_mass_degenerate and not is_fixed_link and not has_link_fixed_child_mass:
+            # A moving link with a massless fixed subtree has a singular composite, so its mass comes from the geometry
+            # estimate. A fixed link, or a moving link with mass-bearing fixed children, keeps its zero mass because the
+            # composite is finite.
+            if is_mass_degenerate and not is_fixed_child and not has_link_fixed_child_mass:
                 l_info["inertial_mass"] = None
-            # An authored inertia stands on its own unless the mass it was sized for is being replaced too.
+            # The authored inertia fits the authored mass, so the mass reset also discards the inertia.
             if is_inertia_degenerate or l_info.get("inertial_mass") is None:
                 l_info["inertial_i"] = None
         if is_inertia_invalid:
@@ -1545,12 +1547,11 @@ class RigidEntityDescription(KinematicEntityDescription):
         inertia = None if is_inertia_recomputed else l_info.get("inertial_i")
         invweight = l_info.get("invweight")
 
-        # The world carries a fixed link, so no geometry estimate applies and the asset's values stand as is. A
-        # fixed link holding no geometry keeps the mass 'finalize_inertial' floors at 'gs.EPS'
+        # A link holding no geometry keeps the mass 'finalize_inertial' floors at 'gs.EPS'.
         hint = InertialProperties(0.0, np.zeros(3, dtype=gs.np_float), np.zeros((3, 3), dtype=gs.np_float))
-        if not is_fixed and inertial_info.hint is not None:
+        if inertial_info.hint is not None:
             hint = inertial_info.hint
-
+        if not is_fixed and inertial_info.hint is not None:
             # Compute the bounding box of the links using both visual and collision geometries to be conservative
             aabb_min = np.full((3,), float("inf"), dtype=gs.np_float)
             aabb_max = np.full((3,), float("-inf"), dtype=gs.np_float)
