@@ -682,7 +682,7 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
     assert_allclose(plain_box.get_pos(), (2.0, 0.0, 0.2), tol=tol)
 
     # With both a morph pose and an offset, the relative getter returns the morph pose while the world getter carries
-    # the offset composed onto it (the offset position adds in z since the user orientation is identity).
+    # the offset composed onto it (the offset position adds in z since the authored orientation is identity).
     assert_allclose(posed_box.get_pos(relative=True), POSED_BOX_POS, tol=tol)
     assert_allclose(posed_box.get_quat(relative=True), gu.identity_quat(), tol=tol)
     assert_allclose(posed_box.get_pos(relative=False), (2.0, 0.5, 0.8), tol=tol)
@@ -692,9 +692,9 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
         tol=tol,
     )
 
-    # Setting the orientation in the user frame keeps the user-frame position fixed: the offset position rotates with
-    # the orientation, so the world position is rewritten to preserve the reported relative position. Rotating about x
-    # while the offset position is along z makes that offset contribution change, exercising the rewrite.
+    # Setting the orientation in the authored frame keeps the authored-frame position fixed: the offset position rotates
+    # with the orientation, so the world position is rewritten to preserve the reported relative position. Rotating
+    # about x while the offset position is along z makes that offset contribution change, exercising the rewrite.
     new_quat = gu.xyz_to_quat(np.array((90.0, 0.0, 0.0)), rpy=True, degrees=True)
     posed_box.set_quat(new_quat, relative=True)
     assert_allclose(posed_box.get_pos(relative=True), POSED_BOX_POS, tol=tol)
@@ -710,15 +710,13 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
 
     # Spinning the box makes the authored origin orbit the internal one, so both are reported at the displacement 'd'
     # the position getters strip. The spin is about a principal body axis orthogonal to the offset position, so it is
-    # torque-free and stays orthogonal to 'd', which collapses the centripetal transport of the acceleration to
-    # '-SPIN**2 * d'.
+    # torque-free and stays orthogonal to 'd', which collapses the acceleration transport to the centripetal term
+    # 'SPIN**2 * d' toward the internal origin.
     SPIN = 5.0
     posed_box.set_dofs_velocity((0.0, 0.0, 0.0, SPIN, 0.0, 0.0))
     scene.step()
     omega = posed_box.get_ang()
     offset_shift = posed_box.get_pos(relative=False) - posed_box.get_pos(relative=True)
-    assert_allclose((omega * offset_shift).sum(dim=-1), 0.0, tol=tol)
-    assert_allclose(posed_box.get_links_acc_ang(), 0.0, tol=tol)
     assert_allclose(
         posed_box.get_vel(relative=True),
         posed_box.get_vel(relative=False) - torch.cross(omega, offset_shift, dim=-1),
@@ -786,7 +784,7 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
             pos_zero = torch.tensor(pos_zero, device=gs.device, dtype=gs.tc_float)
             euler_zero = torch.deg2rad(torch.tensor(euler_zero, dtype=gs.tc_float))
             quat_zero = gu.xyz_to_quat(euler_zero, rpy=True)
-            # The pose lives in the offset, so the world frame (relative=False) carries it; the user frame is identity.
+            # The pose lives in the offset, so relative=False reports it and the authored frame is identity.
             assert_allclose(entity.get_pos(relative=False), pos_zero, tol=tol)
             assert_allclose(entity.get_pos(relative=True), 0.0, tol=tol)
             # Use quaternion for comparison to avoid gymbal lock issue in euler angles

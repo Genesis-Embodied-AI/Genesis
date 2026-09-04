@@ -109,11 +109,12 @@ class KinematicLink(RBC):
         Parameters
         ----------
         envs_idx : int or array of int, optional
-            The indices of the environments to get the position. If None, get the position of all environments. Default is None.
+            The indices of the environments to get the position. If None, get the position of all environments. Default
+            is None.
         relative : bool, optional
             Whether to report the position of the authored link origin rather than of the internal link origin used by
-            the solver. The entity's morph 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
-            ('align=True') displace one from the other. Defaults to True.
+            the solver. The internal link origin is the authored one moved by the entity's morph 'offset_pos' /
+            'offset_quat' and, on a free root link with 'align=True', by the inertial alignment. Defaults to True.
         """
         return self._solver.get_links_pos(self._idx, envs_idx, relative=relative)[..., 0, :]
 
@@ -125,11 +126,12 @@ class KinematicLink(RBC):
         Parameters
         ----------
         envs_idx : int or array of int, optional
-            The indices of the environments to get the quaternion. If None, get the quaternion of all environments. Default is None.
+            The indices of the environments to get the quaternion. If None, get the quaternion of all environments.
+            Default is None.
         relative : bool, optional
             Whether to report the orientation of the authored link origin rather than of the internal link origin used
-            by the solver. The entity's morph 'offset_pos' / 'offset_quat' and the inertial alignment of a free root
-            link ('align=True') displace one from the other. Defaults to True.
+            by the solver. The internal link origin is the authored one moved by the entity's morph 'offset_pos' /
+            'offset_quat' and, on a free root link with 'align=True', by the inertial alignment. Defaults to True.
         """
         return self._solver.get_links_quat(self._idx, envs_idx, relative=relative)[..., 0, :]
 
@@ -141,11 +143,13 @@ class KinematicLink(RBC):
         Parameters
         ----------
         envs_idx : int or array of int, optional
-            The indices of the environments to get the linear velocity. If None, get the linear velocity of all environments. Default is None.
+            The indices of the environments to get the linear velocity. If None, get the linear velocity of all
+            environments. Default is None.
         relative : bool, optional
             Whether to report the velocity of the authored link origin rather than of the internal link origin used by
-            the solver. The entity's morph 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
-            ('align=True') displace one from the other by 'd'. Both are expressed in world coordinates and differ by the
+            the solver. The internal link origin is the authored one moved by the world-frame vector 'd'. That
+            displacement composes the entity's morph 'offset_pos' / 'offset_quat' and, on a free root link with
+            'align=True', the inertial alignment. Both readings are expressed in world coordinates and differ by the
             transport 'omega x d'. Defaults to True.
         """
         return self._solver.get_links_vel(self._idx, envs_idx, relative=relative)[..., 0, :]

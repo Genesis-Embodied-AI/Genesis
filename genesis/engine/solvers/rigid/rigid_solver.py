@@ -1990,12 +1990,13 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         if links_idx is None:
             links_idx = self._base_links_idx
 
-        # Without any pose offset, the authored and internal link origins coincide, so a relative set is just an
-        # absolute one.
-        if relative and not self._has_links_offset:
+        # Without any offset position on the targeted links, the authored and internal link origins coincide, so a
+        # relative set is just an absolute one.
+        idx = links_idx if isinstance(links_idx, int) else slice(None)
+        if relative and self._links_offset_pos_is_identity[idx].all():
             relative = False
 
-        # Map a single base link's user position to world here (keeping the current orientation) so the zero-copy
+        # Map a single base link's authored position to world here (keeping the current orientation) so the zero-copy
         # in-place write below still applies, both for an environment-uniform and a per-environment offset. Multi-link
         # relative sets are composed in the kernel branch instead.
         if relative and isinstance(links_idx, int):
@@ -2054,8 +2055,8 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 pos = pos[None]
 
             if relative:
-                # Compose the body-frame offset onto the user position, keeping the current orientation, then set the
-                # resulting world position absolutely.
+                # Compose the body-frame offset onto the authored position, keeping the current orientation, then set
+                # the resulting world position absolutely.
                 cur_quat = qd_to_torch(self.dyn_state.links.quat, envs_idx, links_idx, transpose=True, copy=True)
                 offset_pos = _select_links_offset(self._links_offset_pos, links_idx, envs_idx)
                 offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
@@ -2113,17 +2114,19 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         if links_idx is None:
             links_idx = self._base_links_idx
 
-        # Without any pose offset, the authored and internal link origins coincide, so a relative set is just an
-        # absolute one.
-        if relative and not self._has_links_offset:
+        # Without any pose offset on the targeted links, the authored and internal link origins coincide, so a relative
+        # set is just an absolute one.
+        idx = links_idx if isinstance(links_idx, int) else slice(None)
+        if relative and (
+            self._links_offset_quat_is_identity[idx].all() and self._links_offset_pos_is_identity[idx].all()
+        ):
             relative = False
 
-        # Computed once and reused by the int fast path and the kernel branch below.
-        idx = links_idx if isinstance(links_idx, int) else slice(None)
+        # Reused by the int fast path and the kernel branch below.
         relative_pos_passthrough = relative and self._links_offset_pos_is_identity[idx].all()
 
-        # Compose a single base link's user orientation to world here so the zero-copy in-place write below still
-        # applies, both for an environment-uniform and a per-environment offset. This only preserves the user-frame
+        # Compose a single base link's authored orientation to world here so the zero-copy in-place write below still
+        # applies, both for an environment-uniform and a per-environment offset. This only preserves the authored-frame
         # position when the offset position is identity; a non-zero offset position rotates with the orientation and
         # is handled (together with multi-link relative sets) in the kernel branch instead.
         if isinstance(links_idx, int) and relative_pos_passthrough:
@@ -2179,13 +2182,13 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             if relative:
                 offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
                 if not relative_pos_passthrough:
-                    # The offset position rotates with the orientation, so keep the user-frame position fixed by
-                    # rewriting the world position from the current user position and the new user orientation.
+                    # The offset position rotates with the orientation, so keep the authored-frame position fixed by
+                    # rewriting the world position from the current authored position and the new authored orientation.
                     cur_pos = qd_to_torch(self.dyn_state.links.pos, envs_idx, links_idx, transpose=True, copy=True)
                     cur_quat = qd_to_torch(self.dyn_state.links.quat, envs_idx, links_idx, transpose=True, copy=True)
                     offset_pos = _select_links_offset(self._links_offset_pos, links_idx, envs_idx)
-                    user_pos = cur_pos - _offset_world_shift(offset_pos, offset_quat, cur_quat)
-                    world_pos = user_pos + gu.transform_by_quat(offset_pos, quat)
+                    authored_pos = cur_pos - _offset_world_shift(offset_pos, offset_quat, cur_quat)
+                    world_pos = authored_pos + gu.transform_by_quat(offset_pos, quat)
                     kernel_set_links_pos(
                         links_idx,
                         envs_idx,
@@ -2195,7 +2198,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                         self.rigid_info,
                         self.rigid_config,
                     )
-                # Compose the offset onto the user orientation, then set the resulting world orientation absolutely.
+                # Compose the offset onto the authored orientation, then set the resulting world orientation absolutely.
                 quat = gu.transform_quat_by_quat(offset_quat, quat)
                 relative = False
 
@@ -2821,6 +2824,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         ref: link_ref_frame = link_ref_frame.link_origin,
         relative=False,
     ):
+        idx = links_idx if isinstance(links_idx, int) else slice(None)
         if not gs.use_zerocopy:
             _, links_idx, envs_idx = self._sanitize_io_variables(
                 None, links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
@@ -2837,8 +2841,11 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             tensor = qd_to_torch(self.dyn_state.links.pos, envs_idx, links_idx, transpose=True, copy=True)
 
         # The pose offset is defined on the link origin, so it is only stripped for the 'link_origin' reference.
-        if relative and ref_frame == link_ref_frame.link_origin and self._has_links_offset:
-            tensor -= self._links_offset_shift(links_idx, envs_idx)
+        if relative and ref_frame == link_ref_frame.link_origin and not self._links_offset_pos_is_identity[idx].all():
+            quat = qd_to_torch(self.dyn_state.links.quat, envs_idx, links_idx, transpose=True)
+            offset_pos = _select_links_offset(self._links_offset_pos, links_idx, envs_idx)
+            offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
+            tensor -= _offset_world_shift(offset_pos, offset_quat, quat)
 
         return tensor[0] if self.n_envs == 0 else tensor
 
@@ -2846,8 +2853,11 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         self, links_idx=None, envs_idx=None, *, ref: link_ref_frame = link_ref_frame.link_origin, relative=False
     ):
         ref_frame = self._sanitize_ref_frame(ref, has_root_COM=False)
+        idx = links_idx if isinstance(links_idx, int) else slice(None)
         # Only the 'link_origin' reference carries the offset, as in 'get_links_pos'.
-        is_relative = relative and ref_frame == link_ref_frame.link_origin and self._has_links_offset
+        is_relative = (
+            relative and ref_frame == link_ref_frame.link_origin and not self._links_offset_pos_is_identity[idx].all()
+        )
         if gs.use_zerocopy:
             mask = indices_to_mask(envs_idx, links_idx)
             cd_vel = qd_to_torch(self.dyn_state.links.cd_vel, transpose=True)
@@ -2860,30 +2870,32 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 root_COM = qd_to_torch(self.dyn_state.links.root_COM, transpose=True)
                 delta = pos[mask] - root_COM[mask]
                 if is_relative:
-                    delta = delta - self._links_offset_shift(links_idx, envs_idx)
+                    quat = qd_to_torch(self.dyn_state.links.quat, envs_idx, links_idx, transpose=True)
+                    offset_pos = _select_links_offset(self._links_offset_pos, links_idx, envs_idx)
+                    offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
+                    delta = delta - _offset_world_shift(offset_pos, offset_quat, quat)
             tensor = cd_vel[mask] + cd_ang[mask].cross(delta, dim=-1)
-        else:
-            _tensor, links_idx, envs_idx = self._sanitize_io_variables(
-                None, links_idx, self.n_links, "links_idx", envs_idx, (3,)
-            )
-            assert _tensor is not None
-            tensor = _tensor[None] if self.n_envs == 0 else _tensor
-            kernel_get_links_vel(
-                links_idx,
-                envs_idx,
-                tensor,
-                self._links_offset_pos,
-                self._links_offset_quat,
-                self.dyn_state,
-                self.rigid_config,
-                ref_frame,
-                is_relative=is_relative,
-                is_offset_per_env=self._is_links_offset_per_env,
-            )
+            return tensor[0] if self.n_envs == 0 else tensor
 
-        return tensor[0] if self.n_envs == 0 else tensor
+        _tensor, links_idx, envs_idx = self._sanitize_io_variables(
+            None, links_idx, self.n_links, "links_idx", envs_idx, (3,)
+        )
+        tensor = _tensor[None] if self.n_envs == 0 else _tensor
+        kernel_get_links_vel(
+            links_idx,
+            envs_idx,
+            tensor,
+            self._links_offset_pos,
+            self._links_offset_quat,
+            self.dyn_state,
+            self.rigid_config,
+            ref_frame,
+            is_relative=is_relative,
+        )
+        return _tensor
 
     def get_links_acc(self, links_idx=None, envs_idx=None, *, relative=False):
+        idx = links_idx if isinstance(links_idx, int) else slice(None)
         _tensor, links_idx, envs_idx = self._sanitize_io_variables(
             None, links_idx, self.n_links, "links_idx", envs_idx, (3,)
         )
@@ -2896,10 +2908,9 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             self._links_offset_quat,
             self.dyn_state,
             self.rigid_config,
-            is_relative=relative and self._has_links_offset,
-            is_offset_per_env=self._is_links_offset_per_env,
+            is_relative=relative and not self._links_offset_pos_is_identity[idx].all(),
         )
-        return tensor[0] if self.n_envs == 0 else tensor
+        return _tensor
 
     def get_links_acc_ang(self, links_idx=None, envs_idx=None):
         tensor = qd_to_torch(self.dyn_state.links.cacc_ang, envs_idx, links_idx, transpose=True, copy=True)

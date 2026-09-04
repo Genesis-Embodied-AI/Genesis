@@ -724,8 +724,8 @@ class KinematicEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         relative : bool, optional
             Whether to report the position of the authored link origin rather than of the internal link origin used by
-            the solver. The morph's 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
-            ('align=True') displace one from the other. Defaults to True.
+            the solver. The internal link origin is the authored one moved by the morph 'offset_pos' / 'offset_quat'
+            and, on a free root link with 'align=True', by the inertial alignment. Defaults to True.
 
         Returns
         -------
@@ -745,8 +745,8 @@ class KinematicEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         relative : bool, optional
             Whether to report the orientation of the authored link origin rather than of the internal link origin used
-            by the solver. The morph's 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
-            ('align=True') displace one from the other. Defaults to True.
+            by the solver. The internal link origin is the authored one moved by the morph 'offset_pos' / 'offset_quat'
+            and, on a free root link with 'align=True', by the inertial alignment. Defaults to True.
 
         Returns
         -------
@@ -766,9 +766,10 @@ class KinematicEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         relative : bool, optional
             Whether to report the velocity of the authored link origin rather than of the internal link origin used by
-            the solver. The morph's 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
-            ('align=True') displace one from the other by 'd'. Both are expressed in world coordinates and differ by the
-            transport 'omega x d'. Defaults to True.
+            the solver. The internal link origin is the authored one moved by the world-frame vector 'd'. That
+            displacement composes the morph 'offset_pos' / 'offset_quat' and, on a free root link with 'align=True', the
+            inertial alignment. Both readings are expressed in world coordinates and differ by the transport 'omega x
+            d'. Defaults to True.
 
         Returns
         -------
@@ -807,8 +808,9 @@ class KinematicEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         relative : bool, optional
             Whether to report the position of the authored link origin, which is where the morph 'pos' placed it, rather
-            than of the internal link origin used by the solver. The morph's 'offset_pos' / 'offset_quat' and the
-            inertial alignment of a free root link ('align=True') displace one from the other. Defaults to True.
+            than of the internal link origin used by the solver. The internal link origin is the authored one moved by
+            the morph 'offset_pos' / 'offset_quat' and, on a free root link with 'align=True', by the inertial
+            alignment. Defaults to True.
 
         Returns
         -------
@@ -831,9 +833,9 @@ class KinematicEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         relative : bool, optional
             Whether to report the orientation of the authored link origin, which is where the morph 'quat' / 'euler'
-            placed it, rather than of the internal link origin used by the solver. The morph's 'offset_pos' /
-            'offset_quat' and the inertial alignment of a free root link ('align=True') displace one from the other.
-            Defaults to True.
+            placed it, rather than of the internal link origin used by the solver. The internal link origin is the
+            authored one moved by the morph 'offset_pos' / 'offset_quat' and, on a free root link with 'align=True', by
+            the inertial alignment. Defaults to True.
 
         Returns
         -------
@@ -892,9 +894,10 @@ class KinematicEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         relative : bool, optional
             Whether to report the velocity of the authored link origin rather than of the internal link origin used by
-            the solver. The morph's 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
-            ('align=True') displace one from the other by 'd'. Both are expressed in world coordinates and differ by the
-            transport 'omega x d'. Defaults to True.
+            the solver. The internal link origin is the authored one moved by the world-frame vector 'd'. That
+            displacement composes the morph 'offset_pos' / 'offset_quat' and, on a free root link with 'align=True', the
+            inertial alignment. Both readings are expressed in world coordinates and differ by the transport 'omega x
+            d'. Defaults to True.
 
         Returns
         -------
@@ -940,8 +943,8 @@ class KinematicEntity(Entity):
             Whether to zero the velocity of all the entity's dofs. Defaults to False.
         relative : bool, optional
             Whether 'pos' places the authored link origin rather than directly the internal link origin used by the
-            solver. The morph's 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
-            ('align=True') displace one from the other. Defaults to True.
+            solver. The internal link origin is the authored one moved by the morph 'offset_pos' / 'offset_quat' and, on
+            a free root link with 'align=True', by the inertial alignment. Defaults to True.
         skip_forward : bool, optional
             Whether to skip forward kinematics after setting position. Defaults to False.
         """
@@ -972,8 +975,8 @@ class KinematicEntity(Entity):
             Whether to zero the velocity of all the entity's dofs. Defaults to False.
         relative : bool, optional
             Whether 'quat' orients the authored link origin rather than directly the internal link origin used by the
-            solver. The morph's 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
-            ('align=True') displace one from the other. Defaults to True.
+            solver. The internal link origin is the authored one moved by the morph 'offset_pos' / 'offset_quat' and, on
+            a free root link with 'align=True', by the inertial alignment. Defaults to True.
         skip_forward : bool, optional
             Whether to skip forward kinematics after setting quaternion. Defaults to False.
         """
@@ -2192,9 +2195,10 @@ class RigidEntity(KinematicEntity):
             joint at its root. Defaults to 'link_origin'.
         relative : bool, optional
             Whether to report the position of the authored link origin rather than of the internal link origin used by
-            the solver. The morph's 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
-            ('align=True') displace one from the other. Only 'ref=gs.link_ref_frame.link_origin' is affected, since the
-            offset is defined on the link origin. Defaults to True.
+            the solver. The internal link origin is the authored one moved by the morph 'offset_pos' / 'offset_quat'
+            and, on a free root link with 'align=True', by the inertial alignment. Only
+            'ref=gs.link_ref_frame.link_origin' is affected, since the offset is defined on the link origin. Defaults to
+            True.
 
         Returns
         -------
@@ -2222,9 +2226,10 @@ class RigidEntity(KinematicEntity):
             mass ('link_COM'). Defaults to 'link_origin'.
         relative : bool, optional
             Whether to report the velocity of the authored link origin rather than of the internal link origin used by
-            the solver. The morph's 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
-            ('align=True') displace one from the other by 'd'. Both are expressed in world coordinates and differ by the
-            transport 'omega x d'. Only 'ref=gs.link_ref_frame.link_origin' is affected. Defaults to True.
+            the solver. The internal link origin is the authored one moved by the world-frame vector 'd'. That
+            displacement composes the morph 'offset_pos' / 'offset_quat' and, on a free root link with 'align=True', the
+            inertial alignment. Both readings are expressed in world coordinates and differ by the transport 'omega x
+            d'. Only 'ref=gs.link_ref_frame.link_origin' is affected. Defaults to True.
 
         Returns
         -------
@@ -2237,8 +2242,7 @@ class RigidEntity(KinematicEntity):
     @gs.assert_built
     def get_links_acc(self, links_idx_local=None, envs_idx=None, *, relative=True):
         """
-        Returns classical linear acceleration of all the entity's links expressed at their origin in world
-        coordinates.
+        Returns classical linear acceleration of all the entity's links expressed at their origin in world coordinates.
 
         Parameters
         ----------
@@ -2248,9 +2252,10 @@ class RigidEntity(KinematicEntity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         relative : bool, optional
             Whether to report the acceleration of the authored link origin rather than of the internal link origin used
-            by the solver. The morph's 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
-            ('align=True') displace one from the other by 'd'. Both are expressed in world coordinates and differ by the
-            transport 'alpha x d + omega x (omega x d)'. Defaults to True.
+            by the solver. The internal link origin is the authored one moved by the world-frame vector 'd'. That
+            displacement composes the morph 'offset_pos' / 'offset_quat' and, on a free root link with 'align=True', the
+            inertial alignment. Both readings are expressed in world coordinates and differ by the transport 'alpha x d
+            + omega x (omega x d)'. Defaults to True.
 
         Returns
         -------
@@ -2423,8 +2428,8 @@ class RigidEntity(KinematicEntity):
             sudden change in entity pose.
         relative : bool, optional
             Whether 'pos' places the authored link origin rather than directly the internal link origin used by the
-            solver. The morph's 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
-            ('align=True') displace one from the other. Defaults to True.
+            solver. The internal link origin is the authored one moved by the morph 'offset_pos' / 'offset_quat' and, on
+            a free root link with 'align=True', by the inertial alignment. Defaults to True.
         skip_forward : bool, optional
             Whether to skip forward kinematics after setting position. Defaults to False.
         """
@@ -2457,8 +2462,8 @@ class RigidEntity(KinematicEntity):
             sudden change in entity pose.
         relative : bool, optional
             Whether 'quat' orients the authored link origin rather than directly the internal link origin used by the
-            solver. The morph's 'offset_pos' / 'offset_quat' and the inertial alignment of a free root link
-            ('align=True') displace one from the other. Defaults to True.
+            solver. The internal link origin is the authored one moved by the morph 'offset_pos' / 'offset_quat' and, on
+            a free root link with 'align=True', by the inertial alignment. Defaults to True.
         skip_forward : bool, optional
             Whether to skip forward kinematics after setting quaternion. Defaults to False.
         """
