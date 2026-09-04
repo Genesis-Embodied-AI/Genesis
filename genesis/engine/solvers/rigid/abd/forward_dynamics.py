@@ -1811,12 +1811,6 @@ def func_update_force(
                         func_add_safe_backward(I_p, dyn_state.links.cfrc_vel[i_l, i_b], dyn_state.links.cfrc_vel, BW)
                         func_add_safe_backward(I_p, dyn_state.links.cfrc_ang[i_l, i_b], dyn_state.links.cfrc_ang, BW)
 
-    # Clear coupling forces after use
-    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
-    for I in qd.grouped(qd.ndrange(*dyn_state.links.cfrc_coupling_ang.shape)):
-        dyn_state.links.cfrc_coupling_ang[I] = qd.Vector.zero(gs.qd_float, 3)
-        dyn_state.links.cfrc_coupling_vel[I] = qd.Vector.zero(gs.qd_float, 3)
-
 
 @qd.func
 def func_actuation(self):
@@ -2225,6 +2219,13 @@ def func_integrate(
                             dyn_state.dofs.vel_next[i_d, i_b] = (
                                 2.0 * dyn_state.dofs.vel_next[i_d, i_b] - dyn_state.dofs.vel[i_d, i_b]
                             )
+
+    # The coupling wrench of this substep is consumed: the bias force read it during forward dynamics and the midpoint
+    # pass above read it last. The coupler accumulates the next one after the substep.
+    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    for I in qd.grouped(qd.ndrange(*dyn_state.links.cfrc_coupling_ang.shape)):
+        dyn_state.links.cfrc_coupling_ang[I] = qd.Vector.zero(gs.qd_float, 3)
+        dyn_state.links.cfrc_coupling_vel[I] = qd.Vector.zero(gs.qd_float, 3)
 
 
 @qd.kernel
