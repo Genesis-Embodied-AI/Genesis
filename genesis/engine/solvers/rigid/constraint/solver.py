@@ -303,7 +303,11 @@ class ConstraintSolver:
             self.noslip()
 
         func_update_contact_force(
-            self._solver.dyn_state, self._collider._collider_state, self.constraint_state, self._solver.rigid_config
+            self._solver.dyn_state,
+            self._collider._collider_state,
+            self.constraint_state,
+            self._solver.dyn_info,
+            self._solver.rigid_config,
         )
 
     def noslip(self):
@@ -655,6 +659,58 @@ def _func_contact_row_direction(
 
 
 @qd.func
+def _is_contact_inert(
+    link_a,
+    link_b,
+    i_b,
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
+    rigid_config: qd.template(),
+) -> bool:
+    """Whether a contact carries no constraint because neither endpoint is an awake dynamic body.
+
+    A sleeper struck by an awake body is revived before the constraints are assembled
+    (kernel_wake_up_entities_on_new_contact), so only hibernated-fixed pairs reach this state.
+    """
+    link_a_maybe_batch = [link_a, i_b] if qd.static(rigid_config.batch_links_info) else link_a
+    link_b_maybe_batch = [link_b, i_b] if qd.static(rigid_config.batch_links_info) else link_b
+    is_a_awake = not (dyn_info.links.is_fixed[link_a_maybe_batch] or dyn_state.links.is_hibernated[link_a, i_b])
+    is_b_awake = link_b >= 0 and not (
+        dyn_info.links.is_fixed[link_b_maybe_batch] or dyn_state.links.is_hibernated[link_b, i_b]
+    )
+    return not is_a_awake and not is_b_awake
+
+
+@qd.func
+def _clear_inert_collision_row(n_con, i_b, constraint_state: array_class.ConstraintState, rigid_config: qd.template()):
+    """Write an inert (force-free) collision row in slot n_con.
+
+    The slots are reused by index across steps, so a contact that carries no constraint must actively clear its
+    slots and mark them inert: leaving the stale jacobian of a prior step (when those dofs were awake and in contact)
+    would leak that contact force into the qfrc_constraint of a since-woken body that now shares the slot. The dof
+    support is emptied too, so every sparse consumer (jv products, island resolve, noslip) skips the row.
+    """
+    if qd.static(rigid_config.sparse_solve):
+        for i_d_ in range(constraint_state.jac_n_dofs[n_con, i_b]):
+            i_d = constraint_state.jac_dofs_idx[n_con, i_d_, i_b]
+            constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
+    else:
+        for i_d in range(constraint_state.jac.shape[1]):
+            constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
+    constraint_state.jac_n_dofs[n_con, i_b] = 0
+    constraint_state.diag[n_con, i_b] = gs.qd_float(1.0)
+    constraint_state.aref[n_con, i_b] = gs.qd_float(0.0)
+    # The elliptic cone reads efc_D as con_mu = friction * sqrt(d0 / d1). A zero would give sqrt(0 / 0) = NaN that the
+    # cleared jacobian cannot mask (0 * NaN = NaN), poisoning the solve. A finite efc_D = 1 / diag keeps con_mu finite,
+    # so the zero residuals classify this inert row as inactive. The pyramidal path is unaffected by efc_D once its
+    # jacobian is zero, so it keeps 0.
+    if qd.static(rigid_config.enable_elliptic_friction):
+        constraint_state.efc_D[n_con, i_b] = 1.0
+    else:
+        constraint_state.efc_D[n_con, i_b] = 0.0
+
+
+@qd.func
 def _add_friction_constraint(
     i_b,
     i_col_,
@@ -857,9 +913,27 @@ def _add_collision_constraints_per_friction(
         i_col_ = slot // rows_per_contact
         i_friction = slot % rows_per_contact
         if i_col_ < collider_state.n_contacts[i_b]:
-            _add_friction_constraint(
-                i_b, i_col_, i_friction, dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config
-            )
+            is_inert = False
+            if qd.static(rigid_config.use_hibernation):
+                i_col = collider_state.contact_sort_idx[i_col_, i_b]
+                link_a = collider_state.contact_data.link_a[i_col, i_b]
+                link_b = collider_state.contact_data.link_b[i_col, i_b]
+                is_inert = _is_contact_inert(link_a, link_b, i_b, dyn_state, dyn_info, rigid_config)
+            if is_inert:
+                n_con = constraint_state.n_constraints[i_b] + i_col_ * rows_per_contact + i_friction
+                _clear_inert_collision_row(n_con, i_b, constraint_state, rigid_config)
+            else:
+                _add_friction_constraint(
+                    i_b,
+                    i_col_,
+                    i_friction,
+                    dyn_state,
+                    collider_state,
+                    constraint_state,
+                    dyn_info,
+                    rigid_info,
+                    rigid_config,
+                )
 
 
 @qd.func
@@ -902,45 +976,16 @@ def _add_collision_constraints_per_contact(
             link_a_maybe_batch = [link_a, i_b] if qd.static(rigid_config.batch_links_info) else link_a
             link_b_maybe_batch = [link_b, i_b] if qd.static(rigid_config.batch_links_info) else link_b
 
+            if qd.static(rigid_config.use_hibernation):
+                if _is_contact_inert(link_a, link_b, i_b, dyn_state, dyn_info, rigid_config):
+                    for i_friction in range(rows_per_contact):
+                        n_con = collision_con_start + i_col_ * rows_per_contact + i_friction
+                        _clear_inert_collision_row(n_con, i_b, constraint_state, rigid_config)
+                    continue
+
             dyn_state.links.is_constrained[link_a, i_b] = True
             if link_b > -1:
                 dyn_state.links.is_constrained[link_b, i_b] = True
-
-            # A contact needs a constraint only when at least one endpoint is an awake dynamic body; if both are
-            # hibernated or fixed, no awake dof is acted upon and the contact carries no constraint. A sleeper struck
-            # by an awake body was already revived in the broad phase, so it does not reach this branch. The slots are
-            # reused by index across steps, so a skipped contact must actively clear its slots and mark them inert:
-            # leaving the stale jacobian of a prior step (when those dofs were awake and in contact) would leak that
-            # contact force into the qfrc_constraint of a since-woken body that now shares the slot.
-            if qd.static(rigid_config.use_hibernation):
-                is_a_awake = not (
-                    dyn_info.links.is_fixed[link_a_maybe_batch] or dyn_state.links.is_hibernated[link_a, i_b]
-                )
-                is_b_awake = link_b >= 0 and not (
-                    dyn_info.links.is_fixed[link_b_maybe_batch] or dyn_state.links.is_hibernated[link_b, i_b]
-                )
-                if not is_a_awake and not is_b_awake:
-                    for i_friction in range(rows_per_contact):
-                        n_con = collision_con_start + i_col_ * rows_per_contact + i_friction
-                        if qd.static(rigid_config.sparse_solve):
-                            for i_d_ in range(constraint_state.jac_n_dofs[n_con, i_b]):
-                                i_d = constraint_state.jac_dofs_idx[n_con, i_d_, i_b]
-                                constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
-                            constraint_state.jac_n_dofs[n_con, i_b] = 0
-                        else:
-                            for i_d in range(n_dofs):
-                                constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
-                        constraint_state.diag[n_con, i_b] = gs.qd_float(1.0)
-                        constraint_state.aref[n_con, i_b] = gs.qd_float(0.0)
-                        # The elliptic cone reads efc_D as con_mu = friction * sqrt(d0 / d1); a zero would give
-                        # sqrt(0 / 0) = NaN that the cleared jacobian cannot mask (0 * NaN = NaN), poisoning the solve.
-                        # A finite efc_D = 1 / diag keeps con_mu finite, so the zero residuals classify this inert row
-                        # as inactive. The pyramidal path is unaffected by efc_D once its jacobian is zero, so it keeps 0.
-                        if qd.static(rigid_config.enable_elliptic_friction):
-                            constraint_state.efc_D[n_con, i_b] = 1.0
-                        else:
-                            constraint_state.efc_D[n_con, i_b] = 0.0
-                    continue
 
             # FIXME: The reference engine anchors the tangent frame of a plane-capsule contact to the capsule axis,
             # while this frame comes from the normal alone, so the friction rows of plane-capsule pairs do not match
@@ -2985,6 +3030,18 @@ def func_island_tiled_factor_solve_all(
                         TileCls,
                         write_L,
                     )
+                elif qd.static(rigid_config.use_hibernation):
+                    # The line search and the iterate update run over every dof of the env, so a hibernated island,
+                    # whose factor and solve are skipped, must carry a zero gradient and search direction: a stale
+                    # direction would otherwise step its dofs every iteration, drifting them without bound and feeding
+                    # that drift into the env-wide step length of the awake islands. The gradient is zeroed where it
+                    # is computed (func_update_gradient_no_solve, func_update_gradient_batch).
+                    dof_start = constraint_state.island.dof_slices.start[i_island, i_b]
+                    i_d_ = tid
+                    while i_d_ < constraint_state.island.dof_slices.n[i_island, i_b]:
+                        i_d = constraint_state.island.dof_id[dof_start + i_d_, i_b]
+                        constraint_state.Mgrad[i_d, i_b] = gs.qd_float(0.0)
+                        i_d_ = i_d_ + T
             # Fence the shared tile before this block reuses it for its next work item.
             qd.simt.block.sync()
             i_work = i_work + N_BLOCKS
@@ -6266,6 +6323,15 @@ def func_update_gradient_batch(
             constraint_state.Ma[i_d, i_b] - dyn_state.dofs.force[i_d, i_b] - constraint_state.qfrc_constraint[i_d, i_b]
         )
 
+    # A dof of a hibernated island carries no gradient and no search direction; see func_island_tiled_factor_solve_all.
+    # The solves below skip that island, so Mgrad is cleared here.
+    if qd.static(rigid_config.use_hibernation):
+        for i_d in range(n_dofs):
+            i_island = constraint_state.island.dofs_island_idx[i_d, i_b]
+            if i_island >= 0 and constraint_state.island.is_hibernated[i_island, i_b]:
+                constraint_state.grad[i_d, i_b] = gs.qd_float(0.0)
+                constraint_state.Mgrad[i_d, i_b] = gs.qd_float(0.0)
+
     if qd.static(rigid_config.solver_type == gs.constraint_solver.CG):
         func_solve_mass_batch(
             i_b, constraint_state.grad, constraint_state.Mgrad, dyn_state, dyn_info, rigid_info, rigid_config
@@ -6310,6 +6376,11 @@ def func_update_gradient_no_solve(
                 - dyn_state.dofs.force[i_d, i_b]
                 - constraint_state.qfrc_constraint[i_d, i_b]
             )
+            # A dof of a hibernated island carries no gradient; see func_island_tiled_factor_solve_all.
+            if qd.static(rigid_config.use_hibernation):
+                i_island = constraint_state.island.dofs_island_idx[i_d, i_b]
+                if i_island >= 0 and constraint_state.island.is_hibernated[i_island, i_b]:
+                    constraint_state.grad[i_d, i_b] = gs.qd_float(0.0)
 
 
 @qd.func
@@ -7074,6 +7145,7 @@ def func_update_contact_force(
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
     n_links = dyn_state.links.contact_force.shape[0]
@@ -7121,6 +7193,11 @@ def func_update_contact_force(
                             * constraint_state.efc_force[i_c * rows_per_contact + i_dir + const_start, i_b]
                         )
 
+            # An inert contact keeps the force of the last solve it took part in, so a resting sleeper keeps reporting
+            # the support force it is at rest under.
+            if qd.static(rigid_config.use_hibernation):
+                if _is_contact_inert(contact_data_link_a, contact_data_link_b, i_b, dyn_state, dyn_info, rigid_config):
+                    force = collider_state.contact_data.force[i_col, i_b]
             collider_state.contact_data.force[i_col, i_b] = force
 
             dyn_state.links.contact_force[contact_data_link_a, i_b] = (
@@ -7143,6 +7220,10 @@ def func_update_qacc(
 
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_d, i_b in qd.ndrange(n_dofs, _B):
+        # A hibernated dof is left out of the solve, so its zero acceleration and last awake forces stand.
+        if qd.static(rigid_config.use_hibernation):
+            if dyn_state.dofs.is_hibernated[i_d, i_b]:
+                continue
         dyn_state.dofs.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
         dyn_state.dofs.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
         dyn_state.dofs.force[i_d, i_b] = dyn_state.dofs.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]

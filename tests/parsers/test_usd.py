@@ -294,7 +294,6 @@ def test_visual_collision_parsing(visual_collision_usd, tmp_path):
     restored.build()
     restored_link = restored.entities[0].base_link
     assert (restored_link.n_geoms, restored_link.n_vgeoms) == (link.n_geoms, link.n_vgeoms)
-    assert restored.entities[0].morphs[0].usd_ctx is None
     assert_equal(restored.entities[0].get_mass(), entity.get_mass())
 
 

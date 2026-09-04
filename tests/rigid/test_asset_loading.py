@@ -627,13 +627,6 @@ def test_xacro_loading(xacro_robot, show_viewer, tol):
         merge_fixed_links=False,
     )
 
-    # After xacro processing, morph.file is a urdfpy.URDF with absolute mesh paths
-    assert isinstance(morph.file, urdfpy.URDF)
-    for link in morph.file.links:
-        for geom_prop in (*link.collisions, *link.visuals):
-            if isinstance(geom_prop.geometry.geometry, urdfpy.Mesh):
-                assert os.path.isabs(geom_prop.geometry.geometry.filename)
-
     entity = scene.add_entity(morph)
 
     # Load again with overridden mass via xacro_args

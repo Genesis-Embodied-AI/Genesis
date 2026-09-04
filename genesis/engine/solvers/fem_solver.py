@@ -11,9 +11,10 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 from genesis.engine.boundaries import FloorBoundary
 from genesis.engine.entities.fem_entity import FEMEntity
+from genesis.engine.materials import FEM
 from genesis.engine.states.solvers import FEMSolverState
-from genesis.utils.misc import qd_to_torch
 from genesis.utils.geom import qd_transform_by_quat, qd_transform_quat_by_quat
+from genesis.utils.misc import qd_to_torch
 
 from .base_solver import GravityMixin, Solver, TimeBasedMixin
 
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
 
 @qd.data_oriented
 class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
+    material_cls = FEM.Base
     # ------------------------------------------------------------------------------------
     # --------------------------------- Initialization -----------------------------------
     # ------------------------------------------------------------------------------------
@@ -389,7 +391,9 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
         # every solver integrates at is settled from the active ones, and that is settled before any of them builds.
         return self.n_elements > 0
 
-    def add_entity(self, idx, material, morph, surface, name: str | None = None) -> "FEMEntity":
+    def add_entity(
+        self, idx, material, morph, surface, visualize_contact=False, name: str | None = None, desc=None
+    ) -> "FEMEntity":
         # add material's update methods if not matching any existing material
         exist = False
         for mat in self._mats:

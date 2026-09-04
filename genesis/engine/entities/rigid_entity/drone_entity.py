@@ -1,24 +1,13 @@
-import os
-import xml.etree.ElementTree as ET
-
 import torch
 
 import genesis as gs
-from genesis.utils.description import DroneEntityDescription
-from genesis.utils.misc import get_assets_dir
 
+from .description import DroneEntityDescription
 from .rigid_entity import RigidEntity
 
 
 class DroneEntity(RigidEntity):
     _description_cls = DroneEntityDescription
-
-    def _load_scene(self, morph, surface):
-        super()._load_scene(morph, surface)
-
-        properties = ET.parse(os.path.join(get_assets_dir(), morph.file)).getroot()[0].attrib
-        self._desc.kf = float(properties["kf"])
-        self._desc.km = float(properties["km"])
 
     def _load_model(self):
         super()._load_model()
