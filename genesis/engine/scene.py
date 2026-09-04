@@ -1428,7 +1428,8 @@ class Scene(RBC):
         omitted_kinds.update(type(recorder).__name__ for recorder in self._recorder_manager.recorders)
         if self._visualizer is not None:
             omitted_kinds.update(type(camera).__name__ for camera in self._visualizer.cameras)
-        omitted_kinds["pre_step_callback"] += len(self._pre_step_callbacks)
+        if self._pre_step_callbacks:
+            omitted_kinds["pre_step_callback"] += len(self._pre_step_callbacks)
         surfaces = [entity.surface for entity in self.entities]
         if isinstance(self.options.renderer, gs.renderers.RayTracer) and self.options.renderer.env_surface is not None:
             surfaces.append(self.options.renderer.env_surface)

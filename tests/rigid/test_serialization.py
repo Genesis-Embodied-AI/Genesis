@@ -1,4 +1,5 @@
 import json
+import pickle
 import xml.etree.ElementTree as ET
 import zipfile
 from copy import deepcopy
@@ -355,7 +356,7 @@ def test_export_and_load_rigid(
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_export_before_build(n_envs, tmp_path, show_viewer):
+def test_export_before_build(n_envs, tmp_path, show_viewer, caplog):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.5, 1.0, 1.0),
@@ -372,9 +373,15 @@ def test_export_before_build(n_envs, tmp_path, show_viewer):
             size=(0.2, 0.2, 0.2),
         ),
     )
-    # Adding an entity resolves its description, so a scene is written before its build as readily as after
+    # Adding an entity resolves its description, so a scene is written before its build as readily as after. The scene
+    # holds nothing a file leaves out, so the export warns of nothing.
     exported = tmp_path / f"authored{SCENE_FORMAT}"
-    scene.export(exported)
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        scene.export(exported)
+    assert not caplog.records
+    # The options of a scene are merged copies of the ones given, and pickle as any option does
+    assert pickle.loads(pickle.dumps(scene.options.rigid)) == scene.options.rigid
     scene.build(n_envs=n_envs)
 
     # A file states no environment layout, so whoever opens one builds it with the layout they ask for
