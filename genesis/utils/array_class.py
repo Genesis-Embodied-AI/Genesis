@@ -633,6 +633,17 @@ class ConstraintState:
     prev_active: qd.Tensor
     qfrc_constraint: qd.Tensor
     qacc: qd.Tensor
+    # Per-lane M^-1 scratch for the colored noslip sweep, (n_dofs, NOSLIP_COOP_T, _B); empty unless enable_color_noslip.
+    # The lane dim lets concurrent rows compute their own M^-1 J^T without clobbering a shared buffer.
+    noslip_minv: qd.Tensor
+    # Colored-noslip scratch (kernel_noslip_color); empty unless enable_color_noslip.
+    #  - row_color[i_c, i_b]: color of row i_c, or -1 for skipped rows (equality/limit); a pyramid pair shares a color.
+    #  - n_colors[i_b]: color count for this env (sweep loop bound), or -1 on overflow (kernel then sweeps serially).
+    #  - color_block_used[c, i_d, i_b]: coloring workspace, 1 iff color c claims the mass block with first dof i_d;
+    #    first axis is NOSLIP_COLOR_MAXC.
+    row_color: qd.Tensor
+    n_colors: qd.Tensor
+    color_block_used: qd.Tensor
     qacc_ws: qd.Tensor
     qacc_prev: qd.Tensor
     cost_ws: qd.Tensor
@@ -873,6 +884,26 @@ def get_constraint_state(constraint_solver, solver, collider):
         nt_H_cone_free_diag=V(
             dtype=gs.qd_float,
             shape=maybe_shape((_B, solver.n_dofs_), solver.rigid_config.enable_cone_free_hessian_reuse),
+        ),
+        # Per-lane scratch for kernel_noslip_color; the 32 must match noslip.NOSLIP_COOP_T. Empty unless enabled.
+        noslip_minv=V(
+            dtype=gs.qd_float,
+            shape=maybe_shape(
+                (solver.n_dofs_, 32, _B),
+                solver.rigid_config.enable_color_noslip,
+            ),
+        ),
+        # Colored-noslip scratch; empty unless enabled. row_color uses efc_force's serial layout (indexed identically in
+        # the sweep); color_block_used's first axis (64) must match noslip.NOSLIP_COLOR_MAXC.
+        row_color=V(
+            dtype=gs.qd_int,
+            shape=maybe_shape((len_constraints_, _B), solver.rigid_config.enable_color_noslip),
+            layout=serial_layout if solver.rigid_config.enable_color_noslip else None,
+        ),
+        n_colors=V(dtype=gs.qd_int, shape=maybe_shape((_B,), solver.rigid_config.enable_color_noslip)),
+        color_block_used=V(
+            dtype=gs.qd_int,
+            shape=maybe_shape((64, solver.n_dofs_, _B), solver.rigid_config.enable_color_noslip),
         ),
         # Allocated last to preserve the allocation order of the tensors above (see the warning at the top).
         island=get_island_state(solver, collider),
@@ -2649,6 +2680,9 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # tensor layouts they expect, eg (_B, len_constraints_) for Jaref / efc_D / ... which unlocks coalesced cross-lane
     # reads.
     enable_cooperative_constraint_kernels: bool = False
+    # Selects the colored Gauss-Seidel warp-per-env noslip kernel (kernel_noslip_color) over the scalar one. Non-bit-
+    # identical (row reorder), same convergence class. GPU-only; requires the whole-env sweep (per-island solve off).
+    enable_color_noslip: bool = False
     # Purely descriptive layout flag: True whenever the layout-flippable constraint-state tensors are physically
     # batch-first, i.e. enable_cooperative_constraint_kernels or serialized execution (env loop outermost, so per-env
     # rows must be contiguous). Consumers that only need iteration order to follow the physical layout (ndrange axes,

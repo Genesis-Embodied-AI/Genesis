@@ -730,6 +730,17 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                     island_factor_n_blocks=max(1, max_tiled_envs // cholesky_tile_size),
                 )
 
+                # Reuse the cooperative-constraint envelope (the regime where warp-per-env beats one-thread-per-env) as
+                # the selection heuristic -- noslip is the last one-thread-per-env kernel left in it. Whole-env sweep
+                # only (the colored kernel has no per-island partition), and off under MuJoCo compatibility since the
+                # color reorder is non-bit-identical.
+                rigid_config["enable_color_noslip"] = (
+                    self._options.noslip_iterations > 0
+                    and enable_cooperative_constraint_kernels
+                    and not rigid_config["enable_per_island_solve"]
+                    and not self._enable_mujoco_compatibility
+                )
+
                 # Manually pin the solve arm only where the winner is determinable in advance AND confirmed across
                 # CUDA + Metal; genuinely backend-dependent cases fall through to the per-step autotuner.
                 if not enable_cooperative_constraint_kernels:

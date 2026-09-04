@@ -1,7 +1,22 @@
+import os
+
 import quadrants as qd
 
 import genesis as gs
 import genesis.utils.array_class as array_class
+
+# Warp width of the colored noslip kernel (lanes per env). MUST match the lane dim of ConstraintState.noslip_minv.
+NOSLIP_COOP_T = 32
+
+# Iteration-count override for the colored sweep (0 = use the scene's noslip_iterations).
+NOSLIP_COOP_ITERS = int(os.environ.get("GS_NOSLIP_COOP_ITERS", "0"))
+
+# NOSLIP_COLOR_MAXC caps the greedy coloring's color count (first axis of ConstraintState.color_block_used); a scene
+# needing more colors falls back to a serial single-lane sweep for that env (correct, slower), so this is a perf knob,
+# not a correctness bound. These bake in as qd.static, so change them only with a dedicated compile cache
+# (QD_OFFLINE_CACHE_FILE_PATH).
+NOSLIP_COLOR_OMEGA = float(os.environ.get("GS_NOSLIP_COLOR_OMEGA", "1.0"))
+NOSLIP_COLOR_MAXC = int(os.environ.get("GS_NOSLIP_COLOR_MAXC", "64"))
 
 
 @qd.func
@@ -494,3 +509,437 @@ def func_cost_change(i_b: int, force_start: int, Ac, old_force, res, eps, force:
             force[force_start + i, i_b] = old_force[i]
         change = 0.0
     return change
+
+
+# ======================================================================================================================
+# Per-lane building blocks for the warp-per-env colored sweep below. Each mirrors a scalar helper (func_solve_mass_block
+# / func_apply_Minv_rows / ...) but writes the per-lane scratch noslip_minv[i_d, i_lane, i_b], whose lane dimension lets
+# concurrent rows compute their own M^-1 J^T without clobbering a shared buffer.
+# ======================================================================================================================
+
+
+@qd.func
+def func_solve_mass_block_lane(i_d0, i_b, i_lane, vec: qd.Tensor, rigid_info: array_class.RigidInfo):
+    """func_solve_mass_block on per-lane scratch vec[i_d, i_lane, i_b]."""
+    block_start = rigid_info.dofs_mass_block_start[i_d0]
+    block_end = rigid_info.dofs_mass_block_end[i_d0]
+    for i_d_ in range(block_end - block_start):
+        i_d = block_end - i_d_ - 1
+        curr = vec[i_d, i_lane, i_b]
+        for j_d in range(i_d + 1, block_end):
+            curr = curr - rigid_info.mass_mat_L[j_d, i_d, i_b] * vec[j_d, i_lane, i_b]
+        vec[i_d, i_lane, i_b] = curr
+    for i_d in range(block_start, block_end):
+        vec[i_d, i_lane, i_b] = vec[i_d, i_lane, i_b] * rigid_info.mass_mat_D_inv[i_d, i_b]
+    for i_d in range(block_start, block_end):
+        curr = vec[i_d, i_lane, i_b]
+        for j_d in range(block_start, i_d):
+            curr = curr - rigid_info.mass_mat_L[i_d, j_d, i_b] * vec[j_d, i_lane, i_b]
+        vec[i_d, i_lane, i_b] = curr
+
+
+@qd.func
+def func_apply_Minv_rows_lane(
+    i_row_0,
+    i_row_1,
+    i_b,
+    i_lane,
+    jac_dofs_idx: qd.Tensor,
+    coef_0,
+    coef_1,
+    vec: qd.Tensor,
+    jac: qd.Tensor,
+    jac_n_dofs: qd.Tensor,
+    rigid_info: array_class.RigidInfo,
+):
+    """func_apply_Minv_rows writing into per-lane scratch vec[i_d, i_lane, i_b]."""
+    tree_start_prev = gs.qd_int(-1)
+    for i_d_ in range(jac_n_dofs[i_row_0, i_b]):
+        i_d = jac_dofs_idx[i_row_0, i_d_, i_b]
+        block_start = rigid_info.dofs_mass_block_start[i_d]
+        if block_start != tree_start_prev:
+            for j_d in range(block_start, rigid_info.dofs_mass_block_end[i_d]):
+                vec[j_d, i_lane, i_b] = gs.qd_float(0.0)
+            tree_start_prev = block_start
+        vec[i_d, i_lane, i_b] = coef_0 * jac[i_row_0, i_d, i_b] + coef_1 * jac[i_row_1, i_d, i_b]
+
+    tree_start_prev = gs.qd_int(-1)
+    for i_d_ in range(jac_n_dofs[i_row_0, i_b]):
+        i_d = jac_dofs_idx[i_row_0, i_d_, i_b]
+        block_start = rigid_info.dofs_mass_block_start[i_d]
+        if block_start != tree_start_prev:
+            func_solve_mass_block_lane(i_d, i_b, i_lane, vec, rigid_info)
+            tree_start_prev = block_start
+
+
+@qd.func
+def func_dot_row_lane(
+    i_row, i_b, i_lane, jac_dofs_idx: qd.Tensor, vec: qd.Tensor, jac: qd.Tensor, jac_n_dofs: qd.Tensor
+):
+    """Sparse dot J[i_row] . vec[:, i_lane, :] over the row dof support (vec has a lane dim)."""
+    s = gs.qd_float(0.0)
+    for i_d_ in range(jac_n_dofs[i_row, i_b]):
+        i_d = jac_dofs_idx[i_row, i_d_, i_b]
+        s += jac[i_row, i_d, i_b] * vec[i_d, i_lane, i_b]
+    return s
+
+
+@qd.func
+def func_accumulate_row_blocks_lane(
+    i_row,
+    i_b,
+    i_lane,
+    scale,
+    jac_dofs_idx: qd.Tensor,
+    vec_src: qd.Tensor,
+    vec_dst: qd.Tensor,
+    jac_n_dofs: qd.Tensor,
+    rigid_info: array_class.RigidInfo,
+):
+    """vec_dst[block, i_b] += scale * vec_src[block, i_lane, i_b] over the mass blocks row i_row touches.
+
+    Same-color rows touch disjoint mass blocks, so concurrent lanes write disjoint vec_dst entries (race-free)."""
+    tree_start_prev = gs.qd_int(-1)
+    for i_d_ in range(jac_n_dofs[i_row, i_b]):
+        i_d = jac_dofs_idx[i_row, i_d_, i_b]
+        block_start = rigid_info.dofs_mass_block_start[i_d]
+        if block_start != tree_start_prev:
+            for j_d in range(block_start, rigid_info.dofs_mass_block_end[i_d]):
+                vec_dst[j_d, i_b] = vec_dst[j_d, i_b] + scale * vec_src[j_d, i_lane, i_b]
+            tree_start_prev = block_start
+
+
+@qd.func
+def func_coop_zero_qfrc(tid, T, i_b, n_dofs, constraint_state: array_class.ConstraintState):
+    i_d = tid
+    while i_d < n_dofs:
+        constraint_state.qfrc_constraint[i_d, i_b] = gs.qd_float(0.0)
+        i_d += T
+
+
+@qd.func
+def func_coop_accum_qfrc(tid, T, i_b, n_rows, constraint_state: array_class.ConstraintState):
+    """qfrc_constraint += J^T f, on a single lane. qfrc_constraint is batch-first under the cooperative layout, where an
+    atomic scatter mis-addresses, so this accumulate is serialized (the costly M^-1 blocks stay cooperative)."""
+    if tid == 0:
+        for i_c in range(n_rows):
+            force = constraint_state.efc_force[i_c, i_b]
+            for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
+                constraint_state.qfrc_constraint[i_d, i_b] = (
+                    constraint_state.qfrc_constraint[i_d, i_b] + constraint_state.jac[i_c, i_d, i_b] * force
+                )
+
+
+@qd.func
+def func_coop_solve_qacc(tid, T, i_b, n_dofs, constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo):
+    """qacc = M^-1 qfrc_constraint, cooperatively over mass blocks (each block owned by its first dof's lane)."""
+    i_d = tid
+    while i_d < n_dofs:
+        if i_d == rigid_info.dofs_mass_block_start[i_d]:
+            constraint_state.qacc[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
+            for j_d in range(i_d + 1, rigid_info.dofs_mass_block_end[i_d]):
+                constraint_state.qacc[j_d, i_b] = constraint_state.qfrc_constraint[j_d, i_b]
+            func_solve_mass_block(i_d, i_b, constraint_state.qacc, rigid_info)
+        i_d += T
+
+
+@qd.func
+def func_coop_add_smooth(tid, T, i_b, n_dofs, constraint_state: array_class.ConstraintState, dyn_state: array_class.DynState):
+    i_d = tid
+    while i_d < n_dofs:
+        constraint_state.qacc[i_d, i_b] = constraint_state.qacc[i_d, i_b] + dyn_state.dofs.acc_smooth[i_d, i_b]
+        i_d += T
+
+
+@qd.func
+def func_coop_finish_copy(tid, T, i_b, n_dofs, constraint_state: array_class.ConstraintState, dyn_state: array_class.DynState):
+    i_d = tid
+    while i_d < n_dofs:
+        constraint_state.qacc[i_d, i_b] = constraint_state.qacc[i_d, i_b] + dyn_state.dofs.acc_smooth[i_d, i_b]
+        dyn_state.dofs.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+        dyn_state.dofs.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
+        dyn_state.dofs.force[i_d, i_b] = (
+            dyn_state.dofs.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
+        )
+        i_d += T
+
+
+@qd.func
+def func_noslip_update_frictionloss_lane(i_c, i_b, i_lane, omega, constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo):
+    """1x1 dry-friction update: A_diag = J M^-1 J^T, res = J qacc - aref, project into [-fl, fl]. omega under-relaxes
+    (omega=1 = the exact projected step)."""
+    func_apply_Minv_rows_lane(
+        i_c, i_c, i_b, i_lane, constraint_state.jac_dofs_idx, 1.0, 0.0,
+        constraint_state.noslip_minv, constraint_state.jac, constraint_state.jac_n_dofs, rigid_info,
+    )
+    A_diag = func_dot_row_lane(
+        i_c, i_b, i_lane, constraint_state.jac_dofs_idx, constraint_state.noslip_minv,
+        constraint_state.jac, constraint_state.jac_n_dofs,
+    )
+    res = (
+        func_dot_row(i_c, i_b, constraint_state.jac_dofs_idx, constraint_state.qacc, constraint_state.jac, constraint_state.jac_n_dofs)
+        - constraint_state.aref[i_c, i_b]
+    )
+    old = constraint_state.efc_force[i_c, i_b]
+    f = old - res / A_diag
+    fl = constraint_state.efc_frictionloss[i_c, i_b]
+    if f < -fl:
+        f = -fl
+    elif f > fl:
+        f = fl
+    constraint_state.efc_force[i_c, i_b] = old + omega * (f - old)
+
+
+@qd.func
+def func_noslip_update_collision_pair_lane(j_efc, i_b, i_lane, EPS, omega, constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo):
+    """2x2 pyramid-pair update: symmetric block A recomputed matrix-free, forces projected onto the pyramid. omega
+    under-relaxes (omega=1 = the exact projected step)."""
+    Ac = qd.Vector.zero(gs.qd_float, 4)
+    res = qd.Vector.zero(gs.qd_float, 2)
+    old_force = qd.Vector.zero(gs.qd_float, 2)
+    bc = qd.Vector.zero(gs.qd_float, 2)
+
+    # Ac[0] = J0 M^-1 J0^T, Ac[1] = Ac[2] = J1 M^-1 J0^T, Ac[3] = J1 M^-1 J1^T.
+    func_apply_Minv_rows_lane(
+        j_efc, j_efc + 1, i_b, i_lane, constraint_state.jac_dofs_idx, 1.0, 0.0,
+        constraint_state.noslip_minv, constraint_state.jac, constraint_state.jac_n_dofs, rigid_info,
+    )
+    Ac[0] = func_dot_row_lane(j_efc, i_b, i_lane, constraint_state.jac_dofs_idx, constraint_state.noslip_minv, constraint_state.jac, constraint_state.jac_n_dofs)
+    Ac[1] = func_dot_row_lane(j_efc + 1, i_b, i_lane, constraint_state.jac_dofs_idx, constraint_state.noslip_minv, constraint_state.jac, constraint_state.jac_n_dofs)
+    func_apply_Minv_rows_lane(
+        j_efc, j_efc + 1, i_b, i_lane, constraint_state.jac_dofs_idx, 0.0, 1.0,
+        constraint_state.noslip_minv, constraint_state.jac, constraint_state.jac_n_dofs, rigid_info,
+    )
+    Ac[3] = func_dot_row_lane(j_efc + 1, i_b, i_lane, constraint_state.jac_dofs_idx, constraint_state.noslip_minv, constraint_state.jac, constraint_state.jac_n_dofs)
+    Ac[2] = Ac[1]
+
+    for i2 in qd.static(range(2)):
+        res[i2] = (
+            func_dot_row(j_efc + i2, i_b, constraint_state.jac_dofs_idx, constraint_state.qacc, constraint_state.jac, constraint_state.jac_n_dofs)
+            - constraint_state.aref[j_efc + i2, i_b]
+        )
+        old_force[i2] = constraint_state.efc_force[j_efc + i2, i_b]
+
+    for j in qd.static(range(2)):
+        bc[j] = res[j]
+        for k in qd.static(range(2)):
+            bc[j] -= Ac[j * 2 + k] * old_force[k]
+    mid = 0.5 * (constraint_state.efc_force[j_efc, i_b] + constraint_state.efc_force[j_efc + 1, i_b])
+    y = 0.5 * (constraint_state.efc_force[j_efc, i_b] - constraint_state.efc_force[j_efc + 1, i_b])
+    K1 = Ac[0] + Ac[3] - Ac[1] - Ac[2]
+    K0 = mid * (Ac[0] - Ac[3]) + bc[0] - bc[1]
+    if K1 < EPS:
+        constraint_state.efc_force[j_efc, i_b] = constraint_state.efc_force[j_efc + 1, i_b] = mid
+    else:
+        y = -K0 / K1
+        if y < -mid:
+            constraint_state.efc_force[j_efc, i_b] = 0
+            constraint_state.efc_force[j_efc + 1, i_b] = 2 * mid
+        elif y > mid:
+            constraint_state.efc_force[j_efc, i_b] = 2 * mid
+            constraint_state.efc_force[j_efc + 1, i_b] = 0
+        else:
+            constraint_state.efc_force[j_efc, i_b] = mid + y
+            constraint_state.efc_force[j_efc + 1, i_b] = mid - y
+    # Under-relax toward the pre-update forces before the cost-change safeguard evaluates the step.
+    constraint_state.efc_force[j_efc, i_b] = old_force[0] + omega * (constraint_state.efc_force[j_efc, i_b] - old_force[0])
+    constraint_state.efc_force[j_efc + 1, i_b] = old_force[1] + omega * (constraint_state.efc_force[j_efc + 1, i_b] - old_force[1])
+    # Reject a step that raised the cost.
+    func_cost_change(i_b, j_efc, Ac, old_force, res, EPS, constraint_state.efc_force, 2)
+
+
+# ======================================================================================================================
+# Colored Gauss-Seidel (warp-per-env) matrix-free noslip.
+#
+# The scalar kernel_noslip runs one env per thread, starving the GPU at small batch. Here a block of NOSLIP_COOP_T lanes
+# handles an env, with the rows graph-colored so same-color rows touch disjoint mass blocks and update in parallel.
+# Sweeping the colors in order keeps it true Gauss-Seidel (each color sees the previous colors' updates).
+# ======================================================================================================================
+
+
+@qd.func
+def func_color_clear(tid, T, i_b, n_dofs, n_rows, constraint_state: array_class.ConstraintState):
+    """Reset the greedy-coloring workspace: color_block_used[*, *, i_b] = 0 and row_color[*, i_b] = -1. Lane-strided."""
+    MAXC = qd.static(NOSLIP_COLOR_MAXC)
+    total = MAXC * n_dofs
+    i = tid
+    while i < total:
+        c = i // n_dofs
+        i_d = i % n_dofs
+        constraint_state.color_block_used[c, i_d, i_b] = gs.qd_int(0)
+        i += T
+    i_c = tid
+    while i_c < n_rows:
+        constraint_state.row_color[i_c, i_b] = gs.qd_int(-1)
+        i_c += T
+
+
+@qd.func
+def func_color_assign(
+    i_b, ne, nf, const_start, const_end, n_rows,
+    constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo,
+):
+    """Greedy graph-coloring of this env's noslip rows on a single lane (caller guards tid == 0).
+
+    Atoms are the friction rows and the pyramid bases j_efc (the base's dof support also covers its j_efc+1 partner).
+    Two atoms conflict iff they share a mass block (keyed on the first dof). Each atom takes the lowest conflict-free
+    color and claims its blocks; equality / joint-limit rows keep -1 so the sweep skips them (matching the scalar
+    kernel). Overflow past NOSLIP_COLOR_MAXC colors sets n_colors = -1, which the kernel handles by falling back to a
+    serial single-lane sweep for that env."""
+    MAXC = qd.static(NOSLIP_COLOR_MAXC)
+    max_color = gs.qd_int(-1)
+    overflow = False
+    for i_c in range(n_rows):
+        is_friction = i_c >= ne and i_c < ne + nf
+        is_pair_base = i_c >= const_start and i_c < const_end and (i_c - const_start) % 2 == 0
+        if is_friction or is_pair_base:
+            chosen = gs.qd_int(-1)
+            for c in range(MAXC):
+                if chosen < 0:
+                    ok = True
+                    for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                        i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
+                        blk = rigid_info.dofs_mass_block_start[i_d]
+                        if constraint_state.color_block_used[c, blk, i_b] == 1:
+                            ok = False
+                    if ok:
+                        chosen = c
+            if chosen < 0:
+                overflow = True
+                chosen = MAXC - 1  # clamp so the marking below stays in bounds; the sentinel flags the failure
+            for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
+                blk = rigid_info.dofs_mass_block_start[i_d]
+                constraint_state.color_block_used[chosen, blk, i_b] = gs.qd_int(1)
+            constraint_state.row_color[i_c, i_b] = chosen
+            if is_pair_base:
+                constraint_state.row_color[i_c + 1, i_b] = chosen
+            if chosen > max_color:
+                max_color = chosen
+    if overflow:
+        constraint_state.n_colors[i_b] = gs.qd_int(-1)
+    else:
+        constraint_state.n_colors[i_b] = max_color + 1
+
+
+@qd.func
+def func_color_apply_row(
+    i_c, i_b, i_lane, ne, nf, const_start, const_end, EPS, omega,
+    constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo,
+):
+    """Project one noslip row at lane i_lane and scatter its force delta into qacc. Friction rows get the 1x1 update,
+    pyramid bases the 2x2; equality / joint-limit rows are skipped. The update leaves noslip_minv holding M^-1 J^T, so
+    propagation is a scaled accumulate (no extra solve)."""
+    if i_c >= ne and i_c < ne + nf:
+        old = constraint_state.efc_force[i_c, i_b]
+        func_noslip_update_frictionloss_lane(i_c, i_b, i_lane, omega, constraint_state, rigid_info)
+        dfc = constraint_state.efc_force[i_c, i_b] - old
+        func_accumulate_row_blocks_lane(
+            i_c, i_b, i_lane, dfc, constraint_state.jac_dofs_idx, constraint_state.noslip_minv,
+            constraint_state.qacc, constraint_state.jac_n_dofs, rigid_info,
+        )
+    elif i_c >= const_start and i_c < const_end and (i_c - const_start) % 2 == 0:
+        old0 = constraint_state.efc_force[i_c, i_b]
+        old1 = constraint_state.efc_force[i_c + 1, i_b]
+        func_noslip_update_collision_pair_lane(i_c, i_b, i_lane, EPS, omega, constraint_state, rigid_info)
+        df0 = constraint_state.efc_force[i_c, i_b] - old0
+        df1 = constraint_state.efc_force[i_c + 1, i_b] - old1
+        func_apply_Minv_rows_lane(
+            i_c, i_c + 1, i_b, i_lane, constraint_state.jac_dofs_idx, df0, df1,
+            constraint_state.noslip_minv, constraint_state.jac, constraint_state.jac_n_dofs, rigid_info,
+        )
+        func_accumulate_row_blocks_lane(
+            i_c, i_b, i_lane, 1.0, constraint_state.jac_dofs_idx, constraint_state.noslip_minv,
+            constraint_state.qacc, constraint_state.jac_n_dofs, rigid_info,
+        )
+
+
+@qd.kernel(fastcache=True)
+def kernel_noslip_color(
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+):
+    """Colored Gauss-Seidel matrix-free noslip; one block of NOSLIP_COOP_T lanes per env. Whole-env sweep only
+    (per-island solve off).
+
+    Lane 0 colors the rows, then each iteration refreshes qacc = acc_smooth + M^-1 J^T f once and sweeps the colors in
+    order, updating each color's rows in parallel and scattering their force deltas back into qacc before the next
+    color. Same-color rows touch disjoint mass blocks, so the update and the qacc scatter are race-free.
+    """
+    _B = constraint_state.jac.shape[2]
+    _T = qd.static(32)  # == NOSLIP_COOP_T
+
+    qd.loop_config(name="noslip_color", block_dim=_T)
+    for i_flat in range(_B * _T):
+        tid = i_flat % _T
+        i_b = i_flat // _T
+
+        n_dofs = constraint_state.qfrc_constraint.shape[0]
+        n_rows = constraint_state.n_constraints[i_b]
+        ne = constraint_state.n_constraints_equality[i_b]
+        nf = constraint_state.n_constraints_frictionloss[i_b]
+        const_start = ne + nf
+        const_end = const_start + qd.static(rigid_config.rows_per_contact) * collider_state.n_contacts[i_b]
+        EPS = rigid_info.EPS[None]
+
+        n_coop_iters = rigid_info.noslip_iterations[None]
+        if qd.static(NOSLIP_COOP_ITERS > 0):
+            n_coop_iters = qd.static(NOSLIP_COOP_ITERS)
+
+        if n_rows > 0:
+            func_color_clear(tid, _T, i_b, n_dofs, n_rows, constraint_state)
+            qd.simt.block.sync()
+            if tid == 0:
+                func_color_assign(i_b, ne, nf, const_start, const_end, n_rows, constraint_state, rigid_info)
+            qd.simt.block.sync()
+            n_colors = constraint_state.n_colors[i_b]
+
+            for i_iter in range(n_coop_iters):
+                # Refresh qacc from the current forces once per iteration (bounds fp drift); colors then propagate
+                # their deltas into qacc incrementally.
+                func_coop_zero_qfrc(tid, _T, i_b, n_dofs, constraint_state)
+                qd.simt.block.sync()
+                func_coop_accum_qfrc(tid, _T, i_b, n_rows, constraint_state)
+                qd.simt.block.sync()
+                func_coop_solve_qacc(tid, _T, i_b, n_dofs, constraint_state, rigid_info)
+                qd.simt.block.sync()
+                func_coop_add_smooth(tid, _T, i_b, n_dofs, constraint_state, dyn_state)
+                qd.simt.block.sync()
+
+                if n_colors >= 0:
+                    for c in range(n_colors):
+                        # Same-color rows own disjoint mass blocks, so updating them and scattering their deltas into
+                        # qacc are race-free across lanes without a mid-color sync.
+                        i_c = tid
+                        while i_c < n_rows:
+                            if constraint_state.row_color[i_c, i_b] == c:
+                                func_color_apply_row(
+                                    i_c, i_b, tid, ne, nf, const_start, const_end, EPS,
+                                    qd.static(NOSLIP_COLOR_OMEGA), constraint_state, rigid_info,
+                                )
+                            i_c += _T
+                        qd.simt.block.sync()
+                else:
+                    # Coloring overflowed NOSLIP_COLOR_MAXC: fall back to a serial single-lane Gauss-Seidel sweep over
+                    # all rows in index order. Slower for this env, but correct and race-free (one lane), and it still
+                    # rides the cooperative qacc refresh above.
+                    if tid == 0:
+                        for i_c in range(n_rows):
+                            func_color_apply_row(
+                                i_c, i_b, 0, ne, nf, const_start, const_end, EPS,
+                                qd.static(NOSLIP_COLOR_OMEGA), constraint_state, rigid_info,
+                            )
+                    qd.simt.block.sync()
+
+            # Dual finish: rebuild qacc / qfrc from the final forces and write them to dof state.
+            func_coop_zero_qfrc(tid, _T, i_b, n_dofs, constraint_state)
+            qd.simt.block.sync()
+            func_coop_accum_qfrc(tid, _T, i_b, n_rows, constraint_state)
+            qd.simt.block.sync()
+            func_coop_solve_qacc(tid, _T, i_b, n_dofs, constraint_state, rigid_info)
+            qd.simt.block.sync()
+            func_coop_finish_copy(tid, _T, i_b, n_dofs, constraint_state, dyn_state)
