@@ -1062,12 +1062,17 @@ def func_aggregate_awake_entities(
 def func_hibernate_link_and_zero_dof_velocities(
     i_l: int, i_b: int, dyn_state: array_class.DynState, dyn_info: array_class.DynInfo, rigid_config: qd.template()
 ):
-    """Mark a link, its DOFs, and its geoms as hibernated, and zero out the DOF velocities and accelerations.
+    """Mark a link, its DOFs, and its geoms as hibernated, and zero out the DOF and link velocities and accelerations.
 
     The next-velocity buffer is zeroed too: the integration copy runs over every dof, so a stale value there would be
-    restored as the sleeper's velocity on the following substep.
+    restored as the sleeper's velocity on the following substep. The link Cartesian velocity is zeroed as well: the
+    velocity pass skips a sleeping link (see func_forward_velocity_entity), so the value it holds at the transition is
+    what every velocity getter reports for as long as the link sleeps, and a restored state recomputes it from the
+    zeroed dof velocities.
     """
     dyn_state.links.is_hibernated[i_l, i_b] = True
+    dyn_state.links.cd_vel[i_l, i_b] = qd.Vector.zero(gs.qd_float, 3)
+    dyn_state.links.cd_ang[i_l, i_b] = qd.Vector.zero(gs.qd_float, 3)
 
     link_I = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
     for i_d in range(dyn_info.links.dof_start[link_I], dyn_info.links.dof_end[link_I]):
