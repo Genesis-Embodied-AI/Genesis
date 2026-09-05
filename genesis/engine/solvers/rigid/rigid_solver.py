@@ -81,7 +81,6 @@ from .abd.misc import (
 from .abd.forward_kinematics import (
     func_aggregate_awake_entities,
     func_COM_links,
-    func_COM_links_entity,
     func_forward_kinematics_batch,
     func_forward_kinematics_entity,
     func_forward_velocity,
@@ -91,7 +90,6 @@ from .abd.forward_kinematics import (
     func_update_all_verts,
     func_update_cartesian_space,
     func_update_cartesian_space_batch,
-    func_update_cartesian_space_entity,
     func_update_geoms,
     func_update_geoms_batch,
     func_update_geoms_entity,
@@ -3211,10 +3209,11 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
     def get_potential_energy(self, links_idx=None, dofs_idx=None, envs_idx=None):
         """Get the potential energy of the specified links and DOFs in Joules [J] (gravitational + joint springs).
 
-        Gravity contributes ``-sum_i(m_i * g^T * p_i)`` over the links, where ``p_i`` is the center of mass (COM)
-        position of link *i*. Joint springs contribute ``0.5 * sum_d(stiffness_d * (q_d - q0_d)^2)``, the elastic
-        energy stored by holding each DOF away from its neutral position. Both are state functions, so their sum with
-        the kinetic energy is conserved by a passive, frictionless, contact-free model.
+        Gravity contributes ``-sum_i(m_i * g^T * p_i)`` over the links free to move, where ``p_i`` is the center of
+        mass (COM) position of link *i*. A link fixed to the world is left out, as it is of the mass of an entity: its
+        potential is a constant of the scene. Joint springs contribute ``0.5 * sum_d(stiffness_d * (q_d - q0_d)^2)``,
+        the elastic energy stored by holding each DOF away from its neutral position. Both are state functions, so
+        their sum with the kinetic energy is conserved by a passive, frictionless, contact-free model.
 
         Contacts contribute nothing: they are resolved by the constraint solver, which stabilizes a penetration
         rather than storing it as an elastic potential.
@@ -3234,7 +3233,12 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         """
         gravity = self.get_gravity(envs_idx=envs_idx)  # (3,) or (n_envs, 3)
         links_pos = self.get_links_pos(links_idx, envs_idx, ref=link_ref_frame.link_COM)  # (..., n_links, 3)
-        links_mass = self.get_links_mass(links_idx, envs_idx if self._options.batch_links_info else None)
+        links_envs_idx = envs_idx if self._options.batch_links_info else None
+        links_mass = qd_to_torch(self.dyn_info.links.inertial_mass, links_envs_idx, links_idx, transpose=True)
+        links_is_fixed = qd_to_torch(self.dyn_info.links.is_fixed, links_envs_idx, links_idx, transpose=True)
+        links_mass = links_mass.masked_fill(links_is_fixed.to(torch.bool), 0.0)
+        if self.n_envs == 0 and self._options.batch_links_info:
+            links_mass = links_mass[0]
 
         # PE_i = m_i * g^T * p_i => PE = sum_i(m_i * (g . p_i))
         # g is (..., 3), links_pos is (..., n_links, 3) -> broadcast g to (..., 1, 3)

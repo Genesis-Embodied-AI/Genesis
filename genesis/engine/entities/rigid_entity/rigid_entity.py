@@ -2987,10 +2987,10 @@ class RigidEntity(KinematicEntity):
     def get_potential_energy(self, envs_idx=None) -> torch.Tensor:
         """Get the total potential energy of the entity in Joules [J] (gravitational + joint springs).
 
-        Gravity contributes ``-sum_i(m_i * g^T * p_i)`` over the entity's links, where ``p_i`` is the center-of-mass
-        position of link *i* and ``g`` is the gravity vector obtained from the solver. Its joint springs contribute
-        ``0.5 * sum_d(stiffness_d * (q_d - q0_d)^2)``, the elastic energy stored by holding each DOF away from its
-        neutral position.
+        Gravity contributes ``-sum_i(m_i * g^T * p_i)`` over the links of the entity free to move, where ``p_i`` is the
+        center-of-mass position of link *i* and ``g`` is the gravity vector obtained from the solver. Its joint springs
+        contribute ``0.5 * sum_d(stiffness_d * (q_d - q0_d)^2)``, the elastic energy stored by holding each DOF away
+        from its neutral position.
 
         Parameters
         ----------
