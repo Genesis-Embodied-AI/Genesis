@@ -344,6 +344,7 @@ class KinematicSolver(Solver):
         self._init_vvert_fields()
         self._init_vgeom_fields()
         self._init_link_fields()
+        self._init_tree_fields()
         self._init_entity_fields()
         self._init_vfaces_raycast_mask()
 
@@ -438,6 +439,14 @@ class KinematicSolver(Solver):
             )
 
         self.dyn_state.dofs.force.fill(0)
+
+    def _init_tree_fields(self):
+        """Initialize the fields describing the kinematic trees, which the kernels walk link by link."""
+        # The links come in build order, so the last one met for a root closes its tree.
+        links_tree_end = np.zeros(self.n_links_, dtype=gs.np_int)
+        for i_l, link in enumerate(self.links):
+            links_tree_end[link.root_idx] = i_l + 1
+        self.rigid_info.links_tree_end.from_numpy(links_tree_end)
 
     def _init_link_fields(self):
         if self.links:

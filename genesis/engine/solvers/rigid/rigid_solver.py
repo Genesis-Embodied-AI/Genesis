@@ -389,8 +389,6 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
 
         super().build()
 
-        self._init_mass_mat()
-
         self._init_vert_fields()
         self._init_geom_fields()
         self._init_equality_fields()
@@ -611,7 +609,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             rigid_config["prefer_decomposed_solver"] = 0
 
         # Per-DOF mass-block bounds (see dofs_mass_block_start in array_class.py), computed here because the tiled
-        # factor arms below are sized for the largest block; _init_mass_mat uploads them.
+        # factor arms below are sized for the largest block; _init_tree_fields uploads them.
         links_by_idx = {link.idx: link for link in self.links}
         dofs_mass_block_start = np.arange(self.n_dofs_, dtype=gs.np_int)
         for link in self.links:
@@ -933,7 +931,11 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             self._is_forward_vel_updated,
         )
 
-    def _init_mass_mat(self):
+    def _init_tree_fields(self):
+        """Initialize the fields describing the kinematic trees, the structure of the joint-space mass matrix
+        included."""
+        super()._init_tree_fields()
+
         self.mass_mat = self.rigid_info.mass_mat
         self.mass_mat_L = self.rigid_info.mass_mat_L
         self.mass_mat_D_inv = self.rigid_info.mass_mat_D_inv
@@ -957,13 +959,6 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         # Per-DOF mass-block bounds, computed by _build_static_config (which sizes the tiled factor arms from them).
         dofs_mass_block_start = self._dofs_mass_block_start
         dofs_mass_block_end = self._dofs_mass_block_end
-
-        # See links_tree_end in array_class.py: one past the last link of each tree, which may reach past interleaved
-        # links of other trees (the CRB fold gates on root_idx).
-        links_root_idx = np.array([link.root_idx for link in self.links], dtype=gs.np_int)
-        links_tree_end = np.zeros(self.n_links_, dtype=gs.np_int)
-        if self.links:
-            np.maximum.at(links_tree_end, links_root_idx, np.arange(self.n_links) + 1)
 
         # An aligned free body whose only DOFs are its own free joint has a diagonal joint-space mass block, so zero its
         # within-link off-diagonal mask to make the assembled mass exactly diagonal (else ~1e-6 round-off once it
@@ -1005,7 +1000,6 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         self.rigid_info.mass_parent_mask.from_numpy(mass_parent_mask)
         self.rigid_info.dofs_mass_block_start.from_numpy(dofs_mass_block_start)
         self.rigid_info.dofs_mass_block_end.from_numpy(dofs_mass_block_end)
-        self.rigid_info.links_tree_end.from_numpy(links_tree_end)
         self.rigid_info.entities_mass_block_dof_start.from_numpy(entities_mass_block_dof_start)
         self.rigid_info.entities_mass_block_dof_end.from_numpy(entities_mass_block_dof_end)
 
@@ -2276,9 +2270,9 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             skip_allocation=True,
         )
         if links_idx_ is not None:
-            # TODO: the anchor of an aligned root keeps its mass block diagonal (see _init_mass_mat). A center of mass
-            # or an inertia written on any link of the body moves the anchor. A mass write keeps it only as one rescale
-            # of every link of the body, inertia included. A frame move shifts the local pose of every geom
+            # TODO: the anchor of an aligned root keeps its mass block diagonal (see _init_tree_fields). A center of
+            # mass or an inertia written on any link of the body moves the anchor. A mass write keeps it only as one
+            # rescale of every link of the body, inertia included. A frame move shifts the local pose of every geom
             # ('GeomsInfo.pos' / 'quat', one entry per geom for all environments). It also shifts 'qpos', quoted in the
             # anchored frame, and the origin a fixed child reports. A per-environment value has no frame to go to, so
             # the guard stays until 'GeomsInfo' gets a batch dimension.
