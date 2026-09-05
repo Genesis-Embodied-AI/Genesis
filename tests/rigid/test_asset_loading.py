@@ -275,6 +275,23 @@ def test_parsing_inertia_defaults(
             merge_fixed_links=False,
         ),
     )
+    # The same asset welded and then attached to a moving link, so that the links the world carried resolve at attach.
+    carrier_welded = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.2, 0.2, 0.2),
+            pos=(0.0, -8.0, 1.0),
+        ),
+    )
+    entity_mounted = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=degenerate_inertials,
+            pos=(0.0, -8.0, 1.3),
+            fixed=True,
+            batch_fixed_verts=True,
+            merge_fixed_links=False,
+        ),
+    )
+    entity_mounted.attach(carrier_welded, parent_link_name=carrier_welded.base_link.name, pos=(0.0, 0.0, 0.2))
     entity_zero_density = scene.add_entity(
         morph=gs.morphs.MJCF(
             file=zero_density_marker_mjcf,
@@ -404,7 +421,8 @@ def test_parsing_inertia_defaults(
         # The root states a zero mass and a valid inertia, and the geometry estimate replaces both. Its fixed child
         # 'massless_marker' keeps its zero mass, so the root has no mass-bearing child.
         (entity.base_link, estimate.mass, GEOM_POS, SPHERE_INERTIA_PER_MASS),
-        (entity.get_link("massless_marker"), gs.EPS, GEOM_POS, 0.0),
+        # A zero mass beside an authored center of mass keeps that center of mass, as the geometry supplies no inertia.
+        (entity.get_link("massless_marker"), gs.EPS, INERTIAL_POS, 0.0),
         # An omitted inertial origin places the center of mass at the link frame.
         (entity.get_link("implicit_origin"), 2.5, (0.0, 0.0, 0.0), np.linalg.eigvalsh(INERTIA) / 2.5),
         # Geometry supplies the inertia scaled to the authored mass, and the link keeps its authored center of mass.
@@ -428,8 +446,11 @@ def test_parsing_inertia_defaults(
             err_msg=link.name,
         )
     # The links the joints still move resolve exactly as in the free copy. The two the world carries keep the asset's
-    # values, degenerate as they are: a zero mass and no inertia.
-    for link, link_welded in zip(entity.links, entity_welded.links):
+    # values, degenerate as they are: a zero mass and no inertia. Attached, every link resolves as in the free copy.
+    for link, link_welded, link_mounted in zip(entity.links, entity_welded.links, entity_mounted.links):
+        assert_allclose(link_mounted.desc.mass, link.desc.mass, tol=gs.EPS, err_msg=link.name)
+        assert_allclose(link_mounted.desc.inertial_pos, link.desc.inertial_pos, tol=gs.EPS, err_msg=link.name)
+        assert_allclose(link_mounted.desc.inertia, link.desc.inertia, tol=gs.EPS, err_msg=link.name)
         if link_welded.is_fixed:
             assert_equal(link_welded.desc.mass, 0.0, err_msg=link.name)
             assert_equal(link_welded.desc.inertia, 0.0, err_msg=link.name)
@@ -444,7 +465,7 @@ def test_parsing_inertia_defaults(
     # Resolving the center of mass to the link frame can place it outside the geometry, which stays worth reporting.
     # Only the link whose geometry is offset qualifies, once per copy of the robot.
     dubious_com_records = [record for record in caplog.records if "dubious center of mass" in record.getMessage()]
-    assert len(dubious_com_records) == 2
+    assert len(dubious_com_records) == 3
 
     # Every link of an aligned free body keeps its own mass, so each link reads its authored mass. The two totals are
     # accumulated by independent code paths, so their agreement is bounded by that cross-path floor.

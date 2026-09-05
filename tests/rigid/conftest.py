@@ -643,13 +643,13 @@ def free_bodies_in_one_model():
 @pytest.fixture(scope="session")
 def degenerate_inertials():
     """Generate a URDF stating a degenerate inertial on several of its links: a zero mass on the root, a zero
-    mass beside geometry on a fixed child, a zero mass above a fixed child that carries all of it, a zero inertia
-    beside an authored center of mass, and a zero inertia on a fixed child. MuJoCo rejects a moving body whose rigid
-    subtree carries no inertia, so each degenerate branch either roots the robot or holds a fixed child that authors
-    one."""
+    mass beside geometry and an authored center of mass on a fixed child, a zero mass above a fixed child that carries
+    all of it, a zero inertia beside an authored center of mass, and a zero inertia on a fixed child. MuJoCo rejects a
+    moving body whose rigid subtree carries no inertia, so each degenerate branch either roots the robot or holds a
+    fixed child that authors one."""
     urdf = ET.Element("robot", name="degenerate_inertials")
     _add_sphere_link(urdf, "base_link", "0.0 0.0 0.09", mass=0.0, inertia=(0.11, 0.01, 0.02, 0.22, 0.03, 0.30))
-    _add_sphere_link(urdf, "massless_marker", "0.0 0.0 0.09", mass=0.0, inertia=(0.0,) * 6)
+    _add_sphere_link(urdf, "massless_marker", "0.0 0.0 0.09", mass=0.0, inertia=(0.0,) * 6, inertial_pos="0.0 0.0 0.11")
     _add_sphere_link(urdf, "implicit_origin", "0.0 0.0 0.09", mass=2.5, inertia=(0.11, 0.01, 0.02, 0.22, 0.03, 0.30))
     _add_sphere_link(urdf, "no_inertial", "0.0 0.0 0.09")
     _add_sphere_link(urdf, "connector", "0.0 0.0 0.09", mass=0.0, inertia=(0.0,) * 6)

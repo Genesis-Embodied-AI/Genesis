@@ -45,6 +45,7 @@ from .inertial import (
     RHO_OBJECT,
     RHO_ROBOT,
     GeomInertialInfo,
+    LinkInertial,
     LinkInertialInfo,
     compose_inertial_from_g_infos,
     compose_inertial_properties,
@@ -181,15 +182,16 @@ class KinematicLinkDescription:
 class RigidLinkDescription(KinematicLinkDescription):
     """Describe one simulated link: the frame and geoms of a kinematic link, plus its dynamics.
 
-    Every inertial quantity holds the simulated value: the authored one where the asset states it, the geometry
-    estimate otherwise. The inverse weight holds the asset value, zeros for a link the world carries, or the sentinel
-    '-1.0', which the solver's refresh completes at build.
+    Every inertial quantity of a moving link holds the simulated value: the authored one where the asset states it,
+    the geometry estimate otherwise. A link the world carries holds what the asset states and None where it states
+    nothing, until an attach sets it moving or the build resolves it. The inverse weight holds the asset value, zeros
+    for a link the world carries, or the sentinel '-1.0', which the solver's refresh completes at build.
     """
 
-    inertial_pos: np.ndarray
-    inertial_quat: np.ndarray
-    inertia: np.ndarray
-    mass: float
+    inertial_pos: np.ndarray | None
+    inertial_quat: np.ndarray | None
+    inertia: np.ndarray | None
+    mass: float | None
     invweight: np.ndarray
     geoms: list[RigidGeomDescription] = field(default_factory=list)
 
@@ -1562,9 +1564,9 @@ class RigidEntityDescription(KinematicEntityDescription):
         invweight = l_info.get("invweight")
 
         # A fixed link takes no geometry estimate: it may be the environment or an object welded for this scene alone,
-        # and nothing in the asset tells which. It is massless when it states no mass, so that an attach setting it
-        # moving computes the estimate then (see 'KinematicEntity.attach'). A moving link without geometry keeps the
-        # mass 'finalize_inertial' floors at 'gs.EPS'.
+        # and nothing in the asset tells which. It keeps what the asset states for an attach that sets it moving to
+        # resolve (see 'KinematicEntity.attach'), and the build zeroes the rest (see 'RigidEntity._build'). A moving
+        # link without geometry keeps the mass 'finalize_inertial' floors at 'gs.EPS'.
         hint = InertialProperties(0.0, np.zeros(3, dtype=gs.np_float), np.zeros((3, 3), dtype=gs.np_float))
         if not is_fixed and inertial_info.hint is not None:
             hint = inertial_info.hint
@@ -1639,7 +1641,10 @@ class RigidEntityDescription(KinematicEntityDescription):
 
         # The final inertial comes from the explicit values and the geometry estimate. The align anchor shares
         # 'finalize_inertial', so the dynamics inertia and that anchor stay in lockstep.
-        inertial = finalize_inertial(mass, com, quat, inertia, *hint, clamp_min_mass=not is_fixed)
+        if is_fixed:
+            inertial = LinkInertial(mass, com, quat, inertia)
+        else:
+            inertial = finalize_inertial(mass, com, quat, inertia, *hint)
 
         # override invweight if fixed
         if is_fixed:

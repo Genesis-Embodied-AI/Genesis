@@ -431,13 +431,10 @@ class KinematicEntity(Entity):
                             rho = RHO_ROBOT if desc.is_robot else RHO_OBJECT
                     # A geom description holds the fields a parse states it with, so one composition serves either.
                     hint = compose_inertial_from_g_infos([vars(g_desc) for g_desc in (desc.geoms or desc.vgeoms)], rho)
-                    # A fixed link is described massless when it states no mass (see '_describe_link').
-                    stated_mass = desc.mass if desc.mass > 0.0 else None
-                    stated_inertia = desc.inertia if desc.inertia is not None and desc.inertia.any() else None
-                    stated_com = desc.inertial_pos if stated_inertia is not None else None
-                    stated_quat = desc.inertial_quat if stated_inertia is not None else None
+                    # A fixed link holds what the asset states and None elsewhere (see 'RigidLinkDescription'), so
+                    # this resolves it exactly as '_describe_link' resolves a moving link.
                     desc.mass, desc.inertial_pos, desc.inertial_quat, desc.inertia = finalize_inertial(
-                        stated_mass, stated_com, stated_quat, stated_inertia, *hint
+                        desc.mass, desc.inertial_pos, desc.inertial_quat, desc.inertia, *hint
                     )
 
         # The anchor of an aligned free root is the center of mass and principal axes of the body the build described,
@@ -1932,6 +1929,20 @@ class RigidEntity(KinematicEntity):
     def _build(self):
         self._n_geoms = self.n_geoms
         self._geoms = self.geoms
+
+        # A link the world carries holds None where its asset states nothing (see 'RigidLinkDescription'). The solver
+        # stores a value for every link, and the inertial of such a link never enters the dynamics, so zero it is.
+        for link in self._links:
+            if link.is_fixed:
+                desc = link.desc
+                if desc.mass is None:
+                    desc.mass = 0.0
+                if desc.inertial_pos is None:
+                    desc.inertial_pos = gu.zero_pos()
+                if desc.inertial_quat is None:
+                    desc.inertial_quat = gu.identity_quat()
+                if desc.inertia is None:
+                    desc.inertia = np.zeros((3, 3), dtype=gs.np_float)
 
         super()._build()
 
