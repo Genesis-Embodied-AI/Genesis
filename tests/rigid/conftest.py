@@ -229,6 +229,42 @@ def scaled_mjcf_joint_equalities():
 
 
 @pytest.fixture(scope="session")
+def urdf_arm_with_tool():
+    """A free base carrying an arm on a revolute joint and a tool on a fixed joint, every link with an inertial."""
+    robot = ET.Element("robot", name="arm_with_tool")
+    links = (
+        ("base", "1.0", "0 0 0"),
+        ("arm", "0.5", "0.1 0 0"),
+        ("tool", "0.2", None),
+    )
+    for link_name, mass, com_xyz in links:
+        link = ET.SubElement(robot, "link", name=link_name)
+        inertial = ET.SubElement(link, "inertial")
+        ET.SubElement(inertial, "mass", value=mass)
+        if com_xyz is not None:
+            ET.SubElement(inertial, "origin", xyz=com_xyz)
+        ET.SubElement(inertial, "inertia", ixx="1e-3", iyy="2e-3", izz="3e-3", ixy="0", ixz="0", iyz="0")
+    # The tool omits its inertial origin and references its mesh by a relative path with a directory component, the
+    # two forms of a model that a copy of it must carry through.
+    visual = ET.SubElement(robot.find("link[@name='tool']"), "visual")
+    geometry = ET.SubElement(visual, "geometry")
+    ET.SubElement(geometry, "mesh", filename="meshes/sphere.obj", scale="0.02 0.02 0.02")
+    joints = (
+        ("shoulder", "revolute", "base", "arm", "0.3 0 0"),
+        ("wrist", "fixed", "arm", "tool", "0.2 0 0"),
+    )
+    for joint_name, joint_type, parent_name, child_name, origin_xyz in joints:
+        joint = ET.SubElement(robot, "joint", name=joint_name, type=joint_type)
+        ET.SubElement(joint, "parent", link=parent_name)
+        ET.SubElement(joint, "child", link=child_name)
+        ET.SubElement(joint, "origin", xyz=origin_xyz)
+        if joint_type == "revolute":
+            ET.SubElement(joint, "axis", xyz="0 0 1")
+            ET.SubElement(joint, "limit", lower="-1.0", upper="1.0", effort="100", velocity="1.0")
+    return ET.tostring(robot, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
 def scaled_urdf_mimic():
     robot = ET.Element("robot", name="scaled_urdf_mimic")
     ET.SubElement(robot, "link", name="base")

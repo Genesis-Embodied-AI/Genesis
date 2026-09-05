@@ -895,13 +895,14 @@ def test_color_overwrite(overwrite, show_viewer):
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize(
-    "xml_path",
+    "file, is_model_shared",
     [
-        pytest.param("xml/franka_emika_panda/panda.xml", marks=pytest.mark.slow),
-        "urdf/go2/urdf/go2.urdf",
+        pytest.param("xml/franka_emika_panda/panda.xml", False, marks=pytest.mark.slow),
+        ("urdf/go2/urdf/go2.urdf", False),
+        ("urdf_arm_with_tool", True),
     ],
 )
-def test_robot_scale_and_dofs_armature(xml_path, tol):
+def test_robot_scale_and_dofs_armature(file, is_model_shared, request, monkeypatch, tol):
     ROBOT_SCALES = (1.0, 0.2, 5.0)
 
     scene = gs.Scene(
@@ -914,19 +915,54 @@ def test_robot_scale_and_dofs_armature(xml_path, tol):
         show_viewer=False,
         show_FPS=False,
     )
-    for i, scale in enumerate(ROBOT_SCALES):
-        morph_kwargs = dict(file=xml_path, scale=scale)
-        if xml_path.endswith(".xml"):
-            morph = gs.morphs.MJCF(**morph_kwargs)
-        else:
-            morph = gs.morphs.URDF(**morph_kwargs)
-        scene.add_entity(morph)
+    # The model object is shared by every entity built from it, so parsing must leave it untouched. It is checked after
+    # every load: the scales multiply to one, so a model scaled in place by each load ends back on its authored values.
+    urdf_model = None
+    if is_model_shared:
+        # A bare name is the fixture generating the model, as for `xml_path`. An in-memory model resolves its relative
+        # mesh paths against the working directory.
+        file = request.getfixturevalue(file)
+        monkeypatch.chdir(get_assets_dir())
+        roots = (ET.fromstring(file), ET.fromstring(file))
+        urdf_model, urdf_model_ref = (urdfpy.URDF._from_xml(root, root, get_assets_dir()) for root in roots)
+    morph_cls = gs.morphs.MJCF if file.endswith(".xml") else gs.morphs.URDF
+    robots_scale = []
+    for scale in ROBOT_SCALES:
+        morphs = [
+            morph_cls(
+                file=file,
+                scale=scale,
+            ),
+        ]
+        if urdf_model is not None:
+            morphs.append(
+                gs.morphs.URDF(
+                    file=urdf_model,
+                    scale=scale,
+                ),
+            )
+        for morph in morphs:
+            scene.add_entity(
+                morph=morph,
+            )
+            robots_scale.append(scale)
+        if urdf_model is not None:
+            for joint, joint_ref in zip(urdf_model.joints, urdf_model_ref.joints, strict=True):
+                assert_equal(joint.origin, joint_ref.origin)
+            for link, link_ref in zip(urdf_model.links, urdf_model_ref.links, strict=True):
+                assert_equal(link.inertial.mass, link_ref.inertial.mass)
+                assert_equal(link.inertial.inertia, link_ref.inertial.inertia)
+                if link_ref.inertial.origin is None:
+                    assert link.inertial.origin is None
+                else:
+                    assert_equal(link.inertial.origin, link_ref.inertial.origin)
+                assert len(link.visuals) == len(link_ref.visuals)
     scene.build()
 
     # Disable armature because it messes up with the mass matrix.
     # It is also a good opportunity to check that it updates 'invweight' and meaninertia accordingly.
     attr_orig = {}
-    for scale, robot in zip(ROBOT_SCALES, scene.entities):
+    for scale, robot in zip(robots_scale, scene.entities, strict=True):
         links_invweight = robot.get_links_invweight()
         dofs_invweight = robot.get_dofs_invweight()
         robot.set_dofs_armature(torch.ones((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
