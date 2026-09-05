@@ -50,7 +50,7 @@ def test_vector_field_plotter_subplots(mpl_agg_backend, png_snapshot):
     def grid_data():
         return np.stack([(positions - 0.5) * (i_title + 1) * 0.1 for i_title in range(len(titles))])
 
-    grid_plotter = scene.start_recording(
+    grid_plotter = scene.add_recorder(
         data_func=grid_data,
         rec_options=gs.recorders.MPLVectorFieldPlot(
             title="grid",
@@ -60,7 +60,7 @@ def test_vector_field_plotter_subplots(mpl_agg_backend, png_snapshot):
             subplot_titles=titles,
         ),
     )
-    single_plotter = scene.start_recording(
+    single_plotter = scene.add_recorder(
         data_func=lambda: (positions - 0.5) * 0.1,
         rec_options=gs.recorders.MPLVectorFieldPlot(
             title="single",
@@ -80,7 +80,7 @@ def test_vector_field_plotter_subplots(mpl_agg_backend, png_snapshot):
         twist[..., 2] = expected_twist
         return vectors, twist
 
-    twist_plotter = scene.start_recording(
+    twist_plotter = scene.add_recorder(
         data_func=twist_data,
         rec_options=gs.recorders.MPLVectorFieldPlot(
             title="twist",
@@ -157,7 +157,7 @@ def test_plotter(tmp_path, monkeypatch, mpl_agg_backend, png_snapshot):
             "b": [call_count * 0.01, call_count * 0.02],
         }
 
-    plotter = scene.start_recording(
+    plotter = scene.add_recorder(
         data_func=dummy_data_func,
         rec_options=gs.recorders.MPLLinePlot(
             labels={"a": ("x", "y", "z"), "b": ("u", "v")},
@@ -219,13 +219,13 @@ def test_file_writers(tmp_path):
     contact_sensor.start_recording(csv_writer)
 
     csv_array_file = tmp_path / "array_data.csv"
-    scene.start_recording(
+    scene.add_recorder(
         data_func=lambda: {"batch": np.arange(6).reshape(2, 3)},
         rec_options=gs.recorders.CSVFile(filename=csv_array_file),
     )
 
     npz_file = tmp_path / "scene_data.npz"
-    scene.start_recording(
+    scene.add_recorder(
         data_func=lambda: {"box_pos": box.get_pos(), "dummy": 1},
         rec_options=gs.recorders.NPZFile(filename=npz_file),
     )
@@ -287,7 +287,7 @@ def test_video_writer(tmp_path):
     )
     # Registered first, so that rejecting its very last frame aborts the step before the others have sampled it
     video_dtype_path = tmp_path / "test_dtype.mp4"
-    scene.start_recording(
+    scene.add_recorder(
         data_func=lambda: (
             np.zeros((64, 64, 3), dtype=np.uint8) if scene.sim.cur_step_global <= STEPS else np.full((64, 64, 3), 0.5)
         ),
@@ -296,7 +296,7 @@ def test_video_writer(tmp_path):
         ),
     )
     video_rgb_path = tmp_path / "test_rgb.mp4"
-    scene.start_recording(
+    scene.add_recorder(
         data_func=lambda: camera.render(rgb=True, depth=False, segmentation=False, normal=False)[0],
         # No explicit codec — exercises automatic codec selection
         rec_options=gs.recorders.VideoFile(
@@ -304,7 +304,7 @@ def test_video_writer(tmp_path):
         ),
     )
     video_depth_path = tmp_path / "test_depth.mp4"
-    scene.start_recording(
+    scene.add_recorder(
         data_func=lambda: as_grayscale_image(camera.render(rgb=False, depth=True, segmentation=False, normal=False)[1]),
         rec_options=gs.recorders.VideoFile(
             filename=video_depth_path,

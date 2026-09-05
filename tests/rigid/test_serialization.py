@@ -206,7 +206,7 @@ def test_export_and_load_rigid(
             entity_idx=box.idx,
         ),
     )
-    scene.start_recording(
+    scene.add_recorder(
         data_func=box.get_pos,
         rec_options=gs.recorders.CSVFile(
             filename=str(tmp_path / "recorded.csv"),
