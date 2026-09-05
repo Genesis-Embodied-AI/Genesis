@@ -33,7 +33,9 @@ class RecorderManager:
         Parameters
         ----------
         data_func: Callable[[], Any]
-            A function with no arguments that returns the data to be recorded.
+            A callable with no arguments that returns the data a step records. A recorder that overrides
+            'Recorder._get_frame' receives from it the object it reads the frame from (the trajectory recorder receives
+            a TrajectorySource).
         rec_options: RecorderOptions
             The options for the recorder which determines how the data is recorded and processed.
 
@@ -63,9 +65,17 @@ class RecorderManager:
             gs.logger.warning("[DataRecorder] Ignoring stop(): data recording is not active.")
         else:
             self._is_recording = False
+            # Every recorder is stopped and flushed before the first failure is raised
+            error = None
             for recorder in self._recorders:
-                recorder.stop()
+                try:
+                    recorder.stop()
+                except Exception as recorder_error:
+                    if error is None:
+                        error = recorder_error
             self._recorders.clear()
+            if error is not None:
+                raise error
 
     @gs.assert_built
     def reset(self, envs_idx=None):
