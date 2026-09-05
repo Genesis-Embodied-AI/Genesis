@@ -417,6 +417,16 @@ def test_energy_analytical_and_conservation(
             file=spring_double_pendulum,
         ),
     )
+    # A load hung on the elbow link weighs on both joints of the arm and swings with it.
+    arm_load = scene.add_entity(
+        gs.morphs.URDF(
+            file=implicit_inertial_origin_chain,
+            pos=(0.45, 0.5, 0.8),
+            fixed=True,
+            batch_fixed_verts=True,
+        ),
+    )
+    arm_load.attach(arm, parent_link_name="arm_lower", pos=(0.2, 0.0, 0.0))
     # Three copies of a tumbling free body, high enough to fall for the whole horizon: one link, a root with a fixed
     # child, and one link with armature on its angular DOFs.
     tumblers = [
@@ -429,7 +439,38 @@ def test_energy_analytical_and_conservation(
         )
         for x, merge_fixed_links in ((1.0, True), (1.6, False), (2.2, True))
     ]
+    # A fourth copy receives a fixed entity off its center of mass, so the body it tumbles as is the pair.
+    tumblers.append(
+        scene.add_entity(
+            gs.morphs.URDF(
+                file=implicit_inertial_origin_chain,
+                pos=(2.8, 1.0, 2.0),
+            ),
+        )
+    )
+    load = scene.add_entity(
+        gs.morphs.URDF(
+            file=implicit_inertial_origin_chain,
+            pos=(2.8, 1.0, 2.0),
+            fixed=True,
+            batch_fixed_verts=True,
+        ),
+    )
+    load.attach(tumblers[-1], parent_link_name=tumblers[-1].base_link.name, pos=(0.3, 0.0, 0.0))
     scene.build()
+    rigid_solver = scene.rigid_solver
+    # The attachment leaves the anchor of the receiving body where the build put it, so its configuration reads exactly
+    # as the lone copy's, offset by the morph pose.
+    assert_allclose(tumblers[-1].get_qpos() - tumblers[0].get_qpos(), (1.8, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0), tol=gs.EPS)
+    arm_links_idx = [link.idx for link in (*arm.links, *arm_load.links)]
+    arm_dofs_idx = slice(arm.dof_start, arm.dof_end)
+    tumblers_links_idx = [[link.idx for link in tumbler.links] for tumbler in tumblers]
+    tumblers_links_idx[-1] += [link.idx for link in load.links]
+    tumblers_dofs_idx = [slice(tumbler.dof_start, tumbler.dof_end) for tumbler in tumblers]
+    tumblers_links_mass = [rigid_solver.get_links_mass(links_idx) for links_idx in tumblers_links_idx]
+    # One row of mass fractions per tumbler turns the links' centers of mass into the tumblers' own.
+    tumblers_all_links_idx = [idx for links_idx in tumblers_links_idx for idx in links_idx]
+    tumblers_weights = torch.block_diag(*[(links_mass / links_mass.sum())[None] for links_mass in tumblers_links_mass])
 
     arm.set_dofs_position([0.5, -0.8])
     ARMATURE = 0.05
@@ -445,12 +486,34 @@ def test_energy_analytical_and_conservation(
     mass = sphere_a.get_links_mass()
     te_initial = sphere_a.get_total_energy()
 
-    ke_a, pe_a, ke_b, pe_b, te_arm, ke_tumblers = [], [], [], [], [], []
+    ke_a, pe_a, ke_b, pe_b, te_arm, ke_tumblers, vel_tumblers, pos_tumblers = [], [], [], [], [], [], [], []
+    pos_tumblers.append(
+        tumblers_weights @ rigid_solver.get_links_pos(tumblers_all_links_idx, ref=gs.link_ref_frame.link_COM)
+    )
+    vel_tumblers.append(
+        tumblers_weights @ rigid_solver.get_links_vel(tumblers_all_links_idx, ref=gs.link_ref_frame.link_COM)
+    )
     impact_step = -1
     for i in range(n_steps):
         scene.step()
-        te_arm.append(arm.get_total_energy())
-        ke_tumblers.append(torch.stack([tumbler.get_kinetic_energy() for tumbler in tumblers]))
+        pos_tumblers.append(
+            tumblers_weights @ rigid_solver.get_links_pos(tumblers_all_links_idx, ref=gs.link_ref_frame.link_COM)
+        )
+        vel_tumblers.append(
+            tumblers_weights @ rigid_solver.get_links_vel(tumblers_all_links_idx, ref=gs.link_ref_frame.link_COM)
+        )
+        te_arm.append(
+            rigid_solver.get_kinetic_energy(arm_links_idx, arm_dofs_idx)
+            + rigid_solver.get_potential_energy(arm_links_idx, arm_dofs_idx)
+        )
+        ke_tumblers.append(
+            torch.stack(
+                [
+                    rigid_solver.get_kinetic_energy(links_idx, dofs_idx)
+                    for links_idx, dofs_idx in zip(tumblers_links_idx, tumblers_dofs_idx)
+                ]
+            )
+        )
         ke_a.append(sphere_a.get_kinetic_energy())
         pe_a.append(sphere_a.get_potential_energy())
         ke_b.append(sphere_b.get_kinetic_energy())
@@ -478,19 +541,31 @@ def test_energy_analytical_and_conservation(
     te_b_final = ke_b[-1] + pe_b[-1]
     assert te_b_final < te_initial
 
-    # Spring-driven arm: nothing dissipates, so its energy holds throughout the swing to integration error
+    # Spring-driven arm with its load: nothing dissipates, so its energy holds through the swing to integration error
     te_arm = torch.stack(te_arm)
     assert_allclose(te_arm, te_arm[0], tol=0.01)
-    # The springs must carry a real share of that energy, otherwise the check above would hold with no spring term
+    # The springs must carry a real share of the arm's own energy, or the check above would hold with no spring term
     spring_energy = 0.5 * torch.sum(arm.get_dofs_stiffness() * arm.get_dofs_position() ** 2)
-    assert spring_energy > 0.1 * te_arm[-1]
+    assert spring_energy > 0.1 * arm.get_total_energy()
 
+    # Gravity is the only force on a tumbling body, so its center of mass falls along the parabola the velocity-implicit
+    # update traces, whatever the body turns about it. A body anchored on its center of mass integrates that point
+    # itself and follows the parabola exactly. The pair is anchored on its first link alone: its center of mass starts
+    # moving with the spin, which the parabola carries through the initial velocity, and turns about the integrated
+    # origin, which leaves the parabola by the rotation of the offset over one step, a second-order term per step.
+    tumblers_mass = torch.stack([links_mass.sum() for links_mass in tumblers_links_mass])
+    steps = torch.arange(n_steps + 1, dtype=gs.tc_float, device=gs.device)[:, None, None]
+    pos_tumblers, vel_tumblers = torch.stack(pos_tumblers), torch.stack(vel_tumblers)
+    gravity = torch.tensor((0.0, 0.0, -g), dtype=gs.tc_float, device=gs.device)
+    pos_expected = pos_tumblers[0] + vel_tumblers[0] * steps * dt + gravity * dt**2 * steps * (steps + 1) / 2
+    assert_allclose(pos_tumblers[:, :-1], pos_expected[:, :-1], tol=tol)
+    pair_offset = np.linalg.norm(tensor_to_array(pos_tumblers[0, -1] - tumblers[-1].get_pos()))
+    pair_spin = np.linalg.norm(tensor_to_array(tumblers[-1].get_dofs_velocity()[3:]))
+    assert_allclose(pos_tumblers[:, -1], pos_expected[:, -1], atol=n_steps * (dt * pair_spin) ** 2 * pair_offset)
     # Gravity exerts no torque about the center of mass, so the rotational energy of a tumbling body is a constant of
     # its motion. The midpoint rule keeps it, with armature the augmented energy w^T (I + A) w / 2. Each Newton solve
     # leaves a residual at the working precision, and the horizon accumulates them.
-    tumblers_mass = torch.stack([tumbler.get_mass() for tumbler in tumblers])
-    steps = torch.arange(1, n_steps + 1, dtype=gs.tc_float, device=gs.device)
-    ke_rot = torch.stack(ke_tumblers) - 0.5 * tumblers_mass * (steps[:, None] * g * dt) ** 2
+    ke_rot = torch.stack(ke_tumblers) - 0.5 * tumblers_mass * vel_tumblers[1:].square().sum(dim=-1)
     if integrator != gs.integrator.Euler:
         assert_allclose(ke_rot, ke_rot[0], tol=10.0 * tol)
 

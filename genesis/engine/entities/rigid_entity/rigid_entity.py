@@ -21,6 +21,7 @@ from .description import (
     RigidEqualityDescription,
     RigidLinkDescription,
 )
+from .inertial import RHO_MUJOCO, RHO_OBJECT, RHO_ROBOT, compose_inertial_from_g_infos, finalize_inertial
 from .rigid_equality import RigidEquality
 from .rigid_geom import RigidGeom
 from .rigid_joint import RigidJoint
@@ -302,7 +303,7 @@ class KinematicEntity(Entity):
                 gs.raise_exception(f"Mounting 'pos' must have shape (3,), got {mount_pos.shape}.")
             if mount_quat.shape != (4,):
                 gs.raise_exception(f"Mounting 'quat' must have shape (4,) (w, x, y, z), got {mount_quat.shape}.")
-            if np.linalg.norm(mount_quat) < gs.EPS:
+            if np.linalg.norm(mount_quat) == 0.0:
                 gs.raise_exception("Mounting 'quat' cannot be a zero-length quaternion.")
             mount_quat = gu.normalize(mount_quat)
 
@@ -407,12 +408,40 @@ class KinematicEntity(Entity):
         # links of other trees declared in the same file keep their own root, as do the fixed flag and invweight.
         for link in self._solver.links:
             if link.root_idx == base_link.idx:
+                was_fixed = link.is_fixed
                 link._root_idx = parent_link.root_idx
                 link._is_fixed &= parent_link.is_fixed
 
                 # The attach moves this link into another kinematic tree, so its old tree's inverse weight no longer
                 # applies. The sentinel makes the solver recompute it during its refresh.
                 link.desc.invweight = np.full((2,), fill_value=-1.0, dtype=gs.np_float)
+
+                # Inertial resolution skips the geometry estimate for a world-carried link (see '_describe_link'), so a
+                # link that starts moving recomputes it from its geoms at the density its entity simulates. Values the
+                # asset states still win over the estimate.
+                if was_fixed and not link.is_fixed and isinstance(link.desc, RigidLinkDescription):
+                    desc = link.desc
+                    # An entity attached beneath this one shares its root, so the density comes from the link's own
+                    # entity rather than from this one.
+                    rho = link.entity.material.rho
+                    if rho is None:
+                        if self._solver._enable_mujoco_compatibility:
+                            rho = RHO_MUJOCO
+                        else:
+                            rho = RHO_ROBOT if desc.is_robot else RHO_OBJECT
+                    # A geom description holds the fields a parse states it with, so one composition serves either.
+                    hint = compose_inertial_from_g_infos([vars(g_desc) for g_desc in (desc.geoms or desc.vgeoms)], rho)
+                    # A fixed link holds what the asset states and None elsewhere (see 'RigidLinkDescription'), so
+                    # this resolves it exactly as '_describe_link' resolves a moving link.
+                    desc.mass, desc.inertial_pos, desc.inertial_quat, desc.inertia = finalize_inertial(
+                        desc.mass, desc.inertial_pos, desc.inertial_quat, desc.inertia, *hint
+                    )
+
+        # The anchor of an aligned free root is the center of mass and principal axes of the body the build described,
+        # and the attached links now extend that body. Its frame and qpos stay where they are, so the anchor stops
+        # standing for the body: the mass block keeps its off-diagonal terms and the midpoint pass turns the body about
+        # its actual center of mass (see '_init_tree_fields' and 'func_midpoint_is_aligned').
+        root_link.desc.is_aligned = False
 
         # Apply the explicit mounting transform. Forward kinematics interprets the base link's local pose relative to
         # its (new) parent link, so overwriting it here mounts the entity at (pos, quat) in the parent link frame.
@@ -1901,6 +1930,20 @@ class RigidEntity(KinematicEntity):
         self._n_geoms = self.n_geoms
         self._geoms = self.geoms
 
+        # A link the world carries holds None where its asset states nothing (see 'RigidLinkDescription'). The solver
+        # stores a value for every link, and the inertial of such a link never enters the dynamics, so zero it is.
+        for link in self._links:
+            if link.is_fixed:
+                desc = link.desc
+                if desc.mass is None:
+                    desc.mass = 0.0
+                if desc.inertial_pos is None:
+                    desc.inertial_pos = gu.zero_pos()
+                if desc.inertial_quat is None:
+                    desc.inertial_quat = gu.identity_quat()
+                if desc.inertia is None:
+                    desc.inertia = np.zeros((3, 3), dtype=gs.np_float)
+
         super()._build()
 
         verts_start = 0
@@ -2987,10 +3030,10 @@ class RigidEntity(KinematicEntity):
     def get_potential_energy(self, envs_idx=None) -> torch.Tensor:
         """Get the total potential energy of the entity in Joules [J] (gravitational + joint springs).
 
-        Gravity contributes ``-sum_i(m_i * g^T * p_i)`` over the entity's links, where ``p_i`` is the center-of-mass
-        position of link *i* and ``g`` is the gravity vector obtained from the solver. Its joint springs contribute
-        ``0.5 * sum_d(stiffness_d * (q_d - q0_d)^2)``, the elastic energy stored by holding each DOF away from its
-        neutral position.
+        Gravity contributes ``-sum_i(m_i * g^T * p_i)`` over the links of the entity free to move, where ``p_i`` is the
+        center-of-mass position of link *i* and ``g`` is the gravity vector obtained from the solver. Its joint springs
+        contribute ``0.5 * sum_d(stiffness_d * (q_d - q0_d)^2)``, the elastic energy stored by holding each DOF away
+        from its neutral position.
 
         Parameters
         ----------

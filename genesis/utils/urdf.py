@@ -583,8 +583,8 @@ def compose_inertial_properties(mass1, com1, inertia1, mass2, com2, inertia2):
         combined_inertia: Combined inertia tensor (3,3) array
     """
     combined_mass = mass1 + mass2
-    if combined_mass < gs.EPS:
-        gs.raise_exception("Combined mass is less than EPS")
+    if combined_mass <= 0.0:
+        gs.raise_exception("Combined mass is zero")
     combined_com = (mass1 * com1 + mass2 * com2) / combined_mass
     inertia1_new = translate_inertia(inertia1, mass1, combined_com - com1)
     inertia2_new = translate_inertia(inertia2, mass2, combined_com - com2)
@@ -612,7 +612,7 @@ def merge_inertia(link1, link2):
     com2, R2 = link2.inertial.origin[:3, 3], link2.inertial.origin[:3, :3]
 
     combined_mass = m1 + m2
-    if combined_mass > gs.EPS:
+    if combined_mass > 0.0:
         combined_com = (m1 * com1 + m2 * com2) / combined_mass
     else:
         combined_com = com1

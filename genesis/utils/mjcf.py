@@ -502,7 +502,7 @@ def parse_link(mj, i_l, scale):
     # Note that the mass matrix of a poly-articulated robot does not scale trivially as it is a copnfiguration-depends
     # mixing of s ** 3 factor for masses and s ** 5 factor for inertia tensors. As a result, it is much simpler to
     # consider invweight indefined, which will trigger recomputation at build time.
-    if abs(1.0 - scale) > gs.EPS:
+    if abs(1.0 - scale) > np.finfo(np.double).eps:
         l_info["pos"] *= scale
         l_info["inertial_pos"] *= scale
         l_info["inertial_mass"] *= scale**3

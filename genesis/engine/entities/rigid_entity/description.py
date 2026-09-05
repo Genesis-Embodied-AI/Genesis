@@ -37,17 +37,23 @@ from genesis.utils.misc import get_assets_dir
 from ..base_entity import EntityDescription
 from .inertial import (
     AABB_EPS,
+    INERTIA_EIGVAL_ATOL,
+    INERTIA_EIGVAL_RTOL,
     INERTIA_RATIO_MAX,
     MASS_EPS,
     RHO_MUJOCO,
     RHO_OBJECT,
     RHO_ROBOT,
     GeomInertialInfo,
+    LinkInertial,
     LinkInertialInfo,
     compose_inertial_from_g_infos,
     compose_inertial_properties,
     finalize_inertial,
 )
+
+# Rounding a pose parsed from a file may carry, within which it reads as the identity
+POSE_EPS = 1e-9
 
 
 @dataclass(kw_only=True)
@@ -176,15 +182,16 @@ class KinematicLinkDescription:
 class RigidLinkDescription(KinematicLinkDescription):
     """Describe one simulated link: the frame and geoms of a kinematic link, plus its dynamics.
 
-    Every inertial quantity holds the simulated value: the authored one where the asset states it, the geometry
-    estimate otherwise. The inverse weight holds the asset value, zeros for a link the world carries, or the sentinel
-    '-1.0', which the solver's refresh completes at build.
+    Every inertial quantity of a moving link holds the simulated value: the authored one where the asset states it,
+    the geometry estimate otherwise. A link the world carries holds what the asset states and None where it states
+    nothing, until an attach sets it moving or the build resolves it. The inverse weight holds the asset value, zeros
+    for a link the world carries, or the sentinel '-1.0', which the solver's refresh completes at build.
     """
 
-    inertial_pos: np.ndarray
-    inertial_quat: np.ndarray
-    inertia: np.ndarray
-    mass: float
+    inertial_pos: np.ndarray | None
+    inertial_quat: np.ndarray | None
+    inertia: np.ndarray | None
+    mass: float | None
     invweight: np.ndarray
     geoms: list[RigidGeomDescription] = field(default_factory=list)
 
@@ -852,15 +859,16 @@ class KinematicEntityDescription(EntityDescription):
                 # Compute eigenvalues of inertia matrix after enforcing symmetry
                 inertia_diag, Q = np.linalg.eigh(0.5 * (inertia_i + inertia_i.T))
 
-                # Make sure that all eigenvalues are positive, ignoring rounding errors
-                if (inertia_diag < -gs.EPS).any():
+                # Make sure that all eigenvalues are positive, ignoring the rounding of the authored tensor
+                if (inertia_diag < -(np.abs(inertia_diag).max() * INERTIA_EIGVAL_RTOL + INERTIA_EIGVAL_ATOL)).any():
                     gs.raise_exception(
                         f"Inertia matrix of link '{l_info['name']}' not positive definite (eigenvalues: {inertia_diag})."
                     )
 
                 # Make sure that the inertia matrix is physically valid (nothing to do with numerical conditioning)
                 if any(
-                    inertia_diag[i] + inertia_diag[(i + 1) % 3] < inertia_diag[(i + 2) % 3] * (1.0 - 1e-6) - 1e-9
+                    inertia_diag[i] + inertia_diag[(i + 1) % 3]
+                    < inertia_diag[(i + 2) % 3] * (1.0 - INERTIA_EIGVAL_RTOL) - INERTIA_EIGVAL_ATOL
                     for i in range(3)
                 ):
                     gs.raise_exception(
@@ -882,9 +890,9 @@ class KinematicEntityDescription(EntityDescription):
         base_j_info, base_g_info = links_j_infos[0], links_g_infos[0]
         if len(l_infos) > 1 and (sum(j_info["n_dofs"] for j_info in base_j_info) == 0) and not base_g_info:
             child_has_freejoint = any(j_info["type"] == gs.JOINT_TYPE.FREE for j_info in links_j_infos[1])
-            child_is_identity = (np.abs(l_infos[1]["pos"]) < gs.EPS).all() and (
-                np.abs(l_infos[1]["quat"] - (1, 0, 0, 0)) < gs.EPS
-            ).all()
+            child_is_identity = np.allclose(l_infos[1]["pos"], 0.0, rtol=0.0, atol=POSE_EPS) and np.allclose(
+                l_infos[1]["quat"], (1.0, 0.0, 0.0, 0.0), rtol=0.0, atol=POSE_EPS
+            )
             if child_has_freejoint or child_is_identity:
                 del l_infos[0], links_j_infos[0], links_g_infos[0]
                 for l_info in l_infos:
@@ -1010,7 +1018,7 @@ class KinematicEntityDescription(EntityDescription):
         for j_info in (
             j_info for link_j_infos in links_j_infos for j_info in link_j_infos if j_info["type"] == gs.JOINT_TYPE.FREE
         ):
-            if not all((j_info[name] < gs.EPS).all() for name in non_physical_fieldnames if name in j_info):
+            if any((j_info[name] != 0.0).any() for name in non_physical_fieldnames if name in j_info):
                 gs.logger.warning(
                     "Some free joint has non-zero frictionloss, damping or armature parameters. Beware it is "
                     "non-physical."
@@ -1112,7 +1120,9 @@ class KinematicEntityDescription(EntityDescription):
                 explicit_mass_flags = set()
                 for i_l in subtree:
                     props, is_mass_explicit, _ = resolution.links_inertial_info[i_l][i_v]
-                    if props.mass < gs.EPS:
+                    # The stash holds the unit-density estimate, so a mass however small is a body of the composite, and
+                    # only a link without geometry or authored mass is left out.
+                    if props.mass <= 0.0:
                         continue
                     explicit_mass_flags.add(is_mass_explicit)
                     rot = gu.quat_to_R(props.quat)
@@ -1140,12 +1150,12 @@ class KinematicEntityDescription(EntityDescription):
                         "links or none of them."
                     )
                 # A body without inertia gets no anchor and keeps its frame, like the articulated body above. The solver
-                # and the setters then read it as unaligned (see 'func_midpoint_is_aligned' and '_init_mass_mat').
+                # and the setters then read it as unaligned (see 'func_midpoint_is_aligned' and '_init_tree_fields').
                 if not inertial_info:
                     root.is_aligned = False
                     continue
                 mass_total, com_root, inertia_root = compose_inertial_properties(inertial_info)
-                if mass_total <= gs.EPS:
+                if mass_total <= 0.0:
                     root.is_aligned = False
                     continue
                 principal_quat = gu.R_to_quat(uu.principal_axes_rot(inertia_root))
@@ -1169,7 +1179,8 @@ class KinematicEntityDescription(EntityDescription):
 
                 # Every link keeps its own mass and inertia. The inertial frame moves with the geoms into the anchored
                 # frame: getters and wrenches read it as 'link_COM', and the inverse weight derives from it. The solver
-                # composes the body from its links each step, so the composite is diagonal there (see '_init_mass_mat').
+                # composes the body from its links each step, so the composite is diagonal there (see
+                # '_init_tree_fields').
                 if isinstance(root, RigidLinkDescription):
                     for i_l in subtree:
                         desc = links[i_l] if i_v == 0 else variants[i_v].links[i_l]
@@ -1298,14 +1309,17 @@ class KinematicEntityDescription(EntityDescription):
             # hint sets "convexify"/"decimate"/"decompose_error_threshold"), with the morph options as defaults for
             # whatever is left unset. Post-processing merges geoms within a call, so each set of effective options
             # gets its own call; geoms without overrides share one, preserving the whole-entity merge behavior.
-            # Thresholds match under gs.EPS tolerance so float noise cannot split a group.
+            # Thresholds match within the tolerance the mesh cache matches options with, so float noise cannot split a
+            # group.
             cg_infos_by_options: list[tuple[tuple, list]] = []
             for g_info in cg_infos:
                 convexify = g_info.pop("convexify", morph.convexify)
                 decimate = g_info.pop("decimate", morph.decimate)
                 threshold = g_info.pop("decompose_error_threshold", decompose_error_threshold)
                 for options, options_cg_infos in cg_infos_by_options:
-                    if options[:2] == (convexify, decimate) and math.isclose(options[2], threshold, abs_tol=gs.EPS):
+                    if options[:2] == (convexify, decimate) and math.isclose(
+                        options[2], threshold, rel_tol=mu.MESH_CACHE_MATCH_RTOL
+                    ):
                         options_cg_infos.append(g_info)
                         break
                 else:
@@ -1470,7 +1484,9 @@ class RigidEntityDescription(KinematicEntityDescription):
                 v_l_info.get("inertial_quat"),
                 v_l_info.get("inertial_i"),
             )
-        inertial = finalize_inertial(mass, com, quat, inertia, *inertial_info.hint)
+        inertial = finalize_inertial(
+            mass, com, quat, inertia, *inertial_info.hint, clamp_min_mass=not is_link_fixed(self.links, i_link)
+        )
         return RigidVariantLinkDescription(
             vgeoms=[description_from_info(RigidVisGeomDescription, vg_info) for vg_info in vg_infos],
             mass=inertial.mass,
@@ -1547,11 +1563,14 @@ class RigidEntityDescription(KinematicEntityDescription):
         inertia = None if is_inertia_recomputed else l_info.get("inertial_i")
         invweight = l_info.get("invweight")
 
-        # A link holding no geometry keeps the mass 'finalize_inertial' floors at 'gs.EPS'.
+        # A fixed link takes no geometry estimate: it may be the environment or an object welded for this scene alone,
+        # and nothing in the asset tells which. It keeps what the asset states for an attach that sets it moving to
+        # resolve (see 'KinematicEntity.attach'), and the build zeroes the rest (see 'RigidEntity._build'). A moving
+        # link without geometry keeps the mass 'finalize_inertial' floors at 'gs.EPS'.
         hint = InertialProperties(0.0, np.zeros(3, dtype=gs.np_float), np.zeros((3, 3), dtype=gs.np_float))
-        if inertial_info.hint is not None:
-            hint = inertial_info.hint
         if not is_fixed and inertial_info.hint is not None:
+            hint = inertial_info.hint
+
             # Compute the bounding box of the links using both visual and collision geometries to be conservative
             aabb_min = np.full((3,), float("inf"), dtype=gs.np_float)
             aabb_max = np.full((3,), float("-inf"), dtype=gs.np_float)
@@ -1570,7 +1589,7 @@ class RigidEntityDescription(KinematicEntityDescription):
                 aabb_max = np.maximum(aabb_max, verts.max(axis=0))
 
             # Make sure that provided spatial inertia is consistent with the estimate from the geometries if not fixed
-            if (mass or hint.mass) > MASS_EPS and hint.mass > gs.EPS:
+            if (mass or hint.mass) > MASS_EPS and hint.mass > 0.0:
                 # An omitted center of mass resolves to the link frame origin whenever the inertia tensor is
                 # authored (see 'finalize_inertial'). It then takes the same consistency check as an authored one.
                 checked_com = gu.zero_pos() if com is None and inertia is not None else com
@@ -1622,7 +1641,10 @@ class RigidEntityDescription(KinematicEntityDescription):
 
         # The final inertial comes from the explicit values and the geometry estimate. The align anchor shares
         # 'finalize_inertial', so the dynamics inertia and that anchor stay in lockstep.
-        inertial = finalize_inertial(mass, com, quat, inertia, *hint)
+        if is_fixed:
+            inertial = LinkInertial(mass, com, quat, inertia)
+        else:
+            inertial = finalize_inertial(mass, com, quat, inertia, *hint)
 
         # override invweight if fixed
         if is_fixed:

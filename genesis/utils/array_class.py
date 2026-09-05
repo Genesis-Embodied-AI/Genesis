@@ -200,7 +200,7 @@ def get_rigid_info(solver, kinematic_only):
             mass_mat_mask=V(dtype=gs.qd_bool, shape=()),
             dofs_mass_block_start=V(dtype=gs.qd_int, shape=()),
             dofs_mass_block_end=V(dtype=gs.qd_int, shape=()),
-            links_tree_end=V(dtype=gs.qd_int, shape=()),
+            links_tree_end=V(dtype=gs.qd_int, shape=(solver.n_links_,)),
             entities_mass_block_dof_start=V(dtype=gs.qd_int, shape=()),
             entities_mass_block_dof_end=V(dtype=gs.qd_int, shape=()),
             mass_parent_mask=V(dtype=gs.qd_float, shape=()),
