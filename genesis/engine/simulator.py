@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 import torch
@@ -6,6 +7,7 @@ import genesis as gs
 from genesis.options.morphs import Morph
 from genesis.options.solvers import IPCCouplerOptions, LegacyCouplerOptions, SAPCouplerOptions
 from genesis.repr_base import RBC
+from genesis.utils.array_class import DataItem, DataKind
 from genesis.utils.misc import indices_to_mask
 
 from .couplers import IPCCoupler, LegacyCoupler, SAPCoupler
@@ -255,6 +257,18 @@ class Simulator(RBC):
         # reset sensors state
         self._sensor_manager.reset(envs_idx=envs_idx)
 
+    def data(self, kinds: frozenset[DataKind]) -> Iterator[DataItem]:
+        """Yield every item of the given kinds the active solvers hold, each under the class name of its solver."""
+        if isinstance(self._coupler, IPCCoupler):
+            gs.raise_exception(
+                "A scene coupled by IPC cannot be checkpointed yet: the IPC world holds state of its own."
+            )
+        for solver in self._active_solvers:
+            prefix = type(solver).__name__
+            for name, value, kind in solver.data:
+                if kind in kinds:
+                    yield DataItem(f"{prefix}.{name}", value, kind)
+
     def __getstate__(self) -> SimulatorCheckpoint:
         """Return a SimulatorCheckpoint of the simulation, for '__setstate__' to restore."""
         if isinstance(self._coupler, IPCCoupler):
@@ -494,6 +508,11 @@ class Simulator(RBC):
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
+
+    @property
+    def steps(self) -> torch.Tensor:
+        """The number of steps each environment has run since its last reset, of shape [B]."""
+        return self._steps
 
     @property
     def dt(self) -> float:

@@ -30,6 +30,7 @@ class Recorder(Generic[T]):
         self._error: Exception | None = None
         self._is_built = False
         self._is_recording = False
+        self._is_alive = True
 
         self._data_queue: queue.Queue | None = None
         self._processor_thread: threading.Thread | None = None
@@ -124,9 +125,11 @@ class Recorder(Generic[T]):
             try:
                 self.process(data, timestamp)
             except Exception as error:
-                # Forwarded to the stepping thread, which raises it at its next step or sync (see 'step'). The samples
-                # left in the queue are marked done, so 'sync' returns.
+                # Forwarded to the stepping thread, which raises it at its next step or sync (see 'step'). The recorder
+                # stops recording for good, as it does when a sample fails on the stepping thread (see 'record'). The
+                # samples left in the queue are marked done, so 'sync' returns.
                 self._error = error
+                self._is_alive = False
                 self._data_queue.task_done()
                 while True:
                     try:
@@ -150,10 +153,7 @@ class Recorder(Generic[T]):
         if self.run_in_thread:
             self.join_thread()
         self.cleanup()
-        self._raise_error()
-
-    def _raise_error(self):
-        """Raise on the calling thread the failure the background thread recorded, once."""
+        # The failure the background thread recorded is raised on the calling thread, once
         if self._error is not None:
             error, self._error = self._error, None
             gs.raise_exception_from(f"[{type(self).__name__}] Processing failed in the background: {error}", error)
@@ -199,37 +199,50 @@ class Recorder(Generic[T]):
                 start_time = time.time()
 
             # A frame taken off the queue is still being processed until the worker marks its task done. A failure
-            # leaves no task pending (see '_process_data_loop'), so it is checked before waiting and while waiting.
-            self._raise_error()
-            while self._data_queue.unfinished_tasks:
-                self._raise_error()
+            # leaves no task pending (see '_process_data_loop'), so it is raised here, once, before and while waiting.
+            while True:
+                if self._error is not None:
+                    error, self._error = self._error, None
+                    gs.raise_exception_from(
+                        f"[{type(self).__name__}] Processing failed in the background: {error}", error
+                    )
+                if not self._data_queue.unfinished_tasks:
+                    break
                 if timeout is not None and time.time() - start_time > timeout:
                     gs.raise_exception(f"[{type(self).__name__}] sync(): Timeout waiting for data queue to be empty.")
 
                 dt = min(timestep, (start_time + timeout) - time.time()) if timeout is not None else timestep
                 if dt > 0.0:
                     time.sleep(dt)
-            self._raise_error()
 
     @gs.assert_built
     def step(self, global_step: int):
-        """Process a simulation step, potentially recording data."""
-        if not self._is_recording:
-            return
-        self._raise_error()
+        """Record the step when the sampling rate selects it, raising what the background thread reported."""
+        if self._error is not None:
+            error, self._error = self._error, None
+            gs.raise_exception_from(f"[{type(self).__name__}] Processing failed in the background: {error}", error)
+        if self._is_recording and global_step % self._steps_per_sample == 0:
+            self.record(global_step)
 
-        if global_step % self._steps_per_sample != 0:
+    @gs.assert_built
+    def record(self, global_step: int):
+        """Record the current state whatever the sampling rate, such as the state a run stops or resets at."""
+        if not self._is_recording or not self._is_alive:
             return
 
         global_time = global_step * self._manager._step_dt
-        # Sanitize to CPU numpy once at the boundary: process() code never has to branch on torch vs numpy, and no
-        # GPU tensor is ever queued for cross-thread access in threaded mode.
-        data = self._get_frame()
-
-        if not self.run_in_thread:
-            # non-threaded mode: process data synchronously
-            self.process(data, global_time)
-            return
+        # A sample that raises ends the recorder for good, on this thread as on a worker (see '_process_data_loop'): a
+        # reset restarts the others (see 'RecorderManager.reset') and the stop flushes what it wrote.
+        try:
+            # Sanitize to CPU numpy once at the boundary: process() code never has to branch on torch vs numpy, and no
+            # GPU tensor is ever queued for cross-thread access in threaded mode.
+            data = self._get_frame()
+            if not self.run_in_thread:
+                self.process(data, global_time)
+                return
+        except Exception:
+            self._is_alive = False
+            raise
 
         # threaded mode: put data in queue
         try:
@@ -256,3 +269,10 @@ class Recorder(Generic[T]):
     @property
     def is_built(self) -> bool:
         return self._is_built
+
+    @property
+    def is_alive(self) -> bool:
+        """Whether no sample or write of the recorder raised. A recorder that raised records no more, a reset restarts
+        the others (see 'RecorderManager.reset'), and the stop flushes what it wrote.
+        """
+        return self._is_alive

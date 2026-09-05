@@ -9,7 +9,7 @@ import sys
 import weakref
 import zipfile
 from collections import Counter
-from typing import TYPE_CHECKING, Callable, Iterable, Literal, overload
+from typing import BinaryIO, Callable, Iterable, Literal, NamedTuple, TYPE_CHECKING, overload
 
 import numpy as np
 import torch
@@ -41,10 +41,11 @@ from genesis.options import (
     VisOptions,
 )
 from genesis.options.morphs import Morph
-from genesis.options.recorders import RecorderOptions
+from genesis.options.recorders import RecorderOptions, TrajectoryFile
 from genesis.options.renderers import RendererOptions
 from genesis.options.surfaces import Surface
 from genesis.recorders import RecorderManager
+from genesis.recorders.trajectory import Trajectory, save_checkpoint
 from genesis.repr_base import RBC
 from genesis.utils import serialization
 from genesis.utils.array_class import check_data
@@ -58,6 +59,7 @@ if TYPE_CHECKING:
     from genesis.engine.entities.base_entity import Entity
     from genesis.engine.entities.rigid_entity import RigidEntity
     from genesis.engine.sensors.base_sensor import Sensor
+    from genesis.engine.simulator import Simulator
     from genesis.options.sensors.options import SensorOptions, SensorT
     from genesis.recorders import Recorder
 
@@ -95,6 +97,14 @@ class SceneCheckpoint:
     digest: str
     layout: EnvironmentLayout
     sim: SimulatorCheckpoint
+
+
+class TrajectorySource(NamedTuple):
+    """The simulator, scene description and environment layout a trajectory recorder reads at build."""
+
+    sim: "Simulator"
+    desc: SceneDescription
+    layout: EnvironmentLayout
 
 
 def description_digest(desc: SceneDescription) -> str:
@@ -271,18 +281,20 @@ class Scene(RBC):
             # This scene may have been destroyed previously
             pass
 
-        if getattr(self, "_recorder_manager", None) is not None:
-            if self._recorder_manager.is_recording:
-                self._recorder_manager.stop()
+        # The recorders are the first to go, and a failure they raise leaves nothing of the scene alive behind it
+        try:
+            if getattr(self, "_recorder_manager", None) is not None and self._recorder_manager.is_recording:
+                self.stop_recording()
+        finally:
             self._recorder_manager = None
 
-        if getattr(self, "_visualizer", None) is not None:
-            self._visualizer.destroy()
-            self._visualizer = None
+            if getattr(self, "_visualizer", None) is not None:
+                self._visualizer.destroy()
+                self._visualizer = None
 
-        if getattr(self, "_sim", None) is not None:
-            self._sim.destroy()
-            self._sim = None
+            if getattr(self, "_sim", None) is not None:
+                self._sim.destroy()
+                self._sim = None
 
     @overload
     def add_entity(
@@ -624,6 +636,31 @@ class Scene(RBC):
         return self._recorder_manager.add_recorder(data_func, rec_options)
 
     @gs.assert_unbuilt
+    def start_recording(self, rec_options: TrajectoryFile) -> "Recorder":
+        """Record the state of the scene at every step to a trajectory file, which 'load_trajectory' opens to seek and
+        replay.
+
+        Recording starts with the build and stops with 'stop_recording'. See 'TrajectoryFile' for what a frame holds
+        and how the file is written.
+
+        Parameters
+        ----------
+        rec_options : TrajectoryFile
+            The file to write and the mode to record in.
+
+        Returns
+        -------
+        recorder : Recorder
+            The created recorder object.
+        """
+
+        def data_func() -> TrajectorySource:
+            self._reject_unexportable()
+            return TrajectorySource(self._sim, self.desc, self._layout)
+
+        return self._recorder_manager.add_recorder(data_func, rec_options)
+
+    @gs.assert_unbuilt
     def add_camera(
         self,
         model="pinhole",
@@ -917,8 +954,12 @@ class Scene(RBC):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
         gs.logger.debug(f"Resetting Scene ~~~<{self._uid}>~~~.")
-        self._reset(state, envs_idx=envs_idx)
+        # The recorders finish the run first: a reset of the whole scene records the state it leaves behind, and a file
+        # rotated on reset ends with it.
+        if envs_idx is None:
+            self._recorder_manager.record(self._sim.cur_step_global)
         self._recorder_manager.reset(envs_idx)
+        self._reset(state, envs_idx=envs_idx)
 
     def _reset(self, state: SimState | None = None, *, envs_idx=None, keep_init: bool = False):
         if self._is_built:
@@ -1026,6 +1067,9 @@ class Scene(RBC):
         if advance:
             if not self._forward_ready:
                 gs.raise_exception("Forward simulation not allowed after backward pass. Please reset scene state.")
+            # The recorders read the state a step starts from, with the inputs the step consumes: 'Simulator.step'
+            # zeroes the applied forces at its end. The pre-step callbacks ran, so their inputs are read as well.
+            self._recorder_manager.step(self._sim.cur_step_global)
             self._sim.step()
 
         if update_visualizer:
@@ -1036,12 +1080,16 @@ class Scene(RBC):
         if advance:
             if self.options.profiling.show_FPS:
                 self.FPS_tracker.step()
-            self._recorder_manager.step(self._sim.cur_step_global)
             for camera in self._visualizer.cameras:
                 camera.update_recording()
 
     def stop_recording(self):
-        self._recorder_manager.stop()
+        # The recorders read before each step, so the state the last step left is recorded here, whatever the
+        # sampling rate: it is the state a stopped run is resumed or studied from.
+        try:
+            self._recorder_manager.record(self._sim.cur_step_global)
+        finally:
+            self._recorder_manager.stop()
 
     def _step_grad(self):
         self._sim.collect_output_grads()
@@ -1491,7 +1539,6 @@ class Scene(RBC):
         rejected_kinds.update(type(emitter).__name__ for emitter in self._emitters)
         rejected_kinds.update(type(force_field).__name__ for force_field in self._sim.solvers[0].force_fields)
         omitted_kinds = Counter(type(sensor).__name__ for sensor in self._sim._sensor_manager.sensors)
-        omitted_kinds.update(type(recorder).__name__ for recorder in self._recorder_manager.recorders)
         if self._visualizer is not None:
             omitted_kinds.update(type(camera).__name__ for camera in self._visualizer.cameras)
         if self._pre_step_callbacks:
@@ -1531,9 +1578,9 @@ class Scene(RBC):
 
         Only a rigid or a kinematic entity carries a description. A scene
         holding anything that alters the simulation raises, naming it: an emitter and a force field. Everything else
-        a description leaves out is written without, with a warning naming it: a camera, a recorder, a sensor, a
-        callback Genesis calls at every step, a texture read from an HDR or EXR file, and the visual vertices an
-        entity was given at runtime.
+        a description leaves out is written without, with a warning naming it: a camera, a sensor, a callback Genesis
+        calls at every step, a texture read from an HDR or EXR file, and the visual vertices an entity was given at
+        runtime. A recorder neither simulates nor draws, so it is left out without a word.
 
         Parameters
         ----------
@@ -1544,7 +1591,14 @@ class Scene(RBC):
         serialization.export(path, {"scene": self.desc})
 
     @classmethod
-    def load(cls, path: str | os.PathLike, show_viewer: bool = False) -> "Scene":
+    def load(
+        cls,
+        path: str | os.PathLike | BinaryIO,
+        show_viewer: bool = False,
+        viewer_options: ViewerOptions | None = None,
+        vis_options: VisOptions | None = None,
+        renderer: RendererOptions | None = None,
+    ) -> "Scene":
         """Create the scene a file holds, as written by 'Scene.export'.
 
         The file names what it holds rather than carrying code to run, and Genesis creates only the options,
@@ -1553,35 +1607,42 @@ class Scene(RBC):
 
         Parameters
         ----------
-        path : str or os.PathLike
+        path : str, os.PathLike or binary file
             The file to read.
         show_viewer : bool, optional
             Whether to open an interactive viewer on the scene. Defaults to False.
+        viewer_options : ViewerOptions, optional
+            Viewer options replacing the recorded ones. If None, the recorded ones stand. Defaults to None.
+        vis_options : VisOptions, optional
+            Visualizer options replacing the recorded ones. If None, the recorded ones stand. Defaults to None.
+        renderer : RendererOptions, optional
+            Renderer replacing the recorded one. If None, the recorded one stands. Defaults to None.
 
         Returns
         -------
         scene : Scene
             The scene the file describes, holding every entity it was authored with and waiting to be built.
         """
-        return cls.from_description(serialization.load(path, {"scene": SceneDescription})["scene"], show_viewer)
+        described = serialization.load(path, {"scene": SceneDescription})["scene"]
+        return cls._from_description(described, show_viewer, viewer_options, vis_options, renderer)
 
     @classmethod
-    def from_description(cls, described: SceneDescription, show_viewer: bool = False) -> "Scene":
-        """Create the scene a description states, holding every entity it names and waiting to be built.
+    def _from_description(
+        cls,
+        described: SceneDescription,
+        show_viewer: bool = False,
+        viewer_options: ViewerOptions | None = None,
+        vis_options: VisOptions | None = None,
+        renderer: RendererOptions | None = None,
+    ) -> "Scene":
+        """Create the scene a description states, waiting to be built.
 
-        Parameters
-        ----------
-        described : SceneDescription
-            The scene to create, as 'Scene.desc' describes one.
-        show_viewer : bool, optional
-            Whether to open an interactive viewer on the scene. Defaults to False.
-
-        Returns
-        -------
-        scene : Scene
-            The created scene.
+        The viewer, visualizer and renderer options are replaced where given. The physics options stand as described,
+        since they size the arrays a recorded state fills.
         """
-        scene = cls(show_viewer=show_viewer, options=described.options)
+        replaced = (("viewer", viewer_options), ("vis", vis_options), ("renderer", renderer))
+        options = described.options.model_copy(update={name: value for name, value in replaced if value is not None})
+        scene = cls(show_viewer=show_viewer, options=options)
         # 'add_entity' would resolve a material and a surface the description already holds, and read the asset it
         # replaces.
         for desc in described.entities:
@@ -1610,10 +1671,96 @@ class Scene(RBC):
     def __reduce__(self):
         return (self._from_state, (self.__getstate__(),))
 
+    @gs.assert_built
+    def save_checkpoint(self, path: str | os.PathLike) -> None:
+        """Write the whole state of this scene to a file, for 'load_checkpoint' to open a copy standing where it stands.
+
+        The file holds the scene as 'export' writes it and every array of the simulation, scratch included, so the
+        exact state of a failing run is kept for inspection. It is a trajectory file of one frame (see 'TrajectoryFile'),
+        and 'load_trajectory' opens it as such.
+
+        Parameters
+        ----------
+        path : str or os.PathLike
+            The '.gstraj' file to write.
+        """
+        self._reject_unexportable()
+        save_checkpoint(path, TrajectorySource(self._sim, self.desc, self._layout))
+
+    @classmethod
+    def load_checkpoint(
+        cls,
+        path: str | os.PathLike,
+        show_viewer: bool = False,
+        viewer_options: ViewerOptions | None = None,
+        vis_options: VisOptions | None = None,
+        renderer: RendererOptions | None = None,
+    ) -> "Scene":
+        """Create and build the scene a checkpoint file holds, standing in the final state the file records.
+
+        The file is one written by 'save_checkpoint' or by recording a 'TrajectoryFile' to its end. The viewer,
+        visualizer and renderer options may be replaced (see 'load').
+
+        Parameters
+        ----------
+        path : str or os.PathLike
+            The file to read.
+        show_viewer : bool, optional
+            Whether to open an interactive viewer on the scene. Defaults to False.
+        viewer_options : ViewerOptions, optional
+            Viewer options replacing the recorded ones. Defaults to None.
+        vis_options : VisOptions, optional
+            Visualizer options replacing the recorded ones. Defaults to None.
+        renderer : RendererOptions, optional
+            Renderer replacing the recorded one. Defaults to None.
+
+        Returns
+        -------
+        scene : Scene
+            The built scene, in the recorded state.
+        """
+        trajectory = Trajectory(path, None, show_viewer, viewer_options, vis_options, renderer)
+        trajectory.seek(len(trajectory) - 1)
+        return trajectory.scene
+
+    @classmethod
+    def load_trajectory(
+        cls,
+        path: str | os.PathLike,
+        show_viewer: bool = False,
+        viewer_options: ViewerOptions | None = None,
+        vis_options: VisOptions | None = None,
+        renderer: RendererOptions | None = None,
+    ) -> Trajectory:
+        """Open a recorded trajectory in the scene it was recorded from, created and built here, to seek and replay.
+
+        The file is one written by recording a 'TrajectoryFile'. The viewer, visualizer and renderer options may be
+        replaced (see 'load').
+
+        Parameters
+        ----------
+        path : str or os.PathLike
+            The file to read.
+        show_viewer : bool, optional
+            Whether to open an interactive viewer on the scene. Defaults to False.
+        viewer_options : ViewerOptions, optional
+            Viewer options replacing the recorded ones. Defaults to None.
+        vis_options : VisOptions, optional
+            Visualizer options replacing the recorded ones. Defaults to None.
+        renderer : RendererOptions, optional
+            Renderer replacing the recorded one. Defaults to None.
+
+        Returns
+        -------
+        trajectory : Trajectory
+            The trajectory, holding the built scene as 'Trajectory.scene'.
+        """
+        return Trajectory(path, None, show_viewer, viewer_options, vis_options, renderer)
+
     @classmethod
     def _from_state(cls, state: SceneCheckpoint) -> "Scene":
         """Create, build and restore the scene a checkpoint describes. '__reduce__' names it as the loader."""
-        scene = cls.from_description(state.scene)
+        scene = cls._from_description(state.scene)
         scene.build(**dataclasses.asdict(state.layout))
         scene.__setstate__(state)
         return scene
@@ -1631,7 +1778,7 @@ class Scene(RBC):
         Parameters
         ----------
         state : SceneCheckpoint
-            The state to put back, as read by '__getstate__'.
+            The state to put back, as read by '__getstate__' or cut from a trajectory frame.
         """
         if state.layout != self._layout:
             gs.raise_exception(
@@ -1640,7 +1787,7 @@ class Scene(RBC):
         if state.digest != self._desc_digest:
             gs.raise_exception("The state was read from another scene: its entities or physics options differ.")
         # Every solver checks its record before anything is touched, so a record from another scene leaves this one as
-        # it was
+        # it was, the recorders included
         solvers = {type(solver).__name__: solver for solver in self._sim.active_solvers}
         if set(state.sim.solvers) != set(solvers):
             gs.raise_exception(
@@ -1649,9 +1796,12 @@ class Scene(RBC):
         for name, solver in solvers.items():
             record = state.sim.solvers[name]
             check_data((item for item in solver.data if item.kind in record.kinds), record.arrays)
+        # The recorders finish the run first (see 'reset'), and the restart follows the state, so the visualizer draws
+        # the state put back.
+        self._recorder_manager.record(self._sim.cur_step_global)
+        self._recorder_manager.reset()
         self._sim.__setstate__(state.sim)
         self._restart()
-        self._recorder_manager.reset()
 
     def _sanitize_envs_idx(
         self, envs_idx: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None

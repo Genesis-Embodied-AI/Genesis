@@ -1,4 +1,5 @@
 import dataclasses
+from typing import NamedTuple
 
 import numpy as np
 import torch
@@ -36,6 +37,20 @@ class KinematicSolverCheckpoint(SolverCheckpoint):
 
     is_forward_pos_updated: bool
     is_forward_vel_updated: bool
+
+
+class FrameField(NamedTuple):
+    """Where one array stands in a trajectory frame.
+
+    The name, canonical shape, numpy dtype string, byte offset and byte length cut a frame back into its arrays without
+    the scene.
+    """
+
+    name: str
+    shape: tuple[int, ...]
+    dtype: str
+    offset: int
+    nbytes: int
 
 
 @dataclasses.dataclass
