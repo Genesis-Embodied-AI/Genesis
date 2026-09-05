@@ -1,9 +1,9 @@
 import genesis as gs
 from genesis.repr_base import RBC
-from genesis.utils.description import Described, RigidEqualityDescription
+from .description import RigidEqualityDescription
 
 
-class RigidEquality(Described, RBC):
+class RigidEquality(RBC):
     """
     Equality class for rigid body entities.
     """

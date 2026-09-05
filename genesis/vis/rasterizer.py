@@ -1,3 +1,4 @@
+import ctypes.util
 import os
 import sys
 
@@ -7,6 +8,16 @@ import OpenGL
 
 import genesis as gs
 from genesis.repr_base import RBC
+from genesis.utils.misc import has_display
+
+
+# PyOpenGL binds every OpenGL function to the library of the platform selected when pyrender is first imported (see
+# OSMesaPlatform), so the platform must be settled here. Offscreen rendering on Linux goes through EGL, and a headless
+# machine lacking it can still render through OSMesa, a self-contained software rasterizer: select it upfront, leaving
+# an explicit choice untouched. A machine with a display keeps its window-system platform, which the viewer relies on.
+if sys.platform == "linux" and "PYOPENGL_PLATFORM" not in os.environ:
+    if ctypes.util.find_library("EGL") is None and ctypes.util.find_library("OSMesa") and not has_display():
+        os.environ["PYOPENGL_PLATFORM"] = "osmesa"
 from genesis.ext import pyrender
 from genesis.vis.camera import Camera
 
@@ -26,22 +37,7 @@ class Rasterizer(RBC):
             return
 
         if self._offscreen:
-            # Select PyOpenGL backend for `pyrender.OffscreenRenderer`.
-            # If env variable is set, use specified platform if supported, otherwise some platform-specific default.
-            default_platform = {"linux": "egl", "darwin": "cgl"}.get(sys.platform, "pyglet")
-            platform = os.environ.get("PYOPENGL_PLATFORM", default_platform)
-            if platform not in ("osmesa", "pyglet", "egl", "cgl"):
-                gs.logger.warning(f"PYOPENGL_PLATFORM='{platform}' not supported. Falling back to 'pyglet'.")
-                platform = "pyglet"
-            if sys.platform == "win32" and platform == "osmesa":
-                gs.raise_exception("PYOPENGL_PLATFORM='osmesa' not supported on Windows OS.")
-            if sys.platform != "darwin" and platform == "cgl":
-                gs.raise_exception("PYOPENGL_PLATFORM='cgl' is only supported on MacOS.")
-
-            # Start the viewer
-            self._renderer = pyrender.OffscreenRenderer(
-                pyopengl_platform=platform, seg_node_map=self._context.seg_node_map
-            )
+            self._renderer = pyrender.OffscreenRenderer(seg_node_map=self._context.seg_node_map)
 
         self.visualizer = self._context.visualizer
 

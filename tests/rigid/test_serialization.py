@@ -1,4 +1,5 @@
 import json
+import pickle
 import xml.etree.ElementTree as ET
 import zipfile
 from copy import deepcopy
@@ -262,8 +263,8 @@ def test_export_and_load_rigid(
     # A texture holding a path rather than pixels stands for nothing, in the surface and in the meshes drawn with it
     assert restored.entities[14].surface.normal_texture is None
     assert restored.entities[14].vgeoms[0].vmesh.surface.normal_texture is None
-    # A morph holding a parsed model travels naming the asset, since the description stands for the model itself
-    assert restored.entities[15].morph.file == "xacro_chain.urdf"
+    # A morph names the asset it was created from, since the description stands for what was parsed out of it
+    assert restored.entities[15].morph.file == "two_link.urdf.xacro"
     # A mesh states the asset it was read from by name, wherever that asset stood
     assert restored.entities[16].geoms[0].mesh.metadata["mesh_path"] == "sphere.obj"
     # The document that entity was created from names that mesh as well, and the name travels without its directory
@@ -355,7 +356,7 @@ def test_export_and_load_rigid(
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_export_before_build(n_envs, tmp_path, show_viewer):
+def test_export_before_build(n_envs, tmp_path, show_viewer, caplog):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.5, 1.0, 1.0),
@@ -372,9 +373,15 @@ def test_export_before_build(n_envs, tmp_path, show_viewer):
             size=(0.2, 0.2, 0.2),
         ),
     )
-    # Adding an entity resolves its description, so a scene is written before its build as readily as after
+    # Adding an entity resolves its description, so a scene is written before its build as readily as after. The scene
+    # holds nothing a file leaves out, so the export warns of nothing.
     exported = tmp_path / f"authored{SCENE_FORMAT}"
-    scene.export(exported)
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        scene.export(exported)
+    assert not caplog.records
+    # The options of a scene are merged copies of the ones given, and pickle as any option does
+    assert pickle.loads(pickle.dumps(scene.options.rigid)) == scene.options.rigid
     scene.build(n_envs=n_envs)
 
     # A file states no environment layout, so whoever opens one builds it with the layout they ask for
@@ -506,5 +513,5 @@ def test_export_rejects_unsupported_physics(tmp_path, show_viewer):
         morph=gs.morphs.Box(pos=(0.5, 0.5, 0.8), size=(0.1, 0.1, 0.1)), material=gs.materials.MPM.Elastic()
     )
     unsupported.add_force_field(gs.force_fields.Wind(direction=(1.0, 0.0, 0.0)))
-    with pytest.raises(gs.GenesisException, match="1 Elastic, 1 MPMEntity, 1 Wind cannot be exported"):
+    with pytest.raises(gs.GenesisException, match="1 MPMEntity, 1 Wind cannot be exported"):
         unsupported.export(tmp_path / f"wind{SCENE_FORMAT}")

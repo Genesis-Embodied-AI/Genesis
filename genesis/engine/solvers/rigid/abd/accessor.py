@@ -341,7 +341,9 @@ def kernel_wake_up_entities_on_new_contact(
     _B = collider_state.n_contacts.shape[0]
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
-        for i_c in range(collider_state.n_contacts[i_b]):
+        # The kept contacts are read through the permutation, see has_prunable_contacts in array_class.py.
+        for i_c_ in range(collider_state.n_contacts[i_b]):
+            i_c = collider_state.contact_sort_idx[i_c_, i_b]
             i_la = collider_state.contact_data.link_a[i_c, i_b]
             i_lb = collider_state.contact_data.link_b[i_c, i_b]
             I_la = [i_la, i_b] if qd.static(rigid_config.batch_links_info) else i_la
@@ -1128,30 +1130,57 @@ def kernel_control_dofs_position_velocity(
         dyn_state.dofs.ctrl_vel[i_d, i_b] = velocity[i_b_, i_d_]
 
 
+@qd.func
+def func_link_offset_shift(
+    i_l,
+    i_b,
+    links_offset_pos: qd.types.ndarray(),
+    links_offset_quat: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+):
+    """World-frame displacement from the authored link origin to the internal one.
+
+    The offset tensors carry a leading environment axis only when the offset is environment-specific.
+    """
+    I_l = [i_b, i_l] if qd.static(len(links_offset_pos.shape) == 3) else i_l
+    offset_pos = qd.Vector.zero(gs.qd_float, 3)
+    for j in qd.static(range(3)):
+        offset_pos[j] = links_offset_pos[I_l, j]
+    offset_quat = qd.Vector.zero(gs.qd_float, 4)
+    for j in qd.static(range(4)):
+        offset_quat[j] = links_offset_quat[I_l, j]
+    authored_quat = gu.qd_transform_quat_by_quat(gu.qd_inv_quat(offset_quat), dyn_state.links.quat[i_l, i_b])
+    return gu.qd_transform_by_quat(offset_pos, authored_quat)
+
+
 @qd.kernel(fastcache=True)
 def kernel_get_links_vel(
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     tensor: qd.types.ndarray(),
+    links_offset_pos: qd.types.ndarray(),
+    links_offset_quat: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     ref: qd.template(),
+    is_relative: qd.template(),
 ):
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+        i_l = links_idx[i_l_]
+        i_b = envs_idx[i_b_]
+
         # This is the velocity in world coordinates expressed at global com-position
-        vel = dyn_state.links.cd_vel[links_idx[i_l_], envs_idx[i_b_]]  # entity's CoM
+        vel = dyn_state.links.cd_vel[i_l, i_b]  # entity's CoM
 
         # Translate to get the velocity expressed at a different position if necessary link-position
         if qd.static(ref == gs.link_ref_frame.link_COM):
-            vel = vel + dyn_state.links.cd_ang[links_idx[i_l_], envs_idx[i_b_]].cross(
-                dyn_state.links.i_pos[links_idx[i_l_], envs_idx[i_b_]]
-            )
+            vel = vel + dyn_state.links.cd_ang[i_l, i_b].cross(dyn_state.links.i_pos[i_l, i_b])
         if qd.static(ref == gs.link_ref_frame.link_origin):
-            vel = vel + dyn_state.links.cd_ang[links_idx[i_l_], envs_idx[i_b_]].cross(
-                dyn_state.links.pos[links_idx[i_l_], envs_idx[i_b_]]
-                - dyn_state.links.root_COM[links_idx[i_l_], envs_idx[i_b_]]
-            )
+            cpos = dyn_state.links.pos[i_l, i_b] - dyn_state.links.root_COM[i_l, i_b]
+            if qd.static(is_relative):
+                cpos = cpos - func_link_offset_shift(i_l, i_b, links_offset_pos, links_offset_quat, dyn_state)
+            vel = vel + dyn_state.links.cd_ang[i_l, i_b].cross(cpos)
 
         for j in qd.static(range(3)):
             tensor[i_b_, i_l_, j] = vel[j]
@@ -1162,8 +1191,11 @@ def kernel_get_links_acc(
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     tensor: qd.types.ndarray(),
+    links_offset_pos: qd.types.ndarray(),
+    links_offset_quat: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
+    is_relative: qd.template(),
 ):
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
@@ -1172,6 +1204,8 @@ def kernel_get_links_acc(
 
         # Compute links spatial acceleration expressed at links origin in world coordinates
         cpos = dyn_state.links.pos[i_l, i_b] - dyn_state.links.root_COM[i_l, i_b]
+        if qd.static(is_relative):
+            cpos = cpos - func_link_offset_shift(i_l, i_b, links_offset_pos, links_offset_quat, dyn_state)
         acc_ang = dyn_state.links.cacc_ang[i_l, i_b]
         acc_lin = dyn_state.links.cacc_lin[i_l, i_b] + acc_ang.cross(cpos)
 
@@ -1273,13 +1307,13 @@ def kernel_get_dofs_control_force(
 @qd.kernel(fastcache=True)
 def kernel_set_drone_rpm(
     propellers_link_idx: qd.types.ndarray(),
+    kf: float,
+    km: float,
     propellers_rpm: qd.types.ndarray(),
     propellers_spin: qd.types.ndarray(),
-    KF: qd.float32,
-    KM: qd.float32,
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
-    invert: qd.i32,
+    invert: qd.template(),
 ):
     """
     Set the RPM of propellers of a drone entity.
@@ -1294,11 +1328,11 @@ def kernel_set_drone_rpm(
         for i_prop in range(n_propellers):
             i_l = propellers_link_idx[i_prop]
 
-            force = qd.Vector([0.0, 0.0, propellers_rpm[i_b, i_prop] ** 2 * KF], dt=gs.qd_float)
+            force = qd.Vector([0.0, 0.0, propellers_rpm[i_b, i_prop] ** 2 * kf], dt=gs.qd_float)
             torque = qd.Vector(
-                [0.0, 0.0, propellers_rpm[i_b, i_prop] ** 2 * KM * propellers_spin[i_prop]], dt=gs.qd_float
+                [0.0, 0.0, propellers_rpm[i_b, i_prop] ** 2 * km * propellers_spin[i_prop]], dt=gs.qd_float
             )
-            if invert:
+            if qd.static(invert):
                 torque = -torque
 
             func_apply_link_external_wrench(

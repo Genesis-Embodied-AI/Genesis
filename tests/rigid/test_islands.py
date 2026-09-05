@@ -447,9 +447,11 @@ def test_hibernation_with_pruning(show_viewer, n_envs):
     # hibernation all run together. contact_pruning_tolerance is set explicitly to keep pruning on alongside islands.
     # Two separated ducks give two islands (hibernation does not keep a single-island scene partitioned). Each duck
     # must reach the plane without tunnelling, hibernate, and then stay frozen in place.
+    GRAVITY = -9.81
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1.0 / 100.0,
+            gravity=(0.0, 0.0, GRAVITY),
         ),
         rigid_options=gs.options.RigidOptions(
             contact_pruning_tolerance=0.02,
@@ -489,6 +491,8 @@ def test_hibernation_with_pruning(show_viewer, n_envs):
     assert asleep()
     for duck, z in zip(ducks, z_rest):
         assert_allclose(duck.get_pos()[..., 2], z, atol=1e-5)
+        # A sleeper resting on the ground keeps reporting the support force balancing its weight.
+        assert_allclose(duck.get_links_net_contact_force()[..., 0, 2], -GRAVITY * duck.get_mass(), tol=2e-3)
 
     # Resetting wakes every body: the restored state is a discontinuity, so a body left hibernated would stay frozen
     # and never be resimulated. After reset the ducks are awake again, with their flags cleared and awake counter zeroed.
@@ -799,7 +803,11 @@ def test_hibernation_wakes_on_collision(show_viewer, n_envs, broadphase_traversa
     # rather than per entity. ALL_VS_ALL exercises hibernation under the non-default traversal: it advects and skips
     # hibernated-fixed pairs exactly like SAP, and the hibernated-vs-hibernated pairs it traverses instead of skipping
     # are inert (both bodies frozen).
+    GRAVITY = -9.81
     scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, GRAVITY),
+        ),
         rigid_options=gs.options.RigidOptions(
             use_contact_island=True,
             use_hibernation=True,
@@ -854,8 +862,18 @@ def test_hibernation_wakes_on_collision(show_viewer, n_envs, broadphase_traversa
     # The bodies that landed first sleep while the one still falling does not.
     assert all(link_asleep(link) for link in multibody_bases[:-1])
     assert not link_asleep(late)
+    # The sleepers stay frozen while the env keeps solving the body still falling: zero velocity, and forces held at
+    # their values from the moment they fell asleep, since their island is left out of the solve. A sleeper resting on
+    # the ground keeps reporting the support force balancing its weight.
+    sleepers_force = [box.get_dofs_force() for box in (box_rest, box_hit)]
+    sleepers_contact_force = [box.get_links_net_contact_force() for box in (box_rest, box_hit)]
     for _ in range(40):
         scene.step()
+    for box, force, contact_force in zip((box_rest, box_hit), sleepers_force, sleepers_contact_force):
+        assert_equal(box.get_dofs_velocity(), 0.0)
+        assert_equal(box.get_dofs_force(), force)
+        assert_equal(box.get_links_net_contact_force(), contact_force)
+        assert_allclose(contact_force[..., 0, 2], -GRAVITY * box.get_mass(), tol=2e-3)
     rest_x0 = box_rest.get_pos()[..., 0]
 
     box_hit.set_dofs_velocity([-2.0, 0.0, 0.0, 0.0, 0.0, 0.0])

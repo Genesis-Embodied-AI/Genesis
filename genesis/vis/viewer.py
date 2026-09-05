@@ -96,25 +96,30 @@ class Viewer(RBC):
             self._is_built = True
             return
 
-        # Try all candidate onscreen OpenGL "platforms" if none is specifically requested
+        # Try all candidate onscreen OpenGL "platforms" if none is specifically requested. OSMesa is ruled out for the
+        # viewer: it binds PyOpenGL to its own private copy of Mesa for the whole process (see OSMesaPlatform), which
+        # the window-system context of the viewer cannot be driven through.
         opengl_platform_orig = os.environ.get("PYOPENGL_PLATFORM")
+        if opengl_platform_orig == "osmesa":
+            gs.raise_exception(
+                "PYOPENGL_PLATFORM='osmesa' only supports offscreen rendering. Unset it or disable the interactive "
+                "viewer."
+            )
         if opengl_platform_orig is None:
             if sys.platform == "win32":
                 all_opengl_platforms = ("wgl",)  # same as "native"
             elif sys.platform == "linux":
                 if pyglet.options.get("headless"):
                     # pyglet's headless windowing creates an EGL pbuffer context, so only the matching PyOpenGL EGL
-                    # platform can share it; native/glx/osmesa query a different context and fail with "no valid
-                    # context", churning GL state on the way out.
+                    # platform can share it; native/glx query a different context and fail with "no valid context",
+                    # churning GL state on the way out.
                     all_opengl_platforms = ("egl",)
                 else:
                     # "native" is platform-specific ("egl" or "glx")
-                    all_opengl_platforms = ("native", "egl", "glx", "osmesa")
+                    all_opengl_platforms = ("native", "egl", "glx")
             else:
                 all_opengl_platforms = ("native",)
         else:
-            if opengl_platform_orig == "osmesa" and sys.platform != "linux":
-                gs.raise_exception("PYOPENGL_PLATFORM='osmesa' is only supported on Linux OS for now.")
             all_opengl_platforms = (opengl_platform_orig,)
 
         for i, platform in enumerate(all_opengl_platforms):

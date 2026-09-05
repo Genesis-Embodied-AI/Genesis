@@ -3,6 +3,7 @@ import argparse
 import numpy as np
 
 import genesis as gs
+from genesis.constants import MESH_FORMATS, MJCF_FORMAT, URDF_FORMAT, USD_FORMATS, XACRO_FORMAT
 from genesis.engine.scene import SCENE_FORMAT
 from genesis.ext.pyrender.overlay import ImGuiOverlayPlugin
 
@@ -35,16 +36,15 @@ def launch(filename=None, collision=False, rotate=False, scale=1.0, show_link_fr
     entities = []
     if filename is not None:
         filename_lower = filename.lower()
-        morphs = gs.options.morphs
         material = gs.materials.Rigid()
         # Morphs load collision geometry by default, so the overlay's collision vis-mode has something to show; the -c
         # flag only selects which representation is displayed first.
         surface = gs.surfaces.Default(vis_mode="visual" if not collision else "collision")
 
-        if filename_lower.endswith(morphs.USD_FORMATS):
+        if filename_lower.endswith(USD_FORMATS):
             morph = gs.morphs.USD(file=filename, scale=scale)
             entities = scene.add_stage(morph=morph, vis_mode=surface.vis_mode)
-        elif filename_lower.endswith((morphs.URDF_FORMAT, morphs.XACRO_FORMAT)):
+        elif filename_lower.endswith((URDF_FORMAT, XACRO_FORMAT)):
             morph_cls = gs.morphs.URDF
             entities = [
                 scene.add_entity(
@@ -53,7 +53,7 @@ def launch(filename=None, collision=False, rotate=False, scale=1.0, show_link_fr
                     surface=surface,
                 )
             ]
-        elif filename_lower.endswith(morphs.MJCF_FORMAT):
+        elif filename_lower.endswith(MJCF_FORMAT):
             morph_cls = gs.morphs.MJCF
             entities = [
                 scene.add_entity(
@@ -62,7 +62,7 @@ def launch(filename=None, collision=False, rotate=False, scale=1.0, show_link_fr
                     surface=surface,
                 )
             ]
-        elif filename_lower.endswith(morphs.MESH_FORMATS):
+        elif filename_lower.endswith(MESH_FORMATS):
             morph_cls = gs.morphs.Mesh
             entities = [
                 scene.add_entity(
@@ -73,8 +73,8 @@ def launch(filename=None, collision=False, rotate=False, scale=1.0, show_link_fr
             ]
         else:
             gs.raise_exception(
-                f"Unsupported file format for 'gs launch'. Expected {morphs.URDF_FORMAT}, {morphs.XACRO_FORMAT}, "
-                f"{morphs.MJCF_FORMAT}, {morphs.MESH_FORMATS}, or {morphs.USD_FORMATS}."
+                f"Unsupported file format for 'gs launch'. Expected {URDF_FORMAT}, {XACRO_FORMAT}, "
+                f"{MJCF_FORMAT}, {MESH_FORMATS}, or {USD_FORMATS}."
             )
 
     scene.build()
@@ -118,24 +118,23 @@ def play(filename=None, collision=False, scale=1.0):
             scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
         else:
             filename_lower = filename.lower()
-            morphs = gs.options.morphs
             surface = gs.surfaces.Default(vis_mode="visual" if not collision else "collision")
 
-            if filename_lower.endswith(morphs.USD_FORMATS):
+            if filename_lower.endswith(USD_FORMATS):
                 scene.add_stage(
                     morph=gs.morphs.USD(file=filename, scale=scale),
                     vis_mode=surface.vis_mode,
                 )
-            elif filename_lower.endswith(morphs.URDF_FORMAT):
+            elif filename_lower.endswith(URDF_FORMAT):
                 scene.add_entity(gs.morphs.URDF(file=filename, scale=scale), surface=surface)
-            elif filename_lower.endswith(morphs.MJCF_FORMAT):
+            elif filename_lower.endswith(MJCF_FORMAT):
                 scene.add_entity(gs.morphs.MJCF(file=filename, scale=scale), surface=surface)
-            elif filename_lower.endswith(morphs.MESH_FORMATS):
+            elif filename_lower.endswith(MESH_FORMATS):
                 scene.add_entity(gs.morphs.Mesh(file=filename, scale=scale), surface=surface)
             else:
                 gs.raise_exception(
-                    f"Unsupported file format for 'gs play'. Expected {morphs.URDF_FORMAT}, "
-                    f"{morphs.MJCF_FORMAT}, {morphs.MESH_FORMATS}, {morphs.USD_FORMATS}, or {SCENE_FORMAT}."
+                    f"Unsupported file format for 'gs play'. Expected {URDF_FORMAT}, "
+                    f"{MJCF_FORMAT}, {MESH_FORMATS}, {USD_FORMATS}, or {SCENE_FORMAT}."
                 )
 
     scene.build()

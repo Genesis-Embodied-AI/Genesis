@@ -13,6 +13,7 @@ from trimesh.visual.texture import TextureVisuals
 from PIL import Image
 
 import genesis as gs
+from genesis.constants import XACRO_FORMAT
 from genesis.ext import urdfpy
 
 from . import geom as gu
@@ -206,12 +207,12 @@ def build_model(
                 autolimits="true",
             )
 
-            # Bound mass and inertia if necessary
-            if not all(link.inertial is not None for link in robot.links):
-                compiler.attrib |= dict(
-                    boundmass=str(MIN_TIMECONST),
-                    boundinertia=str(MIN_TIMECONST),
-                )
+            # MuJoCo rejects a moving body whose mass or inertia is below 'mjMINVAL'. Bounding both at that value keeps
+            # a zero or missing inertial compilable, and the placeholder is discarded below.
+            compiler.attrib |= dict(
+                boundmass=str(mujoco.mjMINVAL),
+                boundinertia=str(mujoco.mjMINVAL),
+            )
 
             # Resolve relative mesh paths
             for elem in root.findall(".//mesh"):
@@ -231,11 +232,18 @@ def build_model(
             if is_urdf_file:
                 # Discard placeholder inertias that were used to avoid parsing failure
                 for link in robot.links:
-                    if link.inertial is None:
-                        body = mj.body(link.name)
+                    inertial = link.inertial
+                    mass = (inertial.mass or 0.0) if inertial is not None else 0.0
+                    is_inertia_defined = inertial is not None and np.linalg.norm(inertial.inertia, np.inf) > 0.0
+                    if mass > 0.0 and is_inertia_defined:
+                        continue
+                    body = mj.body(link.name)
+                    body.mass[:] = mass
+                    # Keep non-zero authored inertia with invalid diagonal so the consistency check reports it
+                    if not is_inertia_defined:
                         body.inertia[:] = 0.0
-                        body.mass[:] = 0.0
-                        body.invweight0[:] = 0.0
+                    # invweight0 derives from placeholder mass and inertia; zero triggers recomputation
+                    body.invweight0[:] = 0.0
 
                 # Set default constraint solver time constant
                 mj.jnt_solref[:, 0] = MIN_TIMECONST
@@ -256,10 +264,13 @@ def parse_xml(morph, surface, rigid_options=None):
         merge_fixed_links = morph.merge_fixed_links
         links_to_keep = morph.links_to_keep
 
-    # Build model from XML (either URDF or MJCF)
+    # Build model from XML (either URDF or MJCF). A XACRO file is expanded into its URDF model here, by the parser
+    # reading it, so that the morph keeps the file provided by the user: an option holds what it was created with, and
+    # the expanded model is only ever read by the parsers.
     exclude_ground_plane = isinstance(morph, gs.morphs.MJCF) and morph.exclude_ground_plane
+    file = uu.load_xacro(morph.file, morph.xacro_args) if morph.is_format(XACRO_FORMAT) else morph.file
     mj = build_model(
-        morph.file,
+        file,
         not morph.visualization,
         morph.default_armature,
         merge_fixed_links,
@@ -273,7 +284,7 @@ def parse_xml(morph, surface, rigid_options=None):
     #     gs.logger.warning("(MJCF) Tendon not supported")
 
     # Parse all geometries grouped by parent joint (or world)
-    links_g_infos = parse_geoms(mj, morph.scale, surface, morph.file)
+    links_g_infos = parse_geoms(mj, morph.scale, surface, file)
 
     # Parse all bodies (links and joints)
     l_infos, links_j_infos = parse_links(mj, morph.scale)

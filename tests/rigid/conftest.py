@@ -536,12 +536,14 @@ def double_pendulum():
     return _build_multi_pendulum(n=2, joint_damping=0.0, joint_friction=0.0)
 
 
-def _add_sphere_link(urdf, link_name, geom_pos, mass=None, inertia=None):
+def _add_sphere_link(urdf, link_name, geom_pos, mass=None, inertia=None, inertial_pos=None):
     """Append a link carrying a single sphere geometry offset by 'geom_pos' from the link frame, optionally authoring
-    an inertial element whose origin is left omitted."""
+    an inertial element, whose origin is left omitted unless 'inertial_pos' is given."""
     link = ET.SubElement(urdf, "link", name=link_name)
     if mass is not None:
         inertial = ET.SubElement(link, "inertial")
+        if inertial_pos is not None:
+            ET.SubElement(inertial, "origin", xyz=inertial_pos, rpy="0.0 0.0 0.0")
         ET.SubElement(inertial, "mass", value=str(mass))
         ixx, ixy, ixz, iyy, iyz, izz = (str(value) for value in inertia)
         ET.SubElement(inertial, "inertia", ixx=ixx, ixy=ixy, ixz=ixz, iyy=iyy, iyz=iyz, izz=izz)
@@ -639,6 +641,61 @@ def free_bodies_in_one_model():
 
 
 @pytest.fixture(scope="session")
+def degenerate_inertials():
+    """Generate a URDF stating a degenerate inertial on several of its links: a zero mass on the root, a zero
+    mass beside geometry on a fixed child, a zero mass above a fixed child that carries all of it, a zero inertia
+    beside an authored center of mass, and a zero inertia on a fixed child. MuJoCo rejects a moving body whose rigid
+    subtree carries no inertia, so each degenerate branch either roots the robot or holds a fixed child that authors
+    one."""
+    urdf = ET.Element("robot", name="degenerate_inertials")
+    _add_sphere_link(urdf, "base_link", "0.0 0.0 0.09", mass=0.0, inertia=(0.11, 0.01, 0.02, 0.22, 0.03, 0.30))
+    _add_sphere_link(urdf, "massless_marker", "0.0 0.0 0.09", mass=0.0, inertia=(0.0,) * 6)
+    _add_sphere_link(urdf, "implicit_origin", "0.0 0.0 0.09", mass=2.5, inertia=(0.11, 0.01, 0.02, 0.22, 0.03, 0.30))
+    _add_sphere_link(urdf, "no_inertial", "0.0 0.0 0.09")
+    _add_sphere_link(urdf, "connector", "0.0 0.0 0.09", mass=0.0, inertia=(0.0,) * 6)
+    _add_sphere_link(
+        urdf, "bob", "0.0 0.0 0.09", mass=1.0, inertia=(1e-3, 0.0, 0.0, 1e-3, 0.0, 1e-3), inertial_pos="0.0 0.0 0.09"
+    )
+    _add_sphere_link(urdf, "zero_inertia", "0.0 0.0 0.09", mass=2.5, inertia=(0.0,) * 6, inertial_pos="0.0 0.0 0.11")
+    _add_sphere_link(urdf, "tip", "0.0 0.0 0.09", mass=1e-5, inertia=(0.0,) * 6)
+    # Every sphere sits at the same offset from its own link frame, so that the whole robot rests flat.
+    # The revolute axis is aligned with gravity so that neither branch swings on the way down.
+    for name, origin in (("implicit_origin", "0.4 0.0 0.0"), ("connector", "-0.4 0.0 0.0")):
+        joint = ET.SubElement(urdf, "joint", name=f"{name}_joint", type="continuous")
+        ET.SubElement(joint, "origin", xyz=origin, rpy="0.0 0.0 0.0")
+        ET.SubElement(joint, "axis", xyz="0.0 0.0 1.0")
+        ET.SubElement(joint, "parent", link="base_link")
+        ET.SubElement(joint, "child", link=name)
+    # Only the four links whose sphere is left at ground level touch it, as a triangle wide enough to stand on.
+    for name, parent, origin in (
+        ("massless_marker", "base_link", "0.0 0.0 0.3"),
+        ("no_inertial", "implicit_origin", "0.0 0.0 0.3"),
+        ("bob", "connector", "0.0 0.0 0.3"),
+        ("zero_inertia", "connector", "0.0 0.4 0.0"),
+        ("tip", "zero_inertia", "0.0 0.0 0.3"),
+    ):
+        joint = ET.SubElement(urdf, "joint", name=f"{name}_joint", type="fixed")
+        ET.SubElement(joint, "origin", xyz=origin, rpy="0.0 0.0 0.0")
+        ET.SubElement(joint, "parent", link=parent)
+        ET.SubElement(joint, "child", link=name)
+    return ET.tostring(urdf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
+def zero_density_marker_mjcf():
+    """Generate an MJCF with a free body holding a jointless child body whose geom has a zero density. The two bodies
+    share one frame, so the center of mass of the child lies inside its own geometry."""
+    mjcf = ET.Element("mujoco", model="zero_density_marker")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    hull = ET.SubElement(worldbody, "body", name="hull", pos="0.0 -2.0 0.5")
+    ET.SubElement(hull, "freejoint")
+    ET.SubElement(hull, "geom", type="box", size="0.1 0.1 0.1")
+    marker = ET.SubElement(hull, "body", name="marker")
+    ET.SubElement(marker, "geom", type="sphere", size="0.05", density="0")
+    return ET.tostring(mjcf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
 def implicit_inertial_origin_chain():
     """Generate a URDF with two fixed-jointed links, each authoring an inertia whose origin is omitted."""
     urdf = ET.Element("robot", name="implicit_inertial_origin_chain")
@@ -649,6 +706,52 @@ def implicit_inertial_origin_chain():
     ET.SubElement(joint, "child", link="tip_link")
     ET.SubElement(joint, "origin", xyz="0.0 0.0 0.3", rpy="0.0 0.0 0.0")
     return ET.tostring(urdf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
+def aligned_link_frame_urdfs():
+    """Generate two fixed-child URDF variants with nontrivial link-local frames."""
+    joint_pos = (0.31, -0.09, 0.11)
+    joint_rpy = (-0.2, 0.15, 0.35)
+    variants_inertial = (
+        (
+            (1.0, (0.1, -0.05, 0.02), (0.0, 0.0, 0.0), (0.04, 0.05, 0.06)),
+            (0.5, (0.04, 0.02, -0.03), (0.2, -0.1, 0.3), (0.01, 0.015, 0.02)),
+        ),
+        (
+            (0.8, (-0.06, 0.04, 0.03), (0.0, 0.0, 0.0), (0.03, 0.04, 0.05)),
+            (0.4, (-0.03, 0.05, 0.02), (-0.1, 0.25, -0.2), (0.012, 0.016, 0.021)),
+        ),
+    )
+    links_geoms = (
+        ("base", ("0.04 -0.02 0.03", "0.2 -0.1 0.3"), ("-0.05 0.03 0.06", "0.4 0.1 -0.2")),
+        ("child", ("0.08 0.01 -0.02", "-0.3 0.2 0.1"), ("0.02 -0.06 0.05", "0.1 -0.4 0.3")),
+    )
+    urdfs = []
+    for i_variant, links_inertial in enumerate(variants_inertial):
+        urdf = ET.Element("robot", name=f"fixed_child_inertial_frame_{i_variant}")
+        for i_link, (link_name, geom_origin, vgeom_origin) in enumerate(links_geoms):
+            link = ET.SubElement(urdf, "link", name=link_name)
+            for group_tag, (origin_xyz, origin_rpy) in (("collision", geom_origin), ("visual", vgeom_origin)):
+                group = ET.SubElement(link, group_tag)
+                geometry = ET.SubElement(group, "geometry")
+                ET.SubElement(geometry, "box", size="0.3 0.2 0.15")
+                ET.SubElement(group, "origin", xyz=origin_xyz, rpy=origin_rpy)
+
+            mass, com, inertial_rpy, inertia = links_inertial[i_link]
+            inertial = ET.SubElement(link, "inertial")
+            ET.SubElement(inertial, "mass", value=str(mass))
+            ET.SubElement(inertial, "origin", xyz=" ".join(map(str, com)), rpy=" ".join(map(str, inertial_rpy)))
+            ixx, iyy, izz = inertia
+            ET.SubElement(inertial, "inertia", ixx=str(ixx), ixy="0", ixz="0", iyy=str(iyy), iyz="0", izz=str(izz))
+
+        joint = ET.SubElement(urdf, "joint", name="fixed_joint", type="fixed")
+        ET.SubElement(joint, "parent", link="base")
+        ET.SubElement(joint, "child", link="child")
+        ET.SubElement(joint, "origin", xyz=" ".join(map(str, joint_pos)), rpy=" ".join(map(str, joint_rpy)))
+        urdfs.append(ET.tostring(urdf, encoding="unicode"))
+
+    return tuple(urdfs)
 
 
 @pytest.fixture(scope="session")

@@ -682,7 +682,7 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
     assert_allclose(plain_box.get_pos(), (2.0, 0.0, 0.2), tol=tol)
 
     # With both a morph pose and an offset, the relative getter returns the morph pose while the world getter carries
-    # the offset composed onto it (the offset position adds in z since the user orientation is identity).
+    # the offset composed onto it (the offset position adds in z since the authored orientation is identity).
     assert_allclose(posed_box.get_pos(relative=True), POSED_BOX_POS, tol=tol)
     assert_allclose(posed_box.get_quat(relative=True), gu.identity_quat(), tol=tol)
     assert_allclose(posed_box.get_pos(relative=False), (2.0, 0.5, 0.8), tol=tol)
@@ -692,9 +692,9 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
         tol=tol,
     )
 
-    # Setting the orientation in the user frame keeps the user-frame position fixed: the offset position rotates with
-    # the orientation, so the world position is rewritten to preserve the reported relative position. Rotating about x
-    # while the offset position is along z makes that offset contribution change, exercising the rewrite.
+    # Setting the orientation in the authored frame keeps the authored-frame position fixed: the offset position rotates
+    # with the orientation, so the world position is rewritten to preserve the reported relative position. Rotating
+    # about x while the offset position is along z makes that offset contribution change, exercising the rewrite.
     new_quat = gu.xyz_to_quat(np.array((90.0, 0.0, 0.0)), rpy=True, degrees=True)
     posed_box.set_quat(new_quat, relative=True)
     assert_allclose(posed_box.get_pos(relative=True), POSED_BOX_POS, tol=tol)
@@ -702,6 +702,34 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
 
     robot_aabb_init, robot_base_aabb_init = robot.get_AABB(), robot.geoms[0].get_AABB()
     cube_aabb_init, cube_base_aabb_init = cube.get_AABB(), cube.geoms[0].get_AABB()
+
+    # A non-rotating link origin only translates, so both frames report the same free fall.
+    scene.step()
+    assert_allclose(posed_box.get_vel(relative=True), posed_box.get_vel(relative=False), tol=tol)
+    assert_allclose(posed_box.get_links_acc(relative=True), posed_box.get_links_acc(relative=False), tol=tol)
+
+    # Spinning the box makes the authored origin orbit the internal one, so both are reported at the displacement 'd'
+    # the position getters strip. The spin is about a principal body axis orthogonal to the offset position, so it is
+    # torque-free and stays orthogonal to 'd', which collapses the acceleration transport to the centripetal term
+    # 'SPIN**2 * d' toward the internal origin.
+    SPIN = 5.0
+    posed_box.set_dofs_velocity((0.0, 0.0, 0.0, SPIN, 0.0, 0.0))
+    scene.step()
+    omega = posed_box.get_ang()
+    offset_shift = posed_box.get_pos(relative=False) - posed_box.get_pos(relative=True)
+    assert_allclose(
+        posed_box.get_vel(relative=True),
+        posed_box.get_vel(relative=False) - torch.cross(omega, offset_shift, dim=-1),
+        tol=tol,
+    )
+    assert_allclose(
+        posed_box.get_links_acc(relative=True)[..., 0, :],
+        posed_box.get_links_acc(relative=False)[..., 0, :] + SPIN**2 * offset_shift,
+        tol=tol,
+    )
+
+    # Masking rows and columns must strip the same offset as the unmasked query.
+    assert_allclose(posed_box.get_links_vel(links_idx_local=0, envs_idx=1)[..., 0, :], posed_box.get_vel()[1], tol=tol)
 
     # Make sure that it is not possible to end up in an inconsistent state for fixed geometries. These place entities
     # at absolute world positions, so they bypass the pose offset (relative=False).
@@ -756,7 +784,7 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
             pos_zero = torch.tensor(pos_zero, device=gs.device, dtype=gs.tc_float)
             euler_zero = torch.deg2rad(torch.tensor(euler_zero, dtype=gs.tc_float))
             quat_zero = gu.xyz_to_quat(euler_zero, rpy=True)
-            # The pose lives in the offset, so the world frame (relative=False) carries it; the user frame is identity.
+            # The pose lives in the offset, so relative=False reports it and the authored frame is identity.
             assert_allclose(entity.get_pos(relative=False), pos_zero, tol=tol)
             assert_allclose(entity.get_pos(relative=True), 0.0, tol=tol)
             # Use quaternion for comparison to avoid gymbal lock issue in euler angles
@@ -837,7 +865,9 @@ def test_normalized_quat(show_viewer, tol):
 
 
 @pytest.mark.required
-def test_inertial_property_setters(sliding_ball_pair, free_bodies_in_one_model, show_viewer, tol):
+def test_inertial_property_setters(
+    sliding_ball_pair, free_bodies_in_one_model, implicit_inertial_origin_chain, show_viewer, tol
+):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
@@ -879,6 +909,13 @@ def test_inertial_property_setters(sliding_ball_pair, free_bodies_in_one_model, 
             file=free_bodies_in_one_model,
             pos=(0.0, 10.0, 8.0),
             align=False,
+        ),
+    )
+    chain = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=implicit_inertial_origin_chain,
+            pos=(0.0, -3.0, 0.5),
+            merge_fixed_links=False,
         ),
     )
     scene.build(n_envs=4)
@@ -986,6 +1023,22 @@ def test_inertial_property_setters(sliding_ball_pair, free_bodies_in_one_model, 
         solver.set_links_COM([OFFSET, 0.0, 0.0], links_idx=free_bodies.links[0].idx)
     with pytest.raises(gs.GenesisException, match="not supported yet"):
         solver.set_links_inertia(SKEWED_INERTIA, links_idx=het_link.idx)
+    # The anchor covers fixed children too, so the setters hold their center of mass and inertia like the root's. A mass
+    # written on one link alone moves the anchor, so the setter rejects it. A mass set on the whole entity keeps the
+    # anchor and the mass ratios.
+    root, child = chain.links
+    with pytest.raises(gs.GenesisException, match="align=False"):
+        child.set_COM([OFFSET, 0.0, 0.0])
+    with pytest.raises(gs.GenesisException, match="align=False"):
+        child.set_inertia(SKEWED_INERTIA)
+    with pytest.raises(gs.GenesisException, match="align=False"):
+        child.set_mass(1.0)
+    with pytest.raises(gs.GenesisException, match="align=False"):
+        root.set_mass(1.0)
+    with pytest.raises(gs.GenesisException, match="align=False"):
+        chain.set_links_mass([1.0, 1.0])
+    chain.set_mass(2.0)
+    assert_allclose(chain.get_links_mass(), [[1.25, 0.75]] * 4, tol=tol)
 
     # An inertial property belongs to the model, so a reset restores the configuration the scene was built at and
     # leaves the mass it now runs with alone.
