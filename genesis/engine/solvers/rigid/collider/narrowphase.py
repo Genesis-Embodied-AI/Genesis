@@ -1954,6 +1954,10 @@ def func_convex_convex_contact(
                                 )
                                 is_mpr_updated = True
 
+                        if not is_col and mpr_state.portal_status[i_b] == PORTAL_STATUS.UNCONVERGED:
+                            # Portal discovery hit its cap: the pair is dropped for this step and the env is flagged.
+                            errno[i_b] = errno[i_b] | array_class.ErrorCode.UNCONVERGED_CONTACT_PORTAL
+
                         if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
                             prefer_gjk = func_prefer_gjk_refinement(
                                 i_pair,
@@ -2541,6 +2545,7 @@ def _func_multicontact_mpr(
                 gb_pos_original, gb_quat_original, contact0_pos, gu.qd_inv_quat(qrot)
             )
 
+            mpr_state.portal_status[i_scratch] = PORTAL_STATUS.NONE
             is_col, normal, contact_pos, penetration, _used_gjk = _func_multicontact_run_detection(
                 i_ga,
                 i_gb,
@@ -2569,6 +2574,10 @@ def _func_multicontact_mpr(
                 ),
                 is_initial_detection=False,
             )
+            if not is_col and mpr_state.portal_status[i_scratch] == PORTAL_STATUS.UNCONVERGED:
+                # Portal discovery hit its cap (and the GJK fallback found nothing either): the perturbed contact is
+                # dropped for this step and the env is flagged.
+                errno[i_b] = errno[i_b] | array_class.ErrorCode.UNCONVERGED_CONTACT_PORTAL
 
             if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
                 if is_col:
@@ -2975,6 +2984,10 @@ def _func_narrowphase_contact0(
                                 collider_static_config,
                             )
                             is_mpr_updated = True
+
+                    if not is_col and mpr_state.portal_status[flat_idx] == PORTAL_STATUS.UNCONVERGED:
+                        # Portal discovery hit its cap: the pair is dropped for this step and the env is flagged.
+                        errno[i_b] = errno[i_b] | array_class.ErrorCode.UNCONVERGED_CONTACT_PORTAL
 
                     if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
                         prefer_gjk = func_prefer_gjk_refinement(

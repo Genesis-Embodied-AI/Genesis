@@ -277,11 +277,22 @@ def mpr_refine_portal(
     collider_static_config: qd.template(),
 ):
     ret = 1
+    iterations = 0
     while True:
         direction = mpr_portal_dir(i_ga, i_gb, i_b, mpr_state)
 
         if mpr_portal_encapsules_origin(i_ga, i_gb, i_b, direction, mpr_state, collider_info):
             ret = 0
+            break
+
+        iterations += 1
+        if iterations > collider_info.mpr.CCD_ITERATIONS[None]:
+            # Same bound as the refinement in mpr_find_penetration (and libccd's): a portal that keeps expanding by
+            # rounding-sized steps without ever encapsulating the origin or reaching the tolerance would otherwise
+            # spin forever, which wedges the whole GPU kernel. Report it as no portal, with a status the callers can
+            # tell from a genuine miss.
+            mpr_state.portal_status[i_b] = PORTAL_STATUS.UNCONVERGED
+            ret = -1
             break
 
         v, v1, v2 = compute_support(

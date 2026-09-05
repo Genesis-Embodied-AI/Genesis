@@ -1407,3 +1407,129 @@ def test_neutral_self_collision_masks_across_merged_entities(merged_overlapping_
     palm_geom = hand.get_link("palm").geoms[0].idx
     assert_equal(collision_pair_idx[a2_geom, palm_geom], -1)
     assert_equal(collision_pair_idx[palm_geom, a2_geom], -1)
+
+
+def _mpr_refine_portal_with_stubbed_predicates(queue):
+    """Call mpr_refine_portal on a portal that can never succeed and report its return value.
+
+    Runs in a child process: without an iteration cap the loop never returns, and only the parent can time that out.
+    The three predicates that end the loop are stubbed so that every iteration expands the portal again, which is
+    what a portal that keeps growing by rounding-sized steps does on real geometry.
+    """
+    import quadrants as qd
+
+    import genesis as gs
+    import genesis.utils.array_class as array_class
+    from genesis.engine.solvers.rigid.collider import mpr
+    from genesis.engine.solvers.rigid.collider.constants import PORTAL_STATUS
+
+    gs.init(backend=gs.cpu, logging_level="warning")
+
+    scene = gs.Scene(rigid_options=gs.options.RigidOptions(use_gjk_collision=False), show_viewer=False)
+    scene.add_entity(gs.morphs.Plane())
+    box = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.5)))
+    scene.build(n_envs=1)
+    solver = scene.sim.rigid_solver
+    collider = solver.collider
+
+    @qd.func
+    def never_encapsulates_origin(
+        i_ga, i_gb, i_b, direction, mpr_state: array_class.MPRState, collider_info: array_class.ColliderInfo
+    ):
+        return False
+
+    @qd.func
+    def always_can_encapsule_origin(v, direction, collider_info: array_class.ColliderInfo):
+        return True
+
+    @qd.func
+    def never_reaches_tolerance(
+        i_ga, i_gb, i_b, ccd_tol, v, direction, mpr_state: array_class.MPRState, collider_info: array_class.ColliderInfo
+    ):
+        return False
+
+    mpr.mpr_portal_encapsules_origin = never_encapsulates_origin
+    mpr.mpr_portal_can_encapsule_origin = always_can_encapsule_origin
+    mpr.mpr_portal_reach_tolerance = never_reaches_tolerance
+
+    @qd.kernel
+    def refine_portal(
+        i_g: int,
+        pos: qd.types.ndarray(),
+        quat: qd.types.ndarray(),
+        collider_state: array_class.ColliderState,
+        mpr_state: array_class.MPRState,
+        dyn_info: array_class.DynInfo,
+        collider_info: array_class.ColliderInfo,
+        rigid_config: qd.template(),
+        collider_static_config: qd.template(),
+        out: qd.types.ndarray(),
+    ):
+        pos_a = qd.Vector([pos[0], pos[1], pos[2]])
+        quat_a = qd.Vector([quat[0], quat[1], quat[2], quat[3]])
+        # A non-degenerate seed portal, so the direction and support queries are well defined.
+        mpr_state.simplex_support.v[0, 0] = qd.Vector([0.0, 0.0, 0.0])
+        mpr_state.simplex_support.v[1, 0] = qd.Vector([0.1, 0.0, 0.0])
+        mpr_state.simplex_support.v[2, 0] = qd.Vector([0.0, 0.1, 0.0])
+        mpr_state.simplex_support.v[3, 0] = qd.Vector([0.0, 0.0, 0.1])
+        mpr_state.simplex_size[0] = 4
+        out[0] = mpr.mpr_refine_portal(
+            i_g,
+            i_g,
+            0,
+            1e-6,
+            pos_a,
+            quat_a,
+            pos_a,
+            quat_a,
+            collider_state,
+            mpr_state,
+            dyn_info,
+            collider_info,
+            rigid_config,
+            collider_static_config,
+        )
+
+    mpr_state = collider._mpr._mpr_state
+    out = qd.ndarray(qd.i32, shape=(1,))
+    refine_portal(
+        box.geoms[0].idx,
+        box.get_pos()[0].cpu().numpy().astype(np.float32),
+        box.get_quat()[0].cpu().numpy().astype(np.float32),
+        collider._collider_state,
+        mpr_state,
+        solver.dyn_info,
+        collider._collider_info,
+        solver.rigid_config,
+        collider._collider_static_config,
+        out,
+    )
+    qd.sync()
+    queue.put((int(out.to_numpy()[0]), int(mpr_state.portal_status.to_numpy()[0]), int(PORTAL_STATUS.UNCONVERGED)))
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_mpr_portal_discovery_is_bounded():
+    """The MPR portal-discovery loop must return on a portal that never converges.
+
+    Regression test for genesis-world#3314: 'mpr_refine_portal' had no iteration cap (unlike the refinement loop in
+    'mpr_find_penetration' and libccd), so a portal that kept expanding by rounding-sized steps spun one GPU lane
+    forever and wedged the whole narrowphase kernel. With the cap it reports 'no portal' and marks the portal
+    UNCONVERGED after CCD_ITERATIONS iterations.
+    """
+    import multiprocessing
+
+    ctx = multiprocessing.get_context("spawn")
+    queue = ctx.Queue()
+    proc = ctx.Process(target=_mpr_refine_portal_with_stubbed_predicates, args=(queue,))
+    proc.start()
+    proc.join(timeout=300.0)
+    if proc.is_alive():
+        proc.kill()
+        proc.join()
+        pytest.fail("mpr_refine_portal did not return within 300 s: the portal-discovery loop is unbounded.")
+    assert proc.exitcode == 0, f"child process failed with exit code {proc.exitcode}"
+    ret, status, unconverged = queue.get(timeout=10.0)
+    assert ret == -1
+    assert status == unconverged

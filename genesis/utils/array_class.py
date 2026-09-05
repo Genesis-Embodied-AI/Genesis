@@ -89,6 +89,10 @@ class ErrorCode(IntEnum):
     INVALID_CONTACT_NAN = 0b00000000000000000000000000010000
     INVALID_FORCE_NAN = 0b00000000000000000000000000100000
     INVALID_ACC_NAN = 0b00000000000000000000000001000000
+    # MPR portal discovery hit its iteration cap for a pair of this env, and that pair was reported as not colliding
+    # for the step. Exposed through 'RigidSolver.get_error_envs_mask' only: the step is still valid, so 'check_errno'
+    # does not raise on it.
+    UNCONVERGED_CONTACT_PORTAL = 0b00000000000000000000000010000000
 
 
 # =========================================== RigidInfo ===========================================
