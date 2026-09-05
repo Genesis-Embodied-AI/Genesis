@@ -73,7 +73,9 @@ def build_model(
     if isinstance(xml, (str, Path, urdfpy.URDF)):
         if isinstance(xml, urdfpy.URDF):
             is_urdf_file = True
-            asset_path = get_assets_dir()
+            # An in-memory model resolves its relative mesh paths against the working directory, as the URDF pass does
+            # (see parse_urdf in urdf.py), so that both passes read the same files.
+            asset_path = os.getcwd()
             root = xml._unparse(asset_path)
             mjcf = ET.SubElement(root, "mujoco")
         else:

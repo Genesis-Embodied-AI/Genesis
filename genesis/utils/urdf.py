@@ -148,7 +148,9 @@ def parse_urdf(morph, surface):
             robot = urdfpy.URDF.load(path)
     else:
         parent_dir = os.getcwd()
-        robot = morph.file
+        # The caller's model is parsed on a copy: the scaling and fixed-link merging below write into it, and the MuJoCo
+        # pass parses the same object again (see parse_xml in mjcf.py).
+        robot = morph.file.copy()
 
     # Merge links connected by fixed joints
     if morph.merge_fixed_links:

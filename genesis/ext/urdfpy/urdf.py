@@ -710,7 +710,7 @@ class Mesh(URDFType):
             for i, m in enumerate(meshes):
                 meshes[i] = m.apply_transform(sm)
         base, fn = os.path.split(self.filename)
-        fn = "{}{}".format(prefix, self.filename)
+        fn = "{}{}".format(prefix, fn)
         m = Mesh(
             filename=os.path.join(base, fn),
             scale=(self.scale.copy() if self.scale is not None else None),
@@ -1345,7 +1345,7 @@ class Inertial(URDFType):
         """
         if mass is None:
             mass = self.mass
-        if origin is None:
+        if origin is None and self.origin is not None:
             origin = self.origin.copy()
         if inertia is None:
             inertia = self.inertia.copy()

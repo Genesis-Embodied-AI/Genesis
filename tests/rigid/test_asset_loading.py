@@ -304,9 +304,12 @@ def test_parsing_inertia_defaults(
             merge_fixed_links=False,
         ),
     )
+    # The two merged chains are built from one in-memory model, which parsing must leave intact for the second one.
+    chain_root = ET.fromstring(implicit_inertial_origin_chain)
+    chain_model = urdfpy.URDF._from_xml(chain_root, chain_root, get_assets_dir())
     entity_chain_merged = scene.add_entity(
         morph=gs.morphs.URDF(
-            file=implicit_inertial_origin_chain,
+            file=chain_model,
             pos=(0.8, 2.0, 0.5),
         ),
     )
@@ -320,7 +323,7 @@ def test_parsing_inertia_defaults(
     )
     entity_chain_merged_unaligned = scene.add_entity(
         morph=gs.morphs.URDF(
-            file=implicit_inertial_origin_chain,
+            file=chain_model,
             pos=(1.6, 1.0, 0.5),
             align=False,
         ),
@@ -926,9 +929,10 @@ def test_color_overwrite(overwrite, show_viewer):
     [
         pytest.param("xml/franka_emika_panda/panda.xml", marks=pytest.mark.slow),
         "urdf/go2/urdf/go2.urdf",
+        "urdf/panda_bullet/panda.urdf",
     ],
 )
-def test_robot_scale_and_dofs_armature(xml_path, tol):
+def test_robot_scale_and_dofs_armature(xml_path, monkeypatch, tol):
     ROBOT_SCALES = (1.0, 0.2, 5.0)
 
     scene = gs.Scene(
@@ -941,19 +945,29 @@ def test_robot_scale_and_dofs_armature(xml_path, tol):
         show_viewer=False,
         show_FPS=False,
     )
-    for i, scale in enumerate(ROBOT_SCALES):
-        morph_kwargs = dict(file=xml_path, scale=scale)
-        if xml_path.endswith(".xml"):
-            morph = gs.morphs.MJCF(**morph_kwargs)
-        else:
-            morph = gs.morphs.URDF(**morph_kwargs)
-        scene.add_entity(morph)
+    files = [xml_path]
+    if xml_path.endswith(".urdf"):
+        # The asset is also loaded as one in-memory model shared by an entity at every scale, which parsing must leave
+        # intact for the next one. An in-memory model resolves its relative mesh paths against the working directory.
+        urdf_path = os.path.join(get_assets_dir(), xml_path)
+        monkeypatch.chdir(os.path.dirname(urdf_path))
+        files.append(urdfpy.URDF.load(urdf_path))
+    robots_scale = []
+    for scale in ROBOT_SCALES:
+        for file in files:
+            morph_kwargs = dict(file=file, scale=scale)
+            if xml_path.endswith(".xml"):
+                morph = gs.morphs.MJCF(**morph_kwargs)
+            else:
+                morph = gs.morphs.URDF(**morph_kwargs)
+            scene.add_entity(morph)
+            robots_scale.append(scale)
     scene.build()
 
     # Disable armature because it messes up with the mass matrix.
     # It is also a good opportunity to check that it updates 'invweight' and meaninertia accordingly.
     attr_orig = {}
-    for scale, robot in zip(ROBOT_SCALES, scene.entities):
+    for scale, robot in zip(robots_scale, scene.entities):
         links_invweight = robot.get_links_invweight()
         dofs_invweight = robot.get_dofs_invweight()
         robot.set_dofs_armature(torch.ones((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
