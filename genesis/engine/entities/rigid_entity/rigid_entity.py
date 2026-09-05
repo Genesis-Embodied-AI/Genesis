@@ -440,6 +440,12 @@ class KinematicEntity(Entity):
                         stated_mass, stated_com, stated_quat, stated_inertia, *hint
                     )
 
+        # The anchor of an aligned free root is the center of mass and principal axes of the body the build described,
+        # and the attached links now extend that body. Its frame and qpos stay where they are, so the anchor stops
+        # standing for the body: the mass block keeps its off-diagonal terms and the midpoint pass turns the body about
+        # its actual center of mass (see '_init_mass_mat' and 'func_midpoint_is_aligned').
+        root_link.desc.is_aligned = False
+
         # Apply the explicit mounting transform. Forward kinematics interprets the base link's local pose relative to
         # its (new) parent link, so overwriting it here mounts the entity at (pos, quat) in the parent link frame.
         # Compose with the morph frame offset exactly as '_align_link' does for the morph pose at load time, so the
