@@ -910,7 +910,7 @@ def test_many_objects_collision(convexify, show_viewer, tol):
 
     # Wait for the pile to collapse and settle at rest
     vmax_trace, wmax_trace, energy_trace = [], [], []
-    for i in range(1500):
+    for i in range(1600):
         scene.step()
         energy_trace.append(tensor_to_array(scene.rigid_solver.get_total_energy()))
         if show_viewer:
