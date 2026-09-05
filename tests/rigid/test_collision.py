@@ -615,7 +615,7 @@ def test_contact_dedup(surface_kind, show_viewer):
         scene.step()
         if i == 20:
             sphere.set_dofs_velocity(0.2, dofs_idx_local=sphere.dof_start)
-        n_contacts = scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()
+        n_contacts = scene.rigid_solver.collider.collider_state.n_contacts.to_numpy()
         assert np.all(n_contacts == 1), f"Expected 1 contact after dedup, got {n_contacts}"
 
 
@@ -948,7 +948,7 @@ def test_contact_pruning_degenerated_hull(model_name, xml_path, show_viewer):
         scene.step()
     for _ in range(300):
         scene.step()
-        n_contacts = scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()
+        n_contacts = scene.rigid_solver.collider.collider_state.n_contacts.to_numpy()
         assert n_contacts.all()
         if model_name.startswith("side_by_side"):
             assert (n_contacts == 4).all()
@@ -1023,14 +1023,14 @@ def test_num_contact_overflow(scene_kind, max_collision_pairs, max_contacts, err
                 ),
             )
     scene.build()
-    assert scene.rigid_solver.collider._collider_static_config.has_prunable_contacts
+    assert scene.rigid_solver.collider.collider_config.has_prunable_contacts
 
     # The resolved contact budget must match the documented resolution: 32 contact points per link pair floored at
     # 512 when automatic (every link pair here has more than 32 candidate contact points), the explicit value clamped
     # to the candidate buffer size otherwise. The constraint buffers are sized accordingly, with 4 constraint rows
     # per contact point (all joints are free so there is no joint-limit term).
     solver = scene.rigid_solver
-    collider_info = solver.collider._collider_info
+    collider_info = solver.collider.collider_info
     if max_contacts is None:
         n_link_pairs = (N_BOWLS + 1) * N_BOWLS // 2
         expected_max_contacts = max(32 * n_link_pairs, 512)
@@ -1402,7 +1402,7 @@ def test_neutral_self_collision_masks_across_merged_entities(merged_overlapping_
     assert set(geoms_root_idx[arm_geoms].tolist()) == set(geoms_root_idx[hand_geoms].tolist())
 
     # The palm overlaps the non-adjacent a2 link at qpos0, so the neutral-overlap check masks this cross-entity pair.
-    collision_pair_idx = scene.rigid_solver.collider._collider_info.collision_pair_idx.to_numpy()
+    collision_pair_idx = scene.rigid_solver.collider.collider_info.collision_pair_idx.to_numpy()
     a2_geom = arm.get_link("a2").geoms[0].idx
     palm_geom = hand.get_link("palm").geoms[0].idx
     assert_equal(collision_pair_idx[a2_geom, palm_geom], -1)

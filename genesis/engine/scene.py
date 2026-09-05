@@ -1,8 +1,13 @@
 import collections.abc
 import dataclasses
+import hashlib
+import io
+import json
+import math
 import os
 import sys
 import weakref
+import zipfile
 from collections import Counter
 from typing import TYPE_CHECKING, Callable, Iterable, Literal, overload
 
@@ -18,7 +23,7 @@ from genesis.engine.entities.base_entity import Entity, EntityDescription
 from genesis.engine.entities.rigid_entity import KinematicEntity
 from genesis.engine.force_fields import ForceField
 from genesis.engine.materials.base import EntityT, Material
-from genesis.engine.states.solvers import SimState
+from genesis.engine.states.solvers import SimState, SimulatorCheckpoint
 from genesis.options import (
     SceneOptions,
     BaseCouplerOptions,
@@ -42,8 +47,9 @@ from genesis.options.surfaces import Surface
 from genesis.recorders import RecorderManager
 from genesis.repr_base import RBC
 from genesis.utils import serialization
-from genesis.utils.serialization import pixel_less_textures
+from genesis.utils.array_class import check_data
 from genesis.utils.misc import sanitize_index, tensor_to_array
+from genesis.utils.serialization import ARRAY_MEMBER, MANIFEST_NAME, pixel_less_textures
 from genesis.utils.tools import FPSTracker
 from genesis.utils.warnings import warn_once
 from genesis.vis import Visualizer
@@ -69,6 +75,53 @@ class SceneDescription:
 
     options: SceneOptions
     entities: list[EntityDescription] = dataclasses.field(default_factory=list)
+
+
+@dataclasses.dataclass
+class EnvironmentLayout:
+    """The environment layout given to 'Scene.build'. It sizes every array of the state."""
+
+    n_envs: int
+    env_spacing: tuple[float, float]
+    n_envs_per_row: int
+    center_envs_at_origin: bool
+
+
+@dataclasses.dataclass
+class SceneCheckpoint:
+    """The checkpoint of a built scene, which 'Scene.__getstate__' returns and a pickled scene serializes."""
+
+    scene: SceneDescription
+    digest: str
+    layout: EnvironmentLayout
+    sim: SimulatorCheckpoint
+
+
+def description_digest(desc: SceneDescription) -> str:
+    """Digest what a description states of the physics: its entities and every option group but the visual ones, which
+    'Scene.load' replaces. Two scenes sharing the digest allocate the same state, so a record of one restores into the
+    other. The Genesis version and sources are left out, so a record survives the code moving on.
+
+    The digest exports the description in memory, meshes included, so it is taken once per built scene and once per
+    trajectory opened, never per restore.
+    """
+    defaults = SceneOptions()
+    visual = {
+        "vis": defaults.vis,
+        "viewer": defaults.viewer,
+        "renderer": defaults.renderer,
+        "profiling": defaults.profiling,
+    }
+    buffer = io.BytesIO()
+    serialization.export(buffer, {"scene": dataclasses.replace(desc, options=desc.options.model_copy(update=visual))})
+    with zipfile.ZipFile(buffer) as archive:
+        manifest = json.loads(archive.read(MANIFEST_NAME))
+        arrays = np.load(io.BytesIO(archive.read(ARRAY_MEMBER)))
+        digest = hashlib.sha256(json.dumps((manifest["schema"], manifest["held"]), sort_keys=True).encode())
+        for name in sorted(arrays):
+            digest.update(f"{name}{arrays[name].shape}{arrays[name].dtype.str}".encode())
+            digest.update(arrays[name].tobytes())
+    return digest.hexdigest()
 
 
 @gs.assert_initialized
@@ -202,6 +255,7 @@ class Scene(RBC):
 
         self._uid = gs.UID()
         self._is_built = False
+        self._desc_digest: str | None = None
         self._pre_step_callbacks: list = []
 
         gs.logger.info(f"Scene ~~~<{self._uid}>~~~ created.")
@@ -778,6 +832,8 @@ class Scene(RBC):
             # reset state
             self._reset()
 
+            # The description is fixed once built, so its digest is taken once (see 'description_digest')
+            self._desc_digest = description_digest(self._desc)
             self._is_built = True
 
         with gs.logger.timer("Compiling simulation kernels..."):
@@ -811,11 +867,12 @@ class Scene(RBC):
         self._envs_idx = torch.arange(self._B, dtype=gs.tc_int, device=gs.device)
 
         if self.n_envs_per_row is None:
-            self.n_envs_per_row = np.ceil(np.sqrt(self._B)).astype(int)
+            self.n_envs_per_row = math.ceil(math.sqrt(self._B))
 
         # compute offset values for visualizing each env
         if not isinstance(env_spacing, (list, tuple)) or len(env_spacing) != 2:
             gs.raise_exception("`env_spacing` should be a tuple of length 2.")
+        self._layout = EnvironmentLayout(n_envs, tuple(env_spacing), self.n_envs_per_row, center_envs_at_origin)
         offset_x = (np.arange(self._B) // self.n_envs_per_row) * self.env_spacing[0]
         offset_y = (np.arange(self._B) % self.n_envs_per_row) * self.env_spacing[1]
         offset_z = np.zeros((self._B,))
@@ -875,7 +932,10 @@ class Scene(RBC):
             self._sim.reset(state, envs_idx)
         else:
             self._init_state = self._get_state()
+        self._restart()
 
+    def _restart(self):
+        """Restart what surrounds the state: the gradient tape, the cache of the visualizer and the emitters."""
         self._forward_ready = True
         self._reset_grad()
 
@@ -1395,28 +1455,33 @@ class Scene(RBC):
         self._backward_ready = False
         self._forward_ready = False
 
-    def export(self, path: str | os.PathLike) -> None:
-        """Write a portable copy of this scene to a file that anyone can open.
+    @gs.assert_built
+    def get_time(self, envs_idx=None):
+        """
+        Get the simulated time of each environment, in seconds.
 
-        What is written is what the scene was authored from and what its build resolved, so the file stands on its
-        own: opening it reads no mesh, no model file and no texture from disk, and creates only the options,
-        descriptions and meshes Genesis declares. The file is therefore self-contained enough to attach to a bug
-        report.
-
-        A scene opened from a file stands at the configuration its entities were given rather than where the
-        simulation had run to, so the simulated state has to be reproduced by stepping it again. Adding an entity
-        resolves its description, so a scene is exported before it is built as readily as after.
-
-        Only a rigid or a kinematic entity carries a description. A scene
-        holding anything that alters the simulation raises, naming it: an emitter and a force field. Everything else
-        a description leaves out is written without, with a warning naming it: a camera, a recorder, a sensor, a
-        callback Genesis calls at every step, a texture read from an HDR or EXR file, and the visual vertices an
-        entity was given at runtime.
+        Environments are stepped and reset independently, so each one carries its own simulated time. The number of
+        `scene.step()` calls is a separate scalar, `Simulator.cur_step_global`.
 
         Parameters
         ----------
-        path : str or os.PathLike
-            Where to write the file.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments are returned. Defaults to None.
+
+        Returns
+        -------
+        time : torch.Tensor, shape (n_envs,) or scalar
+            The simulated time of each environment.
+        """
+        return self._sim.get_time(envs_idx)
+
+    # ------------------------------------------------------------------------------------
+    # ----------------------------------- utilities --------------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _reject_unexportable(self) -> None:
+        """Raise when the scene holds an entity, an emitter or a force field no description covers, and warn about what
+        'export' leaves out.
         """
         # A scene holding what alters the simulation is rejected, since a file leaving it out would restore other
         # physics. Everything else is left out with a warning: what observes or draws the simulation, and every
@@ -1451,6 +1516,30 @@ class Scene(RBC):
                 )
                 report(f"A scene holding {listing} {ending}")
 
+    def export(self, path: str | os.PathLike) -> None:
+        """Write a portable copy of this scene to a file that anyone can open.
+
+        What is written is what the scene was authored from and what its build resolved, so the file stands on its
+        own: opening it reads no mesh, no model file and no texture from disk, and creates only the options,
+        descriptions and meshes Genesis declares. The file is therefore self-contained enough to attach to a bug
+        report.
+
+        A scene opened from a file stands at the configuration its entities were given rather than where the
+        simulation had run to, so the simulated state has to be reproduced by stepping it again. Adding an entity
+        resolves its description, so a scene is exported before it is built as readily as after.
+
+        Only a rigid or a kinematic entity carries a description. A scene
+        holding anything that alters the simulation raises, naming it: an emitter and a force field. Everything else
+        a description leaves out is written without, with a warning naming it: a camera, a recorder, a sensor, a
+        callback Genesis calls at every step, a texture read from an HDR or EXR file, and the visual vertices an
+        entity was given at runtime.
+
+        Parameters
+        ----------
+        path : str or os.PathLike
+            Where to write the file.
+        """
+        self._reject_unexportable()
         serialization.export(path, {"scene": self.desc})
 
     @classmethod
@@ -1473,18 +1562,95 @@ class Scene(RBC):
         scene : Scene
             The scene the file describes, holding every entity it was authored with and waiting to be built.
         """
-        described = serialization.load(path, {"scene": SceneDescription})["scene"]
-        scene = cls(show_viewer=show_viewer, options=described.options)
+        return cls.from_description(serialization.load(path, {"scene": SceneDescription})["scene"], show_viewer)
 
+    @classmethod
+    def from_description(cls, described: SceneDescription, show_viewer: bool = False) -> "Scene":
+        """Create the scene a description states, holding every entity it names and waiting to be built.
+
+        Parameters
+        ----------
+        described : SceneDescription
+            The scene to create, as 'Scene.desc' describes one.
+        show_viewer : bool, optional
+            Whether to open an interactive viewer on the scene. Defaults to False.
+
+        Returns
+        -------
+        scene : Scene
+            The created scene.
+        """
+        scene = cls(show_viewer=show_viewer, options=described.options)
         # 'add_entity' would resolve a material and a surface the description already holds, and read the asset it
         # replaces.
         for desc in described.entities:
             scene._sim._add_entity(desc=desc)
         return scene
 
-    # ------------------------------------------------------------------------------------
-    # ----------------------------------- utilities --------------------------------------
-    # ------------------------------------------------------------------------------------
+    @gs.assert_built
+    def __getstate__(self) -> SceneCheckpoint:
+        """Return the SceneCheckpoint of this built scene, for '__setstate__' to restore.
+
+        The description travels by reference and the arrays as copies made where they live (see 'Solver.__getstate__'),
+        so a save and a restore within one process cost one copy on the device. Pickling a scene reads this record,
+        and unpickling creates and builds the scene, then restores the record. What a description leaves out is left
+        out of a copy the same way, and reported as 'export' reports it.
+
+        Returns
+        -------
+        state : SceneCheckpoint
+            The scene as its description, the environment layout it was built with, and the state of its simulator.
+        """
+        self._reject_unexportable()
+        return SceneCheckpoint(
+            scene=self.desc, digest=self._desc_digest, layout=self._layout, sim=self._sim.__getstate__()
+        )
+
+    def __reduce__(self):
+        return (self._from_state, (self.__getstate__(),))
+
+    @classmethod
+    def _from_state(cls, state: SceneCheckpoint) -> "Scene":
+        """Create, build and restore the scene a checkpoint describes. '__reduce__' names it as the loader."""
+        scene = cls.from_description(state.scene)
+        scene.build(**dataclasses.asdict(state.layout))
+        scene.__setstate__(state)
+        return scene
+
+    @gs.assert_built
+    def __setstate__(self, state: SceneCheckpoint) -> None:
+        """Put this built scene in the state a checkpoint holds, as if it had run to there.
+
+        The scene must be built from the description the state was read from, with the same environment layout, since
+        the arrays written back are the ones that build allocates. A state from another layout is rejected, and a state
+        from another build by the names of the arrays that differ. Everything around the state restarts as under
+        'reset': the gradient tape, the sensors and the recorders forget the run that led here, and the visualizer
+        redraws.
+
+        Parameters
+        ----------
+        state : SceneCheckpoint
+            The state to put back, as read by '__getstate__'.
+        """
+        if state.layout != self._layout:
+            gs.raise_exception(
+                f"The state was read from a scene built with {state.layout} and this one was built with {self._layout}."
+            )
+        if state.digest != self._desc_digest:
+            gs.raise_exception("The state was read from another scene: its entities or physics options differ.")
+        # Every solver checks its record before anything is touched, so a record from another scene leaves this one as
+        # it was
+        solvers = {type(solver).__name__: solver for solver in self._sim.active_solvers}
+        if set(state.sim.solvers) != set(solvers):
+            gs.raise_exception(
+                f"The checkpoint holds {sorted(state.sim.solvers)} where this scene simulates {sorted(solvers)}."
+            )
+        for name, solver in solvers.items():
+            record = state.sim.solvers[name]
+            check_data((item for item in solver.data if item.kind in record.kinds), record.arrays)
+        self._sim.__setstate__(state.sim)
+        self._restart()
+        self._recorder_manager.reset()
 
     def _sanitize_envs_idx(
         self, envs_idx: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None
@@ -1512,26 +1678,6 @@ class Scene(RBC):
             return self._envs_idx[envs_idx : envs_idx + 1]
 
         return sanitize_index(envs_idx, -1, self.n_envs, 0, "envs_idx")
-
-    @gs.assert_built
-    def get_time(self, envs_idx=None):
-        """
-        Get the simulated time of each environment, in seconds.
-
-        Environments are stepped and reset independently, so each one carries its own simulated time. The number of
-        `scene.step()` calls is a separate scalar, `Simulator.cur_step_global`.
-
-        Parameters
-        ----------
-        envs_idx : None | array_like, optional
-            The indices of the environments. If None, all environments are returned. Defaults to None.
-
-        Returns
-        -------
-        time : torch.Tensor, shape (n_envs,) or scalar
-            The simulated time of each environment.
-        """
-        return self._sim.get_time(envs_idx)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

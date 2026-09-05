@@ -353,7 +353,7 @@ class SAPCoupler(RBC):
         self.rigid_volume_elems_geom_idx = qd.field(gs.qd_int, shape=(self.n_rigid_volume_elems,))
         self.rigid_volume_elems_geom_idx.from_numpy(rigid_volume_elems_geom_idx_np)
         # FIXME: Convert collision_pair_idx to field here because SAPCoupler cannot support ndarray/field switch yet
-        np_collision_pair_idx = self.rigid_solver.collider._collider_info.collision_pair_idx.to_numpy()
+        np_collision_pair_idx = self.rigid_solver.collider.collider_info.collision_pair_idx.to_numpy()
         self.rigid_collision_pair_idx = qd.field(gs.qd_int, shape=np_collision_pair_idx.shape)
         self.rigid_collision_pair_idx.from_numpy(np_collision_pair_idx)
         self.rigid_pressure_field = qd.field(gs.qd_float, shape=(self.n_rigid_volume_verts,))

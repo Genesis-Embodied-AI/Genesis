@@ -1,7 +1,8 @@
 import dataclasses
 import math
+from collections.abc import Iterable, Iterator, Mapping
 from enum import IntEnum
-from typing import NamedTuple
+from typing import ClassVar, NamedTuple
 
 import quadrants as qd
 from typing_extensions import dataclass_transform  # Made it into standard lib from Python 3.12
@@ -9,6 +10,7 @@ import numpy as np
 import torch
 
 import genesis as gs
+from genesis.utils.misc import qd_to_torch
 
 
 def _tensor_backend():
@@ -77,6 +79,126 @@ def V_SCALAR_FROM(dtype, value):
     return data
 
 
+class DataKind(IntEnum):
+    """The kind of every array or static config a solver yields (see 'Solver.data'), which checkpoints and trajectories
+    select by.
+
+    CONFIG is a static config of plain Python natives that keys the compiled kernels, recorded as provenance only.
+    CONSTANT is an array the build computes from the scene description once. INFO is a model parameter the setters
+    write, such as mass, friction, gains or limits. STATE is the reduced-space configuration, velocities,
+    accelerations, control inputs, contacts and constraint solution. WARMSTART is a cache the next solve reads to
+    reproduce the previous result bit-for-bit. Forward kinematics and dynamics recompute DERIVED from STATE. A step or
+    a solve writes SCRATCH before it reads it.
+    """
+
+    CONFIG = 0
+    CONSTANT = 1
+    INFO = 2
+    STATE = 3
+    WARMSTART = 4
+    DERIVED = 5
+    SCRATCH = 6
+
+
+# Metadata key under which 'of_kind' stores the kind of a field.
+KIND = "kind"
+# The kinds a checkpoint carries: INFO, STATE, WARMSTART and DERIVED. The static configs travel in a separate field of
+# the checkpoint as provenance.
+CHECKPOINT_KINDS = frozenset((DataKind.INFO, DataKind.STATE, DataKind.WARMSTART, DataKind.DERIVED))
+
+
+def of_kind(kind: DataKind):
+    """Declare a struct field whose kind differs from the default its struct states (see DataKind)."""
+    return dataclasses.field(metadata={KIND: kind})
+
+
+class DataItem(NamedTuple):
+    """One array or static config a solver holds, under the dotted name of the slot and fields reaching it."""
+
+    name: str
+    value: object
+    kind: DataKind
+
+
+def iter_data(struct, name: str, kind: DataKind | None = None) -> Iterator[DataItem]:
+    """Yield a DataItem for every array in a struct of arrays, named by 'name' plus field names joined with dots.
+
+    Structs are the frozen dataclasses and named tuples of this module, nested to any depth. The class attribute
+    'kind' gives the default kind of a struct's fields, and 'of_kind' on a field overrides it. An override on a
+    struct-valued field applies to every array of that struct. An array carrying gradients yields them as one more item
+    of its kind, named 'grad'. A static config yields one item of kind CONFIG, and anything else raises and names the
+    offending slot.
+    """
+    if isinstance(struct, (qd.Tensor, qd.Field, qd.Ndarray)):
+        if kind is None:
+            gs.raise_exception(f"'{name}' holds an array that no struct or annotation gives a kind.")
+        yield DataItem(name, struct, kind)
+        if struct.has_grad():
+            yield DataItem(f"{name}.grad", struct.grad, kind)
+    elif isinstance(type(struct), AutoInitMeta):
+        yield DataItem(name, struct, DataKind.CONFIG)
+    elif dataclasses.is_dataclass(struct) or isinstance(struct, tuple):
+        if dataclasses.is_dataclass(struct):
+            values = vars(struct)
+            members = [
+                (field.name, values[field.name], field.metadata.get(KIND)) for field in dataclasses.fields(struct)
+            ]
+        else:
+            members = [(member, value, None) for member, value in zip(struct._fields, struct)]
+        for member, value, stated_kind in members:
+            if stated_kind is None and kind is None and isinstance(value, (qd.Tensor, qd.Field, qd.Ndarray)):
+                stated_kind = type(struct).kind
+            yield from iter_data(value, f"{name}.{member}", kind if stated_kind is None else stated_kind)
+    else:
+        gs.raise_exception(f"'{name}' holds a {type(struct).__name__} where an array or a struct of arrays stands.")
+
+
+def check_data(items: Iterable[DataItem], values: Mapping[str, np.ndarray | torch.Tensor]) -> list[tuple]:
+    """Return the (array, value) pairs 'fill_data' writes, rejecting a record made for another scene.
+
+    A value with the array's shape fills it, cast to its dtype, so a one-byte boolean fills an int32 flag. A floating
+    value for an integer array, or the reverse, raises. 'maybe_shape' shapes an unused array as (), so an array with
+    that shape on either side stays as built. Any other shape mismatch raises, since the record comes from a different
+    build. A name on one side only raises, since the record comes from another build or version.
+    """
+    items = tuple(items)
+    unshared = sorted({name for name, _, _ in items} ^ set(values))
+    if unshared:
+        gs.raise_exception(f"The record and this scene do not share {unshared}: another build or version wrote it.")
+    writes = []
+    for name, array, _ in items:
+        value = values[name]
+        element_shape = array.element_shape if isinstance(array, (qd.VectorTensor, qd.MatrixTensor)) else ()
+        if tuple(array.shape) == () or tuple(value.shape) == element_shape:
+            continue
+        shape = (*array.shape, *element_shape)
+        if tuple(value.shape) != shape:
+            gs.raise_exception(f"'{name}' is shaped {shape} here and {value.shape} in the record: another build.")
+        if isinstance(value, torch.Tensor):
+            is_real = value.dtype.is_floating_point
+        else:
+            is_real = np.issubdtype(value.dtype, np.floating)
+        if is_real != (array.dtype in qd.types.primitive_types.real_types):
+            gs.raise_exception(f"'{name}' holds {array.dtype} values here where {value.dtype} ones were recorded.")
+        writes.append((array, value))
+    return writes
+
+
+def fill_data(items: Iterable[DataItem], values: Mapping[str, np.ndarray | torch.Tensor]) -> None:
+    """Write into each array the value recorded under its name, once every value passed 'check_data', so a record
+    from another build leaves the scene as it was.
+
+    Where zero-copy views exist the values go through them, so a device-resident record stays on the device. On Metal
+    these writes stay on the torch stream, so the caller must call 'torch.mps.synchronize' once before the next kernel.
+    """
+    for array, value in check_data(items, values):
+        if gs.use_zerocopy:
+            view = qd_to_torch(array, copy=False)
+            view.copy_(torch.as_tensor(value, device=view.device))
+        else:
+            array.from_numpy(value)
+
+
 # =========================================== ErrorCode ===========================================
 
 
@@ -96,24 +218,26 @@ class ErrorCode(IntEnum):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class RigidInfo:
+    kind: ClassVar[DataKind] = DataKind.CONSTANT
+
     # *_bw: Cache for backward pass
-    n_awake_dofs: qd.Tensor
-    awake_dofs: qd.Tensor
-    n_awake_entities: qd.Tensor
-    awake_entities: qd.Tensor
-    n_awake_links: qd.Tensor
-    awake_links: qd.Tensor
-    qpos0: qd.Tensor
-    qpos: qd.Tensor
-    qpos_next: qd.Tensor
-    links_T: qd.Tensor
+    n_awake_dofs: qd.Tensor = of_kind(DataKind.STATE)
+    awake_dofs: qd.Tensor = of_kind(DataKind.STATE)
+    n_awake_entities: qd.Tensor = of_kind(DataKind.STATE)
+    awake_entities: qd.Tensor = of_kind(DataKind.STATE)
+    n_awake_links: qd.Tensor = of_kind(DataKind.STATE)
+    awake_links: qd.Tensor = of_kind(DataKind.STATE)
+    qpos0: qd.Tensor = of_kind(DataKind.INFO)
+    qpos: qd.Tensor = of_kind(DataKind.STATE)
+    qpos_next: qd.Tensor = of_kind(DataKind.SCRATCH)
+    links_T: qd.Tensor = of_kind(DataKind.DERIVED)
     envs_offset: qd.Tensor
     geoms_init_AABB: qd.Tensor
-    mass_mat: qd.Tensor
-    mass_mat_L: qd.Tensor
-    mass_mat_D_inv: qd.Tensor
-    mass_mat_tiled_scratch: qd.Tensor
-    mass_mat_mask: qd.Tensor
+    mass_mat: qd.Tensor = of_kind(DataKind.DERIVED)
+    mass_mat_L: qd.Tensor = of_kind(DataKind.DERIVED)
+    mass_mat_D_inv: qd.Tensor = of_kind(DataKind.DERIVED)
+    mass_mat_tiled_scratch: qd.Tensor = of_kind(DataKind.SCRATCH)
+    mass_mat_mask: qd.Tensor = of_kind(DataKind.STATE)
     # Per-DOF bounds of the mass block the DOF belongs to: the DOFs of its branch rooted where the fixed structure
     # ends (deeper branches stay mass-coupled to their chain and belong to the enclosing block), merged across
     # entities and kept contiguous by attach(). The assemble/factor/solve restrict to these bounds.
@@ -128,9 +252,9 @@ class RigidInfo:
     # the per-entity assemble/factor/solve iterate their blocks as one flat, autodiff-compatible loop over DOFs.
     entities_mass_block_dof_start: qd.Tensor
     entities_mass_block_dof_end: qd.Tensor
-    meaninertia: qd.Tensor
+    meaninertia: qd.Tensor = of_kind(DataKind.INFO)
     mass_parent_mask: qd.Tensor
-    gravity: qd.Tensor
+    gravity: qd.Tensor = of_kind(DataKind.INFO)
     # Runtime constants
     substep_dt: qd.Tensor
     iterations: qd.Tensor
@@ -264,6 +388,8 @@ def get_rigid_info(solver, kinematic_only):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class IslandSlices:
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     # Per-(island, env) slices into a packed id array: island i_island's items are id[start[i_island, i_b] : start +
     # n[i_island, i_b]]. curr is the write cursor the partition build advances while filling each slice; once built,
     # curr == start + n. Indexed [n_entities, B] since an env has at most n_entities islands.
@@ -287,6 +413,8 @@ def get_slices(solver, is_active=True):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class IslandState:
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     # Union-find partition of LINKS into islands. An island is a dynamic component: a maximal set of links connected
     # through the kinematic tree (a floating-base subtree) plus any contact/equality couplings. The union-find is over
     # links, with kinematic edges (link <-> parent) added alongside contact/equality edges - so a single Genesis entity
@@ -330,8 +458,8 @@ class IslandState:
     # component together as one island across steps: sleeping bodies generate no live contacts, so the contact/equality
     # union would otherwise fragment them (the kinematic edges still hold within a component). It is written at
     # hibernation time, walked at wakeup, and re-unioned by the partition build before labeling.
-    is_hibernated: qd.Tensor
-    hibernated_next_link: qd.Tensor
+    is_hibernated: qd.Tensor = of_kind(DataKind.STATE)
+    hibernated_next_link: qd.Tensor = of_kind(DataKind.STATE)
     # Compact (env, island) work-list for the cooperative per-island factor+solve. factor_worklist_size[0] is the total
     # island count across all envs (atomic-built by the partition pass); factor_worklist_i_b / factor_worklist_i_island
     # hold the env and island index of each work item. The cooperative kernel launches a static block grid and
@@ -370,7 +498,7 @@ def get_island_state(solver, collider):
         and solver.rigid_config.enable_per_island_solve
         and not solver.rigid_config.sparse_envelope
     )
-    max_candidate_contacts = max(collider._collider_info.max_candidate_contacts[None], 1)
+    max_candidate_contacts = max(collider.collider_info.max_candidate_contacts[None], 1)
     # Safe upper bound on active constraints, mirroring ConstraintSolver.len_constraints: rows_per_contact per
     # contact + joint-limit/frictionloss (<= n_dofs each) + equality rows (<= 6 each). The equality term must use the
     # candidate count (model equalities plus the dynamic-weld budget), not just the model equalities, otherwise
@@ -421,6 +549,8 @@ class IKState:
     stacks the per-target pose residuals.
     """
 
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     # Single-target spatial Jacobian (6 x n_dofs), rebuilt per target link and copied into the stacked block.
     jacobian: qd.Tensor
     # Stacked multi-target Jacobian and its transpose, feeding the damped normal-equations solve.
@@ -468,6 +598,8 @@ class IKScratchFK:
     and integrates poses on caller-owned buffers without mutating live solver state. A column is an environment.
     """
 
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     # Entity-local working configuration iterated by the solve.
     qpos: qd.Tensor
     # Link poses and joint frames placed by func_forward_kinematics_scratch, feeding the error and the Jacobian.
@@ -495,6 +627,8 @@ class IKTargets:
     orientations are vec-typed so the solver reads a target pose per (link, column) directly; the host populates
     every field before the solve.
     """
+
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
 
     # Global indices of the target links, the effective DOFs to move, and the columns (solver envs) to solve.
     links_idx: qd.Tensor
@@ -537,6 +671,8 @@ class KinematicsScratch:
     configuration so the global q indices callers already work in index it directly.
     """
 
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     jacobian: qd.Tensor
     qpos_cache: qd.Tensor
 
@@ -558,6 +694,7 @@ class WeightScratch(NamedTuple):
     hold.
     """
 
+    kind = DataKind.SCRATCH
     jac_row: qd.Tensor
     solve_out: qd.Tensor
 
@@ -576,6 +713,7 @@ class IKScratch(NamedTuple):
     entity spans; a column is an environment.
     """
 
+    kind = DataKind.SCRATCH
     state: IKState
     fk: IKScratchFK
     targets: IKTargets
@@ -597,22 +735,24 @@ def get_ik_scratch(solver):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class ConstraintState:
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     # Union-find partition of links into contact islands, read by the per-island Newton solve and hibernation.
     island: IslandState
-    is_warmstart: qd.Tensor
-    n_constraints: qd.Tensor
-    qd_n_equalities: qd.Tensor
+    is_warmstart: qd.Tensor = of_kind(DataKind.WARMSTART)
+    n_constraints: qd.Tensor = of_kind(DataKind.STATE)
+    qd_n_equalities: qd.Tensor = of_kind(DataKind.STATE)
     jac: qd.Tensor
     diag: qd.Tensor
     aref: qd.Tensor
     jac_dofs_idx: qd.Tensor
     jac_n_dofs: qd.Tensor
-    n_constraints_equality: qd.Tensor
-    n_constraints_frictionloss: qd.Tensor
+    n_constraints_equality: qd.Tensor = of_kind(DataKind.STATE)
+    n_constraints_frictionloss: qd.Tensor = of_kind(DataKind.STATE)
     # Number of elliptic-cone contact rows (rows_per_contact per contact), laid out contiguously at the start of the
     # collision segment. Zero for the pyramidal cone. The cone rows occupy
     # [ne + n_frictionloss, ne + n_frictionloss + n_cone).
-    n_constraints_cone: qd.Tensor
+    n_constraints_cone: qd.Tensor = of_kind(DataKind.STATE)
     improved: qd.Tensor
     Jaref: qd.Tensor
     Ma: qd.Tensor
@@ -628,12 +768,12 @@ class ConstraintState:
     # contact sliding friction coefficient read by the cone solver, and with torsional friction the spin row carries
     # the torsional coefficient the same way (the tangent rows hold 0).
     efc_frictionloss: qd.Tensor
-    efc_force: qd.Tensor
-    active: qd.Tensor
+    efc_force: qd.Tensor = of_kind(DataKind.STATE)
+    active: qd.Tensor = of_kind(DataKind.STATE)
     prev_active: qd.Tensor
-    qfrc_constraint: qd.Tensor
-    qacc: qd.Tensor
-    qacc_ws: qd.Tensor
+    qfrc_constraint: qd.Tensor = of_kind(DataKind.STATE)
+    qacc: qd.Tensor = of_kind(DataKind.STATE)
+    qacc_ws: qd.Tensor = of_kind(DataKind.WARMSTART)
     qacc_prev: qd.Tensor
     cost_ws: qd.Tensor
     cost: qd.Tensor
@@ -681,14 +821,14 @@ class ConstraintState:
     # Skyline envelope: nt_H_env_start[i_b, i_d] is the first (smallest) column index with a structural
     # nonzero in row i_d of the Hessian. Cholesky fill-in stays within this envelope, so the factor and
     # solve loops only need to visit columns [nt_H_env_start[i_d], i_d]. Only meaningful with sparse_solve.
-    nt_H_env_start: qd.Tensor
+    nt_H_env_start: qd.Tensor = of_kind(DataKind.CONSTANT)
     # Fill-reducing DOF reordering (sparse_solve). dof_perm[i_b, p] = original DOF at permuted position p;
     # dof_iperm[i_b, d] = permuted position of original DOF d. The Hessian is assembled, factored and solved in
     # permuted order (a spatial sort of bodies that keeps coupled DOFs index-adjacent), making the skyline band
     # insensitive to insertion order; grad/Mgrad are indexed through dof_perm at the solve boundary so the rest of
     # the solver stays in natural order. dof_sort_key is per-DOF scratch for the spatial sort.
-    dof_perm: qd.Tensor
-    dof_iperm: qd.Tensor
+    dof_perm: qd.Tensor = of_kind(DataKind.CONSTANT)
+    dof_iperm: qd.Tensor = of_kind(DataKind.CONSTANT)
     dof_sort_key: qd.Tensor
     nt_vec: qd.Tensor
     # Compacted list of constraints whose active state changed, used by incremental Cholesky update
@@ -884,6 +1024,8 @@ def get_constraint_state(constraint_solver, solver, collider):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class ContactData:
+    kind: ClassVar[DataKind] = DataKind.STATE
+
     geom_a: qd.Tensor
     geom_b: qd.Tensor
     penetration: qd.Tensor
@@ -922,6 +1064,8 @@ def get_contact_data(solver, max_candidate_contacts, requires_grad):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class DiffContactInput:
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     ### Non-differentiable input data
     # Geom id of the two geometries
     geom_a: qd.Tensor
@@ -970,6 +1114,8 @@ def get_diff_contact_input(_B, max_contacts_per_pair, is_active, requires_grad=F
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class SortBuffer:
+    kind: ClassVar[DataKind] = DataKind.WARMSTART
+
     value: qd.Tensor
     i_g: qd.Tensor
     is_max: qd.Tensor
@@ -987,6 +1133,8 @@ def get_sort_buffer(solver):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class ContactCache:
+    kind: ClassVar[DataKind] = DataKind.WARMSTART
+
     normal: qd.Tensor
     # Previous-step penetration per pair (reset to 0 when out of contact), the warm-start for the MPR->GJK gate.
     penetration: qd.Tensor
@@ -1002,6 +1150,8 @@ def get_contact_cache(solver, n_possible_pairs):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class NarrowphaseWorkQueues:
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     mpr_i_b: qd.Tensor
     mpr_i_ga: qd.Tensor
     mpr_i_gb: qd.Tensor
@@ -1033,6 +1183,8 @@ def get_narrowphase_work_queues(max_entries):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class ColliderState:
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     sort_buffer: SortBuffer
     contact_data: ContactData
     active_buffer: qd.Tensor
@@ -1050,15 +1202,15 @@ class ColliderState:
     box_pu: qd.Tensor
     xyz_max_min: qd.Tensor
     prism: qd.Tensor
-    n_contacts: qd.Tensor
-    n_contacts_hibernated: qd.Tensor
-    first_time: qd.Tensor
+    n_contacts: qd.Tensor = of_kind(DataKind.STATE)
+    n_contacts_hibernated: qd.Tensor = of_kind(DataKind.STATE)
+    first_time: qd.Tensor = of_kind(DataKind.WARMSTART)
     contact_cache: ContactCache
     # Input data for differentiable contact detection used in the backward pass
     diff_contact_input: DiffContactInput
     narrowphase_work_queues: NarrowphaseWorkQueues
     contact_sort_key: qd.Tensor
-    contact_sort_idx: qd.Tensor
+    contact_sort_idx: qd.Tensor = of_kind(DataKind.STATE)
     contact_proj_v: qd.Tensor
     contact_keep: qd.Tensor
     contact_hull_stack: qd.Tensor
@@ -1130,6 +1282,8 @@ def get_collider_state(
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class VertsSpatialGrid:
+    kind: ClassVar[DataKind] = DataKind.CONSTANT
+
     # Per-geom 8x8x8 grid over collision verts in the local AABB: a permutation of vert indices sorted by grid
     # cell (z fastest), the matching vert positions duplicated in that order for sequential streaming, and per-cell
     # vert ranges (8^3 + 1 entries per geom), so a scan visits only the cells overlapping a query box. The cell
@@ -1186,6 +1340,8 @@ class ColliderStaticConfig(metaclass=AutoInitMeta):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class MPRSimplexSupport:
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     v1: qd.Tensor
     v2: qd.Tensor
     v: qd.Tensor
@@ -1201,6 +1357,8 @@ def get_mpr_simplex_support(B_):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class MPRState:
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     simplex_support: MPRSimplexSupport
     simplex_size: qd.Tensor
     # What the depth of the contact in simplex_support[1..3] is worth, a PORTAL_STATUS value. Zero means no portal.
@@ -1218,6 +1376,8 @@ def get_mpr_state(B_):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class MPRInfo:
+    kind: ClassVar[DataKind] = DataKind.CONSTANT
+
     CCD_EPS: qd.Tensor
     CCD_TOLERANCE: qd.Tensor
     CCD_ITERATIONS: qd.Tensor
@@ -1236,6 +1396,8 @@ def get_mpr_info(**kwargs):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class MDVertex:
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     # Vertex of the Minkowski difference
     obj1: qd.Tensor
     obj2: qd.Tensor
@@ -1275,6 +1437,8 @@ def get_epa_polytope_vertex(_B, gjk_info, is_active):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class GJKSimplex:
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     nverts: qd.Tensor
 
 
@@ -1285,6 +1449,8 @@ def get_gjk_simplex(_B, is_active):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class GJKSimplexBuffer:
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     normal: qd.Tensor
     sdist: qd.Tensor
 
@@ -1296,6 +1462,8 @@ def get_gjk_simplex_buffer(_B, is_active):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class EPAPolytope:
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     nverts: qd.Tensor
     nfaces: qd.Tensor
     nfaces_map: qd.Tensor
@@ -1316,6 +1484,8 @@ def get_epa_polytope(_B, is_active):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class EPAPolytopeFace:
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     verts_idx: qd.Tensor
     adj_idx: qd.Tensor
     normal: qd.Tensor
@@ -1338,6 +1508,8 @@ def get_epa_polytope_face(_B, polytope_max_faces, is_active):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class EPAPolytopeHorizonData:
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     face_idx: qd.Tensor
     edge_idx: qd.Tensor
 
@@ -1349,6 +1521,8 @@ def get_epa_polytope_horizon_data(_B, polytope_max_horizons, is_active):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class ContactFace:
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     vert1: qd.Tensor
     vert2: qd.Tensor
     endverts: qd.Tensor
@@ -1373,6 +1547,8 @@ def get_contact_face(_B, max_contact_polygon_verts, is_active):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class ContactNormal:
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     endverts: qd.Tensor
     normal: qd.Tensor
     id: qd.Tensor
@@ -1389,6 +1565,8 @@ def get_contact_normal(_B, max_contact_polygon_verts, is_active):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class ContactHalfspace:
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     normal: qd.Tensor
     dist: qd.Tensor
 
@@ -1400,6 +1578,8 @@ def get_contact_halfspace(_B, max_contact_polygon_verts, is_active):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class Witness:
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     point_obj1: qd.Tensor
     point_obj2: qd.Tensor
 
@@ -1413,6 +1593,8 @@ def get_witness(_B, max_contacts_per_pair, is_active):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class GJKState:
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     support_mesh_prev_vertex_id: qd.Tensor
     simplex_vertex: MDVertex
     simplex_buffer: GJKSimplexBuffer
@@ -1552,6 +1734,8 @@ def get_gjk_state_contact_only(_B):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class GJKInfo:
+    kind: ClassVar[DataKind] = DataKind.CONSTANT
+
     max_contacts_per_pair: qd.Tensor
     max_contact_polygon_verts: qd.Tensor
     # Maximum number of iterations for GJK and EPA algorithms
@@ -1644,6 +1828,8 @@ class GJKStaticConfig(metaclass=AutoInitMeta):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class SupportFieldInfo:
+    kind: ClassVar[DataKind] = DataKind.CONSTANT
+
     support_cell_start: qd.Tensor
     support_v: qd.Tensor
     support_vid: qd.Tensor
@@ -1664,6 +1850,8 @@ def get_support_field_info(n_geoms, n_support_cells, support_res):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class SDFGeomInfo:
+    kind: ClassVar[DataKind] = DataKind.CONSTANT
+
     T_mesh_to_sdf: qd.Tensor
     sdf_res: qd.Tensor
     sdf_max: qd.Tensor
@@ -1688,6 +1876,8 @@ def get_sdf_geom_info(n_geoms):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class SDFInfo:
+    kind: ClassVar[DataKind] = DataKind.CONSTANT
+
     geoms_info: SDFGeomInfo
     geoms_sdf_start: qd.Tensor
     geoms_sdf_val: qd.Tensor
@@ -1718,6 +1908,8 @@ def get_sdf_info(n_geoms, n_cells, n_coarse_cells):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class ColliderInfo:
+    kind: ClassVar[DataKind] = DataKind.CONSTANT
+
     # Narrowphase sub-component descriptions, owned by their respective builders (MPR, GJK, SupportField, SDF) and
     # embedded here so kernels receive the whole collider description as one argument. Each has a single instance,
     # activated (which may reallocate it at its final size) before this struct is built; a reassignment after the
@@ -1817,6 +2009,8 @@ def get_collider_info(
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class DofsInfo:
+    kind: ClassVar[DataKind] = DataKind.INFO
+
     entity_idx: qd.Tensor
     stiffness: qd.Tensor
     invweight: qd.Tensor
@@ -1854,6 +2048,8 @@ def get_dofs_info(solver):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class DofsState:
+    kind: ClassVar[DataKind] = DataKind.DERIVED
+
     # *_bw: Cache to avoid overwriting for backward pass
     force: qd.Tensor
     qf_bias: qd.Tensor
@@ -1862,10 +2058,10 @@ class DofsState:
     qf_applied: qd.Tensor
     act_length: qd.Tensor
     pos: qd.Tensor
-    vel: qd.Tensor
-    vel_prev: qd.Tensor
-    vel_next: qd.Tensor
-    acc: qd.Tensor
+    vel: qd.Tensor = of_kind(DataKind.STATE)
+    vel_prev: qd.Tensor = of_kind(DataKind.SCRATCH)
+    vel_next: qd.Tensor = of_kind(DataKind.SCRATCH)
+    acc: qd.Tensor = of_kind(DataKind.STATE)
     acc_smooth: qd.Tensor
     acc_smooth_bw: qd.Tensor
     qf_smooth: qd.Tensor
@@ -1878,11 +2074,11 @@ class DofsState:
     cdofd_vel: qd.Tensor
     f_vel: qd.Tensor
     f_ang: qd.Tensor
-    ctrl_force: qd.Tensor
-    ctrl_pos: qd.Tensor
-    ctrl_vel: qd.Tensor
-    ctrl_mode: qd.Tensor
-    is_hibernated: qd.Tensor
+    ctrl_force: qd.Tensor = of_kind(DataKind.STATE)
+    ctrl_pos: qd.Tensor = of_kind(DataKind.STATE)
+    ctrl_vel: qd.Tensor = of_kind(DataKind.STATE)
+    ctrl_mode: qd.Tensor = of_kind(DataKind.STATE)
+    is_hibernated: qd.Tensor = of_kind(DataKind.STATE)
 
 
 def get_dofs_state(solver):
@@ -1927,6 +2123,8 @@ def get_dofs_state(solver):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class LinksState:
+    kind: ClassVar[DataKind] = DataKind.DERIVED
+
     # *_bw: Cache to avoid overwriting for backward pass
     cinr_inertial: qd.Tensor
     cinr_pos: qd.Tensor
@@ -1966,13 +2164,13 @@ class LinksState:
     cacc_lin: qd.Tensor
     cfrc_ang: qd.Tensor
     cfrc_vel: qd.Tensor
-    cfrc_applied_ang: qd.Tensor
-    cfrc_applied_vel: qd.Tensor
+    cfrc_applied_ang: qd.Tensor = of_kind(DataKind.STATE)
+    cfrc_applied_vel: qd.Tensor = of_kind(DataKind.STATE)
     cfrc_coupling_ang: qd.Tensor
     cfrc_coupling_vel: qd.Tensor
     contact_force: qd.Tensor
-    is_hibernated: qd.Tensor
-    awake_steps: qd.Tensor
+    is_hibernated: qd.Tensor = of_kind(DataKind.STATE)
+    awake_steps: qd.Tensor = of_kind(DataKind.STATE)
 
 
 def get_links_state(solver):
@@ -2030,6 +2228,8 @@ def get_links_state(solver):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class LinksInfo:
+    kind: ClassVar[DataKind] = DataKind.INFO
+
     parent_idx: qd.Tensor
     root_idx: qd.Tensor
     q_start: qd.Tensor
@@ -2090,6 +2290,8 @@ def get_links_info(solver):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class JointsInfo:
+    kind: ClassVar[DataKind] = DataKind.INFO
+
     type: qd.Tensor
     sol_params: qd.Tensor
     q_start: qd.Tensor
@@ -2117,6 +2319,8 @@ def get_joints_info(solver):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class JointsState:
+    kind: ClassVar[DataKind] = DataKind.DERIVED
+
     xanchor: qd.Tensor
     xaxis: qd.Tensor
 
@@ -2136,6 +2340,8 @@ def get_joints_state(solver):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class GeomsInfo:
+    kind: ClassVar[DataKind] = DataKind.INFO
+
     pos: qd.Tensor
     center: qd.Tensor
     quat: qd.Tensor
@@ -2209,6 +2415,8 @@ def get_geoms_info(solver, is_active=True):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class GeomsState:
+    kind: ClassVar[DataKind] = DataKind.DERIVED
+
     pos: qd.Tensor
     quat: qd.Tensor
     aabb_min: qd.Tensor
@@ -2216,8 +2424,8 @@ class GeomsState:
     verts_updated: qd.Tensor
     min_buffer_idx: qd.Tensor
     max_buffer_idx: qd.Tensor
-    is_hibernated: qd.Tensor
-    friction_ratio: qd.Tensor
+    is_hibernated: qd.Tensor = of_kind(DataKind.STATE)
+    friction_ratio: qd.Tensor = of_kind(DataKind.INFO)
 
 
 def get_geoms_state(solver, is_active=True):
@@ -2242,6 +2450,8 @@ def get_geoms_state(solver, is_active=True):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class VertsInfo:
+    kind: ClassVar[DataKind] = DataKind.CONSTANT
+
     init_pos: qd.Tensor
     init_normal: qd.Tensor
     geom_idx: qd.Tensor
@@ -2268,6 +2478,8 @@ def get_verts_info(solver, is_active=True):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class FacesInfo:
+    kind: ClassVar[DataKind] = DataKind.CONSTANT
+
     verts_idx: qd.Tensor
     geom_idx: qd.Tensor
 
@@ -2283,6 +2495,8 @@ def get_faces_info(solver, is_active=True):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class EdgesInfo:
+    kind: ClassVar[DataKind] = DataKind.CONSTANT
+
     v0: qd.Tensor
     v1: qd.Tensor
     length: qd.Tensor
@@ -2301,6 +2515,8 @@ def get_edges_info(solver, is_active=True):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class VertsState:
+    kind: ClassVar[DataKind] = DataKind.DERIVED
+
     pos: qd.Tensor
 
 
@@ -2317,6 +2533,8 @@ def get_fixed_verts_state(solver, is_active=True):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class VVertsInfo:
+    kind: ClassVar[DataKind] = DataKind.CONSTANT
+
     init_pos: qd.Tensor
     init_vnormal: qd.Tensor
     vgeom_idx: qd.Tensor
@@ -2339,6 +2557,8 @@ def get_vverts_info(solver):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class VVertsState:
+    kind: ClassVar[DataKind] = DataKind.DERIVED
+
     pos: qd.Tensor
 
 
@@ -2358,6 +2578,8 @@ def get_vverts_state(solver, is_active=True):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class VFacesInfo:
+    kind: ClassVar[DataKind] = DataKind.CONSTANT
+
     vverts_idx: qd.Tensor
     vgeom_idx: qd.Tensor
 
@@ -2373,6 +2595,8 @@ def get_vfaces_info(solver):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class VGeomsInfo:
+    kind: ClassVar[DataKind] = DataKind.CONSTANT
+
     pos: qd.Tensor
     quat: qd.Tensor
     link_idx: qd.Tensor
@@ -2407,6 +2631,8 @@ def get_vgeoms_info(solver):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class VGeomsState:
+    kind: ClassVar[DataKind] = DataKind.DERIVED
+
     pos: qd.Tensor
     quat: qd.Tensor
 
@@ -2422,6 +2648,8 @@ def get_vgeoms_state(solver, is_active=True):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class EqualitiesInfo:
+    kind: ClassVar[DataKind] = DataKind.INFO
+
     eq_obj1id: qd.Tensor
     eq_obj2id: qd.Tensor
     eq_data: qd.Tensor
@@ -2446,6 +2674,8 @@ def get_equalities_info(solver, is_active=True):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class EntitiesInfo:
+    kind: ClassVar[DataKind] = DataKind.INFO
+
     dof_start: qd.Tensor
     dof_end: qd.Tensor
     n_dofs: qd.Tensor
@@ -2482,6 +2712,8 @@ def get_entities_info(solver):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class EntitiesState:
+    kind: ClassVar[DataKind] = DataKind.STATE
+
     is_hibernated: qd.Tensor
 
 
@@ -2492,6 +2724,8 @@ def get_entities_state(solver, is_active=True):
 # =========================================== RigidAdjointCache ===========================================
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class RigidAdjointCache:
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     # This cache stores intermediate values during rigid body simulation to use Quadrants's AD. Quadrants's AD requires
     # us not to overwrite the values that have been read during the forward pass, so we need to store the intemediate
     # values in this cache to avoid overwriting them. Specifically, after we compute next frame's qpos, dofs_vel, and
@@ -2803,6 +3037,8 @@ class DataManager:
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class RaycastResult:
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
     distance: qd.Tensor
     geom_idx: qd.Tensor
     hit_point: qd.Tensor

@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import pickle
 import xml.etree.ElementTree as ET
@@ -12,7 +13,7 @@ import trimesh
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.engine.scene import SCENE_FORMAT
+from genesis.engine.scene import SCENE_FORMAT, description_digest
 from genesis.utils.misc import get_assets_dir
 from genesis.utils.serialization import ARRAY_MEMBER, MANIFEST_NAME
 
@@ -515,3 +516,121 @@ def test_export_rejects_unsupported_physics(tmp_path, show_viewer):
     unsupported.add_force_field(gs.force_fields.Wind(direction=(1.0, 0.0, 0.0)))
     with pytest.raises(gs.GenesisException, match="1 MPMEntity, 1 Wind cannot be exported"):
         unsupported.export(tmp_path / f"wind{SCENE_FORMAT}")
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_pickle_resumes_stepped_scene(n_envs, mimic_hinges, show_viewer):
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.0, 1.5, 1.0),
+            camera_lookat=(0.0, 0.0, 0.3),
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
+    # Lands on the plane within the first steps, so contacts and their warm start are part of what is read
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0.0, 0.0, 0.15),
+            size=(0.2, 0.2, 0.2),
+        ),
+    )
+    # Articulated, driven, and tied by an equality, so joints, control targets and constraints all travel
+    arm = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file=ET.tostring(mimic_hinges, encoding="unicode"),
+            pos=(0.6, 0.0, 0.5),
+        ),
+    )
+    # A convex mesh, whose contacts with the plane go through the general narrowphase
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/duck.obj",
+            scale=0.05,
+            pos=(0.0, 0.6, 0.1),
+        ),
+    )
+    # A kinematic entity, whose solver holds state of its own
+    ghost = scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0.0, -0.6, 0.5),
+            size=(0.1, 0.1, 0.1),
+        ),
+        material=gs.materials.Kinematic(),
+    )
+    with pytest.raises(gs.GenesisException):
+        pickle.dumps(scene)
+    scene.build(n_envs=n_envs)
+    arm.control_dofs_position([0.3, -0.3])
+    for _ in range(20):
+        scene.step()
+    # Set right before the state is read, so the pose the kinematic solver is left to recompute at its next step
+    # travels as such rather than as a pose already computed
+    ghost.set_dofs_position([0.1, 0.0, 0.0, 0.0, 0.0, 0.0])
+
+    held = scene.__getstate__()
+    # A record of another scene is rejected on its description, however its arrays compare
+    other_desc = dataclasses.replace(held.scene, entities=held.scene.entities[:-1])
+    other_held = dataclasses.replace(held, scene=other_desc, digest=description_digest(other_desc))
+    with pytest.raises(gs.GenesisException, match="another scene"):
+        scene.__setstate__(other_held)
+    pickled = pickle.dumps(scene)
+    read_time = scene.get_time()
+    read_box_pos = box.get_pos()
+    read_arm_qpos = arm.get_qpos()
+    # The scene the state was read from steps on: where it lands is what putting the state back must reproduce exactly
+    for _ in range(10):
+        scene.step()
+    landing = scene.sim.rigid_solver.get_state()
+    landing_ghost_pos = ghost.get_links_pos()
+    landing_contacts = box.get_contacts()
+
+    # Unpickling creates and builds the scene from its description, then puts it back where it was pickled
+    twin = pickle.loads(pickled)
+    assert_equal(twin.get_time(), read_time)
+    assert_equal(twin.entities[1].get_pos(), read_box_pos)
+    assert_equal(twin.entities[2].get_qpos(), read_arm_qpos)
+    # Read again right away, it holds the state it was given: what was written back is every array a step reads
+    again = twin.__getstate__()
+    assert_equal(again.sim.steps, held.sim.steps)
+    for name, record in held.sim.solvers.items():
+        assert again.sim.solvers[name].is_forward_pos_updated == record.is_forward_pos_updated
+        assert again.sim.solvers[name].is_forward_vel_updated == record.is_forward_vel_updated
+        for array_name, array in record.arrays.items():
+            assert_equal(again.sim.solvers[name].arrays[array_name], array)
+    for _ in range(10):
+        twin.step()
+    resumed = twin.sim.rigid_solver.get_state()
+    assert_equal(resumed.qpos, landing.qpos)
+    assert_equal(resumed.dofs_vel, landing.dofs_vel)
+    assert_equal(resumed.dofs_acc, landing.dofs_acc)
+    assert_equal(resumed.links_pos, landing.links_pos)
+    assert_equal(resumed.links_quat, landing.links_quat)
+    assert_equal(twin.entities[4].get_links_pos(), landing_ghost_pos)
+    assert_equal(twin.entities[1].get_contacts()["force_a"], landing_contacts["force_a"])
+
+    # The scene the state was read from goes back to the same point when the state is put back into it
+    scene.__setstate__(held)
+    assert_equal(scene.get_time(), read_time)
+    for _ in range(10):
+        scene.step()
+    reloaded = scene.sim.rigid_solver.get_state()
+    assert_equal(reloaded.qpos, landing.qpos)
+    assert_equal(reloaded.dofs_vel, landing.dofs_vel)
+    assert_equal(reloaded.links_pos, landing.links_pos)
+    assert_equal(ghost.get_links_pos(), landing_ghost_pos)
+    assert_equal(box.get_contacts()["force_a"], landing_contacts["force_a"])
+
+    # A state names every array it holds. One read from a solver holding another set of arrays is rejected by the
+    # names the two do not share, and one read from another environment layout by its count.
+    rigid = held.sim.solvers["RigidSolver"]
+    dropped_name, *_ = rigid.arrays
+    arrays = {name: array for name, array in rigid.arrays.items() if name != dropped_name}
+    solvers = {**held.sim.solvers, "RigidSolver": dataclasses.replace(rigid, arrays=arrays)}
+    with pytest.raises(gs.GenesisException, match=f"do not share \\['{dropped_name}'\\]"):
+        scene.__setstate__(dataclasses.replace(held, sim=dataclasses.replace(held.sim, solvers=solvers)))
+    with pytest.raises(gs.GenesisException, match="built with EnvironmentLayout\\(n_envs=3"):
+        scene.__setstate__(dataclasses.replace(held, layout=dataclasses.replace(held.layout, n_envs=3)))

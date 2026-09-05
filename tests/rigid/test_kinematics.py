@@ -668,7 +668,7 @@ def test_path_planning_avoidance(backend, n_envs, batch_dofs_info, show_viewer, 
         vis_mode="collision",
     )
     scene.build(n_envs=n_envs)
-    collider_state = scene.rigid_solver.collider._collider_state
+    collider_state = scene.rigid_solver.collider.collider_state
 
     hand = franka.get_link("hand")
     hand_pos_ref = torch.tensor([0.3, 0.1, 0.1], dtype=gs.tc_float, device=gs.device)

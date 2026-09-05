@@ -204,7 +204,7 @@ class PathPlanner(ABC):
                 obj_geom_end,
                 ignore_geom_pairs,
                 out,
-                self._solver.collider._collider_state,
+                self._solver.collider.collider_state,
                 is_plan_with_obj,
             )
         return out
@@ -564,7 +564,7 @@ class RRT(PathPlanner):
                     obj_geom_start,
                     obj_geom_end,
                     ignore_geom_pairs,
-                    self._solver.collider._collider_state,
+                    self._solver.collider.collider_state,
                     ignore_collision,
                     is_plan_with_obj,
                 )
@@ -943,7 +943,7 @@ class RRTConnect(PathPlanner):
                 obj_geom_start,
                 obj_geom_end,
                 ignore_geom_pairs,
-                self._solver.collider._collider_state,
+                self._solver.collider.collider_state,
                 self._solver.rigid_info,
                 forward_pass,
                 ignore_collision,

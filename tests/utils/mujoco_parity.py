@@ -465,14 +465,14 @@ def _pair_constraint_rows(gs_sim, mj_sim, gs_dofs_idx, mj_dofs_idx, *, qvel_prev
     gs_n_constraints = gs_sim.rigid_solver.constraint_solver.n_constraints.to_numpy()[0]
     mj_n_constraints = mj_sim.data.nefc
     assert gs_n_constraints == mj_n_constraints
-    gs_n_contacts = gs_sim.rigid_solver.collider._collider_state.n_contacts.to_numpy()[0]
+    gs_n_contacts = gs_sim.rigid_solver.collider.collider_state.n_contacts.to_numpy()[0]
     mj_n_contacts = mj_sim.data.ncon
-    gs_contact_pos = gs_sim.rigid_solver.collider._collider_state.contact_data.pos.to_numpy()[:gs_n_contacts, 0]
+    gs_contact_pos = gs_sim.rigid_solver.collider.collider_state.contact_data.pos.to_numpy()[:gs_n_contacts, 0]
     mj_contact_pos = mj_sim.data.contact.pos
     gs_contact_geoms = np.stack(
         (
-            gs_sim.rigid_solver.collider._collider_state.contact_data.geom_a.to_numpy()[:gs_n_contacts, 0],
-            gs_sim.rigid_solver.collider._collider_state.contact_data.geom_b.to_numpy()[:gs_n_contacts, 0],
+            gs_sim.rigid_solver.collider.collider_state.contact_data.geom_a.to_numpy()[:gs_n_contacts, 0],
+            gs_sim.rigid_solver.collider.collider_state.contact_data.geom_b.to_numpy()[:gs_n_contacts, 0],
         ),
         axis=-1,
     )
@@ -514,7 +514,7 @@ def _pair_constraint_rows(gs_sim, mj_sim, gs_dofs_idx, mj_dofs_idx, *, qvel_prev
     n_head = mj_n_constraints - n_mj_contact_rows - int(is_mj_limit.sum())
     rows_per_contact = n_mj_contact_rows // mj_n_contacts if mj_n_contacts else 0
 
-    gs_contact_sort_idx = gs_sim.rigid_solver.collider._collider_state.contact_sort_idx.to_numpy()[:gs_n_contacts, 0]
+    gs_contact_sort_idx = gs_sim.rigid_solver.collider.collider_state.contact_sort_idx.to_numpy()[:gs_n_contacts, 0]
     gs_block_of_contact = np.empty(gs_n_contacts, dtype=int)
     gs_block_of_contact[gs_contact_sort_idx] = np.arange(gs_n_contacts)
 
@@ -625,7 +625,7 @@ def check_mujoco_data_consistency(
     mj_qfrc_actuator = mj_sim.data.qfrc_actuator
     assert_allclose(gs_qfrc_actuator, mj_qfrc_actuator[mj_dofs_idx], tol=tol)
 
-    gs_n_contacts = gs_sim.rigid_solver.collider._collider_state.n_contacts.to_numpy()[0]
+    gs_n_contacts = gs_sim.rigid_solver.collider.collider_state.n_contacts.to_numpy()[0]
     mj_n_contacts = mj_sim.data.ncon
     assert gs_n_contacts == mj_n_contacts, f"contact count differs: gs={gs_n_contacts} mj={mj_n_contacts}"
     gs_n_constraints = gs_sim.rigid_solver.constraint_solver.n_constraints.to_numpy()[0]
@@ -635,7 +635,7 @@ def check_mujoco_data_consistency(
     efc_atol, qvel_atol = _compute_efc_tolerances(mj_sim, tol)
 
     if gs_n_constraints and not ignore_constraints:
-        gs_contact_pos = gs_sim.rigid_solver.collider._collider_state.contact_data.pos.to_numpy()[:gs_n_contacts, 0]
+        gs_contact_pos = gs_sim.rigid_solver.collider.collider_state.contact_data.pos.to_numpy()[:gs_n_contacts, 0]
         mj_contact_pos = mj_sim.data.contact.pos
         # Sort based on the axis with the largest variation
         max_var_axis = 0
@@ -650,12 +650,12 @@ def check_mujoco_data_consistency(
         gs_sidx = np.argsort(gs_contact_pos[:, max_var_axis])
         mj_sidx = np.argsort(mj_contact_pos[:, max_var_axis])
         assert_allclose(gs_contact_pos[gs_sidx], mj_contact_pos[mj_sidx], tol=tol)
-        gs_contact_normal = gs_sim.rigid_solver.collider._collider_state.contact_data.normal.to_numpy()[
+        gs_contact_normal = gs_sim.rigid_solver.collider.collider_state.contact_data.normal.to_numpy()[
             :gs_n_contacts, 0
         ]
         mj_contact_normal = -mj_sim.data.contact.frame[:, :3]
         assert_allclose(gs_contact_normal[gs_sidx], mj_contact_normal[mj_sidx], tol=tol)
-        gs_penetration = gs_sim.rigid_solver.collider._collider_state.contact_data.penetration.to_numpy()[
+        gs_penetration = gs_sim.rigid_solver.collider.collider_state.contact_data.penetration.to_numpy()[
             :gs_n_contacts, 0
         ]
         mj_penetration = -mj_sim.data.contact.dist

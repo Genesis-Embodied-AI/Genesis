@@ -279,7 +279,7 @@ def test_drone_advanced(show_viewer):
             drone.set_propellers_rpm(50000.0)
         scene.step()
         if i > 350:
-            assert scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()[0] == 2
+            assert scene.rigid_solver.collider.collider_state.n_contacts.to_numpy()[0] == 2
             assert_allclose(scene.rigid_solver.get_dofs_velocity(), 0, tol=2e-3)
 
     # Push the drones symmetrically and wait for them to collide
@@ -289,7 +289,7 @@ def test_drone_advanced(show_viewer):
         for drone in drones:
             drone.set_propellers_rpm(50000.0)
         scene.step()
-        if scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()[0] > 2:
+        if scene.rigid_solver.collider.collider_state.n_contacts.to_numpy()[0] > 2:
             break
     else:
         raise AssertionError

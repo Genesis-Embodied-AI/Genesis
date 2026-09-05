@@ -7,6 +7,7 @@ terrain), and contact management.
 """
 
 import math
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -96,16 +97,16 @@ class Collider:
 
         self._init_static_config()
         self._use_split_narrowphase = (
-            self._collider_static_config.has_non_box_plane_convex_convex
+            self.collider_config.has_non_box_plane_convex_convex
             and gs.backend != gs.cpu
             and not self._solver._requires_grad
         )
 
-        if self._collider_static_config.has_nonconvex_nonterrain:
+        if self.collider_config.has_nonconvex_nonterrain:
             self._sdf.activate()
-        if self._collider_static_config.has_non_box_plane_convex_convex:
+        if self.collider_config.has_non_box_plane_convex_convex:
             self._gjk.activate()
-        if self._collider_static_config.has_terrain or self._collider_static_config.has_non_box_plane_convex_convex:
+        if self.collider_config.has_terrain or self.collider_config.has_non_box_plane_convex_convex:
             self._support_field.activate()
 
         self._init_collision_fields()
@@ -119,11 +120,11 @@ class Collider:
             # in its SNode tree no zero-copy view exists, and get_contacts falls back to the gather-kernel path.
             self._contact_data: dict[str, torch.Tensor] | None = {}
             try:
-                qd_to_torch(self._collider_state.n_contacts, copy=False)
-                qd_to_torch(self._collider_state.contact_sort_idx, transpose=True, copy=False)
-                qd_to_torch(self._collider_state.first_time, copy=False)
-                qd_to_torch(self._collider_state.contact_cache.normal, copy=False)
-                qd_to_torch(self._collider_state.contact_cache.penetration, copy=False)
+                qd_to_torch(self.collider_state.n_contacts, copy=False)
+                qd_to_torch(self.collider_state.contact_sort_idx, transpose=True, copy=False)
+                qd_to_torch(self.collider_state.first_time, copy=False)
+                qd_to_torch(self.collider_state.contact_cache.normal, copy=False)
+                qd_to_torch(self.collider_state.contact_cache.penetration, copy=False)
                 for key, name in (
                     ("link_a", "link_a"),
                     ("link_b", "link_b"),
@@ -135,13 +136,30 @@ class Collider:
                     ("force", "force"),
                 ):
                     self._contact_data[key] = qd_to_torch(
-                        getattr(self._collider_state.contact_data, name), transpose=True, copy=False
+                        getattr(self.collider_state.contact_data, name), transpose=True, copy=False
                     )
             except ValueError:
                 self._contact_data = None
 
         # Make sure that the initial state is clean
         self.clear()
+
+    @property
+    def data(self) -> Iterator[array_class.DataItem]:
+        """Yield every array and static config of the collider, tagged by kind (see 'Solver.data')."""
+        structs = [
+            (self, "collider_config"),
+            (self._gjk, "gjk_config"),
+            (self, "collider_info"),
+            (self, "collider_state"),
+            (self._mpr, "mpr_state"),
+            (self._gjk, "gjk_state"),
+        ]
+        if self._use_split_narrowphase:
+            structs += [(self, name) for name in ("contact0_mpr_state", "contact0_gjk_state")]
+            structs += [(self, name) for name in ("multicontact_mpr_state", "multicontact_gjk_state")]
+        for owner, name in structs:
+            yield from array_class.iter_data(getattr(owner, name), name)
 
     def _init_static_config(self) -> None:
         # Identify the convex collision detection (ccd) algorithm
@@ -224,7 +242,7 @@ class Collider:
 
         # Initialize the static config, which stores every data that are compile-time constants.
         # Note that updating any of them will trigger recompilation.
-        self._collider_static_config = array_class.ColliderStaticConfig(
+        self.collider_config = array_class.ColliderStaticConfig(
             has_terrain=has_terrain,
             has_non_box_plane_convex_convex=has_non_box_plane_convex_convex,
             has_convex_specialization=has_convex_specialization,
@@ -244,11 +262,11 @@ class Collider:
 
         # Initialize [info], which stores every data that must be considered mutable from Quadrants's perspective,
         # i.e. unknown at compile time, but IMMUTABLE from Genesis scene's perspective after build.
-        self._collider_info = array_class.get_collider_info(
+        self.collider_info = array_class.get_collider_info(
             self._solver,
             n_vert_neighbors,
             n_valid_pairs,
-            self._collider_static_config,
+            self.collider_config,
             self._mpr._mpr_info,
             self._gjk._gjk_info,
             self._support_field._support_field_info,
@@ -272,13 +290,13 @@ class Collider:
 
         # Initialize [state], which stores every data that are may be updated at every single simulation step
         n_possible_pairs_ = max(self._n_possible_pairs, 1)
-        self._collider_state = array_class.get_collider_state(
+        self.collider_state = array_class.get_collider_state(
             self._solver,
             self._solver.rigid_config,
             n_possible_pairs_,
             self._solver._options.multiplier_collision_broad_phase,
-            self._collider_info,
-            self._collider_static_config,
+            self.collider_info,
+            self.collider_config,
         )
 
         # 'contact_data_cache' is not used in Quadrants kernels, so keep it outside of the collider state / info
@@ -310,19 +328,19 @@ class Collider:
         if self._use_split_narrowphase:
             self._contact0_n_chunks = max(1, math.ceil(gpu_cores / self._solver._B))
             self._contact0_grid_size = self._solver._B * self._contact0_n_chunks
-            self._contact0_mpr_state = array_class.get_mpr_state(self._contact0_grid_size)
-            self._contact0_gjk_state = array_class.get_gjk_state_contact_only(self._contact0_grid_size)
+            self.contact0_mpr_state = array_class.get_mpr_state(self._contact0_grid_size)
+            self.contact0_gjk_state = array_class.get_gjk_state_contact_only(self._contact0_grid_size)
 
             self._multicontact_n_total_threads = gpu_cores
             self._multicontact_max_items_per_thread = cores_per_unit
-            self._multicontact_mpr_state = array_class.get_mpr_state(self._multicontact_n_total_threads)
+            self.multicontact_mpr_state = array_class.get_mpr_state(self._multicontact_n_total_threads)
 
     def _init_multicontact_gjk_state(self):
         """Allocate the GJK scratch state for the multicontact pass.
 
         Must be called after self._gjk is initialized. Sized to all multicontact threads because any thread may fall
         back to GJK for its own contact."""
-        self._multicontact_gjk_state = array_class.get_gjk_state(
+        self.multicontact_gjk_state = array_class.get_gjk_state(
             self._multicontact_n_total_threads,
             self._solver.rigid_config,
             self._gjk._gjk_info,
@@ -654,7 +672,7 @@ class Collider:
             geoms_inv_cell_size[i_g] = inv_cell_size
             offset_vert = offset_vert + len(verts)
 
-        verts_spatial_grid = self._collider_info.verts_spatial_grid
+        verts_spatial_grid = self.collider_info.verts_spatial_grid
         verts_spatial_grid.verts_idx.from_numpy(np.concatenate(verts_idx, dtype=gs.np_int))
         verts_spatial_grid.verts_pos.from_numpy(np.concatenate(verts_pos, dtype=gs.np_float))
         verts_spatial_grid.cells_vert_start.from_numpy(np.concatenate(cells_vert_start, dtype=gs.np_int))
@@ -663,19 +681,19 @@ class Collider:
 
     def _init_collision_pair_idx(self, collision_pair_idx):
         if self._n_possible_pairs == 0:
-            self._collider_info.collision_pair_idx.fill(-1)
+            self.collider_info.collision_pair_idx.fill(-1)
             return
-        self._collider_info.collision_pair_idx.from_numpy(collision_pair_idx)
+        self.collider_info.collision_pair_idx.from_numpy(collision_pair_idx)
 
     def _init_valid_pairs(self):
         if len(self._valid_collision_pairs) > 0:
-            self._collider_info.valid_collision_pairs.from_numpy(self._valid_collision_pairs)
+            self.collider_info.valid_collision_pairs.from_numpy(self._valid_collision_pairs)
 
     def _init_verts_connectivity(self, vert_neighbors, vert_neighbor_start, vert_n_neighbors):
         if self._solver.n_verts > 0:
-            self._collider_info.vert_neighbors.from_numpy(vert_neighbors)
-            self._collider_info.vert_neighbor_start.from_numpy(vert_neighbor_start)
-            self._collider_info.vert_n_neighbors.from_numpy(vert_n_neighbors)
+            self.collider_info.vert_neighbors.from_numpy(vert_neighbors)
+            self.collider_info.vert_neighbor_start.from_numpy(vert_neighbor_start)
+            self.collider_info.vert_n_neighbors.from_numpy(vert_n_neighbors)
 
     def _init_max_contacts(self, n_possible_pairs, large_contact_pair_mask):
         n_possible_nonconvex_pairs = int(np.count_nonzero(large_contact_pair_mask))
@@ -685,8 +703,8 @@ class Collider:
         # (larger-cap) nonconvex pairs as exist, then the rest with convex pairs. The budget of a nonconvex pair is
         # shared between its two vertex scans: the verification scan appends while the pair is under its cap and then
         # only displaces the pair's least-penetrating contact, so the cap holds regardless of the number of scans.
-        cap_nonconvex = self._collider_static_config.n_contacts_per_nonconvex_pair
-        cap_convex = self._collider_static_config.n_contacts_per_convex_pair
+        cap_nonconvex = self.collider_config.n_contacts_per_nonconvex_pair
+        cap_convex = self.collider_config.n_contacts_per_convex_pair
         n_nonconvex = min(n_possible_nonconvex_pairs, max_collision_pairs)
         n_convex = min(n_possible_pairs - n_possible_nonconvex_pairs, max_collision_pairs - n_nonconvex)
         max_candidate_contacts = n_nonconvex * cap_nonconvex + n_convex * cap_convex
@@ -704,7 +722,7 @@ class Collider:
         # 'max_contacts' is set.
         max_contacts = max_candidate_contacts
         if (
-            self._collider_static_config.has_prunable_contacts
+            self.collider_config.has_prunable_contacts
             and not self._solver._requires_grad
             and self._solver._options.contact_pruning_tolerance is not None
         ):
@@ -718,14 +736,14 @@ class Collider:
             max_contacts_pruned_total = max(int(max_contacts_pruned.sum()), self._prune_max_contacts_floor)
             max_contacts = min(max_contacts, max_contacts_pruned_total)
 
-        self._collider_info.max_possible_pairs[None] = n_possible_pairs
-        self._collider_info.max_collision_pairs[None] = max_collision_pairs
-        self._collider_info.max_collision_pairs_broad[None] = max_collision_pairs_broad
-        self._collider_info.max_candidate_contacts[None] = max_candidate_contacts
-        self._collider_info.max_contacts[None] = max_contacts
+        self.collider_info.max_possible_pairs[None] = n_possible_pairs
+        self.collider_info.max_collision_pairs[None] = max_collision_pairs
+        self.collider_info.max_collision_pairs_broad[None] = max_collision_pairs_broad
+        self.collider_info.max_candidate_contacts[None] = max_candidate_contacts
+        self.collider_info.max_contacts[None] = max_contacts
 
     def _init_terrain_state(self):
-        if self._collider_static_config.has_terrain:
+        if self.collider_config.has_terrain:
             solver = self._solver
             links_idx = solver.dyn_info.geoms.link_idx.to_numpy()[
                 solver.dyn_info.geoms.type.to_numpy() == gs.GEOM_TYPE.TERRAIN
@@ -748,10 +766,10 @@ class Collider:
                 dtype=gs.np_float,
             )
 
-            self._collider_info.terrain_hf.from_numpy(entity.terrain_hf)
-            self._collider_info.terrain_rc.from_numpy(rc)
-            self._collider_info.terrain_scale.from_numpy(entity.terrain_scale)
-            self._collider_info.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
+            self.collider_info.terrain_hf.from_numpy(entity.terrain_hf)
+            self.collider_info.terrain_rc.from_numpy(rc)
+            self.collider_info.terrain_scale.from_numpy(entity.terrain_scale)
+            self.collider_info.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
 
     def activate_sdf(self) -> None:
         """Enable SDF queries against this collider's geometry. Idempotent."""
@@ -762,12 +780,12 @@ class Collider:
         if gs.use_zerocopy and self._contact_data is not None:
             envs_mask = indices_to_mask(envs_idx)
             if not cache_only:
-                first_time = qd_to_torch(self._collider_state.first_time, copy=False)
+                first_time = qd_to_torch(self.collider_state.first_time, copy=False)
                 assign_indexed_tensor(first_time, envs_mask, True)
 
             pairs_mask = (slice(None), *envs_mask)
-            normal = qd_to_torch(self._collider_state.contact_cache.normal, copy=False)
-            penetration = qd_to_torch(self._collider_state.contact_cache.penetration, copy=False)
+            normal = qd_to_torch(self.collider_state.contact_cache.normal, copy=False)
+            penetration = qd_to_torch(self.collider_state.contact_cache.penetration, copy=False)
             assign_indexed_tensor(normal, pairs_mask, 0.0)
             assign_indexed_tensor(penetration, pairs_mask, 0.0)
 
@@ -776,7 +794,7 @@ class Collider:
             return
 
         envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
-        collider_kernel_reset(envs_idx, self._collider_state, self._solver.rigid_config, cache_only)
+        collider_kernel_reset(envs_idx, self.collider_state, self._solver.rigid_config, cache_only)
 
     def clear(self, envs_idx=None):
         self.reset(envs_idx, cache_only=False)
@@ -787,15 +805,15 @@ class Collider:
             and not self._solver._use_hibernation
             and (not isinstance(envs_idx, torch.Tensor) or (not IS_OLD_TORCH or envs_idx.dtype == torch.bool))
         ):
-            n_contacts = qd_to_torch(self._collider_state.n_contacts, copy=False)
-            link_a = qd_to_torch(self._collider_state.contact_data.link_a, copy=False)
-            link_b = qd_to_torch(self._collider_state.contact_data.link_b, copy=False)
-            geom_a = qd_to_torch(self._collider_state.contact_data.geom_a, copy=False)
-            geom_b = qd_to_torch(self._collider_state.contact_data.geom_b, copy=False)
-            penetration = qd_to_torch(self._collider_state.contact_data.penetration, copy=False)
-            pos = qd_to_torch(self._collider_state.contact_data.pos, copy=False)
-            normal = qd_to_torch(self._collider_state.contact_data.normal, copy=False)
-            force = qd_to_torch(self._collider_state.contact_data.force, copy=False)
+            n_contacts = qd_to_torch(self.collider_state.n_contacts, copy=False)
+            link_a = qd_to_torch(self.collider_state.contact_data.link_a, copy=False)
+            link_b = qd_to_torch(self.collider_state.contact_data.link_b, copy=False)
+            geom_a = qd_to_torch(self.collider_state.contact_data.geom_a, copy=False)
+            geom_b = qd_to_torch(self.collider_state.contact_data.geom_b, copy=False)
+            penetration = qd_to_torch(self.collider_state.contact_data.penetration, copy=False)
+            pos = qd_to_torch(self.collider_state.contact_data.pos, copy=False)
+            normal = qd_to_torch(self.collider_state.contact_data.normal, copy=False)
+            force = qd_to_torch(self.collider_state.contact_data.force, copy=False)
             if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
                 n_contacts.masked_fill_(envs_idx, 0)
                 link_a.masked_fill_(envs_idx[None, :], -1)
@@ -837,21 +855,21 @@ class Collider:
             fn = kernel_masked_collider_clear
         else:
             fn = kernel_collider_clear
-        fn(envs_idx, self._solver.dyn_state, self._collider_state, self._solver.dyn_info, self._solver.rigid_config)
+        fn(envs_idx, self._solver.dyn_state, self.collider_state, self._solver.dyn_info, self._solver.rigid_config)
 
     def _call_multicontact(self):
         narrowphase._func_narrowphase_multicontact(
             self._solver.geoms_init_AABB,
             self._solver.dyn_state,
-            self._collider_state,
-            self._multicontact_mpr_state,
-            self._multicontact_gjk_state,
+            self.collider_state,
+            self.multicontact_mpr_state,
+            self.multicontact_gjk_state,
             self._solver.dyn_info,
             self._solver.rigid_info,
-            self._collider_info,
+            self.collider_info,
             self._solver.rigid_config,
-            self._collider_static_config,
-            self._gjk._gjk_static_config,
+            self.collider_config,
+            self._gjk.gjk_config,
             self._multicontact_n_total_threads,
             self._multicontact_max_items_per_thread,
             self._solver._errno,
@@ -872,79 +890,79 @@ class Collider:
             self._solver.rigid_info,
             self._solver.rigid_config,
             self._solver.constraint_solver.constraint_state,
-            self._collider_state,
-            self._collider_info,
+            self.collider_state,
+            self.collider_info,
             self._solver._errno,
         )
         if self._use_split_narrowphase:
-            narrowphase._func_reset_narrowphase_work_queues(self._collider_state)
+            narrowphase._func_reset_narrowphase_work_queues(self.collider_state)
             narrowphase._func_narrowphase_contact0(
                 self._solver.geoms_init_AABB,
                 self._solver.dyn_state,
-                self._collider_state,
-                self._contact0_mpr_state,
-                self._contact0_gjk_state,
+                self.collider_state,
+                self.contact0_mpr_state,
+                self.contact0_gjk_state,
                 self._solver.dyn_info,
                 self._solver.rigid_info,
-                self._collider_info,
+                self.collider_info,
                 self._solver.rigid_config,
-                self._collider_static_config,
+                self.collider_config,
                 self._solver._B,
                 self._contact0_n_chunks,
                 self._solver._errno,
             )
             self._call_multicontact()
-        elif self._collider_static_config.has_non_box_plane_convex_convex:
+        elif self.collider_config.has_non_box_plane_convex_convex:
             narrowphase.func_narrow_phase_convex_vs_convex(
                 self._solver.geoms_init_AABB,
                 self._solver.dyn_state,
-                self._collider_state,
-                self._mpr._mpr_state,
-                self._gjk._gjk_state,
-                self._gjk._gjk_state.diff_contact_input,
+                self.collider_state,
+                self._mpr.mpr_state,
+                self._gjk.gjk_state,
+                self._gjk.gjk_state.diff_contact_input,
                 self._solver.dyn_info,
                 self._solver.rigid_info,
-                self._collider_info,
+                self.collider_info,
                 self._solver.rigid_config,
-                self._collider_static_config,
-                self._gjk._gjk_static_config,
+                self.collider_config,
+                self._gjk.gjk_config,
                 self._solver._errno,
             )
-        if self._collider_static_config.has_convex_specialization:
+        if self.collider_config.has_convex_specialization:
             func_narrow_phase_convex_specializations(
                 self._solver.geoms_init_AABB,
                 self._solver.dyn_state,
-                self._collider_state,
+                self.collider_state,
                 self._solver.dyn_info,
                 self._solver.rigid_info,
-                self._collider_info,
+                self.collider_info,
                 self._solver.rigid_config,
-                self._collider_static_config,
+                self.collider_config,
                 self._solver._errno,
             )
-        if self._collider_static_config.has_terrain:
+        if self.collider_config.has_terrain:
             func_narrow_phase_any_vs_terrain(
                 self._solver.geoms_init_AABB,
                 self._solver.dyn_state,
-                self._collider_state,
-                self._mpr._mpr_state,
+                self.collider_state,
+                self._mpr.mpr_state,
                 self._solver.dyn_info,
                 self._solver.rigid_info,
-                self._collider_info,
+                self.collider_info,
                 self._solver.rigid_config,
-                self._collider_static_config,
+                self.collider_config,
                 self._solver._errno,
             )
-        if self._collider_static_config.has_nonconvex_nonterrain:
+        if self.collider_config.has_nonconvex_nonterrain:
             func_narrow_phase_nonconvex_vs_nonterrain(
                 self._solver.geoms_init_AABB,
                 self._solver.dyn_state,
-                self._collider_state,
+                self.collider_state,
                 self._solver.dyn_info,
                 self._solver.rigid_info,
-                self._collider_info,
+                self.collider_info,
                 self._solver.rigid_config,
-                self._collider_static_config,
+                self.collider_config,
                 self._solver._errno,
             )
 
@@ -954,26 +972,26 @@ class Collider:
         ran_fused_dedup_coop = (
             gs.backend != gs.cpu
             and not self._solver.rigid_config.requires_grad
-            and self._collider_static_config.has_prunable_contacts
+            and self.collider_config.has_prunable_contacts
             and (self._solver._options.contact_pruning_tolerance or 0.0) > 0.0
             and self._solver._B * 2 <= self._gpu_cores
         )
         if ran_fused_dedup_coop:
             func_clamp_prune_contacts_coop(
                 self._solver.dyn_state,
-                self._collider_state,
+                self.collider_state,
                 self._solver.rigid_info,
-                self._collider_info,
+                self.collider_info,
                 self._solver._errno,
             )
         else:
             func_clamp_prune_contacts(
                 self._solver.dyn_state,
-                self._collider_state,
+                self.collider_state,
                 self._solver.rigid_info,
-                self._collider_info,
+                self.collider_info,
                 self._solver.rigid_config,
-                self._collider_static_config,
+                self.collider_config,
                 self._solver._errno,
             )
 
@@ -982,7 +1000,7 @@ class Collider:
         # kernel_fill_diff_contact_input_analytic).
         if self._solver.rigid_config.requires_grad:
             narrowphase.kernel_fill_diff_contact_input_analytic(
-                self._solver.dyn_state, self._collider_state, self._solver.dyn_info, self._solver.rigid_config
+                self._solver.dyn_state, self.collider_state, self._solver.dyn_info, self._solver.rigid_config
             )
 
     def get_contacts(
@@ -1001,11 +1019,10 @@ class Collider:
         # views, then materialize each field via a single torch.gather along the contact axis. This still avoids the
         # Quadrants gather kernel and produces a contiguous output suitable for downstream consumers.
         zerocopy_aligned = (
-            not self._collider_static_config.has_prunable_contacts
-            and not self._collider_static_config.spatial_sort_supported
+            not self.collider_config.has_prunable_contacts and not self.collider_config.spatial_sort_supported
         )
         if gs.use_zerocopy and self._contact_data is not None:
-            n_contacts = qd_to_torch(self._collider_state.n_contacts, copy=False)
+            n_contacts = qd_to_torch(self.collider_state.n_contacts, copy=False)
             # 'is_padded' returns fixed-capacity tensors (plus per-env 'n_contacts'), skipping the
             # 'n_contacts.max().item()' device->host sync that trimming to the live count needs.
             padded = is_padded
@@ -1018,7 +1035,7 @@ class Collider:
                 # field; per-env trimming to n_contacts[i] happens in the ragged split below.
                 if not (as_tensor or n_envs == 0) and not padded:
                     n_contacts_max = n_contacts.max().item()
-                sort_idx_view = qd_to_torch(self._collider_state.contact_sort_idx, transpose=True, copy=False)
+                sort_idx_view = qd_to_torch(self.collider_state.contact_sort_idx, transpose=True, copy=False)
                 if padded:
                     # Gather the full capacity so no host-side trim (sync) is needed. Sort indices past the live
                     # range may be stale; clamp (out-of-place, preserving the zero-copy view) keeps them in-bounds.
@@ -1075,7 +1092,7 @@ class Collider:
             return contact_data.copy()
 
         # Find out how much dynamic memory must be allocated
-        n_contacts = qd_to_numpy(self._collider_state.n_contacts)
+        n_contacts = qd_to_numpy(self.collider_state.n_contacts)
         n_contacts_max = n_contacts.max().item()
         # 'is_padded' is honored here too so the result matches the zero-copy path on every backend (this path
         # already syncs to size its buffers, so padding only fixes the shape). Padding needs the dense rectangular
@@ -1099,7 +1116,7 @@ class Collider:
 
         # Copy contact data
         if n_contacts_max > 0:
-            collider_kernel_get_contacts(iout, fout, self._collider_state, self._solver.rigid_config, dense)
+            collider_kernel_get_contacts(iout, fout, self.collider_state, self._solver.rigid_config, dense)
 
         # Build structured view (no copy)
         if dense:
@@ -1109,7 +1126,7 @@ class Collider:
             if padded:
                 # Widen from the live count to the fixed capacity the zero-copy path returns (contact buffers are
                 # sized max(max_candidate_contacts, 1)). New slots keep the sentinel (-1 ints / 0 floats).
-                capacity = max(self._collider_info.max_candidate_contacts[None], 1)
+                capacity = max(self.collider_info.max_candidate_contacts[None], 1)
                 if to_torch:
                     iout_full = torch.full((nb, capacity, 4), -1, dtype=gs.tc_int, device=gs.device)
                     fout_full = torch.zeros((nb, capacity, 10), dtype=gs.tc_float, device=gs.device)
@@ -1175,17 +1192,17 @@ class Collider:
         return contact_data.copy()
 
     def backward(self, dL_dposition, dL_dnormal, dL_dpenetration):
-        func_set_upstream_grad(dL_dposition, dL_dnormal, dL_dpenetration, self._collider_state)
+        func_set_upstream_grad(dL_dposition, dL_dnormal, dL_dpenetration, self.collider_state)
         self.backward_narrowphase()
 
     def backward_narrowphase(self):
         func_narrow_phase_diff_convex_vs_convex.grad(
             self._solver.dyn_state,
-            self._collider_state,
-            self._collider_state.diff_contact_input,
+            self.collider_state,
+            self.collider_state.diff_contact_input,
             self._solver.dyn_info,
             self._solver.rigid_info,
-            self._collider_info,
+            self.collider_info,
             self._solver.rigid_config,
             self._solver._errno,
         )
