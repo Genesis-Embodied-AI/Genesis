@@ -1790,26 +1790,35 @@ def func_update_force(
                     + dyn_state.links.cfrc_coupling_ang[i_l, i_b]
                 )
 
+    # One thread folds the forces of a whole kinematic tree from its leaves up to its root, gating each link of the
+    # span on that root, like func_crb_fold: a tree spans several entities once one is attached beneath another, and a
+    # child must fold into its parent before the parent folds further up.
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_0, i_b in (
+    for i_l_, i_b in (
         qd.ndrange(1, dyn_state.links.pos.shape[1])
         if qd.static(rigid_config.use_hibernation)
-        else qd.ndrange(dyn_info.entities.n_links.shape[0], dyn_state.links.pos.shape[1])
+        else qd.ndrange(dyn_info.links.root_idx.shape[0], dyn_state.links.pos.shape[1])
     ):
-        for i_1 in (
-            range(rigid_info.n_awake_entities[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
+        for i_l_awake in (
+            range(rigid_info.n_awake_links[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(i_1, 0, rigid_info.n_awake_entities[i_b], rigid_config.use_hibernation):
-                i_e = rigid_info.awake_entities[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
-
-                for i_l_ in range(dyn_info.entities.n_links[i_e]):
-                    i_l = dyn_info.entities.link_end[i_e] - 1 - i_l_
-                    I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
-                    i_p = dyn_info.links.parent_idx[I_l]
-                    I_p = [i_p, i_b]
-                    if i_p != -1:
-                        func_add_safe_backward(I_p, dyn_state.links.cfrc_vel[i_l, i_b], dyn_state.links.cfrc_vel, BW)
-                        func_add_safe_backward(I_p, dyn_state.links.cfrc_ang[i_l, i_b], dyn_state.links.cfrc_ang, BW)
+            if func_check_index_range(i_l_awake, 0, rigid_info.n_awake_links[i_b], rigid_config.use_hibernation):
+                i_l_root = rigid_info.awake_links[i_l_awake, i_b] if qd.static(rigid_config.use_hibernation) else i_l_
+                I_l_root = [i_l_root, i_b] if qd.static(rigid_config.batch_links_info) else i_l_root
+                if dyn_info.links.root_idx[I_l_root] == i_l_root:
+                    tree_end = rigid_info.links_tree_end[i_l_root]
+                    for k in range(tree_end - i_l_root):
+                        i_l = tree_end - 1 - k
+                        I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
+                        i_p = dyn_info.links.parent_idx[I_l]
+                        I_p = [i_p, i_b]
+                        if dyn_info.links.root_idx[I_l] == i_l_root and i_p != -1:
+                            func_add_safe_backward(
+                                I_p, dyn_state.links.cfrc_vel[i_l, i_b], dyn_state.links.cfrc_vel, BW
+                            )
+                            func_add_safe_backward(
+                                I_p, dyn_state.links.cfrc_ang[i_l, i_b], dyn_state.links.cfrc_ang, BW
+                            )
 
 
 @qd.func
