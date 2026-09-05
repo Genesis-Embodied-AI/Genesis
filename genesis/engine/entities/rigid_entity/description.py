@@ -1481,7 +1481,9 @@ class RigidEntityDescription(KinematicEntityDescription):
                 v_l_info.get("inertial_quat"),
                 v_l_info.get("inertial_i"),
             )
-        inertial = finalize_inertial(mass, com, quat, inertia, *inertial_info.hint)
+        inertial = finalize_inertial(
+            mass, com, quat, inertia, *inertial_info.hint, clamp_min_mass=not is_link_fixed(self.links, i_link)
+        )
         return RigidVariantLinkDescription(
             vgeoms=[description_from_info(RigidVisGeomDescription, vg_info) for vg_info in vg_infos],
             mass=inertial.mass,
@@ -1558,11 +1560,14 @@ class RigidEntityDescription(KinematicEntityDescription):
         inertia = None if is_inertia_recomputed else l_info.get("inertial_i")
         invweight = l_info.get("invweight")
 
-        # A link holding no geometry keeps the mass 'finalize_inertial' floors at 'gs.EPS'.
+        # A fixed link takes no geometry estimate: it may be the environment or an object welded for this scene alone,
+        # and nothing in the asset tells which. It is massless when it states no mass, so that an attach setting it
+        # moving computes the estimate then (see 'KinematicEntity.attach'). A moving link without geometry keeps the
+        # mass 'finalize_inertial' floors at 'gs.EPS'.
         hint = InertialProperties(0.0, np.zeros(3, dtype=gs.np_float), np.zeros((3, 3), dtype=gs.np_float))
-        if inertial_info.hint is not None:
-            hint = inertial_info.hint
         if not is_fixed and inertial_info.hint is not None:
+            hint = inertial_info.hint
+
             # Compute the bounding box of the links using both visual and collision geometries to be conservative
             aabb_min = np.full((3,), float("inf"), dtype=gs.np_float)
             aabb_max = np.full((3,), float("-inf"), dtype=gs.np_float)
@@ -1633,7 +1638,7 @@ class RigidEntityDescription(KinematicEntityDescription):
 
         # The final inertial comes from the explicit values and the geometry estimate. The align anchor shares
         # 'finalize_inertial', so the dynamics inertia and that anchor stay in lockstep.
-        inertial = finalize_inertial(mass, com, quat, inertia, *hint)
+        inertial = finalize_inertial(mass, com, quat, inertia, *hint, clamp_min_mass=not is_fixed)
 
         # override invweight if fixed
         if is_fixed:

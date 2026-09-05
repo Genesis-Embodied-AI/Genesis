@@ -201,8 +201,9 @@ def finalize_inertial(
     anchor resolve their inertial here, so the rigid dynamics inertia and the align anchor agree.
 
     With ``clamp_min_mass`` the resolved mass is floored at ``gs.EPS`` so a geometry-less moving link stays
-    non-singular in the dynamics. The align stash passes ``False``, so a genuinely massless link keeps its ``0.0``
-    mass and does not inflate the fixed-subtree composite by ``gs.EPS``.
+    non-singular in the dynamics. The align stash and the links fixed to the world pass ``False``, so a genuinely
+    massless link keeps its ``0.0`` mass: it neither inflates the fixed-subtree composite by ``gs.EPS`` nor reads as
+    stated once an attach sets it moving.
     """
     mass, com, quat, inertia = explicit_mass, explicit_com, explicit_quat, explicit_inertia
     if mass is not None and hint_mass > 0.0:

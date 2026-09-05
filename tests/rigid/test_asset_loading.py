@@ -266,7 +266,7 @@ def test_parsing_inertia_defaults(
             merge_fixed_links=False,
         ),
     )
-    # The same asset welded to the world resolves every link exactly as the free copy does.
+    # The same asset welded to the world, so that the links the world carries resolve without a geometry estimate.
     entity_welded = scene.add_entity(
         morph=gs.morphs.URDF(
             file=degenerate_inertials,
@@ -427,10 +427,16 @@ def test_parsing_inertia_defaults(
             tol=tol,
             err_msg=link.name,
         )
+    # The links the joints still move resolve exactly as in the free copy. The two the world carries keep the asset's
+    # values, degenerate as they are: a zero mass and no inertia.
     for link, link_welded in zip(entity.links, entity_welded.links):
-        assert_allclose(link_welded.desc.mass, link.desc.mass, tol=gs.EPS, err_msg=link.name)
-        assert_allclose(link_welded.desc.inertial_pos, link.desc.inertial_pos, tol=gs.EPS, err_msg=link.name)
-        assert_allclose(link_welded.desc.inertia, link.desc.inertia, tol=gs.EPS, err_msg=link.name)
+        if link_welded.is_fixed:
+            assert_equal(link_welded.desc.mass, 0.0, err_msg=link.name)
+            assert_equal(link_welded.desc.inertia, 0.0, err_msg=link.name)
+            continue
+        assert_equal(link_welded.desc.mass, link.desc.mass, err_msg=link.name)
+        assert_equal(link_welded.desc.inertial_pos, link.desc.inertial_pos, err_msg=link.name)
+        assert_equal(link_welded.desc.inertia, link.desc.inertia, err_msg=link.name)
 
     # Every asset above is parsed by MuJoCo, a zero or missing inertial included.
     assert not any("legacy URDF parser" in record.getMessage() for record in caplog.records)
