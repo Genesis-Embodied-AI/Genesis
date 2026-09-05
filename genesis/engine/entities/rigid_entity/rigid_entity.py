@@ -302,7 +302,7 @@ class KinematicEntity(Entity):
                 gs.raise_exception(f"Mounting 'pos' must have shape (3,), got {mount_pos.shape}.")
             if mount_quat.shape != (4,):
                 gs.raise_exception(f"Mounting 'quat' must have shape (4,) (w, x, y, z), got {mount_quat.shape}.")
-            if np.linalg.norm(mount_quat) < gs.EPS:
+            if np.linalg.norm(mount_quat) == 0.0:
                 gs.raise_exception("Mounting 'quat' cannot be a zero-length quaternion.")
             mount_quat = gu.normalize(mount_quat)
 
