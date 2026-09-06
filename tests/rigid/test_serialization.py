@@ -648,9 +648,10 @@ def test_pickle_resume(n_envs, requires_grad, checkpoint_scene, tmp_path, show_v
     # A record names every array, so a restore raises on a missing or extra array and names the difference. A restore
     # of a record with another 'n_envs' raises and names both counts.
     rigid = checkpoint.sim.solvers["RigidSolver"]
-    arrays = {name: array for name, array in rigid.arrays.items() if name != "dyn_state.links.pos"}
+    dropped_name, *_ = rigid.arrays
+    arrays = {name: array for name, array in rigid.arrays.items() if name != dropped_name}
     solvers = {**checkpoint.sim.solvers, "RigidSolver": dataclasses.replace(rigid, arrays=arrays)}
-    with pytest.raises(gs.GenesisException, match="do not share \\['dyn_state.links.pos'\\]"):
+    with pytest.raises(gs.GenesisException, match=f"do not share \\['{dropped_name}'\\]"):
         scene.__setstate__(dataclasses.replace(checkpoint, sim=dataclasses.replace(checkpoint.sim, solvers=solvers)))
     with pytest.raises(gs.GenesisException, match="built with EnvironmentLayout\\(n_envs=3"):
         scene.__setstate__(dataclasses.replace(checkpoint, layout=dataclasses.replace(checkpoint.layout, n_envs=3)))
@@ -662,24 +663,22 @@ def test_trajectory_replay(n_envs, checkpoint_scene, tmp_path, show_viewer, capl
     scene = checkpoint_scene
     box, arm, ghost = scene.entities[1], scene.entities[2], scene.entities[4]
     # Both modes logged from one run. Short chunks, so the frames span several chunks and a chunk can be cut off. The
-    # files rotate on reset, so the run ends with a reset and each first file must close on the state before it.
+    # run ends with a reset, which every log records the state before, and goes on in the same file.
     N_STEPS, CHUNK_SIZE = 30, 8
-    exact_path = tmp_path / f"exact_0{TRAJECTORY_FORMAT}"
-    compressed_path = tmp_path / f"compressed_0{TRAJECTORY_FORMAT}"
+    exact_path = tmp_path / f"exact{TRAJECTORY_FORMAT}"
+    compressed_path = tmp_path / f"compressed{TRAJECTORY_FORMAT}"
     scene.start_recording(
         gs.recorders.TrajectoryFile(
-            filename=str(tmp_path / f"exact{TRAJECTORY_FORMAT}"),
+            filename=str(exact_path),
             exact=True,
             chunk_size=CHUNK_SIZE,
-            save_on_reset=True,
         ),
     )
     scene.start_recording(
         gs.recorders.TrajectoryFile(
-            filename=str(tmp_path / f"compressed{TRAJECTORY_FORMAT}"),
+            filename=str(compressed_path),
             exact=False,
             chunk_size=CHUNK_SIZE,
-            save_on_reset=True,
         ),
     )
     # A third log samples every fourth step, a rate the run length is off
@@ -720,16 +719,18 @@ def test_trajectory_replay(n_envs, checkpoint_scene, tmp_path, show_viewer, capl
     final_state = scene.sim.rigid_solver.get_state()
     final_force = box.get_contacts()["force_a"]
     scene.reset()
+    reset_state = scene.sim.rigid_solver.get_state()
     # Every recorder is stopped, then the failure of the capped one is raised, and it leaves no file behind
     with pytest.raises(gs.GenesisException, match="cannot hold the header"):
         scene.stop_recording()
     assert not capped_path.exists()
 
-    # The state the recording stopped at closes each file, as one more frame. Both trajectories play in the same scene.
+    # Each file holds the frame before each step, the state the reset left behind and the state the recording stopped
+    # at. Both trajectories play in the same scene.
     exact_trajectory = gs.Scene.load_trajectory(exact_path, show_viewer=show_viewer)
     replay_scene = exact_trajectory.scene
     compressed_trajectory = Trajectory(compressed_path, scene=replay_scene)
-    assert len(exact_trajectory) == len(compressed_trajectory) == N_STEPS + 1
+    assert len(exact_trajectory) == len(compressed_trajectory) == N_STEPS + 2
     assert exact_trajectory.is_exact and not compressed_trajectory.is_exact
     for index, (state, ghost_pos, force, time) in enumerate(zip(states, ghosts_pos, forces, times)):
         # An exact frame puts back everything a step reads or writes, so the scene stands exactly where it stood
@@ -764,7 +765,7 @@ def test_trajectory_replay(n_envs, checkpoint_scene, tmp_path, show_viewer, capl
     assert_equal(replayed_state.qpos, final_state.qpos)
     assert_equal(replayed_state.dofs_vel, final_state.dofs_vel)
     assert_equal(replay_scene.entities[1].get_contacts()["force_a"], final_force)
-    # The last frame is the state the reset left behind, and seeking it puts the scene where the run ended
+    # The frame after the run is the state the reset left behind, and seeking it puts the scene where the run ended
     assert_equal(
         exact_trajectory.frame(N_STEPS)["RigidSolver.rigid_info.qpos"],
         tensor_to_array(final_state.qpos).T,
@@ -776,9 +777,10 @@ def test_trajectory_replay(n_envs, checkpoint_scene, tmp_path, show_viewer, capl
     # scratch of the solvers comes beside the kinds the other frames hold
     for trajectory in (exact_trajectory, compressed_trajectory):
         assert set(trajectory.frame(-1)) > set(trajectory.frame(-2))
-        assert_equal(trajectory.frame(-1)["RigidSolver.rigid_info.qpos"], tensor_to_array(final_state.qpos).T)
+        assert_equal(trajectory.frame(-1)["RigidSolver.rigid_info.qpos"], tensor_to_array(reset_state.qpos).T)
     exact_trajectory.seek(-1)
-    assert_equal(replay_scene.sim.rigid_solver.get_state().qpos, final_state.qpos)
+    assert_equal(replay_scene.sim.rigid_solver.get_state().qpos, reset_state.qpos)
+    assert_equal(replay_scene.get_time(), 0.0)
 
     # A run cut off inside a chunk keeps every complete chunk and loses the final state
     with open(exact_path, "rb") as file:

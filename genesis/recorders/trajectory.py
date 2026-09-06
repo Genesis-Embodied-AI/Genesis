@@ -30,7 +30,6 @@ from genesis.utils import serialization
 from genesis.utils.array_class import CHECKPOINT_KINDS, DataKind
 from genesis.utils.misc import qd_to_numpy, qd_to_torch, tensor_to_array
 
-from .base_recorder import Recorder
 from .file_writers import BaseFileWriter
 from .recorder_manager import register_recording
 
@@ -350,14 +349,6 @@ class TrajectoryFileWriter(BaseFileWriter):
         (gs.logger or LOGGER).info(
             f'[TrajectoryFileWriter] Saved {self._n_frames} frames to ~<"{self._get_filename()}">~.'
         )
-
-    def reset(self, envs_idx=None):
-        # The per-environment step counts in each frame record a reset of some environments, so only a whole-scene
-        # reset starts a new file.
-        if envs_idx is None:
-            super().reset()
-        else:
-            Recorder.reset(self, envs_idx)
 
     @property
     def run_in_thread(self) -> bool:

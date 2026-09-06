@@ -48,13 +48,9 @@ class BaseFileWriterOptions(RecorderOptions):
     ----------
     filename: str
         The path of the output file.
-    save_on_reset: bool, optional
-        Whether to save the data on reset. Defaults to False.
-        If True, a counter will be added to the filename and incremented on each reset.
     """
 
     filename: PathType
-    save_on_reset: StrictBool = False
 
 
 class VideoFile(BaseFileWriterOptions):
@@ -80,9 +76,6 @@ class VideoFile(BaseFileWriterOptions):
         Defaults to 1.0.
     codec_options: dict[str, str]
         Additional low-level codec options that will be pass to ffmpeg. Empty by default.
-    save_on_reset: bool, optional
-        Whether to save the data on reset. If True, a counter will be added to the filename and incremented on each
-        reset. Defaults to False.
     """
 
     filename: PathType = Field(pattern=r"(?i).*\.mp4$")
@@ -115,9 +108,6 @@ class CSVFile(BaseFileWriterOptions):
         after flattening the values.
     save_every_write: bool, optional
         Whether to flush the data to disk as soon as new data is recieved. Defaults to False.
-    save_on_reset: bool, optional
-        Whether to save the data on scene reset. Defaults to False.
-        If True, a counter will be added to the filename and incremented on each reset.
     """
 
     filename: PathType = Field(pattern=r"(?i).*\.csv$")
@@ -135,9 +125,6 @@ class NPZFile(BaseFileWriterOptions):
     ----------
     filename : str
         The name of the .npz file to save the data.
-    save_on_reset: bool, optional
-        Whether to save the data on reset. Defaults to False.
-        If True, a counter will be added to the filename and incremented on each reset.
     """
 
     filename: PathType = Field(pattern=r"(?i).*\.npz$")
@@ -172,9 +159,6 @@ class TrajectoryFile(BaseFileWriterOptions):
         Bytes the file may grow to. A record that would pass it is dropped, the file is closed as a valid log, and the
         next step raises, so a run left recording fills the disk by at most this much. Raise it for a long run whose
         size is planned. If None, the file grows with the run. Defaults to 2 GiB.
-    save_on_reset : bool, optional
-        Whether a reset of the whole scene starts a new file, numbered after this one. A reset of some environments is
-        recorded by their clocks in the same file. Defaults to False.
     """
 
     filename: PathType = Field(pattern=r"(?i).*\.gstraj$")
