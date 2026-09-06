@@ -197,7 +197,7 @@ def urdf_with_external_assets(asset_tmp_path):
         ],
         dtype=np.uint8,
     )
-    Image.fromarray(texture).save(texture_path)
+    Image.fromarray(texture).convert("P", palette=Image.Palette.ADAPTIVE).save(texture_path)
     robot = ET.Element("robot", name="external_mesh_and_texture")
     material = ET.SubElement(robot, "material", name="textured")
     ET.SubElement(material, "color", rgba="0 1 0 1")

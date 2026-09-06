@@ -928,7 +928,7 @@ def test_color_overwrite(overwrite, urdf_with_external_assets, show_viewer):
             assert_equal(color, (255, 0, 0, 255))
 
     texture_path = ET.fromstring(urdf_with_external_assets).find("material/texture").get("filename")
-    texture = np.array(Image.open(texture_path))
+    texture = np.array(Image.open(texture_path).convert("RGB"))
     sphere_vgeom, quad_vgeom = textured.vgeoms
     for vgeom in (sphere_vgeom, quad_vgeom):
         assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
