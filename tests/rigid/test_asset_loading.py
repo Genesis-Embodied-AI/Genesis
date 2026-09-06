@@ -869,7 +869,6 @@ def test_color_overwrite(overwrite, urdf_with_external_assets, show_viewer):
     textured = scene.add_entity(
         gs.morphs.URDF(
             file=urdf_with_external_assets,
-            prioritize_urdf_material=True,
         ),
         surface=gs.surfaces.Default(
             color=(1.0, 0.0, 0.0, 1.0) if overwrite else None,
