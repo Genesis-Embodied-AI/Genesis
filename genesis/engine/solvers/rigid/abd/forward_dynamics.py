@@ -24,7 +24,7 @@ from .forward_kinematics import func_forward_velocity_batch, func_update_cartesi
 from .misc import func_add_safe_backward, func_check_index_range, func_wakeup_island, linear_to_lower_tri
 
 
-@qd.kernel
+@qd.kernel(fastcache=True)
 def update_qacc_from_qvel_delta(
     dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
@@ -46,7 +46,7 @@ def update_qacc_from_qvel_delta(
                 dyn_state.dofs.vel[i_d, i_b] = dyn_state.dofs.vel_prev[i_d, i_b]
 
 
-@qd.kernel
+@qd.kernel(fastcache=True)
 def update_qvel(
     dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
@@ -2364,7 +2364,7 @@ def func_integrate(
         dyn_state.links.cfrc_coupling_vel[I] = qd.Vector.zero(gs.qd_float, 3)
 
 
-@qd.kernel
+@qd.kernel(fastcache=True)
 def kernel_forward_dynamics_without_qacc(
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,

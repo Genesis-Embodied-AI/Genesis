@@ -2001,7 +2001,7 @@ def kernel_delete_weld_constraint(
 # ====================================== Hessian Matrix & Cholesky Factorization ======================================
 
 
-@qd.kernel
+@qd.kernel(fastcache=True)
 def func_compute_dof_perm(
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,

@@ -672,20 +672,7 @@ class Mesh(URDFType):
         return Mesh(**kwargs)
 
     def _to_xml(self, parent, path):
-        # Make sure that parent directory exists
-        get_filename(path, self.filename, makedirs=True)
-
-        # Export the meshes as a single file
-        # meshes = self.meshes
-        # if len(meshes) == 1:
-        #     meshes = meshes[0]
-        # elif os.path.splitext(fn)[1] == ".glb":
-        #     meshes = trimesh.scene.Scene(geometry=meshes)
-        # trimesh.exchange.export.export_mesh(meshes, fn)
-
-        # Unparse the node
-        node = self._unparse(path)
-        return node
+        return self._unparse(path)
 
     def copy(self, prefix="", scale=None):
         """Create a deep copy with the prefix applied to all names.
