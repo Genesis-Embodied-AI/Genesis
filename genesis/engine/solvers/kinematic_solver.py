@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -15,7 +16,7 @@ from genesis.engine.solvers.rigid.abd.inverse_kinematics import (
     kernel_inverse_kinematics_entity,
     kernel_set_ik_targets,
 )
-from genesis.engine.states.solvers import KinematicSolverState
+from genesis.engine.states.solvers import KinematicSolverCheckpoint, KinematicSolverState
 from genesis.options.morphs import Morph
 from genesis.options.solvers import KinematicOptions
 from genesis.utils.misc import (
@@ -396,6 +397,16 @@ class KinematicSolver(Solver):
         self.dyn_state = self.data_manager.dyn_state
         self.kinematics_scratch = self.data_manager.kinematics_scratch
 
+    @property
+    def data(self) -> Iterator[array_class.DataItem]:
+        yield from array_class.iter_data(self.rigid_config, "rigid_config")
+        yield from array_class.iter_data(self.data_manager.errno, "errno", array_class.DataKind.STATE)
+        structs = ["rigid_info", "dyn_info", "dyn_state", "rigid_adjoint_cache"]
+        if self.rigid_config.requires_grad:
+            structs.append("dyn_state_adjoint_cache")
+        for name in structs:
+            yield from array_class.iter_data(getattr(self.data_manager, name), name)
+
     # ------------------------------------------------------------------------------------
     # --------------------------------- hook methods -------------------------------------
     # ------------------------------------------------------------------------------------
@@ -752,6 +763,28 @@ class KinematicSolver(Solver):
         else:
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
+
+    def __getstate__(self) -> KinematicSolverCheckpoint:
+        state = super().__getstate__()
+        return KinematicSolverCheckpoint(
+            arrays=state.arrays,
+            configs=state.configs,
+            kinds=state.kinds,
+            is_forward_pos_updated=self._is_forward_pos_updated,
+            is_forward_vel_updated=self._is_forward_vel_updated,
+        )
+
+    @mutates(StateChange.GEOMETRY, StateChange.DYNAMICS)
+    def __setstate__(self, state: KinematicSolverCheckpoint) -> None:
+        super().__setstate__(state)
+        if array_class.DataKind.DERIVED in state.kinds:
+            self._is_forward_pos_updated = state.is_forward_pos_updated
+            self._is_forward_vel_updated = state.is_forward_vel_updated
+        else:
+            # Without the derived arrays, forward kinematics runs now so the scene is drawn where the record put it. The
+            # next step recomputes the rest of the derived state.
+            self._is_forward_pos_updated = self._is_forward_vel_updated = False
+            self.update_forward_pos()
 
     # ------------------------------------------------------------------------------------
     # -------------------------------- process_input -------------------------------------
@@ -1572,6 +1605,16 @@ class KinematicSolver(Solver):
         if self.is_built:
             return self._n_qs
         return sum(entity.n_qs for entity in self._entities)
+
+    @property
+    def is_forward_pos_updated(self) -> bool:
+        """Whether the link and geom poses are current for the configuration, so the next step skips forward kinematics."""
+        return self._is_forward_pos_updated
+
+    @property
+    def is_forward_vel_updated(self) -> bool:
+        """Whether the link velocities are current for the generalized velocities."""
+        return self._is_forward_vel_updated
 
     @property
     def n_dofs(self):

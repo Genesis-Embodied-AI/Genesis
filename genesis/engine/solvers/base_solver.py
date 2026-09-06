@@ -1,6 +1,7 @@
 import enum
 import functools
 import inspect
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
@@ -12,12 +13,13 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.materials.base import Material
-from genesis.engine.states import QueriedStates
+from genesis.engine.states import QueriedStates, SolverCheckpoint
 from genesis.repr_base import RBC
 from genesis.utils.misc import (
     assign_indexed_tensor,
     broadcast_tensor,
     indices_to_mask,
+    qd_to_numpy,
     qd_to_torch,
     sanitize_index,
     tensor_to_array,
@@ -326,8 +328,6 @@ class Solver(RBC):
         # through both the simulator-level and the per-solver loop.
         self._queried_states = QueriedStates()
 
-        self.data_manager = None
-
         # force fields
         self._ffs = list()
 
@@ -358,6 +358,34 @@ class Solver(RBC):
 
     def build(self):
         self._B = self._sim._B
+
+    @property
+    def data(self) -> Iterator[array_class.DataItem]:
+        """Yield every array and static config the solver holds, tagged by kind (see 'DataKind'), under the dotted name
+        a checkpoint and a trajectory frame use for it.
+        """
+        gs.raise_exception(f"{type(self).__name__} cannot be checkpointed yet.")
+
+    def __getstate__(self) -> SolverCheckpoint:
+        """Return a SolverCheckpoint of this solver, for '__setstate__' to restore.
+
+        The state is what 'data' yields of the kinds a checkpoint carries (see 'CHECKPOINT_KINDS'), copied where it
+        lives: on the device as torch tensors when zero-copy views exist, which keeps a save and a restore within one
+        process off the host, and as numpy arrays otherwise.
+        """
+        read = qd_to_torch if gs.use_zerocopy else qd_to_numpy
+        arrays = {}
+        configs = {}
+        for name, value, kind in self.data:
+            if kind == array_class.DataKind.CONFIG:
+                configs[name] = value
+            elif kind in array_class.CHECKPOINT_KINDS:
+                arrays[name] = read(value, copy=True)
+        return SolverCheckpoint(arrays=arrays, configs=configs, kinds=array_class.CHECKPOINT_KINDS)
+
+    def __setstate__(self, state: SolverCheckpoint) -> None:
+        """Write back the arrays of the kinds a record holds, rejecting a record read from another build."""
+        array_class.fill_data((item for item in self.data if item.kind in state.kinds), state.arrays)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

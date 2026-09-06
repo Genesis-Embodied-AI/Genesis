@@ -24,7 +24,7 @@ class MPR:
             # Bounds that refinement, which is not otherwise guaranteed to terminate.
             CCD_ITERATIONS=50,
         )
-        self._mpr_state = array_class.get_mpr_state(self._solver._B)
+        self.mpr_state = array_class.get_mpr_state(self._solver._B)
 
 
 @qd.kernel

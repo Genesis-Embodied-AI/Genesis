@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 import torch
@@ -6,6 +7,7 @@ import genesis as gs
 from genesis.options.morphs import Morph
 from genesis.options.solvers import IPCCouplerOptions, LegacyCouplerOptions, SAPCouplerOptions
 from genesis.repr_base import RBC
+from genesis.utils.array_class import DataItem, DataKind
 from genesis.utils.misc import indices_to_mask
 
 from .couplers import IPCCoupler, LegacyCoupler, SAPCoupler
@@ -23,7 +25,7 @@ from .solvers import (
 )
 from .solvers.base_solver import GravityMixin, TimeBasedMixin
 from .states.cache import QueriedStates
-from .states.solvers import SimState
+from .states.solvers import SimState, SimulatorCheckpoint
 
 if TYPE_CHECKING:
     from genesis.engine.entities.base_entity import Entity, EntityDescription
@@ -237,19 +239,64 @@ class Simulator(RBC):
             if solver.n_entities > 0:
                 solver.set_state(0, solver_state, envs_idx)
 
+        if envs_idx is None:
+            self._steps.zero_()
+        else:
+            self._steps[indices_to_mask(envs_idx)] = 0
+        self._restart(envs_idx)
+
+    def _restart(self, envs_idx=None):
+        """Restart the coupler, the gradient tape and the sensors."""
         self._coupler.reset(envs_idx=envs_idx)
 
         # TODO: keeping as is for now
         self.reset_grad()
         # The tape cursor is a position in the recorded window, not a clock, so it rewinds whole.
         self._cur_substep_global = 0
-        if envs_idx is None:
-            self._steps.zero_()
-        else:
-            self._steps[indices_to_mask(envs_idx)] = 0
 
         # reset sensors state
         self._sensor_manager.reset(envs_idx=envs_idx)
+
+    def data(self, kinds: frozenset[DataKind]) -> Iterator[DataItem]:
+        """Yield every item of the given kinds the active solvers hold, each under the class name of its solver."""
+        if isinstance(self._coupler, IPCCoupler):
+            gs.raise_exception(
+                "A scene coupled by IPC cannot be checkpointed yet: the IPC world holds state of its own."
+            )
+        for solver in self._active_solvers:
+            prefix = type(solver).__name__
+            for name, value, kind in solver.data:
+                if kind in kinds:
+                    yield DataItem(f"{prefix}.{name}", value, kind)
+
+    def __getstate__(self) -> SimulatorCheckpoint:
+        """Return a SimulatorCheckpoint of the simulation, for '__setstate__' to restore."""
+        if isinstance(self._coupler, IPCCoupler):
+            gs.raise_exception(
+                "A scene coupled by IPC cannot be checkpointed yet: the IPC world holds state of its own."
+            )
+        return SimulatorCheckpoint(
+            steps=self._steps.clone(),
+            solvers={type(solver).__name__: solver.__getstate__() for solver in self._active_solvers},
+        )
+
+    def __setstate__(self, state: SimulatorCheckpoint) -> None:
+        """Put the built simulation back in a state '__getstate__' read.
+
+        Everything around the state restarts as under a reset.
+
+        The clock of each environment comes back as recorded, since simulated time is state. The tape cursor, the
+        gradients, the coupler and the sensors are restarted (see 'reset'): they describe the run that led here.
+        """
+        # The record was checked against every solver by the scene (see 'Scene.__setstate__'). The restart precedes the
+        # state, whose gradients it would zero otherwise.
+        self._restart()
+        for solver in self._active_solvers:
+            solver.__setstate__(state.solvers[type(solver).__name__])
+        self._steps[:] = torch.as_tensor(state.steps, device=gs.device)
+        # Flush the zero-copy writes of fill_data on Metal.
+        if gs.use_zerocopy and gs.backend == gs.metal:
+            torch.mps.synchronize()
 
     def reset_grad(self):
         for solver in self._active_solvers:
@@ -461,6 +508,11 @@ class Simulator(RBC):
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
+
+    @property
+    def steps(self) -> torch.Tensor:
+        """The number of steps each environment has run since its last reset, of shape [B]."""
+        return self._steps
 
     @property
     def dt(self) -> float:

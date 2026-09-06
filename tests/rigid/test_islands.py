@@ -192,7 +192,7 @@ def test_partition_logics(show_viewer, n_envs, multi_free_body_path, monkeypatch
     dof_id = qd_to_numpy(island_state.dof_id)
     island_contact_n = qd_to_numpy(island_state.contact_slices.n)
     island_constraint_n = qd_to_numpy(island_state.constraint_slices.n)
-    n_contacts = qd_to_numpy(solver.collider._collider_state.n_contacts)
+    n_contacts = qd_to_numpy(solver.collider.collider_state.n_contacts)
     n_constraints = qd_to_numpy(solver.constraint_solver.constraint_state.n_constraints)
     alone_dofs = list(range(box_alone.dof_start, box_alone.dof_start + box_alone.n_dofs))
     for i_env in range(island_idx.shape[1]):

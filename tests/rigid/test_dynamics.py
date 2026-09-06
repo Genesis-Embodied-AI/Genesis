@@ -518,7 +518,7 @@ def test_energy_analytical_and_conservation(
         pe_a.append(sphere_a.get_potential_energy())
         ke_b.append(sphere_b.get_kinetic_energy())
         pe_b.append(sphere_b.get_potential_energy())
-        if impact_step < 0 and scene.rigid_solver.collider._collider_state.n_contacts.to_numpy().any():
+        if impact_step < 0 and scene.rigid_solver.collider.collider_state.n_contacts.to_numpy().any():
             impact_step = i
     assert impact_step > 0
 

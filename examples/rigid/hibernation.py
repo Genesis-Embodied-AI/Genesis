@@ -111,7 +111,7 @@ def main():
     def plot_data():
         return {"step_rate": [step_rate[0]], "awake_bodies": [n_awake[0]]}
 
-    scene.start_recording(
+    scene.add_recorder(
         plot_data,
         gs.recorders.MPLLinePlot(
             labels={"step_rate": ["steps/s"], "awake_bodies": ["awake bodies"]},

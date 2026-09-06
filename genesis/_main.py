@@ -143,6 +143,12 @@ def play(filename=None, collision=False, scale=1.0):
         scene.step()
 
 
+def replay(filename):
+    gs.init()
+
+    gs.Scene.load_trajectory(filename, show_viewer=True).play(loop=True)
+
+
 def animate(filename_pattern, fps):
     import glob
 
@@ -192,6 +198,9 @@ def main():
     )
     parser_play.add_argument("-s", "--scale", type=float, default=1.0, help="Scale of the entity")
 
+    parser_replay = subparsers.add_parser("replay", help="Replay a recorded trajectory in the viewer")
+    parser_replay.add_argument("filename", type=str, help="Trajectory file (.gstraj)")
+
     parser_animate = subparsers.add_parser("animate", help="Compile a list of image files into a video")
     parser_animate.add_argument("filename_pattern", type=str, help="Image files, via glob pattern")
     parser_animate.add_argument("--fps", type=int, default=30, help="FPS of the output video")
@@ -209,6 +218,8 @@ def main():
         )
     elif args.command == "play":
         play(args.filename, args.collision, args.scale)
+    elif args.command == "replay":
+        replay(args.filename)
     elif args.command == "animate":
         animate(args.filename_pattern, args.fps)
     elif args.command is None:

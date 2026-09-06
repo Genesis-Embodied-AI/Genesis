@@ -1,6 +1,7 @@
 import math
 import os
 import sys
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -15,7 +16,7 @@ from genesis.constants import link_ref_frame
 from genesis.engine.entities import DroneEntity, RigidEntity, TerrainEntity
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.materials import Rigid
-from genesis.engine.states import QueriedStates, RigidSolverState
+from genesis.engine.states import KinematicSolverCheckpoint, QueriedStates, RigidSolverState
 from genesis.options.morphs import Drone, Morph, Terrain
 from genesis.options.solvers import RigidOptions
 from genesis.utils.misc import (
@@ -1291,7 +1292,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             self._func_constraint_force()
             kernel_step_2(
                 self.dyn_state,
-                self.collider._collider_state,
+                self.collider.collider_state,
                 self.constraint_solver.constraint_state,
                 self.dyn_info,
                 self.rigid_info,
@@ -1318,19 +1319,19 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             errno = kernel_bit_reduction(self._errno)
 
         if errno & array_class.ErrorCode.OVERFLOW_CANDIDATE_CONTACTS:
-            max_collision_pairs_broad = self.collider._collider_info.max_collision_pairs_broad[None]
+            max_collision_pairs_broad = self.collider.collider_info.max_collision_pairs_broad[None]
             gs.raise_exception(
                 f"Exceeding max number of broad phase candidate contact pairs ({max_collision_pairs_broad}). "
                 f"Please increase the value of RigidSolver's option 'multiplier_collision_broad_phase'."
             )
         if errno & array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS:
-            max_candidate_contacts = self.collider._collider_info.max_candidate_contacts[None]
+            max_candidate_contacts = self.collider.collider_info.max_candidate_contacts[None]
             gs.raise_exception(
                 f"Exceeding max number of candidate contact points ({max_candidate_contacts}). Please increase the "
                 "value of RigidSolver's option 'max_collision_pairs'."
             )
         if errno & array_class.ErrorCode.OVERFLOW_CONTACTS:
-            max_contacts = self.collider._collider_info.max_contacts[None]
+            max_contacts = self.collider.collider_info.max_contacts[None]
             gs.raise_exception(
                 f"Exceeding max number of post-pruning contact points ({max_contacts}) supported by the constraint "
                 "solver. Please increase the value of RigidSolver's option 'max_contacts'."
@@ -1355,10 +1356,10 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         # TODO: support batching
         self._kernel_detect_collision()
 
-        n_collision = qd_to_numpy(self.collider._collider_state.n_contacts)[env_idx]
+        n_collision = qd_to_numpy(self.collider.collider_state.n_contacts)[env_idx]
         collision_pairs = np.empty((n_collision, 2), dtype=np.int32)
-        collision_pairs[:, 0] = qd_to_numpy(self.collider._collider_state.contact_data.geom_a)[:n_collision, env_idx]
-        collision_pairs[:, 1] = qd_to_numpy(self.collider._collider_state.contact_data.geom_b)[:n_collision, env_idx]
+        collision_pairs[:, 0] = qd_to_numpy(self.collider.collider_state.contact_data.geom_a)[:n_collision, env_idx]
+        collision_pairs[:, 1] = qd_to_numpy(self.collider.collider_state.contact_data.geom_b)[:n_collision, env_idx]
 
         return collision_pairs
 
@@ -1373,7 +1374,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             if self._use_hibernation:
                 kernel_wake_up_entities_on_new_contact(
                     self.dyn_state,
-                    self.collider._collider_state,
+                    self.collider.collider_state,
                     self.constraint_solver.constraint_state,
                     self.dyn_info,
                     self.rigid_info,
@@ -1425,7 +1426,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         )
 
         if self._enable_collision:
-            collider_state = self.collider._collider_state
+            collider_state = self.collider.collider_state
             qd_zero_grad(collider_state.contact_data.pos)
             qd_zero_grad(collider_state.contact_data.normal)
             qd_zero_grad(collider_state.contact_data.penetration)
@@ -1445,7 +1446,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         if self._enable_joint_limit:
             kernel_manual_add_joint_limit_constraints_bw(
                 self.dyn_state,
-                self.collider._collider_state,
+                self.collider.collider_state,
                 constraint_state,
                 self.dyn_info,
                 self.rigid_info,
@@ -1652,7 +1653,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
 
         kernel_step_2.grad(
             self.dyn_state,
-            self.collider._collider_state,
+            self.collider.collider_state,
             self.constraint_solver.constraint_state,
             self.dyn_info,
             self.rigid_info,
@@ -1698,7 +1699,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             update_qacc_from_qvel_delta(self.dyn_state, self.rigid_info, self.rigid_config)
             kernel_step_2(
                 self.dyn_state,
-                self.collider._collider_state,
+                self.collider.collider_state,
                 self.constraint_solver.constraint_state,
                 self.dyn_info,
                 self.rigid_info,
@@ -1912,9 +1913,28 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
 
+        self._restart()
+
+    @property
+    def data(self) -> Iterator[array_class.DataItem]:
+        yield from super().data
+        yield from self.collider.data
+        yield from self.constraint_solver.data
+
+    def _restart(self):
+        """Clear the contact and equality caches of the last query and re-arm the once-per-step propeller guard of
+        each drone (see 'set_propellers_rpm').
+        """
+        self.collider._contact_data_cache.clear()
+        self.constraint_solver._eq_const_info_cache.clear()
         for entity in self.entities:
             if isinstance(entity, DroneEntity):
                 entity._prev_prop_t = -1
+
+    @mutates(StateChange.GEOMETRY, StateChange.DYNAMICS)
+    def __setstate__(self, state: KinematicSolverCheckpoint) -> None:
+        super().__setstate__(state)
+        self._restart()
 
     def process_input(self, in_backward=False):
         for entity in self._entities:

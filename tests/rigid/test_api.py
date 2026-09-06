@@ -62,7 +62,7 @@ def test_data_accessor(n_envs, batched, tol):
     for _ in range(400):
         scene.step()
 
-        gs_n_contacts = gs_s.collider._collider_state.n_contacts.to_numpy()
+        gs_n_contacts = gs_s.collider.collider_state.n_contacts.to_numpy()
         assert len(gs_n_contacts) == max(n_envs, 1)
         for as_tensor in (False, True):
             for to_torch in (False, True):
@@ -96,7 +96,7 @@ def test_data_accessor(n_envs, batched, tol):
 
     # 'is_padded' returns a fixed capacity (independent of the live contact count) plus per-env 'n_contacts',
     # with the live prefix identical to the trimmed result, for every (as_tensor, to_torch) and batching.
-    capacity = max(gs_s.collider._collider_info.max_candidate_contacts[None], 1)
+    capacity = max(gs_s.collider.collider_info.max_candidate_contacts[None], 1)
     for as_tensor in (False, True):
         for to_torch in (False, True):
             trimmed = gs_s.collider.get_contacts(as_tensor, to_torch, is_padded=False)
