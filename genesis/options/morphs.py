@@ -1725,9 +1725,9 @@ def _exported_urdf(robot: urdfpy.URDF, exporting: serialization.Exporting) -> st
     """Export a URDF model built in memory as the document it stands for.
 
     Relative asset paths stay as written: an in-memory model resolves them against the working directory when it is
-    read (see '_loaded_urdf' and 'build_model' in mjcf.py).
+    read (see '_loaded_urdf').
     """
-    return ET.tostring(robot._unparse(os.getcwd()), encoding="unicode")
+    return ET.tostring(robot.to_xml(), encoding="unicode")
 
 
 def _loaded_urdf(raw: str, loading: serialization.Loading) -> urdfpy.URDF:
