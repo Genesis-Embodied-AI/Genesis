@@ -79,7 +79,7 @@ def checkpoint_scene(mimic_hinges, requires_grad, show_viewer):
 @pytest.mark.parametrize("model_name", ["two_free_boxes"])
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_export_and_load_rigid(
-    n_envs, xml_path, mimic_hinges, urdf_with_external_mesh, xacro_robot, tmp_path, show_viewer, caplog
+    n_envs, xml_path, mimic_hinges, urdf_with_external_assets, xacro_robot, tmp_path, show_viewer, caplog
 ):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -250,7 +250,7 @@ def test_export_and_load_rigid(
     # An asset may name a mesh outside its own directory, which the mesh states as an absolute path of its own
     far_mesh = scene.add_entity(
         morph=gs.morphs.URDF(
-            file=urdf_with_external_mesh,
+            file=urdf_with_external_assets,
             pos=(80.0, 80.0, 1.0),
         ),
     )
@@ -324,7 +324,7 @@ def test_export_and_load_rigid(
     # A mesh states the asset it was read from by name, wherever that asset stood
     assert restored.entities[16].geoms[0].mesh.metadata["mesh_path"] == "sphere.obj"
     # The document that entity was created from names that mesh as well, and the name travels without its directory
-    assert "external_meshes" not in restored.entities[16].morph.file
+    assert "external_assets" not in restored.entities[16].morph.file
     assert 'filename="sphere.obj"' in restored.entities[16].morph.file
     # A scale per axis comes back as the three factors it was given, and the geometry it produced with them
     assert_equal(restored.entities[14].morph.scale, stretched.morph.scale)

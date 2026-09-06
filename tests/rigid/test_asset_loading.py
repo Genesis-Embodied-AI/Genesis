@@ -5,6 +5,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import pytest
 import torch
+from PIL import Image
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -817,7 +818,7 @@ def test_xacro_loading(xacro_robot, show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.required
 @pytest.mark.parametrize("overwrite", [False, True])
-def test_color_overwrite(overwrite, show_viewer):
+def test_color_overwrite(overwrite, urdf_with_external_assets, show_viewer):
     scene = gs.Scene(show_viewer=show_viewer)
     box = scene.add_entity(
         gs.morphs.URDF(
@@ -865,20 +866,32 @@ def test_color_overwrite(overwrite, show_viewer):
             color=(1.0, 0.0, 0.0, 1.0) if overwrite else None,
         ),
     )
+    textured = scene.add_entity(
+        gs.morphs.URDF(
+            file=urdf_with_external_assets,
+            prioritize_urdf_material=True,
+        ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.0, 0.0, 1.0) if overwrite else None,
+        ),
+    )
     if show_viewer:
         scene.build()
+
     for vgeom in box.vgeoms:
         assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
         visual = vgeom.vmesh.trimesh.visual
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
         assert_equal(color, (255, 0, 0, 255) if overwrite else (0, 0, 255, 255))
+
     for vgeom in chain.vgeoms:
         assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
         visual = vgeom.vmesh.trimesh.visual
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
         assert_equal(color, (255, 0, 0, 255) if overwrite else (51, 51, 51, 255))
+
     for vgeom in humanoid.vgeoms:
         # FIXME: The original material is lost because the visuals are collision geometries that has been duplicated as
         # visual to circumvent the lack of dedicated visuals.
@@ -895,6 +908,7 @@ def test_color_overwrite(overwrite, show_viewer):
                     assert_equal(color, (128, 128, 128, 255))
         else:
             assert_equal(color, (255, 0, 0, 255) if overwrite else (128, 128, 128, 255))
+
     for vgeom in axis.vgeoms:
         assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
         visual = vgeom.vmesh.trimesh.visual
@@ -904,6 +918,7 @@ def test_color_overwrite(overwrite, show_viewer):
             assert_equal(color, (255, 0, 0, 255))
         else:
             assert_equal(color, [[0, 0, 178, 255], [0, 178, 0, 255], [178, 0, 0, 255], [255, 255, 255, 255]])
+
     for vgeom in table.vgeoms:
         assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
         visual = vgeom.vmesh.trimesh.visual
@@ -911,6 +926,23 @@ def test_color_overwrite(overwrite, show_viewer):
         if overwrite:
             color = np.unique(visual.vertex_colors, axis=0)
             assert_equal(color, (255, 0, 0, 255))
+
+    texture_path = ET.fromstring(urdf_with_external_assets).find("material/texture").get("filename")
+    texture = np.array(Image.open(texture_path))
+    sphere_vgeom, quad_vgeom = textured.vgeoms
+    for vgeom in (sphere_vgeom, quad_vgeom):
+        assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
+        assert vgeom.vmesh.trimesh.visual.defined
+    if overwrite:
+        for vgeom in (sphere_vgeom, quad_vgeom):
+            color = np.unique(vgeom.vmesh.trimesh.visual.vertex_colors, axis=0)
+            assert_equal(color, (255, 0, 0, 255))
+    else:
+        assert_equal(np.array(quad_vgeom.vmesh.trimesh.visual.material.image.convert("RGB")), texture)
+        # A visual without texture coordinates takes the mean color of the texture
+        color = np.unique(sphere_vgeom.vmesh.trimesh.visual.vertex_colors, axis=0)
+        assert_equal(color, (*texture.mean(axis=(0, 1)), 255))
+
     for entity in scene.entities:
         for geom in entity.geoms:
             assert geom.mesh.metadata["is_visual_overwritten"]

@@ -903,10 +903,6 @@ class Texture(URDFType):
         return Texture(**kwargs)
 
     def _to_xml(self, parent, path):
-        # Save the image
-        filepath = get_filename(path, self.filename, makedirs=True)
-        self.image.save(filepath)
-
         return self._unparse(path)
 
     def copy(self, prefix="", scale=None):
