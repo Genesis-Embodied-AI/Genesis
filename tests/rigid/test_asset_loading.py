@@ -821,7 +821,7 @@ def test_color_overwrite(overwrite, show_viewer):
     scene = gs.Scene(show_viewer=show_viewer)
     box = scene.add_entity(
         gs.morphs.URDF(
-            file="genesis/assets/urdf/blue_box/model.urdf",
+            file="urdf/blue_box/model.urdf",
             convexify=False,
         ),
         surface=gs.surfaces.Default(
