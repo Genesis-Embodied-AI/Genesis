@@ -100,6 +100,77 @@ def kernel_masked_forward_kinematics(
             func_forward_velocity_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
 
 
+@qd.func
+def func_refresh_kinematics(
+    i_b,
+    forward_pos_updated: qd.types.ndarray(),
+    forward_vel_updated: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+    refresh_velocity: qd.template(),
+):
+    if not forward_pos_updated[i_b]:
+        # Position refresh also propagates velocity to preserve the freshness invariant
+        func_forward_kinematics_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
+        func_COM_links(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
+        func_forward_velocity_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
+    elif qd.static(refresh_velocity):
+        if not forward_vel_updated[i_b]:
+            func_forward_velocity_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
+
+
+@qd.kernel(fastcache=True)
+def kernel_refresh_kinematics(
+    envs_idx: qd.types.ndarray(),
+    forward_pos_updated: qd.types.ndarray(),
+    forward_vel_updated: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+    refresh_velocity: qd.template(),
+):
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = qd.cast(envs_idx[i_b_], qd.i32)
+        func_refresh_kinematics(
+            i_b,
+            forward_pos_updated,
+            forward_vel_updated,
+            dyn_state,
+            dyn_info,
+            rigid_info,
+            rigid_config,
+            refresh_velocity,
+        )
+
+
+@qd.kernel(fastcache=True)
+def kernel_masked_refresh_kinematics(
+    envs_mask: qd.types.ndarray(),
+    forward_pos_updated: qd.types.ndarray(),
+    forward_vel_updated: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+    refresh_velocity: qd.template(),
+):
+    for i_b in range(envs_mask.shape[0]):
+        if envs_mask[i_b]:
+            func_refresh_kinematics(
+                i_b,
+                forward_pos_updated,
+                forward_vel_updated,
+                dyn_state,
+                dyn_info,
+                rigid_info,
+                rigid_config,
+                refresh_velocity,
+            )
+
+
 @qd.kernel(fastcache=True)
 def kernel_forward_velocity(
     envs_idx: qd.types.ndarray(),

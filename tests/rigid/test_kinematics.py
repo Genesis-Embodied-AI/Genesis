@@ -112,6 +112,22 @@ def test_link_velocity(gs_sim, tol):
                 expected += (spin - turn[0]) * np.array([anchor[1] - center[1], center[0] - anchor[0], 0.0])
             reported = tensor_to_array(solver.get_links_vel(i_l, ref=gs.link_ref_frame.link_COM))
             assert_allclose(reported, expected, tol=tol)
+    # A skipped forward update preserves the last propagated rigid link state
+    gs_robot.set_dofs_velocity([0.3, -0.2])
+    links_pos = gs_robot.get_links_pos()
+    links_ang = gs_robot.get_links_ang()
+    gs_robot.set_qpos([0.7, -0.4], skip_forward=True)
+    assert_allclose(gs_robot.get_links_ang(), links_ang, tol=tol)
+    assert_allclose(gs_robot.get_links_pos(), links_pos, tol=tol)
+
+    # An eager rigid velocity write must refresh a deferred pose before propagating link velocities
+    gs_robot.set_dofs_velocity([0.3, -0.2])
+    deferred_links_vel = gs_robot.get_links_vel()
+    deferred_links_ang = gs_robot.get_links_ang()
+    gs_robot.set_qpos([0.7, -0.4])
+    gs_robot.set_dofs_velocity([0.3, -0.2])
+    assert_allclose(deferred_links_vel, gs_robot.get_links_vel(), tol=tol)
+    assert_allclose(deferred_links_ang, gs_robot.get_links_ang(), tol=tol)
 
 
 @pytest.mark.required
@@ -780,6 +796,15 @@ def test_path_planning_avoidance(backend, n_envs, batch_dofs_info, show_viewer, 
 
 @pytest.mark.required
 def test_setters(show_viewer, tol):
+    DOFS_VELOCITY = (
+        (0.0, 0.0, 0.0, 0.3, -0.2, 0.4, 0.5),
+        (0.0, 0.0, 0.0, -0.4, 0.2, 0.3, -0.6),
+    )
+    QPOS = (
+        (1.0, 2.0, 3.0, 1.0, 0.0, 0.0, 0.0, 0.1),
+        (1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0, -0.1),
+    )
+
     scene = gs.Scene(
         show_viewer=show_viewer,
         show_FPS=False,
@@ -806,7 +831,6 @@ def test_setters(show_viewer, tol):
     )
 
     scene.build(n_envs=2)
-
     assert_allclose(ghost_box.get_vAABB(), ((-0.20, -0.10, -0.05), (0.20, 0.10, 0.05)), tol=tol)
     assert_allclose(ghost_robot.get_vAABB(), ((-0.05, -0.05, -0.05), (0.15, 0.05, 0.05)), tol=tol)
 
@@ -880,6 +904,16 @@ def test_setters(show_viewer, tol):
 
     ghost_box.set_dofs_position(torch.zeros(ghost_box.n_dofs, device=gs.device))
     ghost_robot.set_dofs_position(torch.zeros(n_dofs, device=gs.device))
+    # Boolean environment masks must update only the selected environment
+    ghost_robot.set_dofs_position(
+        0.1,
+        dofs_idx_local=-1,
+        envs_idx=torch.tensor((False, True), device=gs.device),
+    )
+    assert_allclose(ghost_robot.get_vAABB()[0], ((-0.05, -0.05, -0.05), (0.15, 0.05, 0.05)), tol=tol)
+    assert_allclose(ghost_robot.get_vAABB()[1], ((-0.05, -0.05, -0.05), (0.25, 0.05, 0.05)), tol=tol)
+
+    ghost_robot.set_dofs_position(torch.zeros(n_dofs, device=gs.device))
     ghost_robot.set_dofs_position([0.1, -0.1], dofs_idx_local=-1)
     assert_allclose(ghost_robot.get_vAABB()[0], ((-0.05, -0.05, -0.05), (0.25, 0.05, 0.05)), tol=tol)
     assert_allclose(ghost_robot.get_vAABB()[1], ((-0.05, -0.05, -0.05), (0.05, 0.05, 0.05)), tol=tol)
@@ -887,6 +921,29 @@ def test_setters(show_viewer, tol):
     ghost_robot.set_qpos([1.0, 2.0, 3.0, 1.0, 1.0, 0.0, 0.0, 1.0])
     assert_allclose(ghost_robot.get_vAABB(), ((0.95, 1.95, 2.95), (2.15, 2.05, 3.05)), tol=tol)
 
+    # Boolean masks and velocity zeroing must update only the selected environment
+    envs_mask = torch.tensor((True, False), device=gs.device)
+    masked_qpos = torch.tensor(QPOS[1:], dtype=gs.tc_float, device=gs.device)
+    masked_dofs_velocity = torch.tensor(DOFS_VELOCITY[1:], dtype=gs.tc_float, device=gs.device)
+    qpos_env_1 = ghost_robot.get_qpos(envs_idx=[1])
+    ghost_robot.set_qpos(masked_qpos, envs_idx=envs_mask)
+    ghost_robot.set_dofs_velocity(masked_dofs_velocity, envs_idx=envs_mask)
+    assert_allclose(ghost_robot.get_qpos(envs_idx=[0]), QPOS[1:], tol=tol)
+    assert_equal(ghost_robot.get_qpos(envs_idx=[1]), qpos_env_1)
+    assert_allclose(ghost_robot.get_dofs_velocity(envs_idx=[0]), DOFS_VELOCITY[1:], tol=tol)
+    ghost_robot.set_dofs_velocity(None, envs_idx=envs_mask)
+    assert_equal(ghost_robot.get_dofs_velocity(envs_idx=[0]), 0.0)
+
+    # An eager velocity write must refresh a stale pose subset without disturbing a fresh one
+    ghost_robot.set_qpos(QPOS[0], envs_idx=[0])
+    ghost_robot.set_qpos(QPOS[1], envs_idx=[1], skip_forward=True)
+    ghost_robot.set_dofs_velocity(DOFS_VELOCITY)
+    deferred_links_vel = ghost_robot.get_links_vel()
+    deferred_links_ang = ghost_robot.get_links_ang()
+    ghost_robot.set_qpos(QPOS)
+    ghost_robot.set_dofs_velocity(DOFS_VELOCITY)
+    assert_allclose(ghost_robot.get_links_vel(), deferred_links_vel, tol=tol)
+    assert_allclose(ghost_robot.get_links_ang(), deferred_links_ang, tol=tol)
     frozen_vaabb = [tensor_to_array(entity.get_vAABB()) for entity in scene.entities]
     for _ in range(5):
         scene.step()

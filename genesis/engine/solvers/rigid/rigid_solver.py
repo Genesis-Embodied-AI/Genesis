@@ -152,9 +152,7 @@ from .abd.accessor import (
     kernel_set_dofs_limit,
     kernel_set_dofs_position,
     kernel_set_dofs_stiffness,
-    kernel_set_dofs_velocity,
     kernel_set_dofs_velocity_grad,
-    kernel_set_dofs_zero_velocity,
     kernel_set_drone_rpm,
     kernel_set_geom_friction,
     kernel_set_geom_friction_rolling,
@@ -806,6 +804,28 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         # Gravity lives with the rigid arrays, which the kernels read, so that array is the one handed over to hold it.
         self._build_gravity(self.rigid_info.gravity)
 
+    def _init_forward_update_state(self):
+        # Rigid stepping specializes these flags as compile-time kernel arguments
+        self._is_forward_pos_updated = False
+        self._is_forward_vel_updated = False
+
+    def _update_forward_after_dofs_velocity(self, envs_idx, is_all_envs, skip_forward):
+        if skip_forward:
+            self._is_forward_vel_updated = False
+            return
+        if not self._is_forward_pos_updated:
+            # Let the rigid pose refresh satisfy velocity propagation when its Cartesian state is stale
+            self._is_forward_vel_updated = False
+            self.update_forward_vel()
+            return
+        if envs_idx.dtype == torch.bool:
+            fn = kernel_masked_forward_velocity
+        else:
+            fn = kernel_forward_velocity
+        fn(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, is_backward=False)
+        if is_all_envs:
+            self._is_forward_vel_updated = True
+
     def _sanitize_joint_sol_params(self, sol_params):
         return _sanitize_sol_params(sol_params, self._sol_min_timeconst, self._sol_default_timeconst)
 
@@ -1256,6 +1276,24 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             self.scene._envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
         )
         self._is_forward_pos_updated = True
+        # kernel_forward_kinematics_links_geoms propagates link velocities with the pose
+        self._is_forward_vel_updated = True
+
+    def update_forward_vel(self):
+        if self._is_forward_vel_updated:
+            return
+        self.update_forward_pos()
+        if self._is_forward_vel_updated:
+            return
+        kernel_forward_velocity(
+            self.scene._envs_idx,
+            self.dyn_state,
+            self.dyn_info,
+            self.rigid_info,
+            self.rigid_config,
+            is_backward=False,
+        )
+        self._is_forward_vel_updated = True
 
     def substep(self, f):
         # from genesis.utils.tools import create_timer
@@ -2939,6 +2977,11 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             is_relative=is_relative,
         )
         return _tensor
+
+    # Rigid stepping owns link-velocity propagation, so this getter reads its state directly
+    def get_links_ang(self, links_idx=None, envs_idx=None):
+        tensor = qd_to_torch(self.dyn_state.links.cd_ang, envs_idx, links_idx, transpose=True, copy=True)
+        return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_acc(self, links_idx=None, envs_idx=None, *, relative=False):
         idx = links_idx if isinstance(links_idx, int) else slice(None)
