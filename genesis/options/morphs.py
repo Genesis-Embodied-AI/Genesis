@@ -1104,9 +1104,9 @@ class URDF(FileMorph):
         Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
         significantly increasing memory usage. Default to true. **This is only used for RigidEntity.**
     prioritize_urdf_material : bool, optional
-        Sometimes a geom in a urdf file will be assigned a color, and the geom asset file also contains its own visual
-        material. This parameter controls whether to prioritize the URDF-defined material over the asset's own material.
-        Defaults to False.
+        Sometimes a geom in a urdf file will be assigned a color or a texture, and the geom asset file also contains its
+        own visual material. This parameter controls whether to prioritize the URDF-defined material over the asset's
+        own material. Defaults to False.
     merge_fixed_links : bool, optional
         Whether to merge links connected via a fixed joint. Defaults to True.
     links_to_keep : list of str, optional
@@ -1235,9 +1235,9 @@ class Drone(FileMorph):
     collision : bool, optional
         **NB**: Drone doesn't support collision checking for now.
     prioritize_urdf_material : bool, optional
-        Sometimes a geom in a urdf file will be assigned a color, and the geom asset file also contains its own visual
-        material. This parameter controls whether to prioritize the URDF-defined material over the asset's own material.
-        Defaults to False.
+        Sometimes a geom in a urdf file will be assigned a color or a texture, and the geom asset file also contains its
+        own visual material. This parameter controls whether to prioritize the URDF-defined material over the asset's
+        own material. Defaults to False.
     model : str, optional
         The model of the drone. Defaults to 'CF2X'. Supported models are 'CF2X', 'CF2P', and 'RACE'.
     COM_link_name : str, optional
@@ -1722,8 +1722,12 @@ class USD(FileMorph):
 
 
 def _exported_urdf(robot: urdfpy.URDF, exporting: serialization.Exporting) -> str:
-    """Export a URDF model built in memory as the document it stands for."""
-    return ET.tostring(robot._unparse(mu.get_assets_dir()), encoding="unicode")
+    """Export a URDF model built in memory as the document it stands for.
+
+    Relative asset paths stay as written: an in-memory model resolves them against the working directory when it is
+    read (see '_loaded_urdf').
+    """
+    return ET.tostring(robot.to_xml(), encoding="unicode")
 
 
 def _loaded_urdf(raw: str, loading: serialization.Loading) -> urdfpy.URDF:

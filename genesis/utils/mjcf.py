@@ -73,8 +73,10 @@ def build_model(
     if isinstance(xml, (str, Path, urdfpy.URDF)):
         if isinstance(xml, urdfpy.URDF):
             is_urdf_file = True
-            asset_path = get_assets_dir()
-            root = xml._unparse(asset_path)
+            # An in-memory model resolves its relative mesh paths against the working directory, as the URDF pass does
+            # (see parse_urdf in urdf.py), so that both passes read the same files.
+            asset_path = os.getcwd()
+            root = xml.to_xml()
             mjcf = ET.SubElement(root, "mujoco")
         else:
             # Make sure that it is pointing to a valid XML content (either file path or string)
@@ -194,7 +196,7 @@ def build_model(
             # Merge fixed links if requested
             if merge_fixed_links:
                 robot = uu.merge_fixed_links(robot, links_to_keep)
-                root = robot._to_xml(None, asset_path)
+                root = robot.to_xml()
                 root.append(mjcf)
 
             # Enforce some compiler options
@@ -502,7 +504,7 @@ def parse_link(mj, i_l, scale):
     # Note that the mass matrix of a poly-articulated robot does not scale trivially as it is a copnfiguration-depends
     # mixing of s ** 3 factor for masses and s ** 5 factor for inertia tensors. As a result, it is much simpler to
     # consider invweight indefined, which will trigger recomputation at build time.
-    if abs(1.0 - scale) > gs.EPS:
+    if abs(1.0 - scale) > np.finfo(np.double).eps:
         l_info["pos"] *= scale
         l_info["inertial_pos"] *= scale
         l_info["inertial_mass"] *= scale**3

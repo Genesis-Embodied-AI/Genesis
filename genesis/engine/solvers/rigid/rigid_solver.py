@@ -1,6 +1,7 @@
 import math
 import os
 import sys
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -15,7 +16,7 @@ from genesis.constants import link_ref_frame
 from genesis.engine.entities import DroneEntity, RigidEntity, TerrainEntity
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.materials import Rigid
-from genesis.engine.states import QueriedStates, RigidSolverState
+from genesis.engine.states import KinematicSolverCheckpoint, QueriedStates, RigidSolverState
 from genesis.options.morphs import Drone, Morph, Terrain
 from genesis.options.solvers import RigidOptions
 from genesis.utils.misc import (
@@ -81,7 +82,6 @@ from .abd.misc import (
 from .abd.forward_kinematics import (
     func_aggregate_awake_entities,
     func_COM_links,
-    func_COM_links_entity,
     func_forward_kinematics_batch,
     func_forward_kinematics_entity,
     func_forward_velocity,
@@ -91,7 +91,6 @@ from .abd.forward_kinematics import (
     func_update_all_verts,
     func_update_cartesian_space,
     func_update_cartesian_space_batch,
-    func_update_cartesian_space_entity,
     func_update_geoms,
     func_update_geoms_batch,
     func_update_geoms_entity,
@@ -389,8 +388,6 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
 
         super().build()
 
-        self._init_mass_mat()
-
         self._init_vert_fields()
         self._init_geom_fields()
         self._init_equality_fields()
@@ -611,7 +608,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             rigid_config["prefer_decomposed_solver"] = 0
 
         # Per-DOF mass-block bounds (see dofs_mass_block_start in array_class.py), computed here because the tiled
-        # factor arms below are sized for the largest block; _init_mass_mat uploads them.
+        # factor arms below are sized for the largest block; _init_tree_fields uploads them.
         links_by_idx = {link.idx: link for link in self.links}
         dofs_mass_block_start = np.arange(self.n_dofs_, dtype=gs.np_int)
         for link in self.links:
@@ -955,7 +952,11 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             self._is_forward_vel_updated,
         )
 
-    def _init_mass_mat(self):
+    def _init_tree_fields(self):
+        """Initialize the fields describing the kinematic trees, the structure of the joint-space mass matrix
+        included."""
+        super()._init_tree_fields()
+
         self.mass_mat = self.rigid_info.mass_mat
         self.mass_mat_L = self.rigid_info.mass_mat_L
         self.mass_mat_D_inv = self.rigid_info.mass_mat_D_inv
@@ -979,13 +980,6 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         # Per-DOF mass-block bounds, computed by _build_static_config (which sizes the tiled factor arms from them).
         dofs_mass_block_start = self._dofs_mass_block_start
         dofs_mass_block_end = self._dofs_mass_block_end
-
-        # See links_tree_end in array_class.py: one past the last link of each tree, which may reach past interleaved
-        # links of other trees (the CRB fold gates on root_idx).
-        links_root_idx = np.array([link.root_idx for link in self.links], dtype=gs.np_int)
-        links_tree_end = np.zeros(self.n_links_, dtype=gs.np_int)
-        if self.links:
-            np.maximum.at(links_tree_end, links_root_idx, np.arange(self.n_links) + 1)
 
         # An aligned free body whose only DOFs are its own free joint has a diagonal joint-space mass block, so zero its
         # within-link off-diagonal mask to make the assembled mass exactly diagonal (else ~1e-6 round-off once it
@@ -1027,7 +1021,6 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         self.rigid_info.mass_parent_mask.from_numpy(mass_parent_mask)
         self.rigid_info.dofs_mass_block_start.from_numpy(dofs_mass_block_start)
         self.rigid_info.dofs_mass_block_end.from_numpy(dofs_mass_block_end)
-        self.rigid_info.links_tree_end.from_numpy(links_tree_end)
         self.rigid_info.entities_mass_block_dof_start.from_numpy(entities_mass_block_dof_start)
         self.rigid_info.entities_mass_block_dof_end.from_numpy(entities_mass_block_dof_end)
 
@@ -1337,7 +1330,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             self._func_constraint_force()
             kernel_step_2(
                 self.dyn_state,
-                self.collider._collider_state,
+                self.collider.collider_state,
                 self.constraint_solver.constraint_state,
                 self.dyn_info,
                 self.rigid_info,
@@ -1364,19 +1357,19 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             errno = kernel_bit_reduction(self._errno)
 
         if errno & array_class.ErrorCode.OVERFLOW_CANDIDATE_CONTACTS:
-            max_collision_pairs_broad = self.collider._collider_info.max_collision_pairs_broad[None]
+            max_collision_pairs_broad = self.collider.collider_info.max_collision_pairs_broad[None]
             gs.raise_exception(
                 f"Exceeding max number of broad phase candidate contact pairs ({max_collision_pairs_broad}). "
                 f"Please increase the value of RigidSolver's option 'multiplier_collision_broad_phase'."
             )
         if errno & array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS:
-            max_candidate_contacts = self.collider._collider_info.max_candidate_contacts[None]
+            max_candidate_contacts = self.collider.collider_info.max_candidate_contacts[None]
             gs.raise_exception(
                 f"Exceeding max number of candidate contact points ({max_candidate_contacts}). Please increase the "
                 "value of RigidSolver's option 'max_collision_pairs'."
             )
         if errno & array_class.ErrorCode.OVERFLOW_CONTACTS:
-            max_contacts = self.collider._collider_info.max_contacts[None]
+            max_contacts = self.collider.collider_info.max_contacts[None]
             gs.raise_exception(
                 f"Exceeding max number of post-pruning contact points ({max_contacts}) supported by the constraint "
                 "solver. Please increase the value of RigidSolver's option 'max_contacts'."
@@ -1401,10 +1394,10 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         # TODO: support batching
         self._kernel_detect_collision()
 
-        n_collision = qd_to_numpy(self.collider._collider_state.n_contacts)[env_idx]
+        n_collision = qd_to_numpy(self.collider.collider_state.n_contacts)[env_idx]
         collision_pairs = np.empty((n_collision, 2), dtype=np.int32)
-        collision_pairs[:, 0] = qd_to_numpy(self.collider._collider_state.contact_data.geom_a)[:n_collision, env_idx]
-        collision_pairs[:, 1] = qd_to_numpy(self.collider._collider_state.contact_data.geom_b)[:n_collision, env_idx]
+        collision_pairs[:, 0] = qd_to_numpy(self.collider.collider_state.contact_data.geom_a)[:n_collision, env_idx]
+        collision_pairs[:, 1] = qd_to_numpy(self.collider.collider_state.contact_data.geom_b)[:n_collision, env_idx]
 
         return collision_pairs
 
@@ -1419,7 +1412,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             if self._use_hibernation:
                 kernel_wake_up_entities_on_new_contact(
                     self.dyn_state,
-                    self.collider._collider_state,
+                    self.collider.collider_state,
                     self.constraint_solver.constraint_state,
                     self.dyn_info,
                     self.rigid_info,
@@ -1471,7 +1464,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         )
 
         if self._enable_collision:
-            collider_state = self.collider._collider_state
+            collider_state = self.collider.collider_state
             qd_zero_grad(collider_state.contact_data.pos)
             qd_zero_grad(collider_state.contact_data.normal)
             qd_zero_grad(collider_state.contact_data.penetration)
@@ -1491,7 +1484,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         if self._enable_joint_limit:
             kernel_manual_add_joint_limit_constraints_bw(
                 self.dyn_state,
-                self.collider._collider_state,
+                self.collider.collider_state,
                 constraint_state,
                 self.dyn_info,
                 self.rigid_info,
@@ -1698,7 +1691,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
 
         kernel_step_2.grad(
             self.dyn_state,
-            self.collider._collider_state,
+            self.collider.collider_state,
             self.constraint_solver.constraint_state,
             self.dyn_info,
             self.rigid_info,
@@ -1744,7 +1737,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             update_qacc_from_qvel_delta(self.dyn_state, self.rigid_info, self.rigid_config)
             kernel_step_2(
                 self.dyn_state,
-                self.collider._collider_state,
+                self.collider.collider_state,
                 self.constraint_solver.constraint_state,
                 self.dyn_info,
                 self.rigid_info,
@@ -1958,9 +1951,28 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
 
+        self._restart()
+
+    @property
+    def data(self) -> Iterator[array_class.DataItem]:
+        yield from super().data
+        yield from self.collider.data
+        yield from self.constraint_solver.data
+
+    def _restart(self):
+        """Clear the contact and equality caches of the last query and re-arm the once-per-step propeller guard of
+        each drone (see 'set_propellers_rpm').
+        """
+        self.collider._contact_data_cache.clear()
+        self.constraint_solver._eq_const_info_cache.clear()
         for entity in self.entities:
             if isinstance(entity, DroneEntity):
                 entity._prev_prop_t = -1
+
+    @mutates(StateChange.GEOMETRY, StateChange.DYNAMICS)
+    def __setstate__(self, state: KinematicSolverCheckpoint) -> None:
+        super().__setstate__(state)
+        self._restart()
 
     def process_input(self, in_backward=False):
         for entity in self._entities:
@@ -2316,9 +2328,9 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             skip_allocation=True,
         )
         if links_idx_ is not None:
-            # TODO: the anchor of an aligned root keeps its mass block diagonal (see _init_mass_mat). A center of mass
-            # or an inertia written on any link of the body moves the anchor. A mass write keeps it only as one rescale
-            # of every link of the body, inertia included. A frame move shifts the local pose of every geom
+            # TODO: the anchor of an aligned root keeps its mass block diagonal (see _init_tree_fields). A center of
+            # mass or an inertia written on any link of the body moves the anchor. A mass write keeps it only as one
+            # rescale of every link of the body, inertia included. A frame move shifts the local pose of every geom
             # ('GeomsInfo.pos' / 'quat', one entry per geom for all environments). It also shifts 'qpos', quoted in the
             # anchored frame, and the origin a fixed child reports. A per-environment value has no frame to go to, so
             # the guard stays until 'GeomsInfo' gets a batch dimension.
@@ -3254,10 +3266,11 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
     def get_potential_energy(self, links_idx=None, dofs_idx=None, envs_idx=None):
         """Get the potential energy of the specified links and DOFs in Joules [J] (gravitational + joint springs).
 
-        Gravity contributes ``-sum_i(m_i * g^T * p_i)`` over the links, where ``p_i`` is the center of mass (COM)
-        position of link *i*. Joint springs contribute ``0.5 * sum_d(stiffness_d * (q_d - q0_d)^2)``, the elastic
-        energy stored by holding each DOF away from its neutral position. Both are state functions, so their sum with
-        the kinetic energy is conserved by a passive, frictionless, contact-free model.
+        Gravity contributes ``-sum_i(m_i * g^T * p_i)`` over the links free to move, where ``p_i`` is the center of
+        mass (COM) position of link *i*. A link fixed to the world is left out, as it is of the mass of an entity: its
+        potential is a constant of the scene. Joint springs contribute ``0.5 * sum_d(stiffness_d * (q_d - q0_d)^2)``,
+        the elastic energy stored by holding each DOF away from its neutral position. Both are state functions, so
+        their sum with the kinetic energy is conserved by a passive, frictionless, contact-free model.
 
         Contacts contribute nothing: they are resolved by the constraint solver, which stabilizes a penetration
         rather than storing it as an elastic potential.
@@ -3277,7 +3290,12 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         """
         gravity = self.get_gravity(envs_idx=envs_idx)  # (3,) or (n_envs, 3)
         links_pos = self.get_links_pos(links_idx, envs_idx, ref=link_ref_frame.link_COM)  # (..., n_links, 3)
-        links_mass = self.get_links_mass(links_idx, envs_idx if self._options.batch_links_info else None)
+        links_envs_idx = envs_idx if self._options.batch_links_info else None
+        links_mass = qd_to_torch(self.dyn_info.links.inertial_mass, links_envs_idx, links_idx, transpose=True)
+        links_is_fixed = qd_to_torch(self.dyn_info.links.is_fixed, links_envs_idx, links_idx, transpose=True)
+        links_mass = links_mass.masked_fill(links_is_fixed.to(torch.bool), 0.0)
+        if self.n_envs == 0 and self._options.batch_links_info:
+            links_mass = links_mass[0]
 
         # PE_i = m_i * g^T * p_i => PE = sum_i(m_i * (g . p_i))
         # g is (..., 3), links_pos is (..., n_links, 3) -> broadcast g to (..., 1, 3)

@@ -5,6 +5,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import pytest
 import torch
+from PIL import Image
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -266,7 +267,7 @@ def test_parsing_inertia_defaults(
             merge_fixed_links=False,
         ),
     )
-    # The same asset welded to the world resolves every link exactly as the free copy does.
+    # The same asset welded to the world, so that the links the world carries resolve without a geometry estimate.
     entity_welded = scene.add_entity(
         morph=gs.morphs.URDF(
             file=degenerate_inertials,
@@ -275,6 +276,23 @@ def test_parsing_inertia_defaults(
             merge_fixed_links=False,
         ),
     )
+    # The same asset welded and then attached to a moving link, so that the links the world carried resolve at attach.
+    carrier_welded = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.2, 0.2, 0.2),
+            pos=(0.0, -8.0, 1.0),
+        ),
+    )
+    entity_mounted = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=degenerate_inertials,
+            pos=(0.0, -8.0, 1.3),
+            fixed=True,
+            batch_fixed_verts=True,
+            merge_fixed_links=False,
+        ),
+    )
+    entity_mounted.attach(carrier_welded, parent_link_name=carrier_welded.base_link.name, pos=(0.0, 0.0, 0.2))
     entity_zero_density = scene.add_entity(
         morph=gs.morphs.MJCF(
             file=zero_density_marker_mjcf,
@@ -287,9 +305,12 @@ def test_parsing_inertia_defaults(
             merge_fixed_links=False,
         ),
     )
+    # The two merged chains are built from one in-memory model, which parsing must leave intact for the second one.
+    chain_root = ET.fromstring(implicit_inertial_origin_chain)
+    chain_model = urdfpy.URDF._from_xml(chain_root, chain_root, get_assets_dir())
     entity_chain_merged = scene.add_entity(
         morph=gs.morphs.URDF(
-            file=implicit_inertial_origin_chain,
+            file=chain_model,
             pos=(0.8, 2.0, 0.5),
         ),
     )
@@ -303,7 +324,7 @@ def test_parsing_inertia_defaults(
     )
     entity_chain_merged_unaligned = scene.add_entity(
         morph=gs.morphs.URDF(
-            file=implicit_inertial_origin_chain,
+            file=chain_model,
             pos=(1.6, 1.0, 0.5),
             align=False,
         ),
@@ -404,7 +425,8 @@ def test_parsing_inertia_defaults(
         # The root states a zero mass and a valid inertia, and the geometry estimate replaces both. Its fixed child
         # 'massless_marker' keeps its zero mass, so the root has no mass-bearing child.
         (entity.base_link, estimate.mass, GEOM_POS, SPHERE_INERTIA_PER_MASS),
-        (entity.get_link("massless_marker"), gs.EPS, GEOM_POS, 0.0),
+        # A zero mass beside an authored center of mass keeps that center of mass, as the geometry supplies no inertia.
+        (entity.get_link("massless_marker"), gs.EPS, INERTIAL_POS, 0.0),
         # An omitted inertial origin places the center of mass at the link frame.
         (entity.get_link("implicit_origin"), 2.5, (0.0, 0.0, 0.0), np.linalg.eigvalsh(INERTIA) / 2.5),
         # Geometry supplies the inertia scaled to the authored mass, and the link keeps its authored center of mass.
@@ -427,10 +449,19 @@ def test_parsing_inertia_defaults(
             tol=tol,
             err_msg=link.name,
         )
-    for link, link_welded in zip(entity.links, entity_welded.links):
-        assert_allclose(link_welded.desc.mass, link.desc.mass, tol=gs.EPS, err_msg=link.name)
-        assert_allclose(link_welded.desc.inertial_pos, link.desc.inertial_pos, tol=gs.EPS, err_msg=link.name)
-        assert_allclose(link_welded.desc.inertia, link.desc.inertia, tol=gs.EPS, err_msg=link.name)
+    # The links the joints still move resolve exactly as in the free copy. The two the world carries keep the asset's
+    # values, degenerate as they are: a zero mass and no inertia. Attached, every link resolves as in the free copy.
+    for link, link_welded, link_mounted in zip(entity.links, entity_welded.links, entity_mounted.links):
+        assert_allclose(link_mounted.desc.mass, link.desc.mass, tol=gs.EPS, err_msg=link.name)
+        assert_allclose(link_mounted.desc.inertial_pos, link.desc.inertial_pos, tol=gs.EPS, err_msg=link.name)
+        assert_allclose(link_mounted.desc.inertia, link.desc.inertia, tol=gs.EPS, err_msg=link.name)
+        if link_welded.is_fixed:
+            assert_equal(link_welded.desc.mass, 0.0, err_msg=link.name)
+            assert_equal(link_welded.desc.inertia, 0.0, err_msg=link.name)
+            continue
+        assert_equal(link_welded.desc.mass, link.desc.mass, err_msg=link.name)
+        assert_equal(link_welded.desc.inertial_pos, link.desc.inertial_pos, err_msg=link.name)
+        assert_equal(link_welded.desc.inertia, link.desc.inertia, err_msg=link.name)
 
     # Every asset above is parsed by MuJoCo, a zero or missing inertial included.
     assert not any("legacy URDF parser" in record.getMessage() for record in caplog.records)
@@ -438,7 +469,7 @@ def test_parsing_inertia_defaults(
     # Resolving the center of mass to the link frame can place it outside the geometry, which stays worth reporting.
     # Only the link whose geometry is offset qualifies, once per copy of the robot.
     dubious_com_records = [record for record in caplog.records if "dubious center of mass" in record.getMessage()]
-    assert len(dubious_com_records) == 2
+    assert len(dubious_com_records) == 3
 
     # Every link of an aligned free body keeps its own mass, so each link reads its authored mass. The two totals are
     # accumulated by independent code paths, so their agreement is bounded by that cross-path floor.
@@ -787,11 +818,11 @@ def test_xacro_loading(xacro_robot, show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.required
 @pytest.mark.parametrize("overwrite", [False, True])
-def test_color_overwrite(overwrite, show_viewer):
+def test_color_overwrite(overwrite, urdf_with_external_assets, show_viewer):
     scene = gs.Scene(show_viewer=show_viewer)
     box = scene.add_entity(
         gs.morphs.URDF(
-            file="genesis/assets/urdf/blue_box/model.urdf",
+            file="urdf/blue_box/model.urdf",
             convexify=False,
         ),
         surface=gs.surfaces.Default(
@@ -835,20 +866,31 @@ def test_color_overwrite(overwrite, show_viewer):
             color=(1.0, 0.0, 0.0, 1.0) if overwrite else None,
         ),
     )
+    textured = scene.add_entity(
+        gs.morphs.URDF(
+            file=urdf_with_external_assets,
+        ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.0, 0.0, 1.0) if overwrite else None,
+        ),
+    )
     if show_viewer:
         scene.build()
+
     for vgeom in box.vgeoms:
         assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
         visual = vgeom.vmesh.trimesh.visual
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
         assert_equal(color, (255, 0, 0, 255) if overwrite else (0, 0, 255, 255))
+
     for vgeom in chain.vgeoms:
         assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
         visual = vgeom.vmesh.trimesh.visual
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
         assert_equal(color, (255, 0, 0, 255) if overwrite else (51, 51, 51, 255))
+
     for vgeom in humanoid.vgeoms:
         # FIXME: The original material is lost because the visuals are collision geometries that has been duplicated as
         # visual to circumvent the lack of dedicated visuals.
@@ -865,6 +907,7 @@ def test_color_overwrite(overwrite, show_viewer):
                     assert_equal(color, (128, 128, 128, 255))
         else:
             assert_equal(color, (255, 0, 0, 255) if overwrite else (128, 128, 128, 255))
+
     for vgeom in axis.vgeoms:
         assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
         visual = vgeom.vmesh.trimesh.visual
@@ -874,6 +917,7 @@ def test_color_overwrite(overwrite, show_viewer):
             assert_equal(color, (255, 0, 0, 255))
         else:
             assert_equal(color, [[0, 0, 178, 255], [0, 178, 0, 255], [178, 0, 0, 255], [255, 255, 255, 255]])
+
     for vgeom in table.vgeoms:
         assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
         visual = vgeom.vmesh.trimesh.visual
@@ -881,6 +925,23 @@ def test_color_overwrite(overwrite, show_viewer):
         if overwrite:
             color = np.unique(visual.vertex_colors, axis=0)
             assert_equal(color, (255, 0, 0, 255))
+
+    texture_path = ET.fromstring(urdf_with_external_assets).find("material/texture").get("filename")
+    texture = np.array(Image.open(texture_path).convert("RGB"))
+    sphere_vgeom, quad_vgeom = textured.vgeoms
+    for vgeom in (sphere_vgeom, quad_vgeom):
+        assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
+        assert vgeom.vmesh.trimesh.visual.defined
+    if overwrite:
+        for vgeom in (sphere_vgeom, quad_vgeom):
+            color = np.unique(vgeom.vmesh.trimesh.visual.vertex_colors, axis=0)
+            assert_equal(color, (255, 0, 0, 255))
+    else:
+        assert_equal(np.array(quad_vgeom.vmesh.trimesh.visual.material.image.convert("RGB")), texture)
+        # A visual without texture coordinates takes the mean color of the texture
+        color = np.unique(sphere_vgeom.vmesh.trimesh.visual.vertex_colors, axis=0)
+        assert_equal(color, (*texture.mean(axis=(0, 1)), 255))
+
     for entity in scene.entities:
         for geom in entity.geoms:
             assert geom.mesh.metadata["is_visual_overwritten"]
@@ -899,9 +960,10 @@ def test_color_overwrite(overwrite, show_viewer):
     [
         pytest.param("xml/franka_emika_panda/panda.xml", marks=pytest.mark.slow),
         "urdf/go2/urdf/go2.urdf",
+        "urdf/panda_bullet/panda.urdf",
     ],
 )
-def test_robot_scale_and_dofs_armature(xml_path, tol):
+def test_robot_scale_and_dofs_armature(xml_path, monkeypatch, tol):
     ROBOT_SCALES = (1.0, 0.2, 5.0)
 
     scene = gs.Scene(
@@ -914,19 +976,29 @@ def test_robot_scale_and_dofs_armature(xml_path, tol):
         show_viewer=False,
         show_FPS=False,
     )
-    for i, scale in enumerate(ROBOT_SCALES):
-        morph_kwargs = dict(file=xml_path, scale=scale)
-        if xml_path.endswith(".xml"):
-            morph = gs.morphs.MJCF(**morph_kwargs)
-        else:
-            morph = gs.morphs.URDF(**morph_kwargs)
-        scene.add_entity(morph)
+    files = [xml_path]
+    if xml_path.endswith(".urdf"):
+        # The asset is also loaded as one in-memory model shared by an entity at every scale, which parsing must leave
+        # intact for the next one. An in-memory model resolves its relative mesh paths against the working directory.
+        urdf_path = os.path.join(get_assets_dir(), xml_path)
+        monkeypatch.chdir(os.path.dirname(urdf_path))
+        files.append(urdfpy.URDF.load(urdf_path))
+    robots_scale = []
+    for scale in ROBOT_SCALES:
+        for file in files:
+            morph_kwargs = dict(file=file, scale=scale)
+            if xml_path.endswith(".xml"):
+                morph = gs.morphs.MJCF(**morph_kwargs)
+            else:
+                morph = gs.morphs.URDF(**morph_kwargs)
+            scene.add_entity(morph)
+            robots_scale.append(scale)
     scene.build()
 
     # Disable armature because it messes up with the mass matrix.
     # It is also a good opportunity to check that it updates 'invweight' and meaninertia accordingly.
     attr_orig = {}
-    for scale, robot in zip(ROBOT_SCALES, scene.entities):
+    for scale, robot in zip(robots_scale, scene.entities):
         links_invweight = robot.get_links_invweight()
         dofs_invweight = robot.get_dofs_invweight()
         robot.set_dofs_armature(torch.ones((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
@@ -1978,7 +2050,7 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
         box.attach(hand, "right_finger")
 
     # Make sure that collision between hand base link and franka attachment point has been filtered out as adjacent
-    collision_pair_idx = scene.rigid_solver.collider._collider_info.collision_pair_idx.to_numpy()
+    collision_pair_idx = scene.rigid_solver.collider.collider_info.collision_pair_idx.to_numpy()
     assert collision_pair_idx[franka.get_link("attachment").idx, hand.base_link_idx] == -1
 
     with pytest.raises(gs.GenesisException):

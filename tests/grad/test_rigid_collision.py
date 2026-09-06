@@ -80,7 +80,7 @@ def test_contact_per_step_force_grad_matches_fd(shape, grad_capsule, precision, 
         return scene, obj
 
     def _n_contacts(scene):
-        return qd_to_numpy(scene.rigid_solver.collider._collider_state.n_contacts)[0]
+        return qd_to_numpy(scene.rigid_solver.collider.collider_state.n_contacts)[0]
 
     # Rest z puts the body's lowest point on its support: box / sphere half extent 0.2, upright capsule
     # radius 0.1 + half length 0.2 = 0.3, box-on-ground centered at 0.40.
@@ -354,7 +354,7 @@ def test_contact_detection_jacobian_matches_fd():
                     sphere1.set_pos(sphere1_init_pos)
                     box0.set_quat(box0_init_quat + sign * rand_dx[0, 0] * fd_eps)
                     box1.set_quat(box1_init_quat + sign * rand_dx[1, 0] * fd_eps)
-                collider._collider_state.n_contacts.fill(0)
+                collider.collider_state.n_contacts.fill(0)
                 collider.detection()
                 c = collider.get_contacts(as_tensor=True, to_torch=True, keep_batch_dim=True)
                 losses.append(((c["normal"] * c["position"]).sum(dim=-1) * c["penetration"]).sum())
@@ -373,7 +373,7 @@ def test_contact_detection_jacobian_matches_fd():
     box1.set_pos(box1_init_pos)
     box0.set_quat(box0_init_quat)
     box1.set_quat(box1_init_quat)
-    collider._collider_state.n_contacts.fill(0)
+    collider.collider_state.n_contacts.fill(0)
     collider.detection()
     contacts = collider.get_contacts(as_tensor=True, to_torch=True, keep_batch_dim=True)
     assert torch.isfinite(contacts["normal"]).all()

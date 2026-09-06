@@ -18,6 +18,9 @@ RHO_MUJOCO = 1000.0
 MASS_EPS = 0.005
 AABB_EPS = 0.002
 INERTIA_RATIO_MAX = 100.0
+# Rounding of an authored inertia tensor, relative to its largest eigenvalue and absolute, that its checks forgive
+INERTIA_EIGVAL_RTOL = 1e-6
+INERTIA_EIGVAL_ATOL = 1e-9
 
 
 def get_local_inertial_from_geom(
@@ -198,11 +201,11 @@ def finalize_inertial(
     anchor resolve their inertial here, so the rigid dynamics inertia and the align anchor agree.
 
     With ``clamp_min_mass`` the resolved mass is floored at ``gs.EPS`` so a geometry-less moving link stays
-    non-singular in the dynamics. The align stash passes ``False``, so a genuinely massless link keeps its ``0.0``
-    mass and does not inflate the fixed-subtree composite by ``gs.EPS``.
+    non-singular in the dynamics. The align stash and the variants of a link fixed to the world pass ``False``, so a
+    genuinely massless link keeps its ``0.0`` mass there and leaves the fixed-subtree composite alone.
     """
     mass, com, quat, inertia = explicit_mass, explicit_com, explicit_quat, explicit_inertia
-    if mass is not None and hint_mass > gs.EPS:
+    if mass is not None and hint_mass > 0.0:
         hint_inertia = hint_inertia * (mass / hint_mass)
         hint_mass = mass
     if mass is None:

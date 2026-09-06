@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -110,7 +111,7 @@ class ConstraintSolver:
         # When 'max_contacts' is set, it overrides the post-pruning contact budget enforced by the collider.
         # Resolve the max_contacts option in place: from the collider's post-pruning budget when unset, else clamped
         # to the candidate budget and written back so the collider honors the user's cap. Downstream reads the option.
-        collider_info = rigid_solver.collider._collider_info
+        collider_info = rigid_solver.collider.collider_info
         if rigid_solver._options.max_contacts is None:
             rigid_solver._options.max_contacts = collider_info.max_contacts[None]
         else:
@@ -201,6 +202,11 @@ class ConstraintSolver:
                 self._solver.dyn_state, self.constraint_state, self._solver.dyn_info, self._solver.rigid_config
             )
 
+    @property
+    def data(self) -> Iterator[array_class.DataItem]:
+        """Yield every array of the constraint solver, tagged by kind (see 'Solver.data')."""
+        yield from array_class.iter_data(self.constraint_state, "constraint_state")
+
     def reset(self, envs_idx=None):
         self._eq_const_info_cache.clear()
 
@@ -266,7 +272,7 @@ class ConstraintSolver:
 
         add_equality_constraints(
             self._solver.dyn_state,
-            self._collider._collider_state,
+            self._collider.collider_state,
             self.constraint_state,
             self._solver.dyn_info,
             self._solver.rigid_info,
@@ -276,12 +282,12 @@ class ConstraintSolver:
     def add_inequality_constraints(self):
         add_inequality_constraints(
             self._solver.dyn_state,
-            self._collider._collider_state,
+            self._collider.collider_state,
             self.constraint_state,
             self._solver.dyn_info,
             self._solver.rigid_info,
             self._solver.rigid_config,
-            self._collider._collider_static_config,
+            self._collider.collider_config,
         )
 
     def resolve(self):
@@ -304,7 +310,7 @@ class ConstraintSolver:
 
         func_update_contact_force(
             self._solver.dyn_state,
-            self._collider._collider_state,
+            self._collider.collider_state,
             self.constraint_state,
             self._solver.dyn_info,
             self._solver.rigid_config,
@@ -313,7 +319,7 @@ class ConstraintSolver:
     def noslip(self):
         constraint_noslip.kernel_noslip(
             self._solver.dyn_state,
-            self._collider._collider_state,
+            self._collider.collider_state,
             self.constraint_state,
             self._solver.rigid_info,
             self._solver.rigid_config,
@@ -1995,7 +2001,7 @@ def kernel_delete_weld_constraint(
 # ====================================== Hessian Matrix & Cholesky Factorization ======================================
 
 
-@qd.kernel
+@qd.kernel(fastcache=True)
 def func_compute_dof_perm(
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,

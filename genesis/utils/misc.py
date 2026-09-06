@@ -1,4 +1,5 @@
 import ctypes
+import dataclasses
 import datetime
 import functools
 import io
@@ -898,15 +899,19 @@ def qd_zero_grad(value) -> None:
         return
 
     cls = type(value)
-    try:
-        annotations = cls.__dict__["__annotations__"]
-    except KeyError as err:
-        raise_exception_from(
-            f"qd_zero_grad: expected `qd.Field`, `qd.Ndarray`, or a `dataclass` / `@qd.data_oriented` "
-            f"struct-of-arrays; got `{cls.__name__}`.",
-            cause=err,
-        )
-    for attr_name in annotations:
+    if dataclasses.is_dataclass(cls):
+        # The fields alone: a struct also declares its data kind as a class variable (see array_class.DataKind)
+        attr_names = [field.name for field in dataclasses.fields(cls)]
+    else:
+        try:
+            attr_names = cls.__dict__["__annotations__"]
+        except KeyError as err:
+            raise_exception_from(
+                f"qd_zero_grad: expected `qd.Field`, `qd.Ndarray`, or a `dataclass` / `@qd.data_oriented` "
+                f"struct-of-arrays; got `{cls.__name__}`.",
+                cause=err,
+            )
+    for attr_name in attr_names:
         qd_zero_grad(getattr(value, attr_name, None))
 
 
