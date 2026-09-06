@@ -162,7 +162,7 @@ class ImageTexture(Texture, SerializationMixin):
                 if image_path.endswith((".exr")):
                     image_path = mu.check_exr_compression(image_path)
             else:
-                image_array = np.array(Image.open(image_path))
+                image_array = mu.PIL_to_array(Image.open(image_path))
         else:
             # Normalize image array
             if not isinstance(image_array, np.ndarray):

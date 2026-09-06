@@ -13,6 +13,7 @@ from genesis.constants import GLTF_FORMATS, XACRO_FORMAT
 from genesis.ext import urdfpy
 
 from . import geom as gu
+from . import mesh as mu
 from .misc import get_assets_dir
 
 
@@ -251,16 +252,31 @@ def parse_urdf(morph, surface):
             for tmesh, metadata in zip(tmeshes, metadatas, strict=True):
                 # Overwrite surface color by original color specified in URDF file only if necessary
                 is_urdf_material = False
+                # trimesh gives a mesh holding texture coordinates and no material its placeholder material, which
+                # states nothing about the appearance the asset authored
+                has_asset_material = tmesh.visual.defined and not (
+                    isinstance(tmesh.visual, trimesh.visual.texture.TextureVisuals)
+                    and hash(tmesh.visual.material) == hash(trimesh.visual.material.empty_material())
+                )
                 if geom_is_col:
                     geom_surface = gs.surfaces.Collision()
                 elif (
                     surface.texture is None
-                    and getattr(geom_prop, "material") is not None
-                    and geom_prop.material.color is not None
-                    and (morph.prioritize_urdf_material or not tmesh.visual.defined)
+                    and geom_prop.material is not None
+                    and (geom_prop.material.texture is not None or geom_prop.material.color is not None)
+                    and (morph.prioritize_urdf_material or not has_asset_material)
                 ):
                     is_urdf_material = True
-                    geom_surface = gs.surfaces.Default(color=geom_prop.material.color)
+                    if geom_prop.material.texture is not None:
+                        # The image stands in for the color, as it does for the material of a mesh asset (see
+                        # from_trimesh in engine/mesh.py)
+                        geom_surface = gs.surfaces.Default(
+                            diffuse_texture=gs.textures.ImageTexture(
+                                image_array=mu.PIL_to_array(geom_prop.material.texture.image)
+                            )
+                        )
+                    else:
+                        geom_surface = gs.surfaces.Default(color=geom_prop.material.color)
                 else:
                     geom_surface = surface
 

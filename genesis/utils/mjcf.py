@@ -76,7 +76,7 @@ def build_model(
             # An in-memory model resolves its relative mesh paths against the working directory, as the URDF pass does
             # (see parse_urdf in urdf.py), so that both passes read the same files.
             asset_path = os.getcwd()
-            root = xml._unparse(asset_path)
+            root = xml.to_xml()
             mjcf = ET.SubElement(root, "mujoco")
         else:
             # Make sure that it is pointing to a valid XML content (either file path or string)
@@ -196,7 +196,7 @@ def build_model(
             # Merge fixed links if requested
             if merge_fixed_links:
                 robot = uu.merge_fixed_links(robot, links_to_keep)
-                root = robot._to_xml(None, asset_path)
+                root = robot.to_xml()
                 root.append(mjcf)
 
             # Enforce some compiler options

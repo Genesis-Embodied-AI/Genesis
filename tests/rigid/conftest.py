@@ -4,6 +4,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import pytest
 import trimesh
+from PIL import Image
 
 from genesis.utils.misc import get_assets_dir
 
@@ -163,21 +164,55 @@ def tet_meshball():
 
 
 @pytest.fixture(scope="session")
-def urdf_with_external_mesh(asset_tmp_path):
-    """Generate a URDF naming a mesh by an absolute path outside the directory the model itself sits in."""
-    meshes = asset_tmp_path / "external_meshes"
-    meshes.mkdir(exist_ok=True)
-    mesh_file = meshes / "sphere.obj"
-    if not mesh_file.exists():
-        mesh_file.symlink_to(os.path.join(get_assets_dir(), "meshes", "sphere.obj"))
-    robot = ET.Element("robot", name="external_mesh")
+def urdf_with_external_assets(asset_tmp_path):
+    """Generate a URDF naming a mesh and a texture by absolute paths outside the directory the model itself sits in.
+
+    Its material carries both a color and an image texture, shared by a sphere visual without texture coordinates and
+    a quad visual with them.
+    """
+    assets = asset_tmp_path / "external_assets"
+    assets.mkdir(exist_ok=True)
+    sphere_path = assets / "sphere.obj"
+    if not sphere_path.exists():
+        sphere_path.symlink_to(os.path.join(get_assets_dir(), "meshes", "sphere.obj"))
+    quad_path = assets / "textured_quad.obj"
+    quad_lines = (
+        "v 0 0 0",
+        "v 1 0 0",
+        "v 1 1 0",
+        "v 0 1 0",
+        "vt 0 0",
+        "vt 1 0",
+        "vt 1 1",
+        "vt 0 1",
+        "f 1/1 2/2 3/3",
+        "f 1/1 3/3 4/4",
+    )
+    quad_path.write_text("\n".join(quad_lines))
+    texture_path = assets / "texture.png"
+    texture = np.array(
+        [
+            [[100, 0, 255], [100, 0, 255]],
+            [[200, 0, 255], [200, 0, 255]],
+        ],
+        dtype=np.uint8,
+    )
+    Image.fromarray(texture).convert("P", palette=Image.Palette.ADAPTIVE).save(texture_path)
+    robot = ET.Element("robot", name="external_mesh_and_texture")
+    material = ET.SubElement(robot, "material", name="textured")
+    ET.SubElement(material, "color", rgba="0 1 0 1")
+    ET.SubElement(material, "texture", filename=str(texture_path))
     link = ET.SubElement(robot, "link", name="base_link")
     inertial = ET.SubElement(link, "inertial")
     ET.SubElement(inertial, "mass", value="1.0")
     ET.SubElement(inertial, "inertia", ixx="0.01", ixy="0", ixz="0", iyy="0.01", iyz="0", izz="0.01")
     for tag in ("visual", "collision"):
         geometry = ET.SubElement(ET.SubElement(link, tag), "geometry")
-        ET.SubElement(geometry, "mesh", filename=str(mesh_file), scale="0.05 0.05 0.05")
+        ET.SubElement(geometry, "mesh", filename=str(sphere_path), scale="0.05 0.05 0.05")
+    ET.SubElement(link.find("visual"), "material", name="textured")
+    quad_visual = ET.SubElement(link, "visual")
+    ET.SubElement(ET.SubElement(quad_visual, "geometry"), "mesh", filename=str(quad_path))
+    ET.SubElement(quad_visual, "material", name="textured")
     return ET.tostring(robot, encoding="unicode")
 
 

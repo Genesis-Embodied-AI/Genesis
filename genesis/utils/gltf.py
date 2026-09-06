@@ -87,7 +87,7 @@ def get_glb_image(glb, image_index, image_type=None):
         image = Image.open(uri_to_PIL(glb.images[image_index].uri))
         if image_type is not None:
             image = image.convert(image_type)
-        return np.array(image)
+        return mu.PIL_to_array(image)
     return None
 
 
