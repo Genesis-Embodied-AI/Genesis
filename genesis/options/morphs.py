@@ -1722,8 +1722,12 @@ class USD(FileMorph):
 
 
 def _exported_urdf(robot: urdfpy.URDF, exporting: serialization.Exporting) -> str:
-    """Export a URDF model built in memory as the document it stands for."""
-    return ET.tostring(robot._unparse(mu.get_assets_dir()), encoding="unicode")
+    """Export a URDF model built in memory as the document it stands for.
+
+    Relative asset paths stay as written: an in-memory model resolves them against the working directory when it is
+    read (see '_loaded_urdf' and 'build_model' in mjcf.py).
+    """
+    return ET.tostring(robot._unparse(os.getcwd()), encoding="unicode")
 
 
 def _loaded_urdf(raw: str, loading: serialization.Loading) -> urdfpy.URDF:

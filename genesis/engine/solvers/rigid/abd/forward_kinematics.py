@@ -538,13 +538,11 @@ def func_update_geoms_entity(
                 continue
         if func_check_index_range(i_g, dyn_info.entities.geom_start[i_e], dyn_info.entities.geom_end[i_e], BW):
             if force_update_fixed_geoms or not dyn_info.geoms.is_fixed[i_g]:
-                (dyn_state.geoms.pos[i_g, i_b], dyn_state.geoms.quat[i_g, i_b]) = (
-                    gu.qd_transform_pos_quat_by_trans_quat(
-                        dyn_info.geoms.pos[i_g],
-                        dyn_info.geoms.quat[i_g],
-                        dyn_state.links.pos[dyn_info.geoms.link_idx[i_g], i_b],
-                        dyn_state.links.quat[dyn_info.geoms.link_idx[i_g], i_b],
-                    )
+                dyn_state.geoms.pos[i_g, i_b], dyn_state.geoms.quat[i_g, i_b] = gu.qd_transform_pos_quat_by_trans_quat(
+                    dyn_info.geoms.pos[i_g],
+                    dyn_info.geoms.quat[i_g],
+                    dyn_state.links.pos[dyn_info.geoms.link_idx[i_g], i_b],
+                    dyn_state.links.quat[dyn_info.geoms.link_idx[i_g], i_b],
                 )
                 dyn_state.geoms.verts_updated[i_g, i_b] = False
 
@@ -677,7 +675,7 @@ def func_forward_velocity_entity(
                     cvel_ang = cvel_ang + A(curr_I, _ang, dyn_state.links.cd_ang_bw, BW)
 
                 for i_3 in qd.static(range(3)):
-                    (dyn_state.dofs.cdofd_ang[dof_start + i_3, i_b], dyn_state.dofs.cdofd_vel[dof_start + i_3, i_b]) = (
+                    dyn_state.dofs.cdofd_ang[dof_start + i_3, i_b], dyn_state.dofs.cdofd_vel[dof_start + i_3, i_b] = (
                         qd.Vector.zero(gs.qd_float, 3),
                         qd.Vector.zero(gs.qd_float, 3),
                     )
@@ -831,7 +829,7 @@ def kernel_update_all_verts(
     func_update_all_verts(dyn_state, dyn_info, rigid_config)
 
 
-@qd.kernel
+@qd.kernel(fastcache=True)
 def kernel_update_geom_aabbs(
     geoms_init_AABB: array_class.GeomsInitAABB, dyn_state: array_class.DynState, rigid_config: qd.template()
 ):

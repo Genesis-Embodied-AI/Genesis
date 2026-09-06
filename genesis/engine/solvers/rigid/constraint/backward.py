@@ -112,7 +112,7 @@ def func_solve_adjoint_u_cg_batch(
             constraint_state.bw_p[i_d, i_b] = constraint_state.bw_r[i_d, i_b] + beta * constraint_state.bw_p[i_d, i_b]
 
 
-@qd.kernel
+@qd.kernel(fastcache=True)
 def kernel_solve_adjoint_u(
     constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
@@ -176,7 +176,7 @@ def kernel_solve_adjoint_u(
             func_solve_adjoint_u_cg_batch(i_b, constraint_state, dyn_info, rigid_info, rigid_config)
 
 
-@qd.kernel
+@qd.kernel(fastcache=True)
 def kernel_compute_gradients(
     constraint_state: array_class.ConstraintState, dyn_info: array_class.DynInfo, rigid_config: qd.template()
 ):

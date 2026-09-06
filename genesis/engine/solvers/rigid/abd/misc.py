@@ -749,7 +749,7 @@ def func_apply_coupling_force(link_idx, env_idx, pos, force, links_state: array_
     links_state.cfrc_coupling_vel[link_idx, env_idx] -= force
 
 
-@qd.kernel
+@qd.kernel(fastcache=True)
 def kernel_wakeup_coupled_links(
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
