@@ -373,6 +373,25 @@ def test_fluid_emitter(n_envs, material_type, show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("precision", ["64"])
+def test_sap_rejects_joint_equality_without_joint2(show_viewer, single_joint_equality):
+    scene = gs.Scene(
+        coupler_options=gs.options.SAPCouplerOptions(
+            fem_floor_contact_type="none",
+            enable_fem_self_tet_contact=False,
+            rigid_floor_contact_type="none",
+            enable_rigid_fem_contact=False,
+            rigid_rigid_contact_type="none",
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.MJCF(file=single_joint_equality))
+
+    with pytest.raises(gs.GenesisException, match="SAPCoupler does not support.*without `joint2`"):
+        scene.build()
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("precision", ["64"])
 def test_sap_rigid_rigid_hydroelastic_contact(show_viewer):
     BOX_POS = (0.0, 0.0, 0.1)
     BOX_HALFHEIGHT = 0.1
