@@ -36,6 +36,7 @@ from genesis.utils.sdf import SDF
 from ..base_solver import GravityMixin, MutatedLinks, Solver, StateChange, TimeBasedMixin, mutates
 from ..kinematic_solver import (
     KinematicSolver,
+    _balanced_variant_mapping,
     _fill_base_link_geom_offsets,
     _offset_world_shift,
     _select_links_offset,
@@ -399,6 +400,52 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         self._init_constraint_solver()
         self._refresh_invweight_and_meaninertia(force_update=False, in_place=True)
 
+        # Resolve the default rotor inertia (see 'KinematicVariantDescription'), one variant per environment. The
+        # refresh above assembled the mass matrix it is read from, so the armature is written from the host and the
+        # refresh runs again in place, over the inverse weights the default invalidates alone: those of the defaulted
+        # degrees of freedom and of the links of their entities, the parsed ones standing everywhere else.
+        dofs_idx, dofs_ratio, dofs_entity_idx = [], [], []
+        for entity in self._entities:
+            rotor_links = [
+                link
+                for link in entity.links
+                if link.n_dofs == 1 and link.joints[0].type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC)
+            ]
+            if not rotor_links:
+                continue
+            # Only a scene or robot description file produces a link carrying a rotor, and those morphs state a default
+            # armature.
+            if entity.desc.variants:
+                ratios = np.array([variant.default_armature or 0.0 for variant in entity.desc.variants])
+            else:
+                ratios = np.array([entity.main_morph.default_armature or 0.0])
+            ratio = ratios[_balanced_variant_mapping(ratios.size, self._B)]
+            if (ratio <= 0.0).all():
+                continue
+            dofs_idx.extend(link.dof_start for link in rotor_links)
+            dofs_ratio.extend([ratio] * len(rotor_links))
+            dofs_entity_idx.extend([entity.idx] * len(rotor_links))
+        if dofs_idx:
+            # Field layout, batch last, since the arrays are written back as fields.
+            dofs_armature = qd_to_numpy(self.dyn_info.dofs.armature, transpose=False, copy=True)
+            is_default = (np.atleast_2d(dofs_armature[dofs_idx].T) <= 0.0).all(axis=0)
+            if is_default.any():
+                dofs_idx = np.array(dofs_idx)[is_default]
+                dofs_ratio = np.stack(dofs_ratio, axis=1)[:, is_default]
+                mass_mat_diag = np.atleast_2d(tensor_to_array(self.get_mass_mat().diagonal(dim1=-2, dim2=-1)))
+                default_armature = dofs_ratio * mass_mat_diag[:, dofs_idx]
+                dofs_armature[dofs_idx] = default_armature.T if self._options.batch_dofs_info else default_armature[0]
+                self.dyn_info.dofs.armature.from_numpy(dofs_armature)
+                dofs_invweight = qd_to_numpy(self.dyn_info.dofs.invweight, transpose=False, copy=True)
+                dofs_invweight[dofs_idx] = -1.0
+                self.dyn_info.dofs.invweight.from_numpy(dofs_invweight)
+                entities = [self._entities[i_e] for i_e in set(np.array(dofs_entity_idx)[is_default])]
+                links_idx = [link.idx for entity in entities for link in entity.links]
+                links_invweight = qd_to_numpy(self.dyn_info.links.invweight, transpose=False, copy=True)
+                links_invweight[links_idx] = -1.0
+                self.dyn_info.links.invweight.from_numpy(links_invweight)
+                self._refresh_invweight_and_meaninertia(force_update=False, in_place=True)
+
         # The constraint solver decides it has converged from quantities summed over the whole scene, and every DOF of
         # a link contributes a cost of the order of the link's mass. A link whose mass is a tolerance-fraction of the
         # scene total therefore contributes less than the tolerance, and the solve stops while that link still carries
@@ -490,6 +537,16 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         # get_dofs_info reads from solver._options.batch_dofs_info.
         if self._enable_heterogeneous and self._use_hibernation:
             self._options.batch_dofs_info = True
+        # Likewise, the variants of a heterogeneous entity weigh differently, so the default armature they receive (see
+        # build) is per-env whenever one of them asks for it on a joint that carries a rotor.
+        for entity in self._entities:
+            has_default = any((variant.default_armature or 0.0) > 0.0 for variant in entity.desc.variants)
+            has_rotor = any(
+                link.n_dofs == 1 and link.joints[0].type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC)
+                for link in entity.links
+            )
+            if has_default and has_rotor:
+                self._options.batch_dofs_info = True
 
         # sparse_solve=None resolves automatically: the skyline-envelope solver pays off on CPU only when the scene
         # has block structure, whereas a single dense-coupled tree gains nothing and pays the per-step envelope tax. An
@@ -812,16 +869,18 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
     def _jacobi_mass_spread_bound(self):
         """Upper-bound the spread of the mass matrix diagonal over every configuration, from the model alone.
 
-        Each DOF's diagonal entry is bracketed without kinematics. A translational entry is exactly its per-DOF
-        armature plus the subtree mass. A rotational entry is the link the joint carries plus its descendants: with a
-        single joint the link's axis, anchor and centre of mass (COM) are fixed in its frame, so its own term
-        armature + a^T I_anchor a is exact for a revolute axis and bracketed by the principal inertias about the
-        anchor for free/spherical DOFs whose axes turn with the configuration; descendants add at least nothing, at
-        most their largest principal inertia plus their mass carried at an anchor-to-COM distance no configuration
-        exceeds (frame offsets summed along the chain, each joint anchor counted twice since a joint rotation swings
-        the child origin around it, and each prismatic descendant's full travel span, infinite when unlimited). The
-        largest upper bracket over the smallest lower one thus bounds the true diagonal spread at every configuration:
-        equilibration may enable for scenes whose reachable configurations stay better conditioned, never the reverse.
+        Each DOF's diagonal entry is bracketed without kinematics. A translational entry is exactly its armature plus
+        the subtree mass. A rotational entry is the inertia of the carrying link plus that of its descendants. With a
+        single joint, the link's axis, anchor and centre of mass (COM) are fixed in its frame, so its own term
+        armature + a^T I_anchor a is exact for a revolute axis. The axes of free and spherical DOFs turn with the
+        configuration, so their own term is bracketed by the principal inertias about the anchor. A descendant adds
+        nothing at least, and at most its largest principal inertia plus its mass times the square of an anchor-to-COM
+        distance no configuration exceeds. That distance sums the frame offsets along the chain, counts each joint
+        anchor twice since a joint rotation swings the child origin around it, and adds each prismatic descendant's
+        full travel span, infinite when unlimited. The default armature a DOF receives at build is a fraction of its
+        neutral-configuration entry, so its upper bracket grows by that fraction. The largest upper bracket over the
+        smallest lower one therefore bounds the true spread from above, so the gate can only enable equilibration
+        needlessly, never miss a scene that needs it.
         """
         links = [link for entity in self._entities for link in entity.links]
         children = {}
@@ -832,6 +891,15 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         for link in links:
             if link.is_fixed:
                 continue
+            # Bracketed over every variant a heterogeneous entity dispatches, since each may ask its own default. Only a
+            # scene or robot description file produces a link carrying a rotor, and those morphs state one.
+            default_ratio = 0.0
+            if link.n_dofs == 1 and link.joints[0].type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC):
+                desc = link.entity.desc
+                if desc.variants:
+                    default_ratio = max(variant.default_armature or 0.0 for variant in desc.variants)
+                else:
+                    default_ratio = link.entity.main_morph.default_armature or 0.0
             for joint in link.joints:
                 if joint.type == gs.JOINT_TYPE.FIXED:
                     continue
@@ -878,18 +946,19 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                     rot_self_lower = eigvals[0]
                     rot_self_upper = eigvals[-1] + link.desc.mass * dist_com[link.idx] ** 2
                 for i_d, armature_d in enumerate(joint.desc.dofs_armature):
+                    upper_scale = 1.0 if armature_d > 0.0 else 1.0 + default_ratio
                     if joint.type == gs.JOINT_TYPE.PRISMATIC or (joint.type == gs.JOINT_TYPE.FREE and i_d < 3):
                         lower.append(armature_d + sub_mass)
-                        upper.append(armature_d + sub_mass)
+                        upper.append(upper_scale * (armature_d + sub_mass))
                     elif joint.type == gs.JOINT_TYPE.REVOLUTE and is_sole_joint:
                         axis = joint.desc.dofs_motion_ang[i_d]
                         lever = np.cross(axis, offset_com)
                         rot_self = axis @ inertia_com @ axis + link.desc.mass * np.dot(lever, lever)
                         lower.append(armature_d + rot_self)
-                        upper.append(armature_d + rot_self + rot_desc_upper)
+                        upper.append(upper_scale * (armature_d + rot_self + rot_desc_upper))
                     else:
                         lower.append(armature_d + max(rot_self_lower, 0.0))
-                        upper.append(armature_d + rot_self_upper + rot_desc_upper)
+                        upper.append(upper_scale * (armature_d + rot_self_upper + rot_desc_upper))
         lower = [val for val in lower if val > 0.0]
         if not lower or not upper:
             return 0.0
@@ -1012,8 +1081,6 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         ranges and per-variant inertial properties. Per-variant inertial is pre-computed during
         link._build() from actual geom objects, using analytic formulas for primitives.
         """
-        from genesis.engine.solvers.kinematic_solver import _balanced_variant_mapping
-
         for link in self.links:
             if link._variant_vgeom_ranges is None:
                 continue
