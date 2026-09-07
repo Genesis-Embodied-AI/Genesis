@@ -739,7 +739,7 @@ def test_urdf_joint_dynamics(joint_damping, joint_friction, xml_path):
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["freeflyer_mjcf", "freeflyer_urdf"])
-def test_default_armature_freeflyer(xml_path):
+def test_default_armature(xml_path):
     DEFAULT_ARMATURE = 1000.0
 
     morph_class = gs.morphs.URDF if xml_path.endswith(".urdf") else gs.morphs.MJCF
@@ -750,24 +750,50 @@ def test_default_armature_freeflyer(xml_path):
     morph_without_armature = morph_class(
         file=xml_path,
         pos=(1.0, 0.0, 0.0),
+        default_armature=None,
     )
+    # One variant per environment, each weighing differently and asking its own default.
+    morphs_heterogeneous = [
+        morph_class(
+            file=xml_path,
+            pos=(2.0, 0.0, 0.0),
+            scale=1.0,
+            default_armature=DEFAULT_ARMATURE,
+        ),
+        morph_class(
+            file=xml_path,
+            pos=(2.0, 0.0, 0.0),
+            scale=2.0,
+            default_armature=None,
+        ),
+    ]
 
     scene = gs.Scene()
     robot = scene.add_entity(morph)
     robot_without_armature = scene.add_entity(morph_without_armature)
-    scene.build()
+    robot_heterogeneous = scene.add_entity(morphs_heterogeneous)
+    scene.build(n_envs=2)
 
+    # The default armature is a fraction of the joint-space inertia the DOF drives at the neutral configuration.
+    mass_mat_diag = robot_without_armature.get_mass_mat().diagonal(dim1=-2, dim2=-1)
     armature = robot.get_dofs_armature()
-    assert_allclose(armature[:6], 0.0, tol=gs.EPS)
-    assert_allclose(armature[6], DEFAULT_ARMATURE, tol=gs.EPS)
+    assert_allclose(armature[:, :6], 0.0, tol=gs.EPS)
+    assert_allclose(armature[:, 6], DEFAULT_ARMATURE * mass_mat_diag[:, 6], tol=gs.EPS)
+    assert_allclose(robot_without_armature.get_dofs_armature()[:, 6], 0.0, tol=gs.EPS)
     if xml_path.endswith(".xml"):
-        assert_allclose(armature[7], 42.0, tol=gs.EPS)
-        assert_allclose(armature[8], 0.0002, tol=gs.EPS)
+        assert_allclose(armature[:, 7], 42.0, tol=gs.EPS)
+        assert_allclose(armature[:, 8], 0.0002, tol=gs.EPS)
+    # The armature sits on the diagonal it was a fraction of, so it is that fraction of the diagonal less itself.
+    mass_mat_diag_heterogeneous = robot_heterogeneous.get_mass_mat().diagonal(dim1=-2, dim2=-1)
+    armature_heterogeneous = robot_heterogeneous.get_dofs_armature()
+    expected = DEFAULT_ARMATURE / (1.0 + DEFAULT_ARMATURE) * mass_mat_diag_heterogeneous[0, 6]
+    assert_allclose(armature_heterogeneous[0, 6], expected, tol=gs.EPS)
+    assert_allclose(armature_heterogeneous[1, 6], 0.0, tol=gs.EPS)
 
     # Rotor inertia adds to the effective inertia of the joint it is applied to, so it must lower the inverse weight
     # the solver derives from it. An inverse weight parsed before the armature was applied leaves the rotor inertia
     # out of every constraint it scales.
-    assert robot.get_dofs_invweight()[6] < robot_without_armature.get_dofs_invweight()[6]
+    assert (robot.get_dofs_invweight()[:, 6] < robot_without_armature.get_dofs_invweight()[:, 6]).all()
 
 
 @pytest.mark.slow  # ~200s
