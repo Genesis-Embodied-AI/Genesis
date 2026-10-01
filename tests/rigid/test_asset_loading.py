@@ -231,6 +231,8 @@ def test_parsing_inertia_defaults(
     zero_density_marker_mjcf,
     implicit_inertial_origin_chain,
     visual_collision_inertia,
+    simplified_collision_links,
+    simplified_collision_flat_sheet,
     show_viewer,
     tol,
     caplog,
@@ -248,6 +250,7 @@ def test_parsing_inertia_defaults(
     SPHERE_INERTIA_PER_MASS = 2.0 * 0.06**2 / 5.0
     BOX_INERTIA_PER_MASS = 2.0 * 0.2**2 / 12.0
     GRAVITY = (0.0, 0.0, -9.81)
+    RHO = 1000.0
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -409,6 +412,32 @@ def test_parsing_inertia_defaults(
     stacked_tip.attach(stacked_middle, parent_link_name=stacked_middle.base_link.name, pos=(0.0, 0.0, 0.2))
     stacked_middle.attach(stacked_base, parent_link_name=stacked_base.base_link.name, pos=(0.0, 0.0, 0.2))
 
+    # Each link of the asset stands for one case of visual surface (see 'simplified_collision_links')
+    visual_links_urdf, pipe_volume, double_sided_volume, multipart_volume = simplified_collision_links
+    entity_from_visual = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=visual_links_urdf,
+            pos=(2.4, 1.0, 0.5),
+            merge_fixed_links=False,
+            inertia_from_visual=True,
+            align=False,
+        ),
+        material=gs.materials.Rigid(
+            rho=RHO,
+        ),
+    )
+    entity_from_collision = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=visual_links_urdf,
+            pos=(2.4, 2.0, 0.5),
+            merge_fixed_links=False,
+            align=False,
+        ),
+        material=gs.materials.Rigid(
+            rho=RHO,
+        ),
+    )
+
     with caplog.at_level("WARNING"):
         scene.build()
 
@@ -468,6 +497,59 @@ def test_parsing_inertia_defaults(
 
     # Every asset above is parsed by MuJoCo, a zero or missing inertial included.
     assert not any("legacy URDF parser" in record.getMessage() for record in caplog.records)
+
+    # Faceting makes the visual mesh's inertia differ from an analytic sphere's
+    visual_tmesh = entity_from_visual.base_link.vgeoms[0].vmesh.trimesh
+    assert_allclose(entity_from_visual.base_link.desc.mass, RHO * visual_tmesh.volume, tol=tol)
+    assert_allclose(
+        np.linalg.eigvalsh(entity_from_visual.base_link.desc.inertia),
+        np.linalg.eigvalsh(RHO * visual_tmesh.moment_inertia),
+        tol=tol,
+    )
+
+    collision_radius = entity_from_collision.base_link.geoms[0].data[0]
+    collision_mass = RHO * (4.0 / 3.0) * np.pi * collision_radius**3
+    assert_allclose(entity_from_collision.base_link.desc.mass, collision_mass, tol=tol)
+    assert_allclose(
+        np.linalg.eigvalsh(entity_from_collision.base_link.desc.inertia),
+        (2.0 / 5.0) * collision_mass * collision_radius**2,
+        tol=tol,
+    )
+
+    # The two meshes the pipe is split across are estimated as one closed pipe, and stay open as drawn
+    pipe_link = entity_from_visual.get_link("pipe_link")
+    assert not any(vgeom.vmesh.trimesh.is_watertight for vgeom in pipe_link.vgeoms)
+    assert_allclose(pipe_link.desc.mass, RHO * pipe_volume, rtol=1e-2)
+
+    # A surface stored once per side, however each copy is wound, encloses the solid it would enclose drawn once
+    assert_allclose(entity_from_visual.get_link("double_sided_link").desc.mass, RHO * double_sided_volume, tol=tol)
+
+    # Separate closed parts add up whichever way each is wound, and a part nested in another is a cavity
+    assert_allclose(entity_from_visual.get_link("multipart_link").desc.mass, RHO * multipart_volume, tol=tol)
+
+    # A moving link drawn with a surface that encloses nothing has no inertia to estimate from it
+    sheet_scene = gs.Scene()
+    with pytest.raises(gs.GenesisException, match="encloses no volume"):
+        sheet_scene.add_entity(gs.morphs.URDF(file=simplified_collision_flat_sheet, inertia_from_visual=True))
+    with pytest.raises(gs.GenesisException, match="encloses no volume"):
+        sheet_scene.add_entity(
+            morph=(
+                gs.morphs.URDF(file=undefined_inertia, inertia_from_visual=True),
+                gs.morphs.URDF(file=simplified_collision_flat_sheet, inertia_from_visual=True),
+            )
+        )
+    with pytest.raises(gs.GenesisException, match="encloses no volume"):
+        sheet_scene.add_entity(
+            gs.morphs.URDF(file=simplified_collision_flat_sheet, collision=False, inertia_from_visual=True)
+        )
+    sheet_scene.add_entity(gs.morphs.URDF(file=simplified_collision_flat_sheet))
+
+    # A visual sphere under the option takes the analytic mass of its scaled radius, at the object density of a
+    # single-link asset
+    scaled_drawn = sheet_scene.add_entity(
+        gs.morphs.URDF(file=undefined_inertia, scale=2.0, collision=False, inertia_from_visual=True)
+    )
+    assert_allclose(scaled_drawn.base_link.desc.mass, 600.0 * 4.0 / 3.0 * np.pi * (2.0 * 0.06) ** 3, tol=tol)
 
     # Resolving the center of mass to the link frame can place it outside the geometry, which stays worth reporting.
     # Only the link whose geometry is offset qualifies, once per copy of the robot.

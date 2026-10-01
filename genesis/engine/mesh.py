@@ -19,20 +19,11 @@ import genesis.utils.point_cloud as pc
 from genesis.constants import GLTF_FORMATS, MESH_FORMATS
 from genesis.options.surfaces import Surface
 from genesis.repr_base import RBC
-from genesis.typing import Matrix3x3Type, Vec3FType
 from genesis.utils import serialization
 from genesis.utils.misc import OwnedCache, redirect_libc_stderr
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity.description import SignedDistanceFieldDescription
-
-
-class InertialProperties(NamedTuple):
-    """A rigid body's intrinsic inertial: mass, center of mass 'com', and inertia tensor 'i' about that COM."""
-
-    mass: float
-    com: Vec3FType
-    i: Matrix3x3Type
 
 
 class SDFGrid(NamedTuple):
@@ -354,8 +345,20 @@ class Mesh(RBC, serialization.SerializationMixin):
             tmesh.invert()
             volume = -volume
         if volume > 0.0:
-            return InertialProperties(tmesh.mass, tmesh.center_mass, tmesh.moment_inertia)
-        return InertialProperties(0.0, np.zeros(3), np.zeros((3, 3)))
+            return mu.InertialProperties(tmesh.mass, tmesh.center_mass, tmesh.moment_inertia)
+        return mu.InertialProperties(0.0, np.zeros(3), np.zeros((3, 3)))
+
+    @property
+    @cached_by_tmesh
+    def enclosed_inertial(self):
+        """
+        Mass, center of mass and inertia tensor of the volume the surface encloses, in its own frame, at unit density.
+
+        An open or double-sided surface is estimated by the volume it encloses rather than its convex hull (see
+        'inertial_from_surface'), at a load time growing with its vertex count. The result is shared by reference across
+        the meshes of one trimesh.
+        """
+        return mu.inertial_from_surface(self.verts, self.faces)
 
     @cached_by_tmesh
     def get_sdf_grid(self, sdf: "SignedDistanceFieldDescription") -> SDFGrid:
