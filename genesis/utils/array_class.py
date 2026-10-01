@@ -2271,8 +2271,8 @@ class DofsInfo:
     dof_length: qd.Tensor
 
 
-def get_dofs_info(solver):
-    shape = (solver.n_dofs_, solver._B) if solver._options.batch_dofs_info else (solver.n_dofs_,)
+def get_dofs_info(description):
+    shape = (description.n_dofs_, description._B) if description.is_batch_dofs_info else (description.n_dofs_,)
 
     return DofsInfo(
         entity_idx=V(dtype=gs.qd_int, shape=shape),
@@ -2327,9 +2327,9 @@ class DofsState:
     is_hibernated: qd.Tensor = of_kind(DataKind.STATE)
 
 
-def get_dofs_state(solver):
-    shape = (solver.n_dofs_, solver._B)
-    requires_grad = solver._requires_grad
+def get_dofs_state(description):
+    shape = (description.n_dofs_, description._B)
+    requires_grad = description.requires_grad
     shape_bw = maybe_shape((2, *shape), requires_grad)
 
     return DofsState(
@@ -2420,12 +2420,12 @@ class LinksState:
     awake_steps: qd.Tensor = of_kind(DataKind.STATE)
 
 
-def get_links_state(solver):
-    shape = (solver.n_links_, solver._B)
-    requires_grad = solver._requires_grad
+def get_links_state(description):
+    shape = (description.n_links_, description._B)
+    requires_grad = description.requires_grad
     # The backward joint buffers hold one slot per joint of a link plus the link itself; collapsed when grad is off.
-    n_joints_bw = (max(link.n_joints for link in solver.links) + 1) if requires_grad and solver.n_links else 1
-    shape_bw = (solver.n_links_, n_joints_bw, solver._B)
+    n_joints_bw = description.n_joints_per_link_max + 1 if requires_grad else 1
+    shape_bw = (description.n_links_, n_joints_bw, description._B)
 
     return LinksState(
         cinr_inertial=V(dtype=gs.qd_mat3, shape=shape, needs_grad=requires_grad),
@@ -2498,8 +2498,10 @@ class LinksInfo:
     vgeom_end: qd.Tensor
 
 
-def get_links_info(solver):
-    links_info_shape = (solver.n_links_, solver._B) if solver._options.batch_links_info else solver.n_links_
+def get_links_info(description):
+    links_info_shape = (
+        (description.n_links_, description._B) if description.is_batch_links_info else description.n_links_
+    )
 
     return LinksInfo(
         parent_idx=V(dtype=gs.qd_int, shape=links_info_shape),
@@ -2545,8 +2547,8 @@ class JointsInfo:
     pos: qd.Tensor
 
 
-def get_joints_info(solver):
-    shape = (solver.n_joints_, solver._B) if solver._options.batch_joints_info else (solver.n_joints_,)
+def get_joints_info(description):
+    shape = (description.n_joints_, description._B) if description.is_batch_joints_info else (description.n_joints_,)
 
     return JointsInfo(
         type=V(dtype=gs.qd_int, shape=shape),
@@ -2568,9 +2570,9 @@ class JointsState:
     xaxis: qd.Tensor
 
 
-def get_joints_state(solver):
-    shape = (solver.n_joints_, solver._B)
-    requires_grad = solver._requires_grad
+def get_joints_state(description):
+    shape = (description.n_joints_, description._B)
+    requires_grad = description.requires_grad
 
     return JointsState(
         xanchor=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
@@ -2618,8 +2620,8 @@ class GeomsInfo:
     coup_restitution: qd.Tensor
 
 
-def get_geoms_info(solver, is_active=True):
-    shape = (solver.n_geoms_,) if is_active else ()
+def get_geoms_info(description, is_active=True):
+    shape = (description.n_geoms_,) if is_active else ()
 
     return GeomsInfo(
         pos=V(dtype=gs.qd_vec3, shape=shape),
@@ -2669,9 +2671,9 @@ class GeomsState:
     friction_ratio: qd.Tensor = of_kind(DataKind.INFO)
 
 
-def get_geoms_state(solver, is_active=True):
-    shape = (solver.n_geoms_, solver._B) if is_active else ()
-    requires_grad = solver.rigid_config.requires_grad
+def get_geoms_state(description, is_active=True):
+    shape = (description.n_geoms_, description._B) if is_active else ()
+    requires_grad = description.requires_grad
 
     return GeomsState(
         pos=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
@@ -2699,8 +2701,8 @@ class VertsInfo:
     is_fixed: qd.Tensor
 
 
-def get_verts_info(solver, is_active=True):
-    shape = (solver.n_verts_,) if is_active else ()
+def get_verts_info(description, is_active=True):
+    shape = (description.n_verts_,) if is_active else ()
 
     return VertsInfo(
         init_pos=V(dtype=gs.qd_vec3, shape=shape),
@@ -2723,8 +2725,8 @@ class FacesInfo:
     geom_idx: qd.Tensor
 
 
-def get_faces_info(solver, is_active=True):
-    shape = (solver.n_faces_,) if is_active else ()
+def get_faces_info(description, is_active=True):
+    shape = (description.n_faces_,) if is_active else ()
 
     return FacesInfo(verts_idx=V(dtype=gs.qd_ivec3, shape=shape), geom_idx=V(dtype=gs.qd_int, shape=shape))
 
@@ -2741,8 +2743,8 @@ class EdgesInfo:
     length: qd.Tensor
 
 
-def get_edges_info(solver, is_active=True):
-    shape = (solver.n_edges_,) if is_active else ()
+def get_edges_info(description, is_active=True):
+    shape = (description.n_edges_,) if is_active else ()
 
     return EdgesInfo(
         v0=V(dtype=gs.qd_int, shape=shape), v1=V(dtype=gs.qd_int, shape=shape), length=V(dtype=gs.qd_float, shape=shape)
@@ -2759,12 +2761,12 @@ class VertsState:
     pos: qd.Tensor
 
 
-def get_free_verts_state(solver, is_active=True):
-    return VertsState(pos=V(dtype=gs.qd_vec3, shape=(solver.n_free_verts_, solver._B) if is_active else ()))
+def get_free_verts_state(description, is_active=True):
+    return VertsState(pos=V(dtype=gs.qd_vec3, shape=(description.n_free_verts_, description._B) if is_active else ()))
 
 
-def get_fixed_verts_state(solver, is_active=True):
-    return VertsState(pos=V(dtype=gs.qd_vec3, shape=(solver.n_fixed_verts_,) if is_active else ()))
+def get_fixed_verts_state(description, is_active=True):
+    return VertsState(pos=V(dtype=gs.qd_vec3, shape=(description.n_fixed_verts_,) if is_active else ()))
 
 
 # =========================================== VvertsInfo ===========================================
@@ -2780,8 +2782,8 @@ class VVertsInfo:
     vverts_state_idx: qd.Tensor
 
 
-def get_vverts_info(solver):
-    shape = (solver.n_vverts_,)
+def get_vverts_info(description):
+    shape = (description.n_vverts_,)
 
     return VVertsInfo(
         init_pos=V(dtype=gs.qd_vec3, shape=shape),
@@ -2801,15 +2803,16 @@ class VVertsState:
     pos: qd.Tensor
 
 
-def get_vverts_state(solver, is_active=True):
+def get_vverts_state(description, is_active=True):
     if not is_active:
         return VVertsState(pos=V(dtype=gs.qd_vec3, shape=()))
-    if not _is_tensor_addressable((solver.n_custom_vverts_, solver._B, 3), gs.np_float):
+    if not _is_tensor_addressable((description.n_custom_vverts_, description._B, 3), gs.np_float):
         gs.raise_exception(
-            f"Custom-vverts state shape (n_custom_vverts={solver.n_custom_vverts_}, B={solver._B}, 3) is too large. "
-            "Consider opting fewer kinematic entities into 'enable_custom_vverts=True', or reducing 'n_envs'."
+            f"Custom-vverts state shape (n_custom_vverts={description.n_custom_vverts_}, B={description._B}, 3) is "
+            "too large. Consider opting fewer kinematic entities into 'enable_custom_vverts=True', or reducing "
+            "'n_envs'."
         )
-    return VVertsState(pos=V(dtype=gs.qd_vec3, shape=(solver.n_custom_vverts_, solver._B)))
+    return VVertsState(pos=V(dtype=gs.qd_vec3, shape=(description.n_custom_vverts_, description._B)))
 
 
 # =========================================== VfacesInfo ===========================================
@@ -2823,8 +2826,8 @@ class VFacesInfo:
     vgeom_idx: qd.Tensor
 
 
-def get_vfaces_info(solver):
-    shape = (solver.n_vfaces_,)
+def get_vfaces_info(description):
+    shape = (description.n_vfaces_,)
 
     return VFacesInfo(vverts_idx=V(dtype=gs.qd_ivec3, shape=shape), vgeom_idx=V(dtype=gs.qd_int, shape=shape))
 
@@ -2848,8 +2851,8 @@ class VGeomsInfo:
     color: qd.Tensor
 
 
-def get_vgeoms_info(solver):
-    shape = (solver.n_vgeoms_,)
+def get_vgeoms_info(description):
+    shape = (description.n_vgeoms_,)
 
     return VGeomsInfo(
         pos=V(dtype=gs.qd_vec3, shape=shape),
@@ -2876,8 +2879,8 @@ class VGeomsState:
     quat: qd.Tensor
 
 
-def get_vgeoms_state(solver, is_active=True):
-    shape = (solver.n_vgeoms_, solver._B) if is_active else ()
+def get_vgeoms_state(description, is_active=True):
+    shape = (description.n_vgeoms_, description._B) if is_active else ()
 
     return VGeomsState(pos=V(dtype=gs.qd_vec3, shape=shape), quat=V(dtype=gs.qd_vec4, shape=shape))
 
@@ -2898,8 +2901,8 @@ class EqualitiesInfo:
     sol_params: qd.Tensor
 
 
-def get_equalities_info(solver, is_active=True):
-    shape = (solver.n_candidate_equalities_, solver._B) if is_active else ()
+def get_equalities_info(description, is_active=True):
+    shape = (description.n_candidate_equalities_, description._B) if is_active else ()
 
     return EqualitiesInfo(
         eq_obj1id=V(dtype=gs.qd_int, shape=shape),
@@ -2930,8 +2933,8 @@ class EntitiesInfo:
     is_local_collision_mask: qd.Tensor
 
 
-def get_entities_info(solver):
-    shape = (solver.n_entities_,)
+def get_entities_info(description):
+    shape = (description.n_entities_,)
 
     return EntitiesInfo(
         dof_start=V(dtype=gs.qd_int, shape=shape),
@@ -2958,8 +2961,10 @@ class EntitiesState:
     is_hibernated: qd.Tensor
 
 
-def get_entities_state(solver, is_active=True):
-    return EntitiesState(is_hibernated=V(dtype=gs.qd_int, shape=(solver.n_entities_, solver._B) if is_active else ()))
+def get_entities_state(description, is_active=True):
+    return EntitiesState(
+        is_hibernated=V(dtype=gs.qd_int, shape=(description.n_entities_, description._B) if is_active else ())
+    )
 
 
 # =========================================== RigidAdjointCache ===========================================
@@ -3041,17 +3046,17 @@ class DynState:
     vgeoms: VGeomsState
 
 
-def get_dyn_state_adjoint_cache(solver):
+def get_dyn_state_adjoint_cache(description):
     return DynState(
-        dofs=get_dofs_state(solver),
-        links=get_links_state(solver),
-        joints=get_joints_state(solver),
-        geoms=get_geoms_state(solver),
-        entities=get_entities_state(solver, is_active=False),
-        free_verts=get_free_verts_state(solver, is_active=False),
-        fixed_verts=get_fixed_verts_state(solver, is_active=False),
-        vverts=get_vverts_state(solver, is_active=False),
-        vgeoms=get_vgeoms_state(solver, is_active=False),
+        dofs=get_dofs_state(description),
+        links=get_links_state(description),
+        joints=get_joints_state(description),
+        geoms=get_geoms_state(description),
+        entities=get_entities_state(description, is_active=False),
+        free_verts=get_free_verts_state(description, is_active=False),
+        fixed_verts=get_fixed_verts_state(description, is_active=False),
+        vverts=get_vverts_state(description, is_active=False),
+        vgeoms=get_vgeoms_state(description, is_active=False),
     )
 
 
@@ -3221,69 +3226,11 @@ class DataManager:
     def __init__(self, solver, kinematic_only):
         self.rigid_info = get_rigid_info(solver, kinematic_only)
 
-        # Leaf structs are allocated one by one before assembling the per-component aggregates, to control the
-        # allocation order of the underlying buffers (see the warning in get_constraint_state).
-        is_dynamic = not kinematic_only
-        dofs_info = get_dofs_info(solver)
-        dofs_state = get_dofs_state(solver)
-        links_info = get_links_info(solver)
-        links_state = get_links_state(solver)
-        joints_info = get_joints_info(solver)
-        joints_state = get_joints_state(solver)
-
-        entities_info = get_entities_info(solver)
-        entities_state = get_entities_state(solver)
-
-        vverts_info = get_vverts_info(solver)
-        vverts_state = get_vverts_state(solver)
-        vfaces_info = get_vfaces_info(solver)
-
-        vgeoms_info = get_vgeoms_info(solver)
-        vgeoms_state = get_vgeoms_state(solver)
-
-        geoms_info = get_geoms_info(solver, is_dynamic)
-        geoms_state = get_geoms_state(solver, is_dynamic)
-
-        verts_info = get_verts_info(solver, is_dynamic)
-        faces_info = get_faces_info(solver, is_dynamic)
-        edges_info = get_edges_info(solver, is_dynamic)
-
-        free_verts_state = get_free_verts_state(solver, is_dynamic)
-        fixed_verts_state = get_fixed_verts_state(solver, is_dynamic)
-
-        equalities_info = get_equalities_info(solver, is_dynamic)
-
         self.kinematics_scratch = get_kinematics_scratch(solver)
-
-        self.dyn_info = DynInfo(
-            entities=entities_info,
-            links=links_info,
-            joints=joints_info,
-            dofs=dofs_info,
-            geoms=geoms_info,
-            verts=verts_info,
-            faces=faces_info,
-            edges=edges_info,
-            vverts=vverts_info,
-            vfaces=vfaces_info,
-            vgeoms=vgeoms_info,
-            equalities=equalities_info,
-        )
-        self.dyn_state = DynState(
-            entities=entities_state,
-            links=links_state,
-            joints=joints_state,
-            dofs=dofs_state,
-            geoms=geoms_state,
-            free_verts=free_verts_state,
-            fixed_verts=fixed_verts_state,
-            vverts=vverts_state,
-            vgeoms=vgeoms_state,
-        )
 
         if solver.rigid_config.requires_grad:
             # Data structures required for backward pass
-            self.dyn_state_adjoint_cache = get_dyn_state_adjoint_cache(solver)
+            self.dyn_state_adjoint_cache = get_dyn_state_adjoint_cache(solver._data_description)
 
         self.rigid_adjoint_cache = get_rigid_adjoint_cache(solver)
         self.errno = V(dtype=gs.qd_int, shape=(solver._B,))
