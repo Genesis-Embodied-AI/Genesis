@@ -245,6 +245,9 @@ class Scene(RBC):
 
         # description
         self._desc = SceneDescription(options=self.options)
+        # A scene re-initialized in place (see 'InteractiveScene.rebuild') still holds the digest cached for its
+        # previous description
+        vars(self).pop("_desc_digest", None)
 
         # simulator
         self._sim = Simulator(scene=self, options=self.options)
