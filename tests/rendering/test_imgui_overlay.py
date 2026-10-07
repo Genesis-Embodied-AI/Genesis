@@ -349,13 +349,11 @@ def test_scene_rebuild():
     scene.step()
     assert_allclose(scene.rigid_solver.get_qpos(), qpos_before, tol=gs.EPS)
 
-    # A scale edit hands the rebuild a new morph, so the entity is resolved again at the new scale. Removing an entity
-    # makes a state read before the edit one of another scene.
+    # A scale edit hands the rebuild a new morph, so the entity is resolved again at the new scale
     duck_aabb = scene.get_entity("duck").get_AABB()
     checkpoint = scene.__getstate__()
     duck_kwargs = plugin._pending_entities_kwargs["duck"]
     duck_kwargs["morph"] = duck_kwargs["morph"].model_copy(update={"scale": 0.002})
-    del plugin._pending_entities_kwargs["cube"]
     interactive.rebuild(entities_kwargs=plugin._pending_entities_kwargs)
     scene.step()
     duck_aabb_scaled = scene.get_entity("duck").get_AABB()

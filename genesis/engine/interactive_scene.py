@@ -302,7 +302,7 @@ class InteractiveScene:
             scene.register_pre_step_callback(self._pre_step)
             for name, kwargs in self._entities_kwargs.items():
                 morph = kwargs["morph"]
-                morphs = morph if isinstance(morph, tuple) else (morph,)
+                morphs = morph if isinstance(morph, tuple) else (morph,)  # heterogeneous entity
                 desc = entities_desc.get(name)
                 # A USD morph describes a whole stage (potentially many bodies); add_stage parses and adds them and
                 # takes no name. Every other morph is a single entity added by name.
