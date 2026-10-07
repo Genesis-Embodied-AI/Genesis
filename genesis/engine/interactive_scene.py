@@ -278,6 +278,12 @@ class InteractiveScene:
             # Preserve the live window/GL context so the rebuild does not close and reopen it.
             pyrender_window = viewer._pyrender_viewer
 
+        entities_desc = {
+            entity.name: entity.desc
+            for entity in scene.entities
+            if isinstance(entity, gs.engine.entities.KinematicEntity)
+        }
+
         # Serialize against a threaded render loop (run_in_thread=True): holding the preserved window's render_lock
         # blocks on_draw so it never draws the scene while it is being torn down, rebuilt and re-pointed. No-op when
         # there is no window (headless) or the viewer runs on the main thread.
@@ -291,10 +297,24 @@ class InteractiveScene:
             # Re-register the pre-step callback: the in-place re-init cleared Scene's callback list.
             scene.register_pre_step_callback(self._pre_step)
             for name, kwargs in self._entities_kwargs.items():
+                morph = kwargs["morph"]
+                morphs = morph if isinstance(morph, tuple) else (morph,)
+                desc = entities_desc.get(name)
                 # A USD morph describes a whole stage (potentially many bodies); add_stage parses and adds them and
                 # takes no name. Every other morph is a single entity added by name.
-                if isinstance(kwargs["morph"], gs.morphs.USD):
+                if isinstance(morph, gs.morphs.USD):
                     scene.add_stage(**kwargs)
+                # An entity handed the very objects its description was resolved from is unchanged by the edit, so it is
+                # created from that description without reading its asset again. An edit hands in new objects.
+                elif (
+                    desc is not None
+                    and len(morphs) == len(desc.morphs)
+                    and all(kwargs_morph is desc_morph for kwargs_morph, desc_morph in zip(morphs, desc.morphs))
+                    and kwargs.get("material") is desc.material
+                    and kwargs.get("surface") is desc.surface
+                    and kwargs.get("visualize_contact", False) == desc.visualize_contact
+                ):
+                    scene._sim._add_entity(desc=desc)
                 else:
                     scene.add_entity(name=name, **kwargs)
             for sensor_opts in self._sensors_kwargs:
