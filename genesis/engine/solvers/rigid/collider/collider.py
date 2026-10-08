@@ -1257,7 +1257,7 @@ def kernel_detection(
     coop_dedup: qd.template(),
     errno: qd.Tensor,
 ):
-    """Run func_detection on its own, outside the substep graph that captures it (see kernel_substep_collision)."""
+    """Run func_detection on its own, outside the substep graph that captures it (see func_substep_collision)."""
     func_detection(
         geoms_init_AABB=geoms_init_AABB,
         dyn_state=dyn_state,

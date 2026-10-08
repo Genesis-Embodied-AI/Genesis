@@ -1198,7 +1198,7 @@ def test_solve_arm_equivalence(monkeypatch, show_viewer, tol):
             constraint_solver.func_solve_body(*args)
             accelerations.append(qd_to_numpy(constraint_state.qacc, copy=True))
 
-    monkeypatch.setattr("genesis.engine.solvers.rigid.rigid_solver.func_solve_body", solve_compared)
+    monkeypatch.setattr("genesis.engine.systems.rigid_solver_system.func_solve_body", solve_compared)
 
     for i_step in range(N_STEPS):
         scene.step()

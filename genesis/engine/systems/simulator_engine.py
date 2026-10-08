@@ -35,7 +35,7 @@ class SimulatorEngine(Engine):
         # feed the differentiable tape, and the coupler, which has nothing to exchange
         self.rigid_substep_pipeline = None
         if self.rigid_solver_system is not None:
-            self.rigid_substep_pipeline = Pipeline(self.rigid_solver_system.solver.substep)
+            self.rigid_substep_pipeline = Pipeline(self.rigid_solver_system.substep)
 
 
 def create_active_solver_system(system_cls: type[System], scene) -> System | None:

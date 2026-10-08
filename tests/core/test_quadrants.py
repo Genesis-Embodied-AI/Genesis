@@ -206,13 +206,11 @@ def gs_num_envs_child(args: list[str]):
     scene.rigid_solver.collider.detection()
     qd.sync()
 
-    from genesis.engine.solvers.rigid.rigid_solver import kernel_substep_dynamics
+    from genesis.engine.solvers.rigid.collider.collider import kernel_detection
 
-    assert kernel_substep_dynamics._primal.fe_ll_cache_observations.cache_hit == args.expected_fe_ll_cache_hit
-    assert (
-        kernel_substep_dynamics._primal.src_ll_cache_observations.cache_key_generated == args.expected_use_src_ll_cache
-    )
-    assert kernel_substep_dynamics._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
+    assert kernel_detection._primal.fe_ll_cache_observations.cache_hit == args.expected_fe_ll_cache_hit
+    assert kernel_detection._primal.src_ll_cache_observations.cache_key_generated == args.expected_use_src_ll_cache
+    assert kernel_detection._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
 
     sys.exit(RET_SUCCESS)
 
@@ -310,10 +308,13 @@ def change_scene(args: list[str]):
     z = qpos.reshape((*qpos.shape[:-1], args.n_objs, 7))[..., 2]
     assert_allclose(z, 0.2, atol=1e-3)
 
-    from genesis.engine.solvers.rigid.rigid_solver import kernel_substep_dynamics
+    # The substep graphs take their System, which fastcache does not cover, so the check runs the standalone detection
+    scene.rigid_solver.collider.detection()
 
-    assert kernel_substep_dynamics._primal.src_ll_cache_observations.cache_validated == args.expected_src_ll_cache_hit
-    assert kernel_substep_dynamics._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
+    from genesis.engine.solvers.rigid.collider.collider import kernel_detection
+
+    assert kernel_detection._primal.src_ll_cache_observations.cache_validated == args.expected_src_ll_cache_hit
+    assert kernel_detection._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
 
     sys.exit(RET_SUCCESS)
 

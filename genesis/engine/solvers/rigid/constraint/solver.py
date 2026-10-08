@@ -5890,7 +5890,7 @@ def kernel_resolve_post(
     noslip: qd.template(),
     errno: qd.Tensor,
 ):
-    """Run func_resolve_post on its own, outside the substep graph that captures it (see kernel_substep_post)."""
+    """Run func_resolve_post on its own, outside the substep graph that captures it (see func_substep_post)."""
     func_resolve_post(dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config, noslip, errno)
 
 

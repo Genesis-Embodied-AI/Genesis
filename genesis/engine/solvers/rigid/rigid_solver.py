@@ -139,7 +139,6 @@ from .abd.misc import (
     kernel_wakeup_coupled_links,
 )
 from .collider import Collider
-from .collider.collider import func_detection
 from .constraint import ConstraintSolver
 from .constraint.backward import (
     kernel_accumulate_constraint_solver_grads,
@@ -148,12 +147,6 @@ from .constraint.backward import (
     kernel_manual_add_equality_constraints_bw,
     kernel_manual_add_frictionloss_constraints_bw,
     kernel_manual_add_joint_limit_constraints_bw,
-)
-from .constraint.solver import (
-    func_add_equality_constraints,
-    func_add_inequality_constraints,
-    func_resolve_post,
-    func_solve_body,
 )
 
 if TYPE_CHECKING:
@@ -1258,14 +1251,54 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         self._is_forward_pos_updated = True
 
     def substep(self, f):
-        # from genesis.utils.tools import create_timer
+        """Advance one substep by launching its kernels one by one.
+
+        A SAP-coupled substep replaces the constraint solve by the coupler's own, so it keeps its own launches.
+        FIXME: quadrants#946 - a graph refuses the ndarrays that own a gradient, so a scene tracking gradients launches
+        the substep kernels one by one. Every other substep is captured as graphs by RigidSolverSystem.substep.
+        """
         from genesis.engine.couplers import SAPCoupler
 
         if self._requires_grad and f == 0:
             kernel_save_adjoint_cache(f, self.dyn_state, self._rigid_adjoint_cache, self.rigid_info, self.rigid_config)
 
-        # Coupling forces from the previous coupling phase may target hibernated links (see
-        # kernel_wakeup_coupled_links in abd/misc.py). They can only exist when another solver is active.
+        self.wakeup_coupled_links()
+        kernel_step_1(
+            self.dyn_state,
+            self.constraint_solver.constraint_state,
+            self.dyn_info,
+            self.rigid_info,
+            self.rigid_config,
+            self._is_forward_pos_updated,
+            self._is_forward_vel_updated,
+            self._is_backward,
+        )
+        if isinstance(self.sim.coupler, SAPCoupler):
+            update_qvel(self.dyn_state, self.rigid_info, self.rigid_config)
+        else:
+            self._func_constraint_force()
+            kernel_step_2(
+                self.dyn_state,
+                self.constraint_solver.constraint_state,
+                self.dyn_info,
+                self.rigid_info,
+                self.rigid_config,
+                self._is_backward,
+                self._errno,
+            )
+
+        if not isinstance(self.sim.coupler, SAPCoupler):
+            self.mark_forward_updated()
+            if self._requires_grad:
+                kernel_save_adjoint_cache(
+                    f + 1, self.dyn_state, self._rigid_adjoint_cache, self.rigid_info, self.rigid_config
+                )
+
+    def wakeup_coupled_links(self):
+        """Wake up the hibernated links that the coupling forces of the previous coupling phase target.
+
+        See kernel_wakeup_coupled_links in abd/misc.py. Such forces only exist when another solver is active.
+        """
         if self._use_hibernation and len(self.sim.active_solvers) > 1:
             kernel_wakeup_coupled_links(
                 self.dyn_state,
@@ -1275,106 +1308,11 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 self.rigid_config,
             )
 
-        if isinstance(self.sim.coupler, SAPCoupler) or self._requires_grad:
-            # A SAP-coupled substep replaces the constraint solve by the coupler's own, so it keeps its own launches.
-            # FIXME: quadrants#946 - a graph refuses the ndarrays that own a gradient, so a scene tracking gradients
-            # launches the substep kernels one by one.
-            kernel_step_1(
-                self.dyn_state,
-                self.constraint_solver.constraint_state,
-                self.dyn_info,
-                self.rigid_info,
-                self.rigid_config,
-                self._is_forward_pos_updated,
-                self._is_forward_vel_updated,
-                self._is_backward,
-            )
-            if isinstance(self.sim.coupler, SAPCoupler):
-                update_qvel(self.dyn_state, self.rigid_info, self.rigid_config)
-            else:
-                self._func_constraint_force()
-                kernel_step_2(
-                    self.dyn_state,
-                    self.constraint_solver.constraint_state,
-                    self.dyn_info,
-                    self.rigid_info,
-                    self.rigid_config,
-                    self._is_backward,
-                    self._errno,
-                )
-        else:
-            # The work before the constraint solve is captured as two graphs cut ahead of the collision detection, since
-            # the compile time of a kernel grows faster than its size while one more graph replay costs next to nothing.
-            # The work after the solve is captured as one graph.
-            collider = self.collider
-            constraint_solver = self.constraint_solver
-            collider._contact_data_cache.clear()
-            constraint_solver._eq_const_info_cache.clear()
-            kernel_substep_dynamics(
-                self.dyn_state,
-                collider.collider_state,
-                constraint_solver.constraint_state,
-                self.dyn_info,
-                self.rigid_info,
-                self.rigid_config,
-                self._is_forward_pos_updated,
-                self._is_forward_vel_updated,
-                self._is_backward,
-                not self._disable_constraint,
-            )
-            kernel_substep_collision(
-                self.geoms_init_AABB,
-                self.dyn_state,
-                collider.collider_state,
-                collider.mpr.mpr_state,
-                collider.gjk.gjk_state,
-                collider.gjk.gjk_state.diff_contact_input,
-                collider.mpr.contact0_mpr_state,
-                collider.gjk.contact0_gjk_state,
-                collider.mpr.multicontact_mpr_state,
-                collider.gjk.multicontact_gjk_state,
-                constraint_solver.constraint_state,
-                self.dyn_info,
-                self.rigid_info,
-                collider.collider_info,
-                self.rigid_config,
-                collider.collider_config,
-                collider.gjk.gjk_config,
-                not self._disable_constraint,
-                collider._n_possible_pairs > 0,
-                collider._use_split_narrowphase,
-                collider._use_coop_dedup,
-                self._errno,
-            )
-            if not self._disable_constraint:
-                func_solve_body(
-                    self.dyn_state,
-                    constraint_solver.constraint_state,
-                    self.dyn_info,
-                    self.rigid_info,
-                    self.rigid_config,
-                    constraint_solver._n_iterations,
-                )
-            kernel_substep_post(
-                self.dyn_state,
-                collider.collider_state,
-                constraint_solver.constraint_state,
-                self.dyn_info,
-                self.rigid_info,
-                self.rigid_config,
-                self._is_backward,
-                not self._disable_constraint,
-                self._options.noslip_iterations > 0,
-                self._errno,
-            )
-
-        if not isinstance(self.sim.coupler, SAPCoupler):
-            self._is_forward_pos_updated = not self._enable_mujoco_compatibility
-            self._is_forward_vel_updated = not self._enable_mujoco_compatibility
-            if self._requires_grad:
-                kernel_save_adjoint_cache(
-                    f + 1, self.dyn_state, self._rigid_adjoint_cache, self.rigid_info, self.rigid_config
-                )
+    def mark_forward_updated(self):
+        """Record that the integration has updated the cartesian space and the velocities the next substep starts
+        from, which the MuJoCo-compatible mode recomputes at the start of every substep instead."""
+        self._is_forward_pos_updated = not self._enable_mujoco_compatibility
+        self._is_forward_vel_updated = not self._enable_mujoco_compatibility
 
     def get_error_envs_mask(self):
         return qd_to_torch(self._errno) > 0
@@ -1604,20 +1542,6 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 links_idx, envs_idx, pos, force, torque, self.dyn_state, self.rigid_config, ref_frame, local
             )
 
-    def substep_pre_coupling(self, f):
-        if self.is_active:
-            # Skip rigid body computation when using IPCCoupler (IPC handles rigid simulation)
-            from genesis.engine.couplers import IPCCoupler
-
-            if isinstance(self.sim.coupler, IPCCoupler):
-                # If any rigid entity is coupled to IPC, skip pre-coupling rigid simulation
-                # The rigid simulation will be done in post-coupling phase instead
-                if self.sim.coupler.has_any_rigid_coupling:
-                    return
-
-            # Run Genesis rigid simulation step for non-IPC couplers
-            self.substep(f)
-
     def reset_grad(self):
         # Rigid additionally owns `geoms_state`, `entities_state`, and the `*_adjoint_cache` structs written by the
         # backward substep chain. All carry `needs_grad=True` fields that accumulate via `atomic_add` during backward,
@@ -1735,28 +1659,19 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         # Change back to forward mode
         self._is_backward = False
 
-    def substep_post_coupling(self, f):
-        from genesis.engine.couplers import SAPCoupler, IPCCoupler
-
-        if not self.is_active:
-            return
-
-        if isinstance(self.sim.coupler, SAPCoupler):
-            update_qacc_from_qvel_delta(self.dyn_state, self.rigid_info, self.rigid_config)
-            kernel_step_2(
-                self.dyn_state,
-                self.constraint_solver.constraint_state,
-                self.dyn_info,
-                self.rigid_info,
-                self.rigid_config,
-                self._is_backward,
-                self._errno,
-            )
-        elif isinstance(self.sim.coupler, IPCCoupler):
-            # If any rigid entity is coupled to IPC, perform rigid simulation in post-coupling phase.
-            # Collision exclusion for IPC-coupled links is handled in the collider at build time.
-            if self.sim.coupler.has_any_rigid_coupling:
-                self.substep(f)
+    def finish_sap_substep(self):
+        """Finish a SAP-coupled substep from the velocities the coupler has solved for, which RigidSolver.substep
+        stops short of."""
+        update_qacc_from_qvel_delta(self.dyn_state, self.rigid_info, self.rigid_config)
+        kernel_step_2(
+            self.dyn_state,
+            self.constraint_solver.constraint_state,
+            self.dyn_info,
+            self.rigid_info,
+            self.rigid_config,
+            self._is_backward,
+            self._errno,
+        )
 
     # ------------------------------------------------------------------------------------
     # -------------------------------- state get/set -------------------------------------
@@ -3564,120 +3479,4 @@ def kernel_step_2(
     errno: qd.Tensor,
 ):
     """Run the second half of a substep on its own (see func_step_2)."""
-    func_step_2(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config, is_backward, errno)
-
-
-@qd.kernel(graph=True, fastcache=True)
-def kernel_substep_dynamics(
-    dyn_state: array_class.DynState,
-    collider_state: array_class.ColliderState,
-    constraint_state: array_class.ConstraintState,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    rigid_config: qd.template(),
-    is_forward_pos_updated: qd.template(),
-    is_forward_vel_updated: qd.template(),
-    is_backward: qd.template(),
-    enable_constraint: qd.template(),
-):
-    """Run the forward dynamics of a substep, then assemble its equality constraints, captured as one graph.
-
-    enable_constraint selects the assembly of the equality constraints.
-    """
-    func_step_1(
-        dyn_state,
-        constraint_state,
-        dyn_info,
-        rigid_info,
-        rigid_config,
-        is_forward_pos_updated,
-        is_forward_vel_updated,
-        is_backward,
-    )
-    if qd.static(enable_constraint):
-        func_add_equality_constraints(dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config)
-
-
-@qd.kernel(graph=True, fastcache=True)
-def kernel_substep_collision(
-    geoms_init_AABB: array_class.GeomsInitAABB,
-    dyn_state: array_class.DynState,
-    collider_state: array_class.ColliderState,
-    mpr_state: array_class.MPRState,
-    gjk_state: array_class.GJKState,
-    diff_contact_input: array_class.DiffContactInput,
-    contact0_mpr_state: array_class.MPRState,
-    contact0_gjk_state: array_class.GJKState,
-    multicontact_mpr_state: array_class.MPRState,
-    multicontact_gjk_state: array_class.GJKState,
-    constraint_state: array_class.ConstraintState,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    collider_info: array_class.ColliderInfo,
-    rigid_config: qd.template(),
-    collider_static_config: qd.template(),
-    gjk_static_config: qd.template(),
-    enable_constraint: qd.template(),
-    has_possible_pairs: qd.template(),
-    split_narrowphase: qd.template(),
-    coop_dedup: qd.template(),
-    errno: qd.Tensor,
-):
-    """Detect the collisions of a substep, then assemble its inequality constraints, captured as one graph.
-
-    enable_constraint selects the assembly of the inequality constraints. has_possible_pairs, split_narrowphase and
-    coop_dedup configure the detection (see func_detection).
-    """
-    if qd.static(rigid_config.enable_collision):
-        func_detection(
-            geoms_init_AABB=geoms_init_AABB,
-            dyn_state=dyn_state,
-            collider_state=collider_state,
-            mpr_state=mpr_state,
-            gjk_state=gjk_state,
-            diff_contact_input=diff_contact_input,
-            contact0_mpr_state=contact0_mpr_state,
-            contact0_gjk_state=contact0_gjk_state,
-            multicontact_mpr_state=multicontact_mpr_state,
-            multicontact_gjk_state=multicontact_gjk_state,
-            constraint_state=constraint_state,
-            dyn_info=dyn_info,
-            rigid_info=rigid_info,
-            collider_info=collider_info,
-            rigid_config=rigid_config,
-            collider_static_config=collider_static_config,
-            gjk_static_config=gjk_static_config,
-            has_possible_pairs=has_possible_pairs,
-            split_narrowphase=split_narrowphase,
-            coop_dedup=coop_dedup,
-            errno=errno,
-        )
-    if qd.static(enable_constraint):
-        func_add_inequality_constraints(
-            dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config, collider_static_config
-        )
-
-
-@qd.kernel(graph=True, fastcache=True)
-def kernel_substep_post(
-    dyn_state: array_class.DynState,
-    collider_state: array_class.ColliderState,
-    constraint_state: array_class.ConstraintState,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    rigid_config: qd.template(),
-    is_backward: qd.template(),
-    enable_constraint: qd.template(),
-    noslip: qd.template(),
-    errno: qd.Tensor,
-):
-    """Run the part of a substep that follows the constraint solve, captured as one graph.
-
-    It updates the accelerations and the contact forces from the solved constraint forces when enable_constraint is set
-    (see func_resolve_post for noslip), then integrates.
-    """
-    if qd.static(enable_constraint):
-        func_resolve_post(
-            dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config, noslip, errno
-        )
     func_step_2(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config, is_backward, errno)
