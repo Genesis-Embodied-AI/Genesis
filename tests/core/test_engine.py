@@ -299,8 +299,8 @@ def test_pipeline_distinguishes_host_func_and_checkpointed_kernel_entries():
     def host_entry(left, right):
         host_result[0] = left + right
 
-    host_pipeline = Pipeline(host_entry, 2, 3)
-    host_pipeline.run()
+    host_pipeline = Pipeline(host_entry, 2)
+    host_pipeline.run(3)
     assert host_pipeline.kind == "host"
     assert host_result[0] == 5
 

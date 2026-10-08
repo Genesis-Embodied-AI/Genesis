@@ -489,8 +489,8 @@ PipelineKind = Literal["host", "device"]
 class Pipeline:
     """One entry point with its bound arguments, recognized from what it wraps: a Python function or a @qd.kernel.
 
-    `bound_args` are passed to the entry on every launch and on every resume: `Pipeline(kernel_step, engine)` runs
-    `kernel_step(engine)`. Pipeline is final.
+    `bound_args` are passed to the entry on every launch and on every resume, followed by the call arguments of that
+    run: `Pipeline(kernel_substep, engine).run(f)` runs `kernel_substep(engine, f)`. Pipeline is final.
     """
 
     def __init_subclass__(cls, **kwargs):
@@ -525,9 +525,11 @@ class Pipeline:
         self.kind: PipelineKind = kind
         self.yield_callbacks = dict(yield_callbacks or {})
 
-    def run(self) -> None:
-        """Run the entry once, dispatching yield callbacks and resuming until a graph kernel completes."""
-        status = self.entry(*self.bound_args)
+    def run(self, *call_args: object) -> None:
+        """Run the entry once with the given call arguments, dispatching yield callbacks and resuming until a graph
+        kernel completes."""
+        args = (*self.bound_args, *call_args)
+        status = self.entry(*args)
         # A host entry and a plain kernel return None, and a graph kernel returns a GraphStatus that may have yielded
         while status is not None and status.yielded:
             checkpoint = int(status.checkpoint)
@@ -535,9 +537,7 @@ class Pipeline:
             if callback is None:
                 gs.raise_exception(f"No yield callback for checkpoint {checkpoint}.")
             resume_from = callback(status)
-            status = self.entry.resume(
-                *self.bound_args, from_checkpoint=checkpoint if resume_from is None else int(resume_from)
-            )
+            status = self.entry.resume(*args, from_checkpoint=checkpoint if resume_from is None else int(resume_from))
 
 
 SystemT = TypeVar("SystemT", bound=System)
