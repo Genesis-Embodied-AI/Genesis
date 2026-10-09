@@ -427,6 +427,13 @@ class ConstraintSolver:
             gs.raise_exception(
                 f"Links {link1_idx} and {link2_idx} are already coupled by a {eq_type.name.lower()} constraint."
             )
+        # Checked before any env is written, so a constraint is either added to every selected env or to none.
+        n_equalities = (eq_const_info["type"] >= 0).sum(dim=-1)
+        if (n_equalities[envs_idx] >= self._solver.n_candidate_equalities_).any():
+            gs.raise_exception(
+                f"No room left for another dynamic constraint. Please increase the value of RigidSolver's option "
+                f"'max_dynamic_constraints' ({self._solver._options.max_dynamic_constraints})."
+            )
 
         if self._solver._options.enable_screw_constraints:
             n_eq_data_tail = array_class.EQ_DATA_N_TAIL_SCREW
@@ -436,7 +443,7 @@ class ConstraintSolver:
         eq_data_tail_padded[: len(eq_data_tail)] = eq_data_tail
 
         self._eq_const_info_cache.clear()
-        has_overflow = kernel_add_dynamic_constraint(
+        kernel_add_dynamic_constraint(
             link1_idx,
             link2_idx,
             int(anchor_link_idx),
@@ -451,12 +458,6 @@ class ConstraintSolver:
             self._solver.rigid_config,
             n_eq_data_tail,
         )
-        if has_overflow:
-            gs.logger.warning(
-                f"Ignoring dynamically registered {eq_type.name.lower()} constraint to avoid exceeding max number of "
-                f"equality constraints ({self._solver.n_candidate_equalities_}). Please increase the value of "
-                "RigidSolver's option 'max_dynamic_constraints'."
-            )
 
     def delete_dynamic_constraint(self, eq_type, link1_idx, link2_idx, envs_idx=None):
         envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
@@ -2347,7 +2348,7 @@ def kernel_add_dynamic_constraint(
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
     n_eq_data_tail: qd.template(),
-) -> qd.i32:
+):
     """Register a constraint between two links, taking their current relative pose as its reference.
 
     The anchor is the point anchor_pos given in the frame of link anchor_link_idx. The constraint data holds:
@@ -2355,49 +2356,43 @@ def kernel_add_dynamic_constraint(
     [3:6]   the anchor, in the frame of link1
     [6:10]  the orientation of link2 relative to link1
     [10:]   the n_eq_data_tail type-specific entries of eq_data_tail (see EQ_DATA_N_TAIL in array_class.py)
-    Returns whether an env had no equality slot left.
+    Every selected env has an equality slot left (see ConstraintSolver.add_dynamic_constraint).
     """
-    has_overflow = gs.qd_bool(False)
-
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
         i_e = constraint_state.qd_n_equalities[i_b]
-        if i_e == rigid_info.n_candidate_equalities[None]:
-            has_overflow = True
-        else:
-            anchor = gu.qd_transform_by_trans_quat(
-                gs.qd_vec3([anchor_pos[0], anchor_pos[1], anchor_pos[2]]),
-                dyn_state.links.pos[anchor_link_idx, i_b],
-                dyn_state.links.quat[anchor_link_idx, i_b],
-            )
-            pos1 = gu.qd_inv_transform_by_trans_quat(
-                anchor, dyn_state.links.pos[link1_idx, i_b], dyn_state.links.quat[link1_idx, i_b]
-            )
-            pos2 = gu.qd_inv_transform_by_trans_quat(
-                anchor, dyn_state.links.pos[link2_idx, i_b], dyn_state.links.quat[link2_idx, i_b]
-            )
-            relpose = gu.qd_quat_mul(
-                gu.qd_inv_quat(dyn_state.links.quat[link1_idx, i_b]), dyn_state.links.quat[link2_idx, i_b]
-            )
+        anchor = gu.qd_transform_by_trans_quat(
+            gs.qd_vec3([anchor_pos[0], anchor_pos[1], anchor_pos[2]]),
+            dyn_state.links.pos[anchor_link_idx, i_b],
+            dyn_state.links.quat[anchor_link_idx, i_b],
+        )
+        pos1 = gu.qd_inv_transform_by_trans_quat(
+            anchor, dyn_state.links.pos[link1_idx, i_b], dyn_state.links.quat[link1_idx, i_b]
+        )
+        pos2 = gu.qd_inv_transform_by_trans_quat(
+            anchor, dyn_state.links.pos[link2_idx, i_b], dyn_state.links.quat[link2_idx, i_b]
+        )
+        relpose = gu.qd_quat_mul(
+            gu.qd_inv_quat(dyn_state.links.quat[link1_idx, i_b]), dyn_state.links.quat[link2_idx, i_b]
+        )
 
-            dyn_info.equalities.eq_type[i_e, i_b] = eq_type
-            dyn_info.equalities.eq_obj1id[i_e, i_b] = link1_idx
-            dyn_info.equalities.eq_obj2id[i_e, i_b] = link2_idx
-            for i_3 in qd.static(range(3)):
-                dyn_info.equalities.eq_data[i_e, i_b][i_3] = pos2[i_3]
-                dyn_info.equalities.eq_data[i_e, i_b][i_3 + 3] = pos1[i_3]
-            for i_4 in qd.static(range(4)):
-                dyn_info.equalities.eq_data[i_e, i_b][i_4 + 6] = relpose[i_4]
-            for i_t in qd.static(range(n_eq_data_tail)):
-                dyn_info.equalities.eq_data[i_e, i_b][i_t + 10] = eq_data_tail[i_t]
+        dyn_info.equalities.eq_type[i_e, i_b] = eq_type
+        dyn_info.equalities.eq_obj1id[i_e, i_b] = link1_idx
+        dyn_info.equalities.eq_obj2id[i_e, i_b] = link2_idx
+        for i_3 in qd.static(range(3)):
+            dyn_info.equalities.eq_data[i_e, i_b][i_3] = pos2[i_3]
+            dyn_info.equalities.eq_data[i_e, i_b][i_3 + 3] = pos1[i_3]
+        for i_4 in qd.static(range(4)):
+            dyn_info.equalities.eq_data[i_e, i_b][i_4 + 6] = relpose[i_4]
+        for i_t in qd.static(range(n_eq_data_tail)):
+            dyn_info.equalities.eq_data[i_e, i_b][i_t + 10] = eq_data_tail[i_t]
 
-            dyn_info.equalities.sol_params[i_e, i_b] = qd.Vector(
-                [2 * rigid_info.substep_dt[None], 1.0, 0.9, 0.95, 0.001, 0.5, 2.0]
-            )
+        dyn_info.equalities.sol_params[i_e, i_b] = qd.Vector(
+            [2 * rigid_info.substep_dt[None], 1.0, 0.9, 0.95, 0.001, 0.5, 2.0]
+        )
 
-            constraint_state.qd_n_equalities[i_b] = constraint_state.qd_n_equalities[i_b] + 1
-    return has_overflow
+        constraint_state.qd_n_equalities[i_b] = constraint_state.qd_n_equalities[i_b] + 1
 
 
 @qd.kernel(fastcache=True)
