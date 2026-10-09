@@ -192,8 +192,9 @@ def test_dynamic_weld(show_viewer, tol):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_dynamic_screw(n_envs, show_viewer):
+def test_dynamic_screw(n_envs, show_viewer, tol):
     DT = 0.01
+    SUBSTEPS = 2
     GRAVITY = 9.81
     PITCH = 0.06
     LIMIT_LOWER = -0.01
@@ -206,6 +207,7 @@ def test_dynamic_screw(n_envs, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=DT,
+            substeps=SUBSTEPS,
             gravity=(0.0, 0.0, -GRAVITY),
         ),
         rigid_options=gs.options.RigidOptions(
@@ -291,24 +293,25 @@ def test_dynamic_screw(n_envs, show_viewer):
     inertia = tensor_to_array(nut_helix.get_links_inertia())[0, 2, 2]
     pitch_rad = PITCH / (2.0 * np.pi)
     g_eff = GRAVITY * mass * pitch_rad**2 / (mass * pitch_rad**2 + inertia)
-    # Semi-implicit Euler moves a body under a constant acceleration a by -a * dt^2 * n * (n + 1) / 2 after n steps.
-    fall_factor = DT**2 * N_STEPS_SCREWED * (N_STEPS_SCREWED + 1) / 2
+    # Semi-implicit Euler moves a body under a constant acceleration a by -a * dt^2 * n * (n + 1) / 2 after n substeps.
+    n_substeps = N_STEPS_SCREWED * SUBSTEPS
+    fall_factor = (DT / SUBSTEPS) ** 2 * n_substeps * (n_substeps + 1) / 2
     for _ in range(N_STEPS_SCREWED):
         scene.step()
     # The post is fixed and the screw axis is the world z axis, so the travel of a nut is its height change.
     travel_helix = nut_helix.get_pos()[..., 2] - NUT_Z
-    assert_allclose(travel_helix, -g_eff * fall_factor, rtol=0.02)
+    assert_allclose(travel_helix, -g_eff * fall_factor, rtol=0.01)
     assert_allclose(
         gu.quat_to_rotvec(tensor_to_array(nut_helix.get_quat()))[..., 2], travel_helix / pitch_rad, tol=0.02
     )
     assert_allclose(nut_helix.get_pos()[..., :2], (0.0, 0.0), tol=1e-3)
-    assert_allclose(nut_slider.get_pos()[..., 2] - NUT_Z, -GRAVITY * fall_factor, rtol=1e-3)
+    assert_allclose(nut_slider.get_pos()[..., 2] - NUT_Z, -GRAVITY * fall_factor, tol=tol)
     assert_allclose(nut_slider.get_quat(), (1.0, 0.0, 0.0, 0.0), tol=1e-3)
     assert_allclose(nut_hinge.get_pos()[..., 2], NUT_Z, tol=1e-3)
     hinge_turn = gu.quat_to_rotvec(tensor_to_array(nut_hinge.get_quat()))[..., 2]
     assert_allclose(hinge_turn, HINGE_SPIN_RATE * N_STEPS_SCREWED * DT, tol=1e-2)
-    assert_allclose(nut_braked.get_pos()[..., 2], NUT_Z, tol=1e-2)
-    assert_allclose(nut_held.get_pos()[..., 2], NUT_Z, tol=2e-3)
+    assert_allclose(nut_braked.get_pos()[..., 2], NUT_Z, tol=5e-3)
+    assert_allclose(nut_held.get_pos()[..., 2], NUT_Z, tol=1e-3)
 
     # Once deleted in the last environment, the helix nut falls freely there and keeps screwing down everywhere else.
     rigid.delete_screw_constraint(nut_helix.base_link.idx, post_idx, envs_idx=[n_envs - 1] if n_envs > 0 else None)
@@ -317,12 +320,13 @@ def test_dynamic_screw(n_envs, show_viewer):
         scene.step()
     is_deleted = np.arange(max(n_envs, 1)) == max(n_envs, 1) - 1
     vel_z_delta = np.atleast_1d(tensor_to_array(nut_helix.get_vel()[..., 2] - vel_z))
-    assert_allclose(vel_z_delta, np.where(is_deleted, -GRAVITY, -g_eff) * N_STEPS_RELEASED * DT, rtol=0.02)
+    assert_allclose(vel_z_delta[is_deleted], -GRAVITY * N_STEPS_RELEASED * DT, tol=tol)
+    assert_allclose(vel_z_delta[~is_deleted], -g_eff * N_STEPS_RELEASED * DT, rtol=0.01)
     n_screws = (rigid.get_equality_constraints()["type"] == gs.EQUALITY_TYPE.SCREW).sum(dim=-1)
     assert_equal(n_screws, 7 - is_deleted)
     for nut_stopped in (nut_seated, nut_capped):
-        assert_allclose(nut_stopped.get_pos()[..., 2] - NUT_Z, LIMIT_LOWER, tol=1e-3)
-        assert_allclose(nut_stopped.get_vel(), 0.0, tol=5e-3)
+        assert_allclose(nut_stopped.get_pos()[..., 2] - NUT_Z, LIMIT_LOWER, tol=5e-4)
+        assert_allclose(nut_stopped.get_vel(), 0.0, tol=2e-3)
 
 
 @pytest.mark.required
