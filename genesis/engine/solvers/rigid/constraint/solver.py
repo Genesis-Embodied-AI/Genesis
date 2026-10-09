@@ -433,7 +433,8 @@ class ConstraintSolver:
         self, eq_type, link1_idx, link2_idx, anchor_link_idx, anchor_pos, eq_data_tail, envs_idx=None
     ):
         """Register a dynamic constraint between two links in the selected envs (see kernel_add_dynamic_constraint)."""
-        envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
+        # An env selected twice would pass the checks below twice against the same count, then be written twice.
+        envs_idx = torch.unique(self._solver._scene._sanitize_envs_idx(envs_idx))
         link1_idx, link2_idx = int(link1_idx), int(link2_idx)
         if link1_idx < 0 or link2_idx < 0:
             gs.raise_exception("Dynamic constraints require two links, the world is not a valid link.")
@@ -447,7 +448,7 @@ class ConstraintSolver:
             )
         # Checked before any env is written, so a constraint is either added to every selected env or to none.
         n_equalities = (eq_const_info["type"] >= 0).sum(dim=-1)
-        if (n_equalities[envs_idx] >= self._solver.n_candidate_equalities_).any():
+        if (n_equalities[envs_idx] >= self._solver.n_equalities + self._solver._options.max_dynamic_constraints).any():
             gs.raise_exception(
                 f"No room left for another dynamic constraint. Please increase the value of RigidSolver's option "
                 f"'max_dynamic_constraints' ({self._solver._options.max_dynamic_constraints})."
@@ -478,7 +479,7 @@ class ConstraintSolver:
         )
 
     def delete_dynamic_constraint(self, eq_type, link1_idx, link2_idx, envs_idx=None):
-        envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
+        envs_idx = torch.unique(self._solver._scene._sanitize_envs_idx(envs_idx))
         self._eq_const_info_cache.clear()
         kernel_delete_dynamic_constraint(
             int(link1_idx),

@@ -327,6 +327,12 @@ def test_dynamic_screw(n_envs, show_viewer, tol):
     for nut_stopped in (nut_seated, nut_capped):
         assert_allclose(nut_stopped.get_pos()[..., 2] - NUT_Z, LIMIT_LOWER, tol=5e-4)
         assert_allclose(nut_stopped.get_vel(), 0.0, tol=2e-3)
+    if n_envs > 0:
+        rigid.add_screw_constraint(
+            post_idx, nut_helix.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=PITCH, envs_idx=[n_envs - 1, n_envs - 1]
+        )
+        n_screws = (rigid.get_equality_constraints()["type"] == gs.EQUALITY_TYPE.SCREW).sum(dim=-1)
+        assert_equal(n_screws, 7)
 
 
 @pytest.mark.required
