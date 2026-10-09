@@ -1917,8 +1917,7 @@ def func_screw_frame(
         anchor2_pos, dyn_state.links.pos[i_l2, i_b], dyn_state.links.quat[i_l2, i_b]
     )
     axis = gu.qd_transform_by_quat(axis_local, quat1)
-    # Displacement of link2 along the axis relative to link1, zero at the reference pose.
-    travel = axis.dot(anchor2 - anchor1)
+    travel = axis.dot(anchor2 - anchor1)  # Displacement of link2 along the axis relative to link1
     return anchor1 + travel * axis, anchor2, axis, travel
 
 
@@ -1953,15 +1952,13 @@ def func_equality_screw(
     pitch_cos = eq_data[13]
     pitch_sin = eq_data[14]
 
-    # point1 faces the anchor of link2 across the axis, so that the two differ by the radial error alone however far the
-    # screw has travelled.
+    # point1 faces the anchor of link2 across the axis, so the two differ by the radial error alone.
     point1, anchor2, axis, travel = func_screw_frame(i_b, i_e, dyn_state, dyn_info, rigid_info)
     # Orientation link1 would have if rigidly attached to link2 at the reference pose.
     quat2_ref = gu.qd_quat_mul(dyn_state.links.quat[i_l2, i_b], gu.qd_inv_quat(relpose))
     swing = axis.cross(gu.qd_transform_by_quat(axis_local, quat2_ref))
 
-    # Rotation of link2 away from its reference pose in the frame of link1, taken with a non-negative real part so that
-    # the wrapped turn lies in [-pi, pi].
+    # Rotation of link2 since the reference pose in link1's frame, real part non-negative for a turn in [-pi, pi].
     quat_delta = gu.qd_quat_mul(gu.qd_inv_quat(dyn_state.links.quat[i_l1, i_b]), quat2_ref)
     if quat_delta[0] < 0.0:
         quat_delta = -quat_delta
