@@ -408,43 +408,53 @@ class ConstraintSolver:
 
         return weld_const_info
 
-    def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None):
+    def add_dynamic_constraint(
+        self, eq_type, link1_idx, link2_idx, anchor_link_idx, anchor_pos, eq_data_tail, envs_idx=None
+    ):
+        """Register a dynamic constraint between two links in the selected envs (see kernel_add_dynamic_constraint)."""
         envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
         link1_idx, link2_idx = int(link1_idx), int(link2_idx)
+        if link1_idx < 0 or link2_idx < 0:
+            gs.raise_exception("Dynamic constraints require two links, the world is not a valid link.")
 
-        assert link1_idx >= 0 and link2_idx >= 0
-        weld_const_info = self.get_weld_constraints(as_tensor=True, to_torch=True)
-        link_a = weld_const_info["link_a"]
-        link_b = weld_const_info["link_b"]
-        assert not (
-            ((link_a == link1_idx) | (link_b == link1_idx)) & ((link_a == link2_idx) | (link_b == link2_idx))
-        ).any()
+        eq_const_info = self.get_equality_constraints(as_tensor=True, to_torch=True)
+        link_a, link_b = eq_const_info["obj_a"], eq_const_info["obj_b"]
+        is_pair = ((link_a == link1_idx) & (link_b == link2_idx)) | ((link_a == link2_idx) & (link_b == link1_idx))
+        if (is_pair & (eq_const_info["type"] == eq_type))[envs_idx].any():
+            gs.raise_exception(
+                f"Links {link1_idx} and {link2_idx} are already coupled by a {eq_type.name.lower()} constraint."
+            )
 
         self._eq_const_info_cache.clear()
-        overflow = kernel_add_weld_constraint(
+        has_overflow = kernel_add_dynamic_constraint(
             link1_idx,
             link2_idx,
+            int(anchor_link_idx),
             envs_idx,
+            int(eq_type),
+            anchor_pos,
+            np.asarray(eq_data_tail, dtype=gs.np_float),
             self._solver.dyn_state,
             self.constraint_state,
             self._solver.dyn_info,
             self._solver.rigid_info,
             self._solver.rigid_config,
         )
-        if overflow:
+        if has_overflow:
             gs.logger.warning(
-                "Ignoring dynamically registered weld constraint to avoid exceeding max number of equality constraints"
-                f"({self.rigid_info.n_candidate_equalities.to_numpy()}). Please increase the value of "
+                f"Ignoring dynamically registered {eq_type.name.lower()} constraint to avoid exceeding max number of "
+                f"equality constraints ({self._solver.n_candidate_equalities_}). Please increase the value of "
                 "RigidSolver's option 'max_dynamic_constraints'."
             )
 
-    def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx=None):
+    def delete_dynamic_constraint(self, eq_type, link1_idx, link2_idx, envs_idx=None):
         envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
         self._eq_const_info_cache.clear()
-        kernel_delete_weld_constraint(
+        kernel_delete_dynamic_constraint(
             int(link1_idx),
             int(link2_idx),
             envs_idx,
+            int(eq_type),
             self.constraint_state,
             self._solver.dyn_info,
             self._solver.rigid_info,
@@ -1986,67 +1996,81 @@ def add_frictionloss_constraints(
                         constraint_state.jac_n_dofs[i_con, i_b] = 1
 
 
-# ====================================== Runtime User-Specified Weld Constraints ======================================
+# ==================================== Runtime User-Specified Dynamic Constraints =====================================
 
 
 @qd.kernel(fastcache=True)
-def kernel_add_weld_constraint(
-    link1_idx: qd.i32,
-    link2_idx: qd.i32,
+def kernel_add_dynamic_constraint(
+    link1_idx: int,
+    link2_idx: int,
+    anchor_link_idx: int,
     envs_idx: qd.types.ndarray(),
+    eq_type: int,
+    anchor_pos: qd.types.ndarray(),
+    eq_data_tail: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ) -> qd.i32:
-    overflow = gs.qd_bool(False)
+    """Register a constraint between two links, taking their current relative pose as its reference.
+
+    The anchor is the point anchor_pos given in the frame of link anchor_link_idx. The constraint data holds:
+    [0:3]   the anchor, in the frame of link2
+    [3:6]   the anchor, in the frame of link1
+    [6:10]  the orientation of link2 relative to link1
+    [10]    the type-specific entry of eq_data_tail
+    Returns whether an env had no equality slot left.
+    """
+    has_overflow = gs.qd_bool(False)
 
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
         i_e = constraint_state.qd_n_equalities[i_b]
         if i_e == rigid_info.n_candidate_equalities[None]:
-            overflow = True
+            has_overflow = True
         else:
-            shared_pos = dyn_state.links.pos[link1_idx, i_b]
+            anchor = gu.qd_transform_by_trans_quat(
+                gs.qd_vec3([anchor_pos[0], anchor_pos[1], anchor_pos[2]]),
+                dyn_state.links.pos[anchor_link_idx, i_b],
+                dyn_state.links.quat[anchor_link_idx, i_b],
+            )
             pos1 = gu.qd_inv_transform_by_trans_quat(
-                shared_pos, dyn_state.links.pos[link1_idx, i_b], dyn_state.links.quat[link1_idx, i_b]
+                anchor, dyn_state.links.pos[link1_idx, i_b], dyn_state.links.quat[link1_idx, i_b]
             )
             pos2 = gu.qd_inv_transform_by_trans_quat(
-                shared_pos, dyn_state.links.pos[link2_idx, i_b], dyn_state.links.quat[link2_idx, i_b]
+                anchor, dyn_state.links.pos[link2_idx, i_b], dyn_state.links.quat[link2_idx, i_b]
             )
-
-            dyn_info.equalities.eq_type[i_e, i_b] = gs.qd_int(gs.EQUALITY_TYPE.WELD)
-            dyn_info.equalities.eq_obj1id[i_e, i_b] = link1_idx
-            dyn_info.equalities.eq_obj2id[i_e, i_b] = link2_idx
-
-            for i_3 in qd.static(range(3)):
-                dyn_info.equalities.eq_data[i_e, i_b][i_3 + 3] = pos1[i_3]
-                dyn_info.equalities.eq_data[i_e, i_b][i_3] = pos2[i_3]
-
             relpose = gu.qd_quat_mul(
                 gu.qd_inv_quat(dyn_state.links.quat[link1_idx, i_b]), dyn_state.links.quat[link2_idx, i_b]
             )
 
+            dyn_info.equalities.eq_type[i_e, i_b] = eq_type
+            dyn_info.equalities.eq_obj1id[i_e, i_b] = link1_idx
+            dyn_info.equalities.eq_obj2id[i_e, i_b] = link2_idx
+            for i_3 in qd.static(range(3)):
+                dyn_info.equalities.eq_data[i_e, i_b][i_3] = pos2[i_3]
+                dyn_info.equalities.eq_data[i_e, i_b][i_3 + 3] = pos1[i_3]
             for i_4 in qd.static(range(4)):
                 dyn_info.equalities.eq_data[i_e, i_b][i_4 + 6] = relpose[i_4]
-
-            dyn_info.equalities.eq_data[i_e, i_b][10] = 1.0
+            dyn_info.equalities.eq_data[i_e, i_b][10] = eq_data_tail[0]
 
             dyn_info.equalities.sol_params[i_e, i_b] = qd.Vector(
                 [2 * rigid_info.substep_dt[None], 1.0, 0.9, 0.95, 0.001, 0.5, 2.0]
             )
 
             constraint_state.qd_n_equalities[i_b] = constraint_state.qd_n_equalities[i_b] + 1
-    return overflow
+    return has_overflow
 
 
 @qd.kernel(fastcache=True)
-def kernel_delete_weld_constraint(
-    link1_idx: qd.i32,
-    link2_idx: qd.i32,
+def kernel_delete_dynamic_constraint(
+    link1_idx: int,
+    link2_idx: int,
     envs_idx: qd.types.ndarray(),
+    eq_type: int,
     constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -2056,10 +2080,10 @@ def kernel_delete_weld_constraint(
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
         for i_e in range(rigid_info.n_equalities[None], constraint_state.qd_n_equalities[i_b]):
-            if (
-                dyn_info.equalities.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.WELD
-                and dyn_info.equalities.eq_obj1id[i_e, i_b] == link1_idx
-                and dyn_info.equalities.eq_obj2id[i_e, i_b] == link2_idx
+            link_a = dyn_info.equalities.eq_obj1id[i_e, i_b]
+            link_b = dyn_info.equalities.eq_obj2id[i_e, i_b]
+            if dyn_info.equalities.eq_type[i_e, i_b] == eq_type and (
+                (link_a == link1_idx and link_b == link2_idx) or (link_a == link2_idx and link_b == link1_idx)
             ):
                 if i_e < constraint_state.qd_n_equalities[i_b] - 1:
                     # Swap-remove must move the whole constraint record, not just its type,

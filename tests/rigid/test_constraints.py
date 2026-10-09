@@ -296,7 +296,7 @@ def test_get_constraints_api(show_viewer, tol):
 
     link_a, link_b = robot.base_link.idx, cube.base_link.idx
     scene.sim.rigid_solver.add_weld_constraint(link_a, link_b, envs_idx=[1])
-    with np.testing.assert_raises(AssertionError):
+    with pytest.raises(gs.GenesisException, match="already coupled"):
         scene.sim.rigid_solver.add_weld_constraint(link_a, link_b, envs_idx=[1])
 
     for as_tensor, to_torch in ((True, True), (True, False), (False, True), (False, False)):
