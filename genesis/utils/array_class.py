@@ -2871,7 +2871,7 @@ def get_equalities_info(solver, is_active=True):
     return EqualitiesInfo(
         eq_obj1id=V(dtype=gs.qd_int, shape=shape),
         eq_obj2id=V(dtype=gs.qd_int, shape=shape),
-        eq_data=V(dtype=gs.qd_vec11, shape=shape),
+        eq_data=V(dtype=gs.qd_vec18, shape=shape),
         eq_type=V(dtype=gs.qd_int, shape=shape),
         sol_params=V(dtype=gs.qd_vec7, shape=shape),
     )
@@ -3051,6 +3051,8 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # extra opposing pyramid pairs per contact with the pyramidal cone, two extra cone rows with the elliptic cone.
     # Requires enable_torsional_friction (the rolling rows sit after the spin row in the contact row layout).
     enable_rolling_friction: bool = False
+    # Whether the constraint assembly carries the rows of the screw constraints added at runtime.
+    enable_screw_constraints: bool = False
     # Consecutive sub-tolerance steps a body's max DOF velocity must hold before it is ready to hibernate. Guards
     # against a body that is only momentarily slow (e.g. at the apex of a toss) sleeping prematurely.
     hibernation_min_steps: int = 10

@@ -154,6 +154,10 @@ def test_dynamic_weld(show_viewer, tol):
     for i in range(70):
         scene.step()
 
+    with pytest.raises(gs.GenesisException, match="enable_screw_constraints"):
+        scene.sim.rigid_solver.add_screw_constraint(
+            cube.base_link.idx, end_effector.idx, axis=(0.0, 0.0, 1.0), pitch=0.0
+        )
     # add weld constraint and move back up. The hanging box is welded in the air afterwards, so that deleting the
     # cube weld goes through the swap-remove path and must preserve the full record of the hanging box weld.
     scene.sim.rigid_solver.add_weld_constraint(cube.base_link.idx, end_effector.idx, envs_idx=(0, 1, 2))
@@ -184,6 +188,110 @@ def test_dynamic_weld(show_viewer, tol):
     assert_allclose(torch.diff(cubes_pos[[0, 1, 3]], dim=0), 0.0, tol=1e-2)
     assert_allclose(cubes_pos[2] - cubes_pos[0], ee_pos_up - ee_pos_down, tol=1e-3)
     assert_allclose(hanging_box.get_pos(), HANGING_BOX_POS, tol=1e-3)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_dynamic_screw(n_envs, show_viewer):
+    DT = 0.01
+    GRAVITY = 9.81
+    PITCH = 0.06
+    LIMIT_LOWER = -0.01
+    POST_POS = (2.0, 0.5, 0.25)
+    NUT_Z = 0.4
+    N_STEPS_SCREWED = 30
+    N_STEPS_RELEASED = 10
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+            gravity=(0.0, 0.0, -GRAVITY),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            integrator=gs.integrator.Euler,
+            enable_screw_constraints=True,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.0, -3.0, 1.0),
+            camera_lookat=(2.0, 0.0, 0.2),
+        ),
+        show_viewer=show_viewer,
+    )
+    post = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.02, 0.02, 0.5),
+            pos=POST_POS,
+            fixed=True,
+        ),
+    )
+    nut_helix, nut_slider, nut_hinge, nut_held, nut_seated = (
+        scene.add_entity(
+            gs.morphs.Box(
+                size=(0.1, 0.1, 0.02),
+                pos=(x, 0.0, NUT_Z),
+            ),
+        )
+        for x in (0.0, 1.0, 2.0, 3.0, 4.0)
+    )
+    scene.build(n_envs=n_envs)
+
+    rigid = scene.sim.rigid_solver
+    post_idx = post.base_link.idx
+    rigid.add_screw_constraint(post_idx, nut_helix.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=PITCH)
+    rigid.add_screw_constraint(post_idx, nut_slider.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=np.inf)
+    rigid.add_screw_constraint(post_idx, nut_hinge.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=0.0)
+    rigid.add_screw_constraint(post_idx, nut_held.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=PITCH, frictionloss=1.0)
+    # The axis of the seated nut goes through a point given in the frame of the post rather than through the nut.
+    axis_pos = np.subtract((4.0, 0.0, NUT_Z), POST_POS)
+    rigid.add_screw_constraint(
+        post_idx, nut_seated.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=PITCH, pos=axis_pos, limit=(LIMIT_LOWER, np.inf)
+    )
+    with pytest.raises(gs.GenesisException, match="already coupled"):
+        rigid.add_screw_constraint(nut_helix.base_link.idx, post_idx, axis=(0.0, 0.0, 1.0), pitch=PITCH)
+    scene_with_grad = gs.Scene(
+        sim_options=gs.options.SimOptions(requires_grad=True),
+        rigid_options=gs.options.RigidOptions(enable_screw_constraints=True),
+    )
+    scene_with_grad.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1)))
+    with pytest.raises(gs.GenesisException, match="Screw constraints are not supported yet"):
+        scene_with_grad.build()
+    assert_equal(rigid.get_equality_constraints()["type"], gs.EQUALITY_TYPE.SCREW)
+
+    # The nut descends with the acceleration g_eff of a mass m sliding along the axis while spinning with an axial inertia
+    # I, the two being coupled by the travel per radian p: g_eff = g * m * p^2 / (m * p^2 + I). The compliance of the
+    # coupling row lets the turn lag the travel slightly, hence the relative tolerances.
+    mass = tensor_to_array(nut_helix.get_links_mass())[0]
+    inertia = tensor_to_array(nut_helix.get_links_inertia())[0, 2, 2]
+    pitch_rad = PITCH / (2.0 * np.pi)
+    g_eff = GRAVITY * mass * pitch_rad**2 / (mass * pitch_rad**2 + inertia)
+    # Semi-implicit Euler moves a body under a constant acceleration a by -a * dt^2 * n * (n + 1) / 2 after n steps.
+    fall_factor = DT**2 * N_STEPS_SCREWED * (N_STEPS_SCREWED + 1) / 2
+    for _ in range(N_STEPS_SCREWED):
+        scene.step()
+    # The post is fixed and the screw axis is the world z axis, so the travel of a nut is its height change.
+    travel_helix = nut_helix.get_pos()[..., 2] - NUT_Z
+    assert_allclose(travel_helix, -g_eff * fall_factor, rtol=0.02)
+    assert_allclose(
+        gu.quat_to_rotvec(tensor_to_array(nut_helix.get_quat()))[..., 2], travel_helix / pitch_rad, tol=0.02
+    )
+    assert_allclose(nut_helix.get_pos()[..., :2], (0.0, 0.0), tol=1e-3)
+    assert_allclose(nut_slider.get_pos()[..., 2] - NUT_Z, -GRAVITY * fall_factor, rtol=1e-3)
+    assert_allclose(nut_slider.get_quat(), (1.0, 0.0, 0.0, 0.0), tol=1e-3)
+    assert_allclose(nut_hinge.get_pos()[..., 2], NUT_Z, tol=1e-3)
+    assert_allclose(nut_held.get_pos()[..., 2], NUT_Z, tol=2e-3)
+
+    # Once deleted in the last environment, the helix nut falls freely there and keeps screwing down everywhere else.
+    rigid.delete_screw_constraint(nut_helix.base_link.idx, post_idx, envs_idx=[n_envs - 1] if n_envs > 0 else None)
+    vel_z = nut_helix.get_vel()[..., 2]
+    for _ in range(N_STEPS_RELEASED):
+        scene.step()
+    is_deleted = np.arange(max(n_envs, 1)) == max(n_envs, 1) - 1
+    vel_z_delta = np.atleast_1d(tensor_to_array(nut_helix.get_vel()[..., 2] - vel_z))
+    assert_allclose(vel_z_delta, np.where(is_deleted, -GRAVITY, -g_eff) * N_STEPS_RELEASED * DT, rtol=0.02)
+    n_screws = (rigid.get_equality_constraints()["type"] == gs.EQUALITY_TYPE.SCREW).sum(dim=-1)
+    assert_equal(n_screws, 5 - is_deleted)
+    assert_allclose(nut_seated.get_pos()[..., 2] - NUT_Z, LIMIT_LOWER, tol=1e-3)
+    assert_allclose(nut_seated.get_vel(), 0.0, tol=1e-2)
 
 
 @pytest.mark.required
