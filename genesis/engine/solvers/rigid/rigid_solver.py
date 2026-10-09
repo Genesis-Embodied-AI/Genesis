@@ -15,6 +15,7 @@ from genesis.engine.materials import Rigid
 from genesis.engine.states import RigidSolverState, SolverCheckpoint
 from genesis.options.morphs import Drone, Morph, Terrain
 from genesis.options.solvers import RigidOptions
+from genesis.typing import Vec3FType
 from genesis.utils.misc import (
     DeprecationError,
     assign_indexed_tensor,
@@ -3394,7 +3395,15 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         self.constraint_solver.delete_dynamic_constraint(gs.EQUALITY_TYPE.WELD, link1_idx, link2_idx, envs_idx)
 
     def add_screw_constraint(
-        self, link1_idx, link2_idx, axis, pitch, pos=None, limit=None, frictionloss=0.0, envs_idx=None
+        self,
+        link1_idx: int,
+        link2_idx: int,
+        axis: Vec3FType,
+        pitch: float,
+        pos: Vec3FType | None = None,
+        limit: tuple[float, float] | None = None,
+        frictionloss: float = 0.0,
+        envs_idx=None,
     ):
         """
         Constrain a link to screw along an axis attached to another link, starting from their current relative pose.
@@ -3466,7 +3475,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             envs_idx=envs_idx,
         )
 
-    def delete_screw_constraint(self, link1_idx, link2_idx, envs_idx=None):
+    def delete_screw_constraint(self, link1_idx: int, link2_idx: int, envs_idx=None):
         self.constraint_solver.delete_dynamic_constraint(gs.EQUALITY_TYPE.SCREW, link1_idx, link2_idx, envs_idx)
 
     def get_weld_constraints(self, as_tensor: bool = True, to_torch: bool = True):
