@@ -3430,8 +3430,8 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         # The checks are written so that a NaN fails them.
         axis = np.asarray(axis, dtype=gs.np_float)
         axis_norm = np.linalg.norm(axis)
-        if axis.shape != (3,) or not axis_norm >= gs.EPS:
-            gs.raise_exception(f"'axis' must be a non-zero 3D vector, got {axis}.")
+        if axis.shape != (3,) or not np.isfinite(axis_norm) or not axis_norm >= gs.EPS:
+            gs.raise_exception(f"'axis' must be a finite non-zero 3D vector, got {axis}.")
         if np.isnan(pitch):
             gs.raise_exception("'pitch' must be a number, got NaN.")
         if pos is not None:
