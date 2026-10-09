@@ -15,7 +15,7 @@ from genesis.engine.materials import Rigid
 from genesis.engine.states import RigidSolverState, SolverCheckpoint
 from genesis.options.morphs import Drone, Morph, Terrain
 from genesis.options.solvers import RigidOptions
-from genesis.typing import Vec3FType
+from genesis.typing import Vec2FType, Vec3FType
 from genesis.utils.misc import (
     DeprecationError,
     assign_indexed_tensor,
@@ -3401,7 +3401,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         axis: Vec3FType,
         pitch: float,
         pos: Vec3FType | None = None,
-        limit: tuple[float, float] | None = None,
+        limit: Vec2FType | None = None,
         frictionloss: float = 0.0,
         envs_idx=None,
     ):
@@ -3436,22 +3436,25 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         """
         if not self._options.enable_screw_constraints:
             gs.raise_exception("Screw constraints require 'RigidOptions(enable_screw_constraints=True)'.")
-        # The checks are written so that a NaN fails them.
         axis = np.asarray(axis, dtype=gs.np_float)
         axis_norm = np.linalg.norm(axis)
-        if axis.shape != (3,) or not np.isfinite(axis_norm) or not axis_norm >= gs.EPS:
-            gs.raise_exception(f"'axis' must be a finite non-zero 3D vector, got {axis}.")
-        if np.isnan(pitch):
-            gs.raise_exception("'pitch' must be a number, got NaN.")
-        if pos is not None:
-            pos = np.asarray(pos, dtype=gs.np_float)
-            if pos.shape != (3,) or not np.isfinite(pos).all():
-                gs.raise_exception(f"'pos' must be a finite 3D point, got {pos}.")
+        anchor_pos = np.zeros(3, dtype=gs.np_float) if pos is None else np.asarray(pos, dtype=gs.np_float)
         limit = np.array((-np.inf, np.inf) if limit is None else limit, dtype=gs.np_float)
-        if limit.shape != (2,) or not limit[0] <= limit[1]:
-            gs.raise_exception(f"'limit' must be ordered as (lower, upper), got {limit}.")
-        if not frictionloss >= 0.0:
-            gs.raise_exception(f"'frictionloss' must be non-negative, got {frictionloss}.")
+        if (
+            axis.shape != (3,)
+            or not gs.EPS <= axis_norm < np.inf
+            or np.isnan(pitch)
+            or anchor_pos.shape != (3,)
+            or not np.isfinite(anchor_pos).all()
+            or limit.shape != (2,)
+            or not limit[0] <= limit[1]
+            or not frictionloss >= 0.0
+        ):
+            gs.raise_exception(
+                "Invalid screw constraint: 'axis' must be a finite non-zero 3D vector, 'pitch' a number, 'pos' a "
+                "finite 3D point, 'limit' an ordered (lower, upper) pair and 'frictionloss' non-negative. Got "
+                f"axis={axis}, pitch={pitch}, pos={pos}, limit={limit} and frictionloss={frictionloss}."
+            )
 
         # The pitch enters the constraint per radian, as the direction (cos, sin) of (1, pitch / 2pi), which stays
         # finite for a zero pitch and an infinite one (see func_screw_frame).
@@ -3461,10 +3464,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             pitch_norm = np.hypot(1.0, pitch / (2.0 * np.pi))
             pitch_cos, pitch_sin = 1.0 / pitch_norm, pitch / (2.0 * np.pi) / pitch_norm
 
-        if pos is None:
-            anchor_link_idx, anchor_pos = link2_idx, np.zeros(3, dtype=gs.np_float)
-        else:
-            anchor_link_idx, anchor_pos = link1_idx, pos
+        anchor_link_idx = link2_idx if pos is None else link1_idx
         self.constraint_solver.add_dynamic_constraint(
             gs.EQUALITY_TYPE.SCREW,
             link1_idx,

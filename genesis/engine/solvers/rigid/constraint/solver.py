@@ -1903,9 +1903,6 @@ def func_screw_frame(
             holds sin * turn - cos * travel at zero
     [15:17] the lower and upper travel limits
     [17]    the dry friction
-
-    The travel is the displacement of link2 along the axis relative to link1, zero at the reference pose. Returns the
-    point of link1 on the axis facing the anchor of link2, the anchor of link2, the axis and the travel.
     """
     i_l1 = dyn_info.equalities.eq_obj1id[i_e, i_b]
     i_l2 = dyn_info.equalities.eq_obj2id[i_e, i_b]
@@ -1920,6 +1917,7 @@ def func_screw_frame(
         anchor2_pos, dyn_state.links.pos[i_l2, i_b], dyn_state.links.quat[i_l2, i_b]
     )
     axis = gu.qd_transform_by_quat(axis_local, quat1)
+    # Displacement of link2 along the axis relative to link1, zero at the reference pose.
     travel = axis.dot(anchor2 - anchor1)
     return anchor1 + travel * axis, anchor2, axis, travel
 
@@ -1936,16 +1934,9 @@ def func_equality_screw(
 ):
     """Add the 5 rows of a screw constraint, which leave link2 a single dof relative to link1.
 
-    The screw constraint is the equality i_e of env i_b. Two rows keep the anchor of link2 on the axis, two keep link2
-    from swinging off it, and the last one couples its travel and turn (see func_screw_frame). The turn is the rotation
-    of link2 about the axis relative to link1, zero at the reference pose. The relative rotation only gives it modulo a
-    full turn, so it is unwound to the one closest to what the travel implies, which counts the full turns of a screw.
-    The swing is the cross product of the axis attached to link1 by the axis attached to link2.
-
-    The rate of row k is lin_dirs[k] . (v1 - v2) + ang_dirs[k] . (w1 - w2), where v1 and v2 are the velocities of point1
-    attached to link1 and anchor2 attached to link2, and w1 and w2 the angular velocities of the two links. One walk of
-    the kinematic chains of both links fills the 5 rows and the Jacobian of the free motion of the screw, which its
-    friction and limit rows combine with the coupling row (see func_add_screw_axis_constraints).
+    The screw constraint is the equality i_e of env i_b. Two rows keep link2 on the axis, two keep it from swinging off
+    it, and the last one couples its travel and turn. One walk of the kinematic chains of both links also fills the
+    Jacobian of the free motion of the screw, for its friction and limit rows.
     """
     EPS = rigid_info.EPS[None]
     n_dofs = dyn_state.dofs.ctrl_mode.shape[0]
@@ -2048,8 +2039,7 @@ def func_equality_screw(
                 jac_qvel = jac_qvel + jac * dyn_state.dofs.vel[i_d, i_b]
                 for i_r in qd.static(range(5)):
                     constraint_state.jac[i_con + i_r, i_d, i_b] = constraint_state.jac[i_con + i_r, i_d, i_b] + jac[i_r]
-                # The free motion is read back on the support of the rows alone, so a dof met for the first time
-                # overwrites what a previous step left there.
+                # A dof met for the first time overwrites the value a previous step left, which is read nowhere else.
                 n_dofs_prev = con_n_dofs
                 con_n_dofs = _append_relevant_dof(
                     i_con, i_d, i_b, con_n_dofs, i_ab == 1 and is_same_root, constraint_state
@@ -2095,14 +2085,10 @@ def func_add_screw_axis_constraints(
 ):
     """Add a row along the free motion of every screw constraint of an env: its dry friction, or its violated limit.
 
-    The rows belong to env i_b. The friction resists the turn, or the travel when the screw cannot turn (infinite
-    pitch). The limit pushes the travel back within its bounds. The friction rows belong to the frictionloss block and
-    the limit rows to the inequality one, so this is called once per block.
-
-    Each row combines the Jacobian of the free motion of the screw with its coupling row, both written by
-    func_equality_screw, with (cos, sin) the direction of the pitch (see func_screw_frame). Rows measure the motion of
-    link1 relative to link2, so cos * free - sin * coupling is minus the turn rate of link2 and sin * free + cos *
-    coupling minus its travel rate.
+    The rows belong to env i_b, and this is called once for the frictionloss block and once for the inequality one. The
+    friction resists the turn, or the travel for an infinite pitch. Each row combines the free motion and the coupling
+    row of the screw: cos * free - sin * coupling is minus the turn rate of link2 and sin * free + cos * coupling minus
+    its travel rate.
     """
     EPS = rigid_info.EPS[None]
     n_dofs = dyn_state.dofs.ctrl_mode.shape[0]

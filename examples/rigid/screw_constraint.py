@@ -145,8 +145,6 @@ def main():
             travel = nut_x - NUT_START_POS[0]
             gs.logger.info(f"step {i_step:4d}  travel = {travel * 1e3:6.2f} mm  z = {nut.get_pos()[2] * 1e3:6.2f} mm")
 
-        # The nut is turned like a hand would: towards two turns a second, with a torque proportional to the spin rate
-        # error, capped at the maximum torque, and with no torque at all when no direction is asked.
         torque = 0.0
         if spin_direction != 0:
             spin_rate = gu.inv_transform_by_quat(nut.get_ang(), nut.get_quat())[2]

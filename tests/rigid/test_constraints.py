@@ -261,17 +261,17 @@ def test_dynamic_screw(n_envs, show_viewer):
         rigid.add_screw_constraint(nut_helix.base_link.idx, post_idx, axis=(0.0, 0.0, 1.0), pitch=PITCH)
     with pytest.raises(gs.GenesisException, match="max_dynamic_constraints"):
         rigid.add_weld_constraint(post_idx, nut_helix.base_link.idx)
-    with pytest.raises(gs.GenesisException, match="'axis' must be"):
+    with pytest.raises(gs.GenesisException, match="Invalid screw constraint"):
         rigid.add_screw_constraint(post_idx, nut_helix.base_link.idx, axis=(0.0, 0.0, np.inf), pitch=PITCH)
-    with pytest.raises(gs.GenesisException, match="'pitch' must be"):
+    with pytest.raises(gs.GenesisException, match="Invalid screw constraint"):
         rigid.add_screw_constraint(post_idx, nut_helix.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=np.nan)
-    with pytest.raises(gs.GenesisException, match="'pos' must be"):
+    with pytest.raises(gs.GenesisException, match="Invalid screw constraint"):
         rigid.add_screw_constraint(post_idx, nut_helix.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=PITCH, pos=(0.0, 0.0))
-    with pytest.raises(gs.GenesisException, match="'limit' must be"):
+    with pytest.raises(gs.GenesisException, match="Invalid screw constraint"):
         rigid.add_screw_constraint(
             post_idx, nut_helix.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=PITCH, limit=(0.1, 0.0)
         )
-    with pytest.raises(gs.GenesisException, match="'frictionloss' must be"):
+    with pytest.raises(gs.GenesisException, match="Invalid screw constraint"):
         rigid.add_screw_constraint(
             post_idx, nut_helix.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=PITCH, frictionloss=np.nan
         )

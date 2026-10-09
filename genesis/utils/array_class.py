@@ -2880,8 +2880,9 @@ class EqualitiesInfo:
     sol_params: qd.Tensor
 
 
-# Entries of the data of an equality past the 10 that the dynamic constraints share (see kernel_add_dynamic_constraint
-# in constraint/solver.py): 1 for the other equalities, and 8 for a screw constraint (see func_screw_frame).
+# Entries of the data of an equality past the first 10, which hold the anchor in both links and their relative
+# orientation: 1 for most equalities, and 8 for a screw constraint, which adds its axis, pitch, travel limits and
+# friction.
 EQ_DATA_N_TAIL = 1
 EQ_DATA_N_TAIL_SCREW = 8
 
