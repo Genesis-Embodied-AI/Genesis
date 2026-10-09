@@ -210,6 +210,7 @@ def test_dynamic_screw(n_envs, show_viewer):
         ),
         rigid_options=gs.options.RigidOptions(
             integrator=gs.integrator.Euler,
+            max_dynamic_constraints=7,
             enable_screw_constraints=True,
         ),
         viewer_options=gs.options.ViewerOptions(
@@ -258,6 +259,22 @@ def test_dynamic_screw(n_envs, show_viewer):
     nut_hinge.set_dofs_velocity(HINGE_SPIN_RATE, dofs_idx_local=5)
     with pytest.raises(gs.GenesisException, match="already coupled"):
         rigid.add_screw_constraint(nut_helix.base_link.idx, post_idx, axis=(0.0, 0.0, 1.0), pitch=PITCH)
+    with pytest.raises(gs.GenesisException, match="max_dynamic_constraints"):
+        rigid.add_weld_constraint(post_idx, nut_helix.base_link.idx)
+    with pytest.raises(gs.GenesisException, match="'axis' must be"):
+        rigid.add_screw_constraint(post_idx, nut_helix.base_link.idx, axis=(0.0, 0.0, np.inf), pitch=PITCH)
+    with pytest.raises(gs.GenesisException, match="'pitch' must be"):
+        rigid.add_screw_constraint(post_idx, nut_helix.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=np.nan)
+    with pytest.raises(gs.GenesisException, match="'pos' must be"):
+        rigid.add_screw_constraint(post_idx, nut_helix.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=PITCH, pos=(0.0, 0.0))
+    with pytest.raises(gs.GenesisException, match="'limit' must be"):
+        rigid.add_screw_constraint(
+            post_idx, nut_helix.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=PITCH, limit=(0.1, 0.0)
+        )
+    with pytest.raises(gs.GenesisException, match="'frictionloss' must be"):
+        rigid.add_screw_constraint(
+            post_idx, nut_helix.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=PITCH, frictionloss=np.nan
+        )
     scene_with_grad = gs.Scene(
         sim_options=gs.options.SimOptions(requires_grad=True),
         rigid_options=gs.options.RigidOptions(enable_screw_constraints=True),
