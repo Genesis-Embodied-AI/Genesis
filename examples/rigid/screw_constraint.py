@@ -136,7 +136,7 @@ def main():
             step(i_step)
             i_step += 1
     else:
-        # Screw the nut down onto the head, hold it seated for half a second, then unscrew it until it leaves the thread.
+        # Screw the nut down onto the head, hold it seated for half a second, then unscrew it off the thread.
         horizon = 1000 if "PYTEST_VERSION" not in os.environ else 5
         drive(-1)
         n_seated = 0

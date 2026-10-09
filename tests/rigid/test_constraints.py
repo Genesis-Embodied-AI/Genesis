@@ -212,8 +212,8 @@ def test_dynamic_screw(n_envs, show_viewer):
             enable_screw_constraints=True,
         ),
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(2.0, -3.0, 1.0),
-            camera_lookat=(2.0, 0.0, 0.2),
+            camera_pos=(2.5, -3.0, 1.0),
+            camera_lookat=(2.5, 0.0, 0.2),
         ),
         show_viewer=show_viewer,
     )
@@ -224,14 +224,14 @@ def test_dynamic_screw(n_envs, show_viewer):
             fixed=True,
         ),
     )
-    nut_helix, nut_slider, nut_hinge, nut_held, nut_seated = (
+    nut_helix, nut_slider, nut_hinge, nut_held, nut_seated, nut_capped = (
         scene.add_entity(
             gs.morphs.Box(
                 size=(0.1, 0.1, 0.02),
                 pos=(x, 0.0, NUT_Z),
             ),
         )
-        for x in (0.0, 1.0, 2.0, 3.0, 4.0)
+        for x in (0.0, 1.0, 2.0, 3.0, 4.0, 5.0)
     )
     scene.build(n_envs=n_envs)
 
@@ -246,6 +246,10 @@ def test_dynamic_screw(n_envs, show_viewer):
     rigid.add_screw_constraint(
         post_idx, nut_seated.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=PITCH, pos=axis_pos, limit=(LIMIT_LOWER, np.inf)
     )
+    # The axis of the capped nut points down, so its fall is a positive travel that the upper limit stops.
+    rigid.add_screw_constraint(
+        post_idx, nut_capped.base_link.idx, axis=(0.0, 0.0, -1.0), pitch=PITCH, limit=(-np.inf, -LIMIT_LOWER)
+    )
     with pytest.raises(gs.GenesisException, match="already coupled"):
         rigid.add_screw_constraint(nut_helix.base_link.idx, post_idx, axis=(0.0, 0.0, 1.0), pitch=PITCH)
     scene_with_grad = gs.Scene(
@@ -257,9 +261,9 @@ def test_dynamic_screw(n_envs, show_viewer):
         scene_with_grad.build()
     assert_equal(rigid.get_equality_constraints()["type"], gs.EQUALITY_TYPE.SCREW)
 
-    # The nut descends with the acceleration g_eff of a mass m sliding along the axis while spinning with an axial inertia
-    # I, the two being coupled by the travel per radian p: g_eff = g * m * p^2 / (m * p^2 + I). The compliance of the
-    # coupling row lets the turn lag the travel slightly, hence the relative tolerances.
+    # The nut descends with the acceleration g_eff of a mass m sliding along the axis while spinning with an axial
+    # inertia I, the two being coupled by the travel per radian p: g_eff = g * m * p^2 / (m * p^2 + I). The
+    # compliance of the coupling row lets the turn lag the travel slightly, hence the relative tolerances.
     mass = tensor_to_array(nut_helix.get_links_mass())[0]
     inertia = tensor_to_array(nut_helix.get_links_inertia())[0, 2, 2]
     pitch_rad = PITCH / (2.0 * np.pi)
@@ -289,9 +293,10 @@ def test_dynamic_screw(n_envs, show_viewer):
     vel_z_delta = np.atleast_1d(tensor_to_array(nut_helix.get_vel()[..., 2] - vel_z))
     assert_allclose(vel_z_delta, np.where(is_deleted, -GRAVITY, -g_eff) * N_STEPS_RELEASED * DT, rtol=0.02)
     n_screws = (rigid.get_equality_constraints()["type"] == gs.EQUALITY_TYPE.SCREW).sum(dim=-1)
-    assert_equal(n_screws, 5 - is_deleted)
-    assert_allclose(nut_seated.get_pos()[..., 2] - NUT_Z, LIMIT_LOWER, tol=1e-3)
-    assert_allclose(nut_seated.get_vel(), 0.0, tol=1e-2)
+    assert_equal(n_screws, 6 - is_deleted)
+    for nut_stopped in (nut_seated, nut_capped):
+        assert_allclose(nut_stopped.get_pos()[..., 2] - NUT_Z, LIMIT_LOWER, tol=1e-3)
+        assert_allclose(nut_stopped.get_vel(), 0.0, tol=5e-3)
 
 
 @pytest.mark.required
