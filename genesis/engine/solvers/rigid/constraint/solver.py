@@ -428,7 +428,7 @@ class ConstraintSolver:
                 f"Links {link1_idx} and {link2_idx} are already coupled by a {eq_type.name.lower()} constraint."
             )
 
-        eq_data_tail_padded = np.zeros(8, dtype=gs.np_float)
+        eq_data_tail_padded = np.zeros(8 if self._solver._options.enable_screw_constraints else 1, dtype=gs.np_float)
         eq_data_tail_padded[: len(eq_data_tail)] = eq_data_tail
 
         self._eq_const_info_cache.clear()
@@ -2351,7 +2351,7 @@ def kernel_add_dynamic_constraint(
     [0:3]   the anchor, in the frame of link2
     [3:6]   the anchor, in the frame of link1
     [6:10]  the orientation of link2 relative to link1
-    [10:18] the type-specific entries of eq_data_tail
+    [10:]   the type-specific entries of eq_data_tail, 8 with screw constraints enabled and 1 otherwise
     Returns whether an env had no equality slot left.
     """
     has_overflow = gs.qd_bool(False)
@@ -2386,7 +2386,7 @@ def kernel_add_dynamic_constraint(
                 dyn_info.equalities.eq_data[i_e, i_b][i_3 + 3] = pos1[i_3]
             for i_4 in qd.static(range(4)):
                 dyn_info.equalities.eq_data[i_e, i_b][i_4 + 6] = relpose[i_4]
-            for i_t in qd.static(range(8)):
+            for i_t in qd.static(range(8 if rigid_config.enable_screw_constraints else 1)):
                 dyn_info.equalities.eq_data[i_e, i_b][i_t + 10] = eq_data_tail[i_t]
 
             dyn_info.equalities.sol_params[i_e, i_b] = qd.Vector(
