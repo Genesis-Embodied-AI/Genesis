@@ -11,7 +11,7 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 import genesis.utils.simt as su
-from genesis.engine.solvers.rigid.abd import func_solve_mass_batch
+from genesis.engine.solvers.rigid.abd import func_solve_mass_batch, func_vel_at_point
 from genesis.engine.solvers.rigid.abd.misc import (
     func_hibernate_island_if_settled,
     func_list_item,
@@ -1992,8 +1992,8 @@ def func_equality_screw(
     jdotv2, cddb2_ang = func_equality_jdotv(i_b, i_l2, anchor2, dyn_state, dyn_info, rigid_config)
     omega1 = dyn_state.links.cd_ang[i_l1, i_b]
     omega2 = dyn_state.links.cd_ang[i_l2, i_b]
-    vel1 = dyn_state.links.cd_vel[i_l1, i_b] + omega1.cross(point1 - dyn_state.links.root_COM[i_l1, i_b])
-    vel2 = dyn_state.links.cd_vel[i_l2, i_b] + omega2.cross(anchor2 - dyn_state.links.root_COM[i_l2, i_b])
+    vel1 = func_vel_at_point(i_l1, i_b, point1, dyn_state.links)
+    vel2 = func_vel_at_point(i_l2, i_b, anchor2, dyn_state.links)
     arefs_bias = lin_dirs @ (jdotv1 - jdotv2 + (vel1 - vel2).cross(omega1)) + ang_dirs @ (
         cddb1_ang - cddb2_ang + (omega1 - omega2).cross(omega1)
     )
