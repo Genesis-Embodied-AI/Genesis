@@ -15,6 +15,10 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.vis.keybindings import Key, KeyAction, Keybind
 
+NUT_START_POS = (0.013, 0.0, 0.05)
+NUT_SEAT_X = 0.0
+NUT_RELEASE_X = 0.034
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -56,7 +60,7 @@ def main():
     nut = scene.add_entity(
         gs.morphs.Mesh(
             file="meshes/bolt_nut/nut.stl",
-            pos=(0.013, 0.0, 0.05),
+            pos=NUT_START_POS,
             euler=(0.0, 90.0, 0.0),
         ),
         material=steel,
@@ -67,22 +71,26 @@ def main():
 
     scene.build()
 
-    # The bolt axis is the world x axis, so the travel of the nut is its x position counted from where it starts: its
-    # base reaches the head at -13 mm (the seat) and clears the tip at +19 mm, so the constraint is deleted a little
-    # further, at +21 mm. In the frame of the bolt, the axis is the z axis of its mesh.
-    travel_seat, travel_release = -0.013, 0.021
     rigid = scene.sim.rigid_solver
-    bolt_idx, nut_idx = bolt.base_link.idx, nut.base_link.idx
+    bolt_idx = bolt.base_link.idx
+    nut_idx = nut.base_link.idx
     nut_qpos = nut.get_qpos()
-    nut_x0 = nut.get_pos()[0]
 
     def add_screw():
         rigid.add_screw_constraint(
-            bolt_idx, nut_idx, axis=(0.0, 0.0, 1.0), pitch=3.0e-3, limit=(travel_seat, math.inf), frictionloss=0.002
+            bolt_idx,
+            nut_idx,
+            axis=(0.0, 0.0, 1.0),
+            pitch=3.0e-3,
+            limit=(NUT_SEAT_X - NUT_START_POS[0], math.inf),
+            frictionloss=0.002,
         )
 
     add_screw()
-    is_screwed, is_running, is_reset_requested, spin_direction = True, True, False, 0
+    is_screwed = True
+    is_running = True
+    is_reset_requested = False
+    spin_direction = 0
 
     # Keybind callbacks run on the viewer thread, so they only set the request that the main loop carries out between
     # steps. A positive turn about the local z axis of the nut moves it towards the tip.
@@ -98,30 +106,6 @@ def main():
         nonlocal is_running
         is_running = False
 
-    def step(i_step):
-        nonlocal is_screwed, is_reset_requested
-        if is_reset_requested:
-            if is_screwed:
-                rigid.delete_screw_constraint(bolt_idx, nut_idx)
-            nut.set_qpos(nut_qpos)
-            add_screw()
-            is_screwed, is_reset_requested = True, False
-        travel = nut.get_pos()[0] - nut_x0
-        if is_screwed and travel > travel_release:
-            rigid.delete_screw_constraint(bolt_idx, nut_idx)
-            is_screwed = False
-            gs.logger.info(f"step {i_step:4d}  released past the tip, the nut is free")
-        elif i_step % 25 == 0:
-            gs.logger.info(f"step {i_step:4d}  travel = {travel * 1e3:6.2f} mm  z = {nut.get_pos()[2] * 1e3:6.2f} mm")
-        # The nut is turned like a hand would: towards two turns a second, with a torque proportional to the spin rate
-        # error, capped at the maximum torque, and with no torque at all when no direction is asked.
-        torque = 0.0
-        if spin_direction != 0:
-            spin_rate = gu.inv_transform_by_quat(nut.get_ang(), nut.get_quat())[2]
-            torque = min(max(2.0e-3 * (spin_direction * 4.0 * math.pi - spin_rate), -args.torque), args.torque)
-        rigid.apply_links_external_wrench(torque=(0.0, 0.0, torque), links_idx=(nut_idx,), local=True)
-        scene.step()
-
     if args.vis:
         scene.viewer.register_keybinds(
             Keybind("turn_clockwise", Key.UP, KeyAction.PRESS, callback=drive, args=(-1,)),
@@ -131,21 +115,45 @@ def main():
             Keybind("reset", Key.BACKSLASH, KeyAction.RELEASE, callback=request_reset),
             Keybind("quit", Key.ESCAPE, KeyAction.RELEASE, callback=stop),
         )
-        i_step = 0
-        while is_running and scene.viewer.is_alive():
-            step(i_step)
-            i_step += 1
+        horizon = math.inf
     else:
         # Screw the nut down onto the head, hold it seated for half a second, then unscrew it off the thread.
         horizon = 1000 if "PYTEST_VERSION" not in os.environ else 5
         drive(-1)
-        n_seated = 0
-        for i_step in range(horizon):
-            if is_screwed and nut.get_pos()[0] - nut_x0 < travel_seat + 1e-4:
-                n_seated += 1
-                if n_seated == 50:
-                    drive(1)
-            step(i_step)
+
+    n_seated = 0
+    i_step = 0
+    while is_running and i_step < horizon and (not args.vis or scene.viewer.is_alive()):
+        if is_reset_requested:
+            if is_screwed:
+                rigid.delete_screw_constraint(bolt_idx, nut_idx)
+            nut.set_qpos(nut_qpos)
+            add_screw()
+            is_screwed = True
+            is_reset_requested = False
+
+        nut_x = nut.get_pos()[0]
+        if not args.vis and is_screwed and nut_x < NUT_SEAT_X + 1e-4:
+            n_seated += 1
+            if n_seated == 50:
+                drive(1)
+        if is_screwed and nut_x > NUT_RELEASE_X:
+            rigid.delete_screw_constraint(bolt_idx, nut_idx)
+            is_screwed = False
+            gs.logger.info(f"step {i_step:4d}  released past the tip, the nut is free")
+        elif i_step % 25 == 0:
+            travel = nut_x - NUT_START_POS[0]
+            gs.logger.info(f"step {i_step:4d}  travel = {travel * 1e3:6.2f} mm  z = {nut.get_pos()[2] * 1e3:6.2f} mm")
+
+        # The nut is turned like a hand would: towards two turns a second, with a torque proportional to the spin rate
+        # error, capped at the maximum torque, and with no torque at all when no direction is asked.
+        torque = 0.0
+        if spin_direction != 0:
+            spin_rate = gu.inv_transform_by_quat(nut.get_ang(), nut.get_quat())[2]
+            torque = min(max(2.0e-3 * (spin_direction * 4.0 * math.pi - spin_rate), -args.torque), args.torque)
+        rigid.apply_links_external_wrench(torque=(0.0, 0.0, torque), links_idx=(nut_idx,), local=True)
+        scene.step()
+        i_step += 1
 
 
 if __name__ == "__main__":
