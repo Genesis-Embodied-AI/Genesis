@@ -37,6 +37,24 @@ from . import noslip as constraint_noslip
 
 
 @qd.func
+def _func_clear_jac_row(
+    i_con: qd.int32, i_b: qd.int32, constraint_state: array_class.ConstraintState, rigid_config: qd.template()
+):
+    """Zero one row of the constraint Jacobian.
+
+    Under sparse solve, only the dofs of the support last recorded for row i_con are cleared, the row being zero
+    elsewhere.
+    """
+    if qd.static(rigid_config.sparse_solve):
+        for i_d_ in range(constraint_state.jac_n_dofs[i_con, i_b]):
+            i_d = constraint_state.jac_dofs_idx[i_con, i_d_, i_b]
+            constraint_state.jac[i_con, i_d, i_b] = gs.qd_float(0.0)
+    else:
+        for i_d in range(constraint_state.jac.shape[1]):
+            constraint_state.jac[i_con, i_d, i_b] = gs.qd_float(0.0)
+
+
+@qd.func
 def _append_relevant_dof(
     i_con: qd.int32,
     i_d: qd.int32,
@@ -708,7 +726,6 @@ def _add_friction_constraint(
     to either basis.
     """
     EPS = rigid_info.EPS[None]
-    n_dofs = dyn_state.dofs.ctrl_mode.shape[0]
 
     collision_con_start = constraint_state.n_constraints[i_b]
 
@@ -759,13 +776,7 @@ def _add_friction_constraint(
 
     rows_per_contact = qd.static(rigid_config.rows_per_contact)
     n_con = collision_con_start + i_col_ * rows_per_contact + i_friction
-    if qd.static(rigid_config.sparse_solve):
-        for i_d_ in range(constraint_state.jac_n_dofs[n_con, i_b]):
-            i_d = constraint_state.jac_dofs_idx[n_con, i_d_, i_b]
-            constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
-    else:
-        for i_d in range(n_dofs):
-            constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
+    _func_clear_jac_row(n_con, i_b, constraint_state, rigid_config)
 
     con_n_dofs = 0
     jac_qvel = gs.qd_float(0.0)
@@ -925,7 +936,6 @@ def _add_collision_constraints_per_contact(
     """Build all collision-contact constraints with one GPU thread per contact."""
     EPS = rigid_info.EPS[None]
     _B = dyn_state.dofs.ctrl_mode.shape[1]
-    n_dofs = dyn_state.dofs.ctrl_mode.shape[0]
     max_candidate_contacts = collider_state.contact_data.link_a.shape[0]
     rows_per_contact = qd.static(rigid_config.rows_per_contact)
 
@@ -980,13 +990,7 @@ def _add_collision_constraints_per_contact(
             n_con_head = collision_con_start + i_col_ * rows_per_contact
             for i_friction in range(rows_per_contact):
                 n_con = n_con_head + i_friction
-                if qd.static(rigid_config.sparse_solve):
-                    for i_d_ in range(constraint_state.jac_n_dofs[n_con, i_b]):
-                        i_d = constraint_state.jac_dofs_idx[n_con, i_d_, i_b]
-                        constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
-                else:
-                    for i_d in range(n_dofs):
-                        constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
+                _func_clear_jac_row(n_con, i_b, constraint_state, rigid_config)
             # The rows of a contact share the point whose velocity each dof moves, so both kinematic chains are walked
             # once: every dof's contribution to the point velocity is projected on each row's direction in turn, and
             # the support built on the head row is copied to the others.
@@ -1180,8 +1184,6 @@ def func_equality_connect(
 ):
     EPS = rigid_info.EPS[None]
 
-    n_dofs = dyn_state.dofs.ctrl_mode.shape[0]
-
     link1_idx = dyn_info.equalities.eq_obj1id[i_e, i_b]
     link2_idx = dyn_info.equalities.eq_obj2id[i_e, i_b]
     link_a_maybe_batch = [link1_idx, i_b] if qd.static(rigid_config.batch_links_info) else link1_idx
@@ -1228,13 +1230,7 @@ def func_equality_connect(
         qd.atomic_add(constraint_state.n_constraints_equality[i_b], 1)
         con_n_dofs = 0
 
-        if qd.static(rigid_config.sparse_solve):
-            for i_d_ in range(constraint_state.jac_n_dofs[n_con, i_b]):
-                i_d = constraint_state.jac_dofs_idx[n_con, i_d_, i_b]
-                constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
-        else:
-            for i_d in range(n_dofs):
-                constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
+        _func_clear_jac_row(n_con, i_b, constraint_state, rigid_config)
 
         same_root = (
             link2_idx > -1
@@ -1303,8 +1299,6 @@ def func_equality_joint(
 ):
     EPS = rigid_info.EPS[None]
 
-    n_dofs = constraint_state.jac.shape[1]
-
     sol_params = dyn_info.equalities.sol_params[i_e, i_b]
 
     I_joint1 = (
@@ -1328,13 +1322,7 @@ def func_equality_joint(
     n_con = qd.atomic_add(constraint_state.n_constraints[i_b], 1)
     qd.atomic_add(constraint_state.n_constraints_equality[i_b], 1)
 
-    if qd.static(rigid_config.sparse_solve):
-        for i_d_ in range(constraint_state.jac_n_dofs[n_con, i_b]):
-            i_d = constraint_state.jac_dofs_idx[n_con, i_d_, i_b]
-            constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
-    else:
-        for i_d in range(n_dofs):
-            constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
+    _func_clear_jac_row(n_con, i_b, constraint_state, rigid_config)
 
     pos1 = rigid_info.qpos[i_qpos1, i_b]
     ref1 = rigid_info.qpos0[i_qpos1, i_b]
@@ -1694,13 +1682,7 @@ def func_equality_weld(
         qd.atomic_add(constraint_state.n_constraints_equality[i_b], 1)
         con_n_dofs = 0
 
-        if qd.static(rigid_config.sparse_solve):
-            for i_d_ in range(constraint_state.jac_n_dofs[n_con, i_b]):
-                i_d = constraint_state.jac_dofs_idx[n_con, i_d_, i_b]
-                constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
-        else:
-            for i_d in range(n_dofs):
-                constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
+        _func_clear_jac_row(n_con, i_b, constraint_state, rigid_config)
 
         jac_qvel = gs.qd_float(0.0)
         for i_ab in range(2):
@@ -1746,8 +1728,7 @@ def func_equality_weld(
     qd.atomic_add(constraint_state.n_constraints_equality[i_b], 3)
     con_n_dofs = 0
     for i_con in range(n_con, n_con + 3):
-        for i_d in range(n_dofs):
-            constraint_state.jac[i_con, i_d, i_b] = gs.qd_float(0.0)
+        _func_clear_jac_row(i_con, i_b, constraint_state, rigid_config)
 
     for i_ab in range(2):
         sign = gs.qd_float(1.0) if i_ab == 0 else gs.qd_float(-1.0)
@@ -1859,7 +1840,6 @@ def _func_add_joint_limit_row(
 ):
     """Write row i_con of the constraint system for the joint i_j past one of its limits."""
     EPS = rigid_info.EPS[None]
-    n_dofs = dyn_state.dofs.ctrl_mode.shape[0]
     I_j = [i_j, i_b] if qd.static(rigid_config.batch_joints_info) else i_j
     I_d = [i_d, i_b] if qd.static(rigid_config.batch_dofs_info) else i_d
 
@@ -1873,13 +1853,7 @@ def _func_add_joint_limit_row(
     constraint_state.aref[i_con, i_b] = aref
     constraint_state.efc_D[i_con, i_b] = 1 / diag
 
-    if qd.static(rigid_config.sparse_solve):
-        for i_d2_ in range(constraint_state.jac_n_dofs[i_con, i_b]):
-            i_d2 = constraint_state.jac_dofs_idx[i_con, i_d2_, i_b]
-            constraint_state.jac[i_con, i_d2, i_b] = gs.qd_float(0.0)
-    else:
-        for i_d2 in range(n_dofs):
-            constraint_state.jac[i_con, i_d2, i_b] = gs.qd_float(0.0)
+    _func_clear_jac_row(i_con, i_b, constraint_state, rigid_config)
     constraint_state.jac[i_con, i_d, i_b] = jac
 
     constraint_state.jac_n_dofs[i_con, i_b] = 1
@@ -1938,7 +1912,6 @@ def func_equality_screw(
     Jacobian of the free motion of the screw, for its friction and limit rows.
     """
     EPS = rigid_info.EPS[None]
-    n_dofs = dyn_state.dofs.ctrl_mode.shape[0]
     i_s = i_e - rigid_info.n_equalities[None]
 
     i_l1 = dyn_info.equalities.eq_obj1id[i_e, i_b]
@@ -2006,13 +1979,7 @@ def func_equality_screw(
     constraint_state.screws_i_con[i_s, i_b] = i_con + 4
 
     for i_r in range(5):
-        if qd.static(rigid_config.sparse_solve):
-            for i_d_ in range(constraint_state.jac_n_dofs[i_con + i_r, i_b]):
-                i_d = constraint_state.jac_dofs_idx[i_con + i_r, i_d_, i_b]
-                constraint_state.jac[i_con + i_r, i_d, i_b] = gs.qd_float(0.0)
-        else:
-            for i_d in range(n_dofs):
-                constraint_state.jac[i_con + i_r, i_d, i_b] = gs.qd_float(0.0)
+        _func_clear_jac_row(i_con + i_r, i_b, constraint_state, rigid_config)
 
     con_n_dofs = 0
     jac_qvel = qd.Vector.zero(gs.qd_float, 6)
@@ -2088,7 +2055,6 @@ def func_add_screw_axis_constraints(
     its travel rate.
     """
     EPS = rigid_info.EPS[None]
-    n_dofs = dyn_state.dofs.ctrl_mode.shape[0]
 
     for i_e in range(rigid_info.n_equalities[None], constraint_state.qd_n_equalities[i_b]):
         if dyn_info.equalities.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.SCREW:
@@ -2121,13 +2087,7 @@ def func_add_screw_axis_constraints(
             if is_active:
                 i_con = qd.atomic_add(constraint_state.n_constraints[i_b], 1)
                 i_coupling = constraint_state.screws_i_con[i_s, i_b]
-                if qd.static(rigid_config.sparse_solve):
-                    for i_d_ in range(constraint_state.jac_n_dofs[i_con, i_b]):
-                        i_d = constraint_state.jac_dofs_idx[i_con, i_d_, i_b]
-                        constraint_state.jac[i_con, i_d, i_b] = gs.qd_float(0.0)
-                else:
-                    for i_d in range(n_dofs):
-                        constraint_state.jac[i_con, i_d, i_b] = gs.qd_float(0.0)
+                _func_clear_jac_row(i_con, i_b, constraint_state, rigid_config)
 
                 con_n_dofs = constraint_state.jac_n_dofs[i_coupling, i_b]
                 jac_qvel = gs.qd_float(0.0)
@@ -2266,7 +2226,6 @@ def add_frictionloss_constraints(
 
     _B = constraint_state.jac.shape[2]
     n_links = dyn_info.links.root_idx.shape[0]
-    n_dofs = dyn_state.dofs.ctrl_mode.shape[0]
 
     # TODO: sparse mode
     # FIXME: The condition `if dofs_info.frictionloss[I_d] > EPS:` is not correctly evaluated on Apple Metal
@@ -2300,8 +2259,7 @@ def add_frictionloss_constraints(
                         constraint_state.aref[i_con, i_b] = aref
                         constraint_state.efc_D[i_con, i_b] = 1.0 / diag
                         constraint_state.efc_frictionloss[i_con, i_b] = dyn_info.dofs.frictionloss[I_d]
-                        for i_d2 in range(n_dofs):
-                            constraint_state.jac[i_con, i_d2, i_b] = gs.qd_float(0.0)
+                        _func_clear_jac_row(i_con, i_b, constraint_state, rigid_config)
                         constraint_state.jac[i_con, i_d, i_b] = jac
 
                         constraint_state.jac_dofs_idx[i_con, 0, i_b] = i_d
