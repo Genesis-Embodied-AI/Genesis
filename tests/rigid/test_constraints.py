@@ -200,6 +200,7 @@ def test_dynamic_screw(n_envs, show_viewer):
     POST_POS = (2.0, 0.5, 0.25)
     NUT_Z = 0.4
     N_STEPS_SCREWED = 30
+    HINGE_SPIN_RATE = 2.0
     N_STEPS_RELEASED = 10
 
     scene = gs.Scene(
@@ -212,8 +213,8 @@ def test_dynamic_screw(n_envs, show_viewer):
             enable_screw_constraints=True,
         ),
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(2.5, -3.0, 1.0),
-            camera_lookat=(2.5, 0.0, 0.2),
+            camera_pos=(3.0, -3.5, 1.0),
+            camera_lookat=(3.0, 0.0, 0.2),
         ),
         show_viewer=show_viewer,
     )
@@ -224,14 +225,14 @@ def test_dynamic_screw(n_envs, show_viewer):
             fixed=True,
         ),
     )
-    nut_helix, nut_slider, nut_hinge, nut_held, nut_seated, nut_capped = (
+    nut_helix, nut_slider, nut_hinge, nut_held, nut_seated, nut_capped, nut_braked = (
         scene.add_entity(
             gs.morphs.Box(
                 size=(0.1, 0.1, 0.02),
                 pos=(x, 0.0, NUT_Z),
             ),
         )
-        for x in (0.0, 1.0, 2.0, 3.0, 4.0, 5.0)
+        for x in (0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
     )
     scene.build(n_envs=n_envs)
 
@@ -250,6 +251,11 @@ def test_dynamic_screw(n_envs, show_viewer):
     rigid.add_screw_constraint(
         post_idx, nut_capped.base_link.idx, axis=(0.0, 0.0, -1.0), pitch=PITCH, limit=(-np.inf, -LIMIT_LOWER)
     )
+    # Friction along the axis of a slider, well above the weight of the nut.
+    rigid.add_screw_constraint(
+        post_idx, nut_braked.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=np.inf, frictionloss=10.0
+    )
+    nut_hinge.set_dofs_velocity(HINGE_SPIN_RATE, dofs_idx_local=5)
     with pytest.raises(gs.GenesisException, match="already coupled"):
         rigid.add_screw_constraint(nut_helix.base_link.idx, post_idx, axis=(0.0, 0.0, 1.0), pitch=PITCH)
     scene_with_grad = gs.Scene(
@@ -282,6 +288,9 @@ def test_dynamic_screw(n_envs, show_viewer):
     assert_allclose(nut_slider.get_pos()[..., 2] - NUT_Z, -GRAVITY * fall_factor, rtol=1e-3)
     assert_allclose(nut_slider.get_quat(), (1.0, 0.0, 0.0, 0.0), tol=1e-3)
     assert_allclose(nut_hinge.get_pos()[..., 2], NUT_Z, tol=1e-3)
+    hinge_turn = gu.quat_to_rotvec(tensor_to_array(nut_hinge.get_quat()))[..., 2]
+    assert_allclose(hinge_turn, HINGE_SPIN_RATE * N_STEPS_SCREWED * DT, tol=1e-2)
+    assert_allclose(nut_braked.get_pos()[..., 2], NUT_Z, tol=1e-2)
     assert_allclose(nut_held.get_pos()[..., 2], NUT_Z, tol=2e-3)
 
     # Once deleted in the last environment, the helix nut falls freely there and keeps screwing down everywhere else.
@@ -293,7 +302,7 @@ def test_dynamic_screw(n_envs, show_viewer):
     vel_z_delta = np.atleast_1d(tensor_to_array(nut_helix.get_vel()[..., 2] - vel_z))
     assert_allclose(vel_z_delta, np.where(is_deleted, -GRAVITY, -g_eff) * N_STEPS_RELEASED * DT, rtol=0.02)
     n_screws = (rigid.get_equality_constraints()["type"] == gs.EQUALITY_TYPE.SCREW).sum(dim=-1)
-    assert_equal(n_screws, 6 - is_deleted)
+    assert_equal(n_screws, 7 - is_deleted)
     for nut_stopped in (nut_seated, nut_capped):
         assert_allclose(nut_stopped.get_pos()[..., 2] - NUT_Z, LIMIT_LOWER, tol=1e-3)
         assert_allclose(nut_stopped.get_vel(), 0.0, tol=5e-3)
