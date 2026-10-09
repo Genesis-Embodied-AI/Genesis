@@ -428,7 +428,11 @@ class ConstraintSolver:
                 f"Links {link1_idx} and {link2_idx} are already coupled by a {eq_type.name.lower()} constraint."
             )
 
-        eq_data_tail_padded = np.zeros(8 if self._solver._options.enable_screw_constraints else 1, dtype=gs.np_float)
+        if self._solver._options.enable_screw_constraints:
+            n_eq_data_tail = array_class.EQ_DATA_N_TAIL_SCREW
+        else:
+            n_eq_data_tail = array_class.EQ_DATA_N_TAIL
+        eq_data_tail_padded = np.zeros(n_eq_data_tail, dtype=gs.np_float)
         eq_data_tail_padded[: len(eq_data_tail)] = eq_data_tail
 
         self._eq_const_info_cache.clear()
@@ -445,6 +449,7 @@ class ConstraintSolver:
             self._solver.dyn_info,
             self._solver.rigid_info,
             self._solver.rigid_config,
+            n_eq_data_tail,
         )
         if has_overflow:
             gs.logger.warning(
@@ -1890,7 +1895,8 @@ def func_screw_frame(
 ):
     """Locate a screw constraint in the world frame and measure its travel.
 
-    The screw constraint is the equality i_e of env i_b. Its data follows the layout of kernel_add_dynamic_constraint, with the type-specific entries:
+    The screw constraint is the equality i_e of env i_b. Its data follows the layout of kernel_add_dynamic_constraint,
+    with the type-specific entries:
     [10:13] the unit screw axis, in the frame of link1
     [13:15] (cos, sin) of the direction of (1, p), p being the travel per radian of turn, so that the coupling row
             holds sin * turn - cos * travel at zero
@@ -2018,8 +2024,6 @@ def func_equality_screw(
         else:
             for i_d in range(n_dofs):
                 constraint_state.jac[i_con + i_r, i_d, i_b] = gs.qd_float(0.0)
-    for i_d in range(n_dofs):
-        constraint_state.screws_jac_free[i_s, i_d, i_b] = gs.qd_float(0.0)
 
     con_n_dofs = 0
     jac_qvel = qd.Vector.zero(gs.qd_float, 6)
@@ -2043,12 +2047,18 @@ def func_equality_screw(
                 jac_qvel = jac_qvel + jac * dyn_state.dofs.vel[i_d, i_b]
                 for i_r in qd.static(range(5)):
                     constraint_state.jac[i_con + i_r, i_d, i_b] = constraint_state.jac[i_con + i_r, i_d, i_b] + jac[i_r]
-                constraint_state.screws_jac_free[i_s, i_d, i_b] = (
-                    constraint_state.screws_jac_free[i_s, i_d, i_b] + jac[5]
-                )
+                # The free motion is read back on the support of the rows alone, so a dof met for the first time
+                # overwrites what a previous step left there.
+                n_dofs_prev = con_n_dofs
                 con_n_dofs = _append_relevant_dof(
                     i_con, i_d, i_b, con_n_dofs, i_ab == 1 and is_same_root, constraint_state
                 )
+                if con_n_dofs > n_dofs_prev:
+                    constraint_state.screws_jac_free[i_s, i_d, i_b] = jac[5]
+                else:
+                    constraint_state.screws_jac_free[i_s, i_d, i_b] = (
+                        constraint_state.screws_jac_free[i_s, i_d, i_b] + jac[5]
+                    )
             i_l = dyn_info.links.parent_idx[I_l]
 
     # DOFs from two entities are only descending within each entity, while incremental Cholesky requires globally
@@ -2089,8 +2099,9 @@ def func_add_screw_axis_constraints(
     the limit rows to the inequality one, so this is called once per block.
 
     Each row combines the Jacobian of the free motion of the screw with its coupling row, both written by
-    func_equality_screw: the turn is cos * free - sin * coupling and the travel sin * free + cos * coupling, (cos, sin)
-    being the direction of the pitch (see func_screw_frame).
+    func_equality_screw, with (cos, sin) the direction of the pitch (see func_screw_frame). Rows measure the motion of
+    link1 relative to link2, so cos * free - sin * coupling is minus the turn rate of link2 and sin * free + cos *
+    coupling minus its travel rate.
     """
     EPS = rigid_info.EPS[None]
     n_dofs = dyn_state.dofs.ctrl_mode.shape[0]
@@ -2335,6 +2346,7 @@ def kernel_add_dynamic_constraint(
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
+    n_eq_data_tail: qd.template(),
 ) -> qd.i32:
     """Register a constraint between two links, taking their current relative pose as its reference.
 
@@ -2342,7 +2354,7 @@ def kernel_add_dynamic_constraint(
     [0:3]   the anchor, in the frame of link2
     [3:6]   the anchor, in the frame of link1
     [6:10]  the orientation of link2 relative to link1
-    [10:]   the type-specific entries of eq_data_tail, 8 with screw constraints enabled and 1 otherwise
+    [10:]   the n_eq_data_tail type-specific entries of eq_data_tail (see EQ_DATA_N_TAIL in array_class.py)
     Returns whether an env had no equality slot left.
     """
     has_overflow = gs.qd_bool(False)
@@ -2377,7 +2389,7 @@ def kernel_add_dynamic_constraint(
                 dyn_info.equalities.eq_data[i_e, i_b][i_3 + 3] = pos1[i_3]
             for i_4 in qd.static(range(4)):
                 dyn_info.equalities.eq_data[i_e, i_b][i_4 + 6] = relpose[i_4]
-            for i_t in qd.static(range(8 if rigid_config.enable_screw_constraints else 1)):
+            for i_t in qd.static(range(n_eq_data_tail)):
                 dyn_info.equalities.eq_data[i_e, i_b][i_t + 10] = eq_data_tail[i_t]
 
             dyn_info.equalities.sol_params[i_e, i_b] = qd.Vector(

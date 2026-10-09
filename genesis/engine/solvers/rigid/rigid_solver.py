@@ -3427,18 +3427,25 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         """
         if not self._options.enable_screw_constraints:
             gs.raise_exception("Screw constraints require 'RigidOptions(enable_screw_constraints=True)'.")
+        # The checks are written so that a NaN fails them.
         axis = np.asarray(axis, dtype=gs.np_float)
         axis_norm = np.linalg.norm(axis)
-        if axis.shape != (3,) or axis_norm < gs.EPS:
+        if axis.shape != (3,) or not axis_norm >= gs.EPS:
             gs.raise_exception(f"'axis' must be a non-zero 3D vector, got {axis}.")
-        limit_lower, limit_upper = (-np.inf, np.inf) if limit is None else limit
-        if limit_lower > limit_upper:
+        if np.isnan(pitch):
+            gs.raise_exception("'pitch' must be a number, got NaN.")
+        if pos is not None:
+            pos = np.asarray(pos, dtype=gs.np_float)
+            if pos.shape != (3,) or not np.isfinite(pos).all():
+                gs.raise_exception(f"'pos' must be a finite 3D point, got {pos}.")
+        limit = np.array((-np.inf, np.inf) if limit is None else limit, dtype=gs.np_float)
+        if limit.shape != (2,) or not limit[0] <= limit[1]:
             gs.raise_exception(f"'limit' must be ordered as (lower, upper), got {limit}.")
-        if frictionloss < 0.0:
+        if not frictionloss >= 0.0:
             gs.raise_exception(f"'frictionloss' must be non-negative, got {frictionloss}.")
 
-        # The pitch enters the constraint per radian, as the direction (cos, sin) of (1, pitch / 2pi), which stays finite
-        # for a zero pitch and an infinite one (see func_screw_frame).
+        # The pitch enters the constraint per radian, as the direction (cos, sin) of (1, pitch / 2pi), which stays
+        # finite for a zero pitch and an infinite one (see func_screw_frame).
         if np.isinf(pitch):
             pitch_cos, pitch_sin = 0.0, 1.0
         else:
@@ -3448,14 +3455,14 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         if pos is None:
             anchor_link_idx, anchor_pos = link2_idx, np.zeros(3, dtype=gs.np_float)
         else:
-            anchor_link_idx, anchor_pos = link1_idx, np.asarray(pos, dtype=gs.np_float)
+            anchor_link_idx, anchor_pos = link1_idx, pos
         self.constraint_solver.add_dynamic_constraint(
             gs.EQUALITY_TYPE.SCREW,
             link1_idx,
             link2_idx,
             anchor_link_idx,
             anchor_pos,
-            eq_data_tail=(*(axis / axis_norm), pitch_cos, pitch_sin, limit_lower, limit_upper, frictionloss),
+            eq_data_tail=(*(axis / axis_norm), pitch_cos, pitch_sin, *limit, frictionloss),
             envs_idx=envs_idx,
         )
 

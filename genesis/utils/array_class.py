@@ -2880,16 +2880,21 @@ class EqualitiesInfo:
     sol_params: qd.Tensor
 
 
+# Entries of the data of an equality past the 10 that the dynamic constraints share (see kernel_add_dynamic_constraint
+# in constraint/solver.py): 1 for the other equalities, and 8 for a screw constraint (see func_screw_frame).
+EQ_DATA_N_TAIL = 1
+EQ_DATA_N_TAIL_SCREW = 8
+
+
 def get_equalities_info(solver, is_active=True):
     shape = (solver.n_candidate_equalities_, solver._B) if is_active else ()
 
-    # The data of a screw constraint takes 18 entries (see func_screw_frame), that of the other equalities 11. Only the
-    # rigid solver, which is the active one, carries the screw option.
-    has_screw_data = is_active and solver._options.enable_screw_constraints
+    # Only the rigid solver, which is the active one, carries the screw option.
+    n_tail = EQ_DATA_N_TAIL_SCREW if is_active and solver._options.enable_screw_constraints else EQ_DATA_N_TAIL
     return EqualitiesInfo(
         eq_obj1id=V(dtype=gs.qd_int, shape=shape),
         eq_obj2id=V(dtype=gs.qd_int, shape=shape),
-        eq_data=V(dtype=gs.qd_vec18 if has_screw_data else gs.qd_vec11, shape=shape),
+        eq_data=V(dtype=qd.types.vector(10 + n_tail, gs.qd_float), shape=shape),
         eq_type=V(dtype=gs.qd_int, shape=shape),
         sol_params=V(dtype=gs.qd_vec7, shape=shape),
     )
