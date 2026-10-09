@@ -3420,7 +3420,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             The direction of the screw axis, in the frame of link1.
         pitch : float
             The travel of link2 along the axis per full turn about it [m], positive for a right-handed screw, as
-            thread pitches are quoted (3 mm for an M24 x 3 thread). Zero gives a revolute motion, and infinity a
+            thread pitches are given (3 mm for an M24 x 3 thread). Zero gives a revolute motion, and infinity a
             prismatic one.
         pos : None | array_like, optional
             A point of the screw axis, in the frame of link1. If None, the axis passes through the origin of link2.

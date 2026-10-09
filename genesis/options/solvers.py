@@ -676,6 +676,8 @@ class RigidOptions(GravityMixin, TimeBasedMixin):
             gs.raise_exception("The elliptic friction cone is not supported with the noslip solver.")
         if self.enable_rolling_friction and not self.enable_torsional_friction:
             gs.raise_exception("'enable_rolling_friction' requires 'enable_torsional_friction'.")
+        if self.enable_screw_constraints and self.max_dynamic_constraints == 0:
+            gs.raise_exception("'enable_screw_constraints' requires 'max_dynamic_constraints' to be positive.")
 
 
 class MPMOptions(GravityMixin, TimeBasedMixin):
