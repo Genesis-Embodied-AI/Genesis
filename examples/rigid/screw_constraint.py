@@ -1,8 +1,8 @@
 """Nut screwed onto a fixed bolt by a screw constraint, seated on the bolt head, then unscrewed off the tip.
 
 Without the viewer, this runs a scripted sequence. With it, the keyboard drives the nut:
-Up      - Apply a clockwise torque, seen from the tip of the bolt
-Down    - Apply a counterclockwise torque, seen from the tip of the bolt
+Up      - Turn the nut clockwise, seen from the tip of the bolt
+Down    - Turn the nut counterclockwise, seen from the tip of the bolt
 \\       - Reset the nut onto the bolt
 Esc     - Quit
 """
@@ -12,6 +12,7 @@ import math
 import os
 
 import genesis as gs
+import genesis.utils.geom as gu
 from genesis.vis.keybindings import Key, KeyAction, Keybind
 
 
@@ -19,7 +20,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     parser.add_argument("-g", "--gpu", action="store_true", help="Run on GPU instead of CPU")
-    parser.add_argument("--torque", type=float, default=0.003, help="Driving torque about the bolt [N*m]")
+    parser.add_argument("--torque", type=float, default=0.003, help="Maximum driving torque about the nut axis [N*m]")
     args = parser.parse_args()
 
     gs.init(backend=gs.gpu if args.gpu else gs.cpu)
@@ -81,13 +82,13 @@ def main():
         )
 
     add_screw()
-    is_screwed, is_running, is_reset_requested, torque = True, True, False, 0.0
+    is_screwed, is_running, is_reset_requested, spin_direction = True, True, False, 0
 
     # Keybind callbacks run on the viewer thread, so they only set the request that the main loop carries out between
-    # steps. The torque is applied about the local z axis of the nut, along which a positive turn moves it to the tip.
+    # steps. A positive turn about the local z axis of the nut moves it towards the tip.
     def drive(direction):
-        nonlocal torque
-        torque = direction * args.torque
+        nonlocal spin_direction
+        spin_direction = direction
 
     def request_reset():
         nonlocal is_reset_requested
@@ -112,15 +113,21 @@ def main():
             gs.logger.info(f"step {i_step:4d}  released past the tip, the nut is free")
         elif i_step % 25 == 0:
             gs.logger.info(f"step {i_step:4d}  travel = {travel * 1e3:6.2f} mm  z = {nut.get_pos()[2] * 1e3:6.2f} mm")
+        # The nut is turned like a hand would: towards two turns a second, with a torque proportional to the spin rate
+        # error, capped at the maximum torque, and with no torque at all when no direction is asked.
+        torque = 0.0
+        if spin_direction != 0:
+            spin_rate = gu.inv_transform_by_quat(nut.get_ang(), nut.get_quat())[2]
+            torque = min(max(2.0e-3 * (spin_direction * 4.0 * math.pi - spin_rate), -args.torque), args.torque)
         rigid.apply_links_external_wrench(torque=(0.0, 0.0, torque), links_idx=(nut_idx,), local=True)
         scene.step()
 
     if args.vis:
         scene.viewer.register_keybinds(
-            Keybind("torque_clockwise", Key.UP, KeyAction.PRESS, callback=drive, args=(-1.0,)),
-            Keybind("torque_clockwise_stop", Key.UP, KeyAction.RELEASE, callback=drive, args=(0.0,)),
-            Keybind("torque_counterclockwise", Key.DOWN, KeyAction.PRESS, callback=drive, args=(1.0,)),
-            Keybind("torque_counterclockwise_stop", Key.DOWN, KeyAction.RELEASE, callback=drive, args=(0.0,)),
+            Keybind("turn_clockwise", Key.UP, KeyAction.PRESS, callback=drive, args=(-1,)),
+            Keybind("turn_clockwise_stop", Key.UP, KeyAction.RELEASE, callback=drive, args=(0,)),
+            Keybind("turn_counterclockwise", Key.DOWN, KeyAction.PRESS, callback=drive, args=(1,)),
+            Keybind("turn_counterclockwise_stop", Key.DOWN, KeyAction.RELEASE, callback=drive, args=(0,)),
             Keybind("reset", Key.BACKSLASH, KeyAction.RELEASE, callback=request_reset),
             Keybind("quit", Key.ESCAPE, KeyAction.RELEASE, callback=stop),
         )
@@ -130,14 +137,14 @@ def main():
             i_step += 1
     else:
         # Screw the nut down onto the head, hold it seated for half a second, then unscrew it until it leaves the thread.
-        horizon = 500 if "PYTEST_VERSION" not in os.environ else 5
-        drive(-1.0)
+        horizon = 1000 if "PYTEST_VERSION" not in os.environ else 5
+        drive(-1)
         n_seated = 0
         for i_step in range(horizon):
             if is_screwed and nut.get_pos()[0] - nut_x0 < travel_seat + 1e-4:
                 n_seated += 1
                 if n_seated == 50:
-                    drive(1.0)
+                    drive(1)
             step(i_step)
 
 
