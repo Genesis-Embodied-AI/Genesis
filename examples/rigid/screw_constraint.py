@@ -112,8 +112,7 @@ def main():
             gs.logger.info(f"step {i_step:4d}  released past the tip, the nut is free")
         elif i_step % 25 == 0:
             gs.logger.info(f"step {i_step:4d}  travel = {travel * 1e3:6.2f} mm  z = {nut.get_pos()[2] * 1e3:6.2f} mm")
-        if is_screwed:
-            rigid.apply_links_external_wrench(torque=(0.0, 0.0, torque), links_idx=(nut_idx,), local=True)
+        rigid.apply_links_external_wrench(torque=(0.0, 0.0, torque), links_idx=(nut_idx,), local=True)
         scene.step()
 
     if args.vis:
