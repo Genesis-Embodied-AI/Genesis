@@ -1036,6 +1036,11 @@ class ConstraintState:
     noslip_rows_color: qd.Tensor
     noslip_islands_n_colors: qd.Tensor
     noslip_blocks_n_colors: qd.Tensor
+    # Scratch of the screw constraints (empty when they are disabled), one entry per dynamic equality slot: the Jacobian
+    # of the free motion of the screw, and the row of its coupling constraint. The equality rows write both, and the
+    # friction and limit rows combine them (see func_add_screw_axis_constraints in constraint/solver.py).
+    screws_jac_free: qd.Tensor
+    screws_i_con: qd.Tensor
 
 
 def get_constraint_state(constraint_solver, solver, collider):
@@ -1222,6 +1227,16 @@ def get_constraint_state(constraint_solver, solver, collider):
             dtype=gs.qd_int,
             shape=maybe_shape((solver.n_dofs_, _B), is_noslip_cooperative),
             layout=dof_vec_layout if is_noslip_cooperative else None,
+        ),
+        screws_jac_free=V(
+            dtype=gs.qd_float,
+            shape=maybe_shape(
+                (solver._options.max_dynamic_constraints, solver.n_dofs_, _B), solver._options.enable_screw_constraints
+            ),
+        ),
+        screws_i_con=V(
+            dtype=gs.qd_int,
+            shape=maybe_shape((solver._options.max_dynamic_constraints, _B), solver._options.enable_screw_constraints),
         ),
         # Allocated last to preserve the allocation order of the tensors above (see the warning at the top).
         island=get_island_state(solver, collider, len_constraints_),
