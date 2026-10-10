@@ -700,14 +700,7 @@ def test_box_contact_true_penetration(show_viewer, tol):
 
 @pytest.mark.slow  # ~150s
 @pytest.mark.required
-@pytest.mark.parametrize(
-    "detection",
-    [
-        pytest.param("mpr", marks=pytest.mark.xfail(reason="Lets some stacks of boxes drift.")),
-        pytest.param("gjk", marks=pytest.mark.xfail(reason="Lets some stacks of boxes drift.")),
-        "box_box",
-    ],
-)
+@pytest.mark.parametrize("detection", ["mpr", "gjk", "box_box"])
 def test_box_stacks_stability(detection, show_viewer, tol):
     # Piles of boxes of random shapes, each lying on a random face at a random yaw with a tiny tilt, on fixed bases at
     # several scales, restacked in a new order and pose after every reset. Each pile is statically stable: at every
@@ -1607,8 +1600,11 @@ def test_contact_pruning_degenerated_hull(model_name, xml_path, show_viewer):
             "bowls", 1_000, None, "max number of post-pruning contact points", None, marks=pytest.mark.required
         ),
         # Candidate contact buffer overflow. The explicit contact budget is clamped down to the buffer size, so only
-        # the buffer itself can overflow. Its phase is left unpinned, for the same reason as above.
-        ("bowls", 150, 1_000, "max number of candidate contact points", None),
+        # the buffer itself can overflow. Its phase is left unpinned, for the same reason as above. Debug mode is
+        # forced, as fast-math moves the candidate count of the steps after the build across the buffer size.
+        pytest.param(
+            "bowls", 150, 1_000, "max number of candidate contact points", None, marks=pytest.mark.debug(True)
+        ),
         # Broad phase candidate pair overflow on the step taken by the build, the bowls starting fully overlapping.
         pytest.param(
             "bowls", 20, None, "max number of broad phase candidate contact pairs", True, marks=pytest.mark.required
