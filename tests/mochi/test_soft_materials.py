@@ -42,16 +42,22 @@ def _kernel_stiffness(
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("model", [ELASTIC_MODEL.STABLE_NEOHOOKEAN, ELASTIC_MODEL.STVK, ELASTIC_MODEL.LINEAR])
 def test_tet_stiffness_blocks_match_tangent_contraction(model):
-    # Deformation gradients in tension, compression, shear and inversion: the direct and the projected eigenmode paths
-    # of the neo-Hookean tangent are both exercised.
+    # Deformation gradients in tension, compression, shear, inversion, rotation, and squashing along one axis (two equal
+    # singular values, where the decision of the positive semi-definite oracle is the most sensitive to rounding): the
+    # direct and the projected eigenmode paths of the neo-Hookean tangent are both exercised.
     rng = np.random.default_rng(3)
-    n = 64
+    n = 96
     F = np.tile(np.eye(3), (n, 1, 1))
-    F[: n // 4] *= rng.uniform(1.05, 1.6, (n // 4, 1, 1))
-    F[n // 4 : n // 2] *= rng.uniform(0.3, 0.9, (n // 4, 1, 1))
-    F[n // 2 : 3 * n // 4] += 0.4 * rng.standard_normal((n // 4, 3, 3))
-    F[3 * n // 4 :] = rng.standard_normal((n - 3 * n // 4, 3, 3))
-    F[3 * n // 4 :, 0] *= -1.0
+    F[:16] *= rng.uniform(1.05, 1.6, (16, 1, 1))
+    F[16:32] *= rng.uniform(0.3, 0.9, (16, 1, 1))
+    F[32:48] += 0.4 * rng.standard_normal((16, 3, 3))
+    F[48:64] = rng.standard_normal((16, 3, 3))
+    F[48:64, 0] *= -1.0
+    rotations, _ = np.linalg.qr(rng.standard_normal((32, 3, 3)))
+    rotations *= np.sign(np.linalg.det(rotations))[:, None, None]
+    F[64:80] = rotations[:16]
+    stretches = np.stack((np.full(16, 1.2), np.full(16, 1.2), rng.uniform(0.3, 0.9, 16)), axis=-1)
+    F[80:96] = rotations[16:] * stretches[:, None]
     Dm_inv = rng.standard_normal((n, 3, 3)) * 5.0
     K_blocks = np.zeros((n, 12, 12))
     K_contracted = np.zeros((n, 12, 12))
@@ -59,3 +65,4 @@ def test_tet_stiffness_blocks_match_tangent_contraction(model):
     scale = np.abs(K_contracted).max(axis=(1, 2), keepdims=True)
     np.testing.assert_allclose(K_blocks / scale, K_contracted / scale, rtol=0.0, atol=1e-10)
     np.testing.assert_allclose(K_blocks / scale, np.swapaxes(K_blocks, 1, 2) / scale, rtol=0.0, atol=1e-10)
+    assert np.linalg.eigvalsh(K_blocks / scale).min() > -1e-10

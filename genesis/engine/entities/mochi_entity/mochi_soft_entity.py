@@ -348,6 +348,9 @@ class MochiSoftEntity(Entity):
         elems = np.asarray(elems, dtype=gs.np_int)
         if len(verts) == 0 or len(elems) == 0:
             gs.raise_exception("Entity has no tetrahedra.")
+        # A vertex no element references carries no mass and no stiffness, so the dense island solve would be singular.
+        if len(np.unique(elems)) < len(verts):
+            gs.raise_exception("Every mesh vertex must belong to at least one element.")
         self._instantiate_verts_COM = verts.mean(axis=0)
         morph_quat = np.array(self._morph.quat, dtype=gs.np_float)
         init_quat = gu.transform_quat_by_quat(np.array(self._morph.offset_quat, dtype=gs.np_float), morph_quat)

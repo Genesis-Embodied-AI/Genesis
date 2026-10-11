@@ -1001,7 +1001,7 @@ class MochiOptions(GravityMixin, TimeBasedMixin):
         Largest total number of degrees of freedom for which the dense matrix of the system is allocated (memory
         quadratic in this number per environment); beyond it every environment is solved with PCG. Defaults to 256.
     n_pcg_iterations : int, optional
-        Maximum number of conjugate gradient iterations. If None, the number of degrees of freedom capped at 1000.
+        Maximum number of conjugate gradient iterations. If None, the number of degrees of freedom capped at 500.
         Defaults to None.
     pcg_rel_tol : float, optional
         Relative tolerance of the conjugate gradient solve. Ignored under the "adaptive" tolerance strategy.

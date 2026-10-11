@@ -181,7 +181,6 @@ def func_zero_assembly(
 ):
     n_dofs = mochi_state.res.shape[0]
     n_links = mochi_state.H_diag.shape[0]
-    max_pairs = contact_state.pair_link_a.shape[0]
     max_hits = hit_readback.hit_sample.shape[0]
     _B = mochi_state.is_active.shape[0]
 
@@ -217,17 +216,6 @@ def func_zero_assembly(
             i_b = envs[i_slot] if qd.static(not per_env) else i_b_env
             hit_readback.hit_geom_a[i_h, i_b] = -1
             hit_readback.hit_geom_b[i_h, i_b] = -1
-    qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
-    for i_p, i_slot in qd.ndrange(max_pairs, n_envs[None]) if qd.static(not per_env) else qd.ndrange(max_pairs, 1):
-        i_b = envs[i_slot] if qd.static(not per_env) else i_b_env
-        if func_is_env_active(i_b, mochi_state, skip_ls_done) and i_p < contact_state.n_pairs[i_b]:
-            contact_state.acc_f[i_p, i_b] = qd.Vector.zero(gs.qd_float, 3)
-            contact_state.acc_q[i_p, i_b] = qd.Vector.zero(gs.qd_float, 3)
-            contact_state.acc_D[i_p, i_b] = qd.Vector.zero(gs.qd_float, 6)
-            contact_state.acc_SD[i_p, i_b] = qd.Matrix.zero(gs.qd_float, 3, 3)
-            contact_state.acc_SDS[i_p, i_b] = qd.Vector.zero(gs.qd_float, 6)
-            contact_state.acc_obj[i_p, i_b] = 0.0
-            contact_state.n_hits[i_p, i_b] = 0
 
 
 @qd.kernel
@@ -288,10 +276,15 @@ def func_conservative_bounds(
         aabb_max = mochi_info.links.samples_aabb_max[i_l]
         pad = margin
         if mochi_info.links.is_dynamic[i_l]:
+            # The stage-start velocity is that of the center of mass, so the lever arm is the farthest sample-box
+            # corner from it, and the finite-rotation velocity gradient adds its symmetric part to the spin.
+            I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
+            com = dyn_info.links.inertial_pos[I_l]
+            radius = qd.max(qd.abs(aabb_min - com), qd.abs(aabb_max - com)).norm()
             vel = mochi_state.links_vel_stage_start[i_l, i_b]
             omega = mochi_state.links_ang_stage_start[i_l, i_b]
-            radius = qd.max(aabb_min.norm(), aabb_max.norm())
-            speed = vel.norm() + omega.norm() * radius
+            vsym = mochi_state.links_vsym_stage_start[i_l, i_b]
+            speed = vel.norm() + (omega.norm() + vsym.norm()) * radius
             speed = CONSERVATIVE_SPEED_SCALE * speed + CONSERVATIVE_MAX_ACCEL * dt
             if mochi_info.links.has_gravity[i_l]:
                 speed += mochi_info.gravity[i_b].norm() * dt
@@ -450,8 +443,11 @@ def func_contact_eval_sample(
     record: qd.template(),
     errno: qd.Tensor,
 ):
-    """Evaluate one sample of a candidate pair against its collider at the current iterate and accumulate the pair's
-    force, torque and Hessian sums."""
+    """Evaluate one sample of a candidate pair against its collider at the current iterate.
+
+    Returns whether the sample is in contact, and its weighted energy, force, force derivative and position, all in the
+    collider frame, where the pair sums them before a single rotation to the world frame (see func_contact_eval).
+    """
     max_hits = hit_readback.hit_sample.shape[0]
     EPS = mochi_info.EPS[None]
     i_ga = mochi_info.samples.geom_idx[i_s]
@@ -479,6 +475,9 @@ def func_contact_eval_sample(
     pos_geom = gu.qd_inv_transform_by_trans_quat(pos, pos_g, quat_g)
     d = gs.qd_float(0.0)
     grad = qd.Vector([1.0, 0.0, 0.0], dt=gs.qd_float)
+    w_energy = gs.qd_float(0.0)
+    w_force_geom = qd.Vector.zero(gs.qd_float, 3)
+    w_D_geom = qd.Matrix.zero(gs.qd_float, 3, 3)
     if is_hit:
         is_valid, d_query, grad_query = query_collider(
             i_gb, pos_geom, dyn_info.geoms, mochi_info.geoms, sdf_info, mochi_config
@@ -534,23 +533,13 @@ def func_contact_eval_sample(
         )
 
         w = mochi_info.samples.weight[i_s]
-        R_g = gu.qd_quat_to_R(quat_g, EPS)
-        force = R_g @ force_geom
-        r_b = pos - dyn_state.links.pos[i_lb, i_b]
-        qd.atomic_add(contact_state.acc_f[i_p, i_b], w * force)
-        qd.atomic_add(contact_state.acc_q[i_p, i_b], w * r_b.cross(force))
-        qd.atomic_add(contact_state.acc_obj[i_p, i_b], w * energy)
-        qd.atomic_add(contact_state.n_hits[i_p, i_b], 1)
-        # The three Hessian sums are read by kernel_pairs_to_blocks under the same flag, and they carry most of the
-        # atomic traffic of this kernel: the line search re-evaluates contact for the residual alone.
-        if assem_dres:
-            D = -w * (R_g @ dforce_geom @ R_g.transpose())
-            S_b = skew(r_b)
-            qd.atomic_add(contact_state.acc_D[i_p, i_b], func_mat3_to_sym6(D))
-            qd.atomic_add(contact_state.acc_SD[i_p, i_b], S_b @ D)
-            qd.atomic_add(contact_state.acc_SDS[i_p, i_b], func_mat3_to_sym6(S_b @ D @ S_b))
+        w_energy = w * energy
+        w_force_geom = w * force_geom
+        w_D_geom = -w * dforce_geom
 
         if qd.static(record):
+            R_g = gu.qd_quat_to_R(quat_g, EPS)
+            force = R_g @ force_geom
             qd.atomic_add(dyn_state.links.contact_force[i_la, i_b], w * force)
             qd.atomic_add(dyn_state.links.contact_force[i_lb, i_b], -w * force)
             i_h = qd.atomic_add(hit_readback.n_hits_total[i_b], 1)
@@ -567,6 +556,8 @@ def func_contact_eval_sample(
                 hit_readback.hit_weight[i_h, i_b] = w
             else:
                 qd.atomic_or(errno[i_b], array_class.ErrorCode.OVERFLOW_MOCHI_CONTACTS)
+
+    return is_hit, w_energy, w_force_geom, w_D_geom, pos_geom
 
 
 @qd.func
@@ -611,6 +602,15 @@ def func_contact_eval(
         pos_g = dyn_state.geoms.pos[i_gb, i_b]
         quat_g = dyn_state.geoms.quat[i_gb, i_b]
         band = mochi_info.geoms.penalty_threshold[i_gb]
+        # The lever arms of the torque sums are taken about the origin of link b, expressed in the collider frame.
+        origin_b_geom = gu.qd_inv_transform_by_trans_quat(dyn_state.links.pos[i_lb, i_b], pos_g, quat_g)
+        n_hits = 0
+        sum_energy = gs.qd_float(0.0)
+        sum_f = qd.Vector.zero(gs.qd_float, 3)
+        sum_q = qd.Vector.zero(gs.qd_float, 3)
+        sum_D = qd.Matrix.zero(gs.qd_float, 3, 3)
+        sum_SD = qd.Matrix.zero(gs.qd_float, 3, 3)
+        sum_SDS = qd.Matrix.zero(gs.qd_float, 3, 3)
         i_node = mochi_info.links.tree_start[i_la]
         i_node_end = mochi_info.links.tree_end[i_la]
         while i_node < i_node_end:
@@ -631,7 +631,7 @@ def func_contact_eval(
                 if mochi_info.samples.tree_is_leaf[i_node] != 0:
                     i_s_start = mochi_info.samples.tree_first[i_node]
                     for i_s in range(i_s_start, i_s_start + mochi_info.samples.tree_count[i_node]):
-                        func_contact_eval_sample(
+                        is_hit, w_energy, w_force_geom, w_D_geom, pos_geom = func_contact_eval_sample(
                             i_p,
                             i_s,
                             i_b,
@@ -651,7 +651,30 @@ def func_contact_eval(
                             record,
                             errno,
                         )
+                        if is_hit:
+                            r_b = pos_geom - origin_b_geom
+                            n_hits += 1
+                            sum_energy += w_energy
+                            sum_f += w_force_geom
+                            sum_q += r_b.cross(w_force_geom)
+                            # The Hessian sums are read by kernel_pairs_to_blocks under the same flag: the line search
+                            # re-evaluates contact for the residual alone.
+                            if assem_dres:
+                                S_b = skew(r_b)
+                                sum_D += w_D_geom
+                                sum_SD += S_b @ w_D_geom
+                                sum_SDS += S_b @ w_D_geom @ S_b
                 i_node = i_node + 1
+        # skew(R r) = R skew(r) R^T, so every sum maps to the world frame by one rotation.
+        R_g = gu.qd_quat_to_R(quat_g, mochi_info.EPS[None])
+        contact_state.n_hits[i_p, i_b] = n_hits
+        contact_state.acc_obj[i_p, i_b] = sum_energy
+        contact_state.acc_f[i_p, i_b] = R_g @ sum_f
+        contact_state.acc_q[i_p, i_b] = R_g @ sum_q
+        if assem_dres:
+            contact_state.acc_D[i_p, i_b] = func_mat3_to_sym6(R_g @ sum_D @ R_g.transpose())
+            contact_state.acc_SD[i_p, i_b] = R_g @ sum_SD @ R_g.transpose()
+            contact_state.acc_SDS[i_p, i_b] = func_mat3_to_sym6(R_g @ sum_SDS @ R_g.transpose())
 
 
 @qd.kernel

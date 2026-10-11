@@ -55,17 +55,34 @@ def test_pendulum_period_and_energy(pendulum_urdf_path, integrator, show_viewer)
         gs.morphs.URDF(file=pendulum_urdf_path, pos=(0.0, 0.0, 2.0), fixed=True, default_armature=armature),
         material=gs.materials.Mochi.Rigid(),
     )
+    # A pendulum turned so that its pivot axis is vertical spins freely under gravity, its rotor inertia dominating.
+    spinner = scene.add_entity(
+        gs.morphs.URDF(
+            file=pendulum_urdf_path,
+            pos=(3.0, 0.0, 2.0),
+            euler=(0.0, 90.0, 0.0),
+            fixed=True,
+            default_armature=100.0,
+        ),
+        material=gs.materials.Mochi.Rigid(),
+    )
     scene.build()
-    assert scene.mochi_solver.n_dofs == 1
+    assert scene.mochi_solver.n_dofs == 2
 
     pendulum.set_dofs_position([theta_0])
+    # Half a radian per step, where a sine-based joint rate would lose 4% at every step.
+    spin_rate = 0.5 / dt
+    spinner.set_dofs_velocity([spin_rate])
     # Period of a point mass on a massless arm with rotor inertia, including the first amplitude correction.
     period = 2.0 * math.pi * math.sqrt((1.0 + armature) / gravity) * (1.0 + theta_0**2 / 16.0)
     n_periods = 5
     angles = []
-    for _ in range(round(n_periods * period / dt)):
+    for i_step in range(round(n_periods * period / dt)):
         scene.step()
         angles.append(tensor_to_array(pendulum.get_dofs_position())[0])
+        if i_step == 9:
+            # The spinner keeps its rate up to the rotational dissipation of the link inertia, ~(w dt)^2 per step.
+            assert 0.97 * spin_rate < tensor_to_array(spinner.get_dofs_velocity())[0] <= spin_rate
     angles = np.array(angles)
     crossings = np.flatnonzero(np.diff(np.sign(angles)))
     periods = 2.0 * dt * np.diff(crossings)
@@ -221,4 +238,6 @@ def test_double_pendulum_matches_mochi(double_pendulum_urdf_path, show_viewer):
         angles.append(tensor_to_array(pendulum.get_dofs_position()))
         velocities.append(tensor_to_array(pendulum.get_dofs_velocity()))
     assert_allclose(angles, reference["angles"], atol=1e-7, rtol=0.0)
-    assert_allclose(velocities, reference["velocities"], atol=1e-6, rtol=0.0)
+    # Revolute joint velocities are exact angle rates, as mochi reports them since it dropped the sine-based finite
+    # difference sin(dq) / dt that the reference recorded.
+    assert_allclose(velocities, np.arcsin(reference["velocities"] * dt) / dt, atol=1e-6, rtol=0.0)

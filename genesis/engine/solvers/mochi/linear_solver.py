@@ -51,9 +51,13 @@ def func_add_projected_block(
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
     is_symmetric_pair: qd.template(),
+    is_self_block: qd.template(),
 ):
-    """H_dense += J_a^T block J_b over the ancestor degrees of freedom of links a and b (and the transpose block when
-    the two links differ)."""
+    """H_dense += J_a^T block J_b over the ancestor degrees of freedom of links a and b.
+
+    With is_symmetric_pair, the transpose block is added too, for two different links. With is_self_block, a and b are
+    one link and the block is symmetric, so only the lower triangle is projected and mirrored.
+    """
     i_a = i_la
     while i_a != -1:
         I_a = [i_a, i_b] if qd.static(rigid_config.batch_links_info) else i_a
@@ -65,10 +69,17 @@ def func_add_projected_block(
             while i_c != -1:
                 I_c = [i_c, i_b] if qd.static(rigid_config.batch_links_info) else i_c
                 for j_d in range(dyn_info.links.dof_start[I_c], dyn_info.links.dof_end[I_c]):
-                    value = func_jacobian_column_dot(i_lb, j_d, i_b, row, dyn_state)
-                    qd.atomic_add(H_dense[i_b, i_d, j_d], value)
-                    if qd.static(is_symmetric_pair):
-                        qd.atomic_add(H_dense[i_b, j_d, i_d], value)
+                    if qd.static(is_self_block):
+                        if j_d <= i_d:
+                            value = func_jacobian_column_dot(i_lb, j_d, i_b, row, dyn_state)
+                            qd.atomic_add(H_dense[i_b, i_d, j_d], value)
+                            if j_d < i_d:
+                                qd.atomic_add(H_dense[i_b, j_d, i_d], value)
+                    else:
+                        value = func_jacobian_column_dot(i_lb, j_d, i_b, row, dyn_state)
+                        qd.atomic_add(H_dense[i_b, i_d, j_d], value)
+                        if qd.static(is_symmetric_pair):
+                            qd.atomic_add(H_dense[i_b, j_d, i_d], value)
                 i_c = dyn_info.links.parent_idx[I_c]
         i_a = dyn_info.links.parent_idx[I_a]
 
@@ -117,7 +128,16 @@ def func_condense_dense(
         if not (mochi_state.is_active[i_b] and island_state.uses_dense[i_b]) or not mochi_info.links.is_dynamic[i_l]:
             continue
         func_add_projected_block(
-            i_l, i_l, i_b, mochi_state.H_diag[i_l, i_b], mochi_state.H_dense, dyn_state, dyn_info, rigid_config, False
+            i_l,
+            i_l,
+            i_b,
+            mochi_state.H_diag[i_l, i_b],
+            mochi_state.H_dense,
+            dyn_state,
+            dyn_info,
+            rigid_config,
+            is_symmetric_pair=False,
+            is_self_block=True,
         )
 
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
@@ -132,7 +152,16 @@ def func_condense_dense(
         if not (mochi_info.links.is_dynamic[i_la] and mochi_info.links.is_dynamic[i_lb]):
             continue
         func_add_projected_block(
-            i_la, i_lb, i_b, mochi_state.H_off[i_p, i_b], mochi_state.H_dense, dyn_state, dyn_info, rigid_config, True
+            i_la,
+            i_lb,
+            i_b,
+            mochi_state.H_off[i_p, i_b],
+            mochi_state.H_dense,
+            dyn_state,
+            dyn_info,
+            rigid_config,
+            is_symmetric_pair=True,
+            is_self_block=False,
         )
 
     if qd.static(has_equalities):
@@ -166,7 +195,8 @@ def func_condense_dense(
                         dyn_state,
                         dyn_info,
                         rigid_config,
-                        True,
+                        is_symmetric_pair=True,
+                        is_self_block=False,
                     )
 
 

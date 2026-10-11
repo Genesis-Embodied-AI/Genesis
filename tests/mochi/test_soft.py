@@ -40,6 +40,12 @@ def test_soft_cube_drop_matches_mochi(tmp_path, show_viewer):
     dt = float(reference["dt"])
     verts = mochi_to_genesis(reference["rest_positions"])
     node_path = _write_tet_files(tmp_path / "soft_cube", verts, reference["tets"])
+    stray_node_path = _write_tet_files(
+        tmp_path / "stray_node", np.concatenate((verts, verts[:1] + 1.0)), reference["tets"]
+    )
+    with pytest.raises(gs.GenesisException, match="must belong to at least one element"):
+        gs.Scene().add_entity(gs.morphs.Mesh(file=stray_node_path), material=gs.materials.Mochi.Elastic())
+
     scene = _mochi_scene(show_viewer, dt, n_newton_iterations=8, newton_abs_tol=1e-10, newton_rel_tol=1e-12)
     scene.add_entity(gs.morphs.Plane(), material=gs.materials.Mochi.Rigid(friction=0.5))
     cube = scene.add_entity(

@@ -553,9 +553,18 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
 
     def _resolve_collider_type(self, geom):
         collider_type = geom.entity.material.collider_type
-        if collider_type != "auto":
-            return _COLLIDER_TYPE_BY_NAME[collider_type]
-        return _AUTO_COLLIDER_TYPE_BY_GEOM_TYPE.get(geom.type, COLLIDER_TYPE.GRID)
+        auto_collider_type = _AUTO_COLLIDER_TYPE_BY_GEOM_TYPE.get(geom.type, COLLIDER_TYPE.GRID)
+        if collider_type == "auto":
+            return auto_collider_type
+        resolved_collider_type = _COLLIDER_TYPE_BY_NAME[collider_type]
+        # An analytic field reads the primitive dimensions of the geom, which only the matching primitive holds.
+        is_analytic = resolved_collider_type in _AUTO_COLLIDER_TYPE_BY_GEOM_TYPE.values()
+        if is_analytic and resolved_collider_type != auto_collider_type:
+            gs.raise_exception(
+                f"Collider type '{collider_type}' requires a {collider_type} primitive, got geom type {geom.type}. "
+                "Use 'sdf' for any other geometry."
+            )
+        return resolved_collider_type
 
     def _init_mochi(self):
         options = self._options
@@ -685,7 +694,7 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         )
         self._n_pcg_iterations = options.n_pcg_iterations
         if self._n_pcg_iterations is None:
-            self._n_pcg_iterations = min(max(1, self.n_dofs_total), 1000)
+            self._n_pcg_iterations = min(max(1, self.n_dofs_total), 500)
 
         self._resolve_soft_collider_flags()
         self.mochi_config = MochiStaticConfig(
@@ -919,16 +928,6 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         bins_per_item = options.spatial_hash_bins_per_item
         # every item occupies up to eight entries (the cells its bounds overlap)
         self.n_pc_bins_ = _next_power_of_two(bins_per_item * 8 * self.n_soft_verts) if self._has_pc_colliders else 1
-        # The hash cell of the spheres is the largest diameter of the contact range of a point-cloud collider (radius
-        # plus penalty threshold, as mochi's, with a rounding margin): the range of a sphere then overlaps at most two
-        # cells per axis, and a sample within it lies in one of them.
-        pc_bands = [
-            (e.rod_radius if e.is_rod else e.material.collider_radius) + e.material.penalty_threshold
-            for e in entities
-            if self._soft_collider_kind(e) == COLLIDER_TYPE.POINT_CLOUD
-        ]
-        self._pc_hash_cell = 2.0 * max(pc_bands) * (1.0 + 1e-3) if pc_bands else 1.0
-
         band = self._rod_band_layout()
         self.n_band_rows_ = max(1, len(band.rows_dof))
         csr = self._soft_csr_layout(
@@ -1390,6 +1389,28 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             "origin": tuple(float(x) for x in lower),
             "cell": tuple(float(c) for c in cell),
         }
+
+    @property
+    def _pc_hash_cell(self):
+        """Hash cell size of the point-cloud collider spheres.
+
+        The cell is the largest diameter of the contact range of a point-cloud collider (radius plus penalty threshold,
+        as mochi's, with a rounding margin): the range of a sphere then overlaps at most two cells per axis, and a
+        sample within it lies in one of them. It follows the penalty thresholds changed after the build.
+        """
+        pc_bands = [
+            (entity.rod_radius if entity.is_rod else entity.material.collider_radius)
+            + entity.material.penalty_threshold
+            for entity in self._soft_entities
+            if self._soft_collider_kind(entity) == COLLIDER_TYPE.POINT_CLOUD
+        ]
+        if not pc_bands:
+            return 1.0
+        if min(pc_bands) <= 0.0:
+            gs.raise_exception(
+                "The contact range of a shell or rod (collider radius plus penalty threshold) must be positive."
+            )
+        return 2.0 * max(pc_bands) * (1.0 + 1e-3)
 
     @staticmethod
     def _soft_collider_kind(entity):
@@ -2871,7 +2892,9 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             else:
                 setattr(material, key, value)
             values.append(float(value))
-        kernel_soft_set_entity_contact_params(entity.idx_in_solver, np.array(values, dtype=gs.np_float), self.soft_info)
+        kernel_soft_set_entity_contact_params(
+            entity.idx_in_solver, self._pc_hash_cell, np.array(values, dtype=gs.np_float), self.soft_info
+        )
         self._is_contacts_recorded = False
 
 

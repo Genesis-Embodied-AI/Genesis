@@ -93,7 +93,16 @@ def test_point_cloud_hash_matches_brute_force(tmp_path, show_viewer):
     assert hits_hash[0] != hits_hash[1]
     # Every point-cloud contact has a deformable sample on the colliding side.
     assert {kind for kind, _, _ in hits_hash[0]} == {1}
-    del lower, upper
+
+    # A contact range widened after the build, beyond the hash cell sized at build time, still finds every contact.
+    upper.set_contact_params(penalty_threshold=0.03)
+    hits_wide_hash = _point_cloud_hits(solver)
+    solver.soft_info.pc_hash_cell.fill(1e3)
+    hits_wide_brute = _point_cloud_hits(solver)
+    for i_b in range(2):
+        assert len(hits_wide_brute[i_b]) > len(hits_brute[i_b])
+        assert hits_wide_hash[i_b] == hits_wide_brute[i_b]
+    del lower
 
 
 @pytest.mark.precision("64")

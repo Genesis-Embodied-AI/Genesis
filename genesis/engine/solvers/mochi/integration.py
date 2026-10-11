@@ -293,10 +293,9 @@ def func_post_stage(
                 dyn_state.dofs.vel[dof_start + rot_offset + k, i_b] = rotvec[k] * sinc / h
         else:
             for i_q_ in range(q_end - q_start):
+                # Exact angle rate for revolute joints: the joint armature compares the exact angle difference with
+                # this stage-start velocity, so a sine-based rate would decay by sinc(h * rate) at every step.
                 dq = rigid_info.qpos[q_start + i_q_, i_b] - mochi_state.qpos_stage_start[q_start + i_q_, i_b]
-                if joint_type == gs.JOINT_TYPE.REVOLUTE:
-                    # Sine-based finite difference of the joint rotation, consistent with the angular velocities.
-                    dq = qd.sin(dq)
                 dyn_state.dofs.vel[dof_start + i_q_, i_b] = dq / h
 
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))

@@ -54,21 +54,6 @@ def func_cofactor(F):
 
 
 @qd.func
-def func_max_eigenvalue_sym3(G):
-    """Largest eigenvalue of a symmetric 3x3 matrix (trigonometric closed form)."""
-    q = G.trace() / 3.0
-    p1 = G[0, 1] ** 2 + G[0, 2] ** 2 + G[1, 2] ** 2
-    p2 = (G[0, 0] - q) ** 2 + (G[1, 1] - q) ** 2 + (G[2, 2] - q) ** 2 + 2.0 * p1
-    lam_max = q
-    if p2 > 0.0:
-        p = qd.sqrt(p2 / 6.0)
-        B = (G - q * qd.Matrix.identity(gs.qd_float, 3)) / p
-        r = qd.math.clamp(0.5 * B.determinant(), -1.0, 1.0)
-        lam_max = q + 2.0 * p * qd.cos(qd.acos(r) / 3.0)
-    return lam_max
-
-
-@qd.func
 def func_rotation_variant_svd(F):
     """SVD F = U diag(sigma) V^T with det(U) >= 0 and det(V) >= 0, so that sigma[2] < 0 exactly when F is inverted."""
     U, S, V = qd.svd(F)
@@ -88,7 +73,7 @@ def func_rotation_variant_svd(F):
 def func_tangent_from_eigensystem(U, V, A, twist, flip, eps, project: qd.template()):
     """Assemble the 9x9 tangent from the scaling matrix A (in the u_i v_i^T basis) and the twist and flip eigenvalues,
     clamping every eigenvalue to at least eps when projecting."""
-    evals, Q = sym_eig3(A, n_sweeps=8)
+    evals, Q = sym_eig3(A)
     C = qd.Matrix.zero(gs.qd_float, 9, 9)
     for n in qd.static(range(3)):
         lam_n = evals[n]
@@ -182,18 +167,17 @@ def func_smith_nh_direct_tangent(F, mu_hat, lam_hat, alpha, Ic, J):
 
 @qd.func
 def func_smith_nh_tangent(F, mu, lam, eps, project: qd.template()):
-    """Newton tangent of the Smith neo-Hookean energy. Only the twist and flip modes can make it indefinite, with
-    eigenvalues +-lam_hat (J - alpha) sigma_i + mu_hat_k, mu_hat_k = mu_hat (1 - 1/(Ic+1)); when J >= 0 and
-    lam_hat^2 (J - alpha)^2 max_i sigma_i^2 <= mu_hat_k^2 the exact tangent is positive semidefinite and is returned
-    directly, without any decomposition, as in mochi's PSD oracle (max_i sigma_i^2 is the largest eigenvalue of F^T F).
-    The eigensystem path projects the remaining elements."""
+    """Newton tangent of the Smith neo-Hookean energy.
+
+    The exact tangent is returned directly when func_smith_nh_is_psd proves it positive semidefinite, as in mochi's PSD
+    oracle. The eigensystem path projects the remaining elements."""
     mu_hat, lam_hat, alpha = func_smith_params(mu, lam)
     Ic = F.norm_sqr()
     J = F.determinant()
     C = qd.Matrix.zero(gs.qd_float, 9, 9)
     use_direct = True
     if qd.static(project):
-        use_direct = func_smith_nh_is_psd(F, mu_hat, lam_hat, alpha, Ic, J)
+        use_direct = func_smith_nh_is_psd(F, alpha, Ic, J, eps)
     if use_direct:
         C = func_smith_nh_direct_tangent(F, mu_hat, lam_hat, alpha, Ic, J)
     else:
@@ -203,14 +187,71 @@ def func_smith_nh_tangent(F, mu, lam, eps, project: qd.template()):
 
 
 @qd.func
-def func_smith_nh_is_psd(F, mu_hat, lam_hat, alpha, Ic, J):
-    """mochi's oracle: only the twist and flip modes can make the Smith neo-Hookean tangent indefinite, with
-    eigenvalues +-lam_hat (J - alpha) sigma_i + mu_hat_k, mu_hat_k = mu_hat (1 - 1/(Ic+1)); when J >= 0 and
-    lam_hat^2 (J - alpha)^2 max_i sigma_i^2 <= mu_hat_k^2 the exact tangent is positive semidefinite (max_i sigma_i^2 is
-    the largest eigenvalue of F^T F)."""
-    mu_hat_k = mu_hat * (1.0 - 1.0 / (Ic + 1.0))
-    max_sigma_sq = func_max_eigenvalue_sym3(F.transpose() @ F)
-    return (lam_hat * (J - alpha)) ** 2 * max_sigma_sq <= mu_hat_k * mu_hat_k and J >= 0.0
+def func_smith_nh_is_psd(F, alpha, Ic, J, eps):
+    """Decide whether the Smith neo-Hookean tangent is positive semi-definite (PSD), without any decomposition.
+
+    Only the twist and flip modes can make the tangent indefinite, with eigenvalues +-lam_hat (J - alpha) sigma_i +
+    mu_hat_k, mu_hat_k = mu_hat (1 - 1/(Ic+1)), so it is PSD when J >= 0 and lam_hat^2 (J - alpha)^2 max_i sigma_i^2 <=
+    mu_hat_k^2. The test is divided by (4/3 lam_hat)^2 to keep its terms of order one whatever the stiffness, and
+    max_i sigma_i^2, the largest eigenvalue of G = F^T F, is bracketed by the largest diagonal entry of G and the
+    smaller of its trace and largest absolute row sum. Only states these bounds leave open run the exact test, which
+    checks that rhs I - lhs G is PSD.
+
+    At rest and under rotations both sides are equal and rounding decides, so rhs is scaled by 1 + delta, delta =
+    min(8 eps (alpha + 1) / (alpha - 1), 8192 eps), which keeps those states on the direct path while letting a twist
+    or flip eigenvalue go negative by at most about delta / 2 * mu_hat_k.
+    """
+    alpha_m1 = alpha - 1.0
+    Ic_ratio = 1.0 - 1.0 / (Ic + 1.0)
+    rhs = alpha_m1 * (alpha_m1 + qd.min(8.0 * eps * (alpha + 1.0), 8192.0 * eps * alpha_m1)) * Ic_ratio * Ic_ratio
+    lhs = (0.75 * (J - alpha)) ** 2
+    G = F.transpose() @ F
+    lower_bound = qd.max(qd.max(G[0, 0], G[1, 1]), G[2, 2])
+    row_sum_0 = G[0, 0] + qd.abs(G[0, 1]) + qd.abs(G[0, 2])
+    row_sum_1 = G[1, 1] + qd.abs(G[0, 1]) + qd.abs(G[1, 2])
+    row_sum_2 = G[2, 2] + qd.abs(G[0, 2]) + qd.abs(G[1, 2])
+    upper_bound = qd.min(Ic, qd.max(qd.max(row_sum_0, row_sum_1), row_sum_2))
+    is_psd = J >= 0.0 and lhs * lower_bound <= rhs
+    if is_psd and lhs * upper_bound > rhs:
+        is_psd = func_is_shifted_gram_psd(rhs, lhs, G)
+    return is_psd
+
+
+@qd.func
+def func_is_shifted_gram_psd(shift, weight, G):
+    """Decide whether shift I - weight G is positive semi-definite (PSD) for a symmetric 3x3 matrix G.
+
+    A symmetric matrix is PSD when its largest diagonal entry d is positive and the Schur complement of d is PSD.
+    Eliminating the largest diagonal entry first, as pivoted Cholesky does, keeps the decision accurate when two
+    eigenvalues are near zero, where the determinant cancels to rounding noise. The zero matrix counts as indefinite.
+    """
+    m00 = shift - weight * G[0, 0]
+    m11 = shift - weight * G[1, 1]
+    m22 = shift - weight * G[2, 2]
+    m01 = -weight * G[0, 1]
+    m02 = -weight * G[0, 2]
+    m12 = -weight * G[1, 2]
+    # Order the indices as (p, i, j) = (0, 1, 2), (1, 0, 2) or (2, 0, 1), with d = m_pp the largest diagonal entry.
+    is_p1 = m11 > m00
+    d01 = qd.select(is_p1, m11, m00)
+    is_p2 = m22 > d01
+    is_p12 = is_p1 or is_p2
+    d = qd.select(is_p2, m22, d01)
+    m_pi = qd.select(is_p2, m02, m01)
+    m_pj = qd.select(is_p12, m12, m02)
+    m_ii = qd.select(is_p12, m00, m11)
+    m_jj = qd.select(is_p2, m11, m22)
+    m_ij = qd.select(is_p2, m01, qd.select(is_p1, m02, m12))
+    is_psd = False
+    if d > 0.0:
+        # The Schur complement of d, divided by d, which bounds its entries by one when M is PSD whatever its scale.
+        r_i = m_pi / d
+        r_j = m_pj / d
+        s_ii = m_ii / d - r_i * r_i
+        s_jj = m_jj / d - r_j * r_j
+        s_ij = m_ij / d - r_i * r_j
+        is_psd = s_ii >= 0.0 and s_jj >= 0.0 and s_ii * s_jj >= s_ij * s_ij
+    return is_psd
 
 
 @qd.func
@@ -400,7 +441,7 @@ def func_blocks_from_eigensystem(U, V, A, twist, flip, eps, project: qd.template
     """Element stiffness vol g_f^T C g_g of a tangent given by its analytic eigensystem (see
     func_tangent_from_eigensystem), accumulated mode by mode without forming the 9x9 tangent."""
     K = qd.Matrix.zero(gs.qd_float, 12, 12)
-    evals, Q = sym_eig3(A, n_sweeps=8)
+    evals, Q = sym_eig3(A)
     for n in qd.static(range(3)):
         lam_n = evals[n]
         if qd.static(project):
@@ -512,7 +553,7 @@ def func_tet_stiffness(model, F, mu, lam, eps, project: qd.template(), grads, vo
         J = F.determinant()
         use_direct = True
         if qd.static(project):
-            use_direct = func_smith_nh_is_psd(F, mu_hat, lam_hat, alpha, Ic, J)
+            use_direct = func_smith_nh_is_psd(F, alpha, Ic, J, eps)
         if use_direct:
             K = func_smith_nh_direct_blocks(F, mu_hat, lam_hat, alpha, Ic, J, grads, vol)
         else:

@@ -2161,9 +2161,11 @@ def kernel_soft_set_vertices_target(
 @qd.kernel
 def kernel_soft_set_entity_contact_params(
     i_e: qd.i32,
+    pc_hash_cell: float,
     params: qd.types.ndarray(),
     soft_info: MochiSoftInfo,
 ):
+    soft_info.pc_hash_cell[None] = pc_hash_cell
     soft_info.entities_penalty_coefficient[i_e] = params[0]
     soft_info.entities_friction[i_e] = params[1]
     soft_info.entities_penalty_smoothing_half_distance[i_e] = params[2]

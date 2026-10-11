@@ -32,7 +32,8 @@ class Rigid(Base["MochiEntity"], RigidMaterial):
         Representation of this body used when other bodies' sample points collide against it: "plane", "sphere" and
         "box" are exact analytic distance fields, "sdf" is the precomputed grid of the collision mesh, "none" makes the
         body collide only through its own sample points (it never acts as a collider), and "auto" selects the analytic
-        field for plane, sphere and box primitives and the grid otherwise. Default is "auto".
+        field for plane, sphere and box primitives and the grid otherwise. An analytic field requires the matching
+        primitive. Default is "auto".
     sdf_cell_size : float, optional
         Cell size in SDF grid in meters. Contact resolves the penalty ramp against this grid, so the cell should stay
         well below the ramp width. Default is 0.0025.

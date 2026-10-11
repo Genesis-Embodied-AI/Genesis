@@ -77,6 +77,11 @@ def test_collision_response_is_gradient_of_potential(params_name, friction_model
 @pytest.mark.required
 @pytest.mark.precision("64")
 def test_collider_distance_fields(show_viewer):
+    scene_mismatched = gs.Scene()
+    scene_mismatched.add_entity(gs.morphs.Sphere(radius=1.0), material=gs.materials.Mochi.Rigid(collider_type="box"))
+    with pytest.raises(gs.GenesisException, match="requires a box primitive"):
+        scene_mismatched.build()
+
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=0.01, gravity=(0.0, 0.0, 0.0)),
         show_viewer=show_viewer,

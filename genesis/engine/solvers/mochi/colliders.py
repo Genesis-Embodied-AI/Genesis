@@ -8,11 +8,7 @@ import quadrants as qd
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils import array_class
-from genesis.utils.sdf import (
-    sdf_func_is_outside_sdf_grid,
-    sdf_func_true_grad_consistent,
-    sdf_func_true_sdf,
-)
+from genesis.utils.sdf import sdf_func_is_outside_sdf_grid, sdf_func_true_sdf, sdf_func_true_sdf_and_grad
 
 from .data import COLLIDER_TYPE, MochiGeomsInfo
 
@@ -78,8 +74,7 @@ def query_collider(
             if sdf_func_is_outside_sdf_grid(i_g, pos_sdf, sdf_info):
                 is_valid = False
             else:
-                sd = sdf_func_true_sdf(i_g, pos_sdf, sdf_info)
-                grad = sdf_func_true_grad_consistent(i_g, pos_sdf, sdf_info)
+                sd, grad = sdf_func_true_sdf_and_grad(i_g, pos_sdf, sdf_info)
         else:
             is_valid = False
 
