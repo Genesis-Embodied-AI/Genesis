@@ -13,6 +13,7 @@ import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.constants import link_ref_frame
 from genesis.engine.entities.mochi_entity import MochiEntity, MochiSoftEntity
 from genesis.engine.materials import Mochi
 from genesis.engine.states.solvers import MochiSolverState
@@ -2430,6 +2431,124 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
 
     def set_dofs_limit(self, lower, upper, dofs_idx=None, envs_idx=None):
         self._set_dofs_info([lower, upper], dofs_idx, "limit", envs_idx)
+
+    @staticmethod
+    def _sanitize_ref_frame(ref: link_ref_frame, *, has_root_COM: bool = True) -> int:
+        """Check that a reference frame is supported and return it as a plain int (as ``RigidSolver`` does)."""
+        frames = tuple(link_ref_frame) if has_root_COM else (link_ref_frame.link_origin, link_ref_frame.link_COM)
+        if not isinstance(ref, link_ref_frame) or ref not in frames:
+            refs = ", ".join(f"'gs.link_ref_frame.{frame.name}'" for frame in frames)
+            gs.raise_exception(f"'ref' must be one of {refs}.")
+        return int(ref)
+
+    def get_links_pos(
+        self,
+        links_idx=None,
+        envs_idx=None,
+        *,
+        ref: link_ref_frame = link_ref_frame.link_origin,
+        relative=False,
+    ):
+        """Link positions in the requested reference frame, as ``RigidSolver.get_links_pos``.
+
+        ``KinematicSolver``'s own getter knows only the link origin; the inertial frames the other references name
+        are maintained by this solver as well, so the whole ``ref`` vocabulary is answered here.
+        """
+        ref_frame = self._sanitize_ref_frame(ref)
+        if ref_frame == link_ref_frame.root_COM:
+            tensor = qd_to_torch(self.dyn_state.links.root_COM, envs_idx, links_idx, transpose=True, copy=True)
+        elif ref_frame == link_ref_frame.link_COM:
+            i_pos = qd_to_torch(self.dyn_state.links.i_pos, envs_idx, links_idx, transpose=True)
+            root_COM = qd_to_torch(self.dyn_state.links.root_COM, envs_idx, links_idx, transpose=True)
+            tensor = i_pos + root_COM
+        else:
+            return super().get_links_pos(links_idx, envs_idx, relative=relative)
+        return tensor[0] if self.n_envs == 0 else tensor
+
+    def get_links_vel(self, links_idx=None, envs_idx=None, *, ref: link_ref_frame = link_ref_frame.link_origin):
+        """Link velocities in the requested reference frame, as ``RigidSolver.get_links_vel``."""
+        ref_frame = self._sanitize_ref_frame(ref, has_root_COM=False)
+        if ref_frame == link_ref_frame.link_origin:
+            return super().get_links_vel(links_idx, envs_idx)
+        cd_vel = qd_to_torch(self.dyn_state.links.cd_vel, envs_idx, links_idx, transpose=True, copy=True)
+        cd_ang = qd_to_torch(self.dyn_state.links.cd_ang, envs_idx, links_idx, transpose=True)
+        i_pos = qd_to_torch(self.dyn_state.links.i_pos, envs_idx, links_idx, transpose=True)
+        tensor = cd_vel + cd_ang.cross(i_pos, dim=-1)
+        return tensor[0] if self.n_envs == 0 else tensor
+
+    def _get_dofs_info(self, field, dofs_idx=None, envs_idx=None):
+        """Read one per-DOF info field, honoring the same batching rule as the setters."""
+        if not self._options.batch_dofs_info and envs_idx is not None:
+            gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
+        tensor = qd_to_torch(field, envs_idx, dofs_idx, transpose=True, copy=True)
+        return tensor[0] if self.n_envs == 0 and self._options.batch_dofs_info else tensor
+
+    def _get_dofs_pd_gains(self, dofs_idx=None, envs_idx=None):
+        gain = self._get_dofs_info(self.dyn_info.dofs.act_gain, dofs_idx, envs_idx)
+        bias = self._get_dofs_info(self.dyn_info.dofs.act_bias, dofs_idx, envs_idx)
+        if not (torch.abs(gain + bias[..., 1]) < gs.EPS * torch.clamp(torch.abs(gain), min=1.0)).all():
+            gs.raise_exception(
+                "Some DOFs use a non-PD-reducible actuator (act_gain != -act_bias[1]). "
+                "Use get_dofs_act_gain() and get_dofs_act_bias() instead."
+            )
+        if not (torch.abs(bias[..., 0]) < gs.EPS).all():
+            gs.raise_exception(
+                "Some DOFs use a non-PD-reducible actuator (act_bias[0] != 0). "
+                "Use get_dofs_act_gain() and get_dofs_act_bias() instead."
+            )
+        return gain, -bias[..., 2]
+
+    def get_dofs_kp(self, dofs_idx=None, envs_idx=None):
+        return self._get_dofs_pd_gains(dofs_idx, envs_idx)[0]
+
+    def get_dofs_kv(self, dofs_idx=None, envs_idx=None):
+        return self._get_dofs_pd_gains(dofs_idx, envs_idx)[1]
+
+    def get_dofs_act_gain(self, dofs_idx=None, envs_idx=None):
+        return self._get_dofs_info(self.dyn_info.dofs.act_gain, dofs_idx, envs_idx)
+
+    def get_dofs_act_bias(self, dofs_idx=None, envs_idx=None):
+        tensor = self._get_dofs_info(self.dyn_info.dofs.act_bias, dofs_idx, envs_idx)
+        return tensor[..., 0], tensor[..., 1], tensor[..., 2]
+
+    def get_dofs_force_range(self, dofs_idx=None, envs_idx=None):
+        tensor = self._get_dofs_info(self.dyn_info.dofs.force_range, dofs_idx, envs_idx)
+        return tensor[..., 0], tensor[..., 1]
+
+    def get_dofs_stiffness(self, dofs_idx=None, envs_idx=None):
+        return self._get_dofs_info(self.dyn_info.dofs.stiffness, dofs_idx, envs_idx)
+
+    def get_dofs_invweight(self, dofs_idx=None, envs_idx=None):
+        return self._get_dofs_info(self.dyn_info.dofs.invweight, dofs_idx, envs_idx)
+
+    def get_dofs_armature(self, dofs_idx=None, envs_idx=None):
+        return self._get_dofs_info(self.dyn_info.dofs.armature, dofs_idx, envs_idx)
+
+    def get_dofs_damping(self, dofs_idx=None, envs_idx=None):
+        return self._get_dofs_info(self.dyn_info.dofs.damping, dofs_idx, envs_idx)
+
+    def get_dofs_frictionloss(self, dofs_idx=None, envs_idx=None):
+        return self._get_dofs_info(self.dyn_info.dofs.frictionloss, dofs_idx, envs_idx)
+
+    def set_dofs_force_range(self, lower, upper, dofs_idx=None, envs_idx=None):
+        gs.raise_exception(
+            "`set_dofs_force_range` is not supported by the MochiSolver: drive forces are not clamped to a force "
+            "range, so a new range would silently have no effect."
+        )
+
+    def set_dofs_frictionloss(self, frictionloss, dofs_idx=None, envs_idx=None):
+        gs.raise_exception(
+            "`set_dofs_frictionloss` is not supported by the MochiSolver: joint friction loss is not modeled, so a "
+            "new value would silently have no effect. Use joint damping instead."
+        )
+
+    def set_dofs_act_gain(self, act_gain, dofs_idx=None, envs_idx=None):
+        gs.raise_exception("`set_dofs_act_gain` is not supported by the MochiSolver: use `set_dofs_kp`.")
+
+    def set_dofs_act_bias(self, act_bias, dofs_idx=None, envs_idx=None):
+        gs.raise_exception(
+            "`set_dofs_act_bias` is not supported by the MochiSolver: use `set_dofs_kp` / `set_dofs_kv`."
+        )
 
     def _sanitize_control(self, tensor, dofs_idx, envs_idx):
         tensor, dofs_idx, envs_idx = self._sanitize_io_variables(

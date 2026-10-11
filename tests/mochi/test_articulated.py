@@ -100,6 +100,25 @@ def test_arm_pd_control_limits_and_contact(show_viewer):
     q_target = np.array([0.0, -0.5, 0.0, -2.0, 0.0, 1.5, 0.8, 0.02, 0.02])
     franka.set_dofs_kp(kp)
     franka.set_dofs_kv(kv)
+    # The per-DOF info written by the setters reads back through the same getters the rigid solver has.
+    assert_allclose(franka.get_dofs_kp(), kp, atol=0.0, rtol=1e-12)
+    assert_allclose(franka.get_dofs_kv(), kv, atol=0.0, rtol=1e-12)
+    for getter in (
+        franka.get_dofs_stiffness,
+        franka.get_dofs_damping,
+        franka.get_dofs_armature,
+        franka.get_dofs_frictionloss,
+        franka.get_dofs_invweight,
+    ):
+        assert tensor_to_array(getter()).shape == (9,)
+    lower, upper = franka.get_dofs_force_range()
+    assert tensor_to_array(lower).shape == tensor_to_array(upper).shape == (9,)
+    assert_allclose(franka.get_dofs_armature(dofs_idx_local=[0, 1]), franka.get_dofs_armature()[:2], atol=0.0)
+    # Fields the MochiSolver never reads are refused instead of silently accepted.
+    with pytest.raises(gs.GenesisException, match="set_dofs_force_range"):
+        franka.set_dofs_force_range(-np.ones(9), np.ones(9))
+    with pytest.raises(gs.GenesisException, match="set_dofs_frictionloss"):
+        franka.set_dofs_frictionloss(np.ones(9))
     franka.control_dofs_position(q_target)
     for _ in range(200):
         scene.step()

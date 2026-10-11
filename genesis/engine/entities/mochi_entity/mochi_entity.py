@@ -146,3 +146,18 @@ class MochiEntity(RigidEntity):
 
     def get_total_energy(self, envs_idx=None):
         self._raise_unsupported("get_total_energy")
+
+    def get_links_acc(self, links_idx_local=None, envs_idx=None):
+        self._raise_unsupported("get_links_acc")
+
+    def get_links_acc_ang(self, links_idx_local=None, envs_idx=None):
+        self._raise_unsupported("get_links_acc_ang")
+
+    def get_AABB(self, envs_idx=None, *, allow_fast_approx: bool = False):
+        self._raise_unsupported("get_AABB")
+
+    def get_verts(self):
+        self._raise_unsupported("get_verts")
+
+    def set_geoms_friction_ratio(self, friction_ratio, geoms_idx_local=None, envs_idx=None):
+        self._raise_unsupported("set_geoms_friction_ratio")
