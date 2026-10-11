@@ -39,6 +39,7 @@
 - **Code quality over source consistency.** When refactoring or porting code from PRs, external projects, or prior implementations, Genesis conventions always take priority over the original code's patterns. Use the original logic as reference, not the implementation style.
 - **Build/init time: maintainability first** (as long as performance is reasonable). Use public APIs.
 - **Runtime hot paths: efficiency first.** Minimize GPU-CPU transfers, use bulk operations.
+- **The backend never changes the physics.** It only selects the device that runs the code. Every code path a backend takes (the CPU monolithic narrowphase, the GPU split one, cooperative kernels, graphs) implements the same model and the same algorithm, so a scene simulated on CPU and on GPU differs by rounding alone. A feature, a fix or a heuristic that one backend lacks is not done, whatever its cost in compile time or runtime on the other: find a design that holds on every backend.
 
 ## Data Access
 
@@ -169,25 +170,13 @@
 
 ## Running Tests From a Git Worktree
 
-The package is installed in editable mode pointing at the PRIMARY checkout, so a worktree's `genesis/` is NOT what
-gets imported by default. This silently tests the wrong engine: the worktree's `tests/` run against the primary
-checkout's `genesis/`, so engine edits appear to have no effect and every result is void.
+The package is installed in editable mode pointing at the PRIMARY checkout, so a worktree's `genesis/` is NOT what gets imported by default. This silently tests the wrong engine: the worktree's `tests/` run against the primary checkout's `genesis/`, so engine edits appear to have no effect and every result is void.
 
-- **Always pass `PYTHONPATH=$PWD` when invoking pytest from a worktree**, e.g.
-  `cd <worktree> && PYTHONPATH=$PWD pytest -n 8 tests/rigid`. Same for the cluster: `PYTHONPATH=$WORKTREE pytest ...`.
-- **Verify it once per session, do not assume.** `PYTHONPATH=$PWD pytest -n 0 -s -k <any test>` with a
-  `print(genesis.__file__)`, or simply check that the path printed starts with the worktree.
-- Plain `python script.py` from a worktree DOES pick up the worktree (cwd precedes the editable path), so a script and
-  a pytest run in the same directory can exercise DIFFERENT engines. Never compare their results.
-- Symptoms that mean this is happening: an engine edit changes nothing, a kernel `print()` added to the worktree emits
-  nothing, an A/B over engine variants returns bit-identical numbers for every arm. Treat all three as this trap
-  first, before any physics explanation.
-- **Give the worktree its own compile cache when running in parallel**, e.g.
-  `QD_OFFLINE_CACHE_FILE_PATH=<scratch>/quadrants GS_CACHE_FILE_PATH=<scratch>/genesis`. A worktree engine differs
-  from whatever populated the shared `~/.cache`, so every kernel is new and the xdist workers race to write the same
-  cache, which corrupts entries: hundreds of `QuadrantsNameError` on names that are plainly in scope, spread over
-  tests that pass one at a time, and getting WORSE on a second run as the bad entries persist. Redirect the cache
-  rather than deleting the shared one.
+- **Always pass `PYTHONPATH=$PWD` when invoking pytest from a worktree**, e.g. `cd <worktree> && PYTHONPATH=$PWD pytest -n 8 tests/rigid`. Same for the cluster: `PYTHONPATH=$WORKTREE pytest ...`.
+- **Verify it once per session, do not assume.** `PYTHONPATH=$PWD pytest -n 0 -s -k <any test>` with a `print(genesis.__file__)`, or simply check that the path printed starts with the worktree.
+- Plain `python script.py` from a worktree DOES pick up the worktree (cwd precedes the editable path), so a script and a pytest run in the same directory can exercise DIFFERENT engines. Never compare their results.
+- Symptoms that mean this is happening: an engine edit changes nothing, a kernel `print()` added to the worktree emits nothing, an A/B over engine variants returns bit-identical numbers for every arm. Treat all three as this trap first, before any physics explanation.
+- **Give each worktree its own compile cache when several of them run test suites at the same time**, e.g. `QD_OFFLINE_CACHE_FILE_PATH=<scratch>/<worktree>/quadrants GS_CACHE_FILE_PATH=<scratch>/<worktree>/genesis`. The concurrent runs compile different engines and race to write the same entries of the shared `~/.cache`, which corrupts them: hundreds of `QuadrantsNameError` on names that are plainly in scope, spread over tests that pass one at a time, and getting WORSE on a second run as the bad entries persist. Keep that cache for the life of the worktree, so its kernels compile once, and pass an absolute path, since a relative one resolves against the cwd of each test. A single run, `-n` workers included, uses the default cache.
 
 ## Testing on Cluster
 
