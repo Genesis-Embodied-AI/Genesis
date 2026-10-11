@@ -9,6 +9,10 @@ import numpy as np
 import pytest
 import torch
 
+import trimesh
+
+import quadrants as qd
+
 import genesis as gs
 
 from ..utils.assets import get_git_commit_timestamp, get_hf_dataset
@@ -262,6 +266,49 @@ def make_go2(n_envs, solver=None, gjk=None, **scene_kwargs):
         scene.step()
 
     return scene, step, SceneMeta(compile_time=compile_time)
+
+
+def make_contact_patch(n_envs, solver=None, gjk=None, **scene_kwargs):
+    angles = np.arange(8) * (2.0 * np.pi / 8)
+    face_vertices = np.column_stack((np.cos(angles), np.sin(angles)))
+    vertices = np.column_stack((np.tile(face_vertices, (2, 1)), np.repeat((0.0, 0.1), 8)))
+    mesh = trimesh.Trimesh(vertices=vertices).convex_hull
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=STEP_DT,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            **get_rigid_solver_options(
+                **(dict(constraint_solver=solver) if solver is not None else {}),
+                **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
+            ),
+        ),
+        **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
+    )
+    scene.add_entity(
+        morph=gs.morphs.MeshSet(
+            fixed=True,
+            files=(mesh,),
+        ),
+    )
+    entity = scene.add_entity(
+        morph=gs.morphs.MeshSet(
+            pos=(0.0, 0.0, 0.0999),
+            euler=(0.0, 0.0, 22.5),
+            files=(mesh,),
+        ),
+    )
+    time_start = time.time()
+    scene.build(n_envs=n_envs)
+    compile_time = time.time() - time_start
+    entity_qpos = entity.get_qpos().clone()
+
+    def step():
+        # Reset the pose so every step retains the full overlap between the rotated polygonal faces
+        entity.set_qpos(entity_qpos, zero_velocity=True)
+        scene.step()
+
+    return scene, step, SceneMeta(compile_time=compile_time, duration_warmup=20.0, duration_record=5.0)
 
 
 def make_anymal(n_envs, solver=None, gjk=None, control=None, with_kinematic=False, **scene_kwargs):
@@ -939,8 +986,6 @@ def make_table_bussing(n_envs, solver=None, gjk=None, **scene_kwargs):
 
 
 def run_benchmark(step_fn, *, n_envs, meta):
-    import quadrants as qd
-
     qd.sync()
 
     # Force CUDA-context init / lazy module load / first kernel SASS JIT to
@@ -1057,6 +1102,12 @@ def go2(solver, n_envs, gjk):
 
 
 @pytest.fixture
+def contact_patch(solver, n_envs, gjk):
+    _, step_fn, meta = make_contact_patch(n_envs, solver=solver, gjk=gjk)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
 def anymal_random(solver, n_envs, gjk):
     _, step_fn, meta = make_anymal(n_envs, solver=solver, gjk=gjk, control="per_env")
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
@@ -1119,6 +1170,7 @@ def table_bussing(solver, n_envs, gjk):
 # Full benchmark suite (one instance of each, solver/gjk left at their defaults), run on the 'field' dtype.
 BENCHMARKS_FIELD = [
     ("go2", None, None, 4096, gs.gpu),
+    ("contact_patch", None, None, 4096, gs.gpu),
     ("anymal_random", None, None, 20000, gs.gpu),
     ("anymal_random", None, None, 0, gs.cpu),
     ("g1_fall", None, None, 4096, gs.gpu),
