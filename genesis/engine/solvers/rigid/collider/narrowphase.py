@@ -1894,6 +1894,9 @@ def func_contact_overlap_axes(
     # Two opposite supports seed a convex outline. Each query adds its support to the hull, retaining at most eight
     # vertices in contact-plane coordinates plus height along the normal. Geom A lies on the positive side of the
     # normal, so its face looks backwards. Sorted geom types put a plane at A and a terrain at B.
+    # TODO: Ten vertices per face and 40 support queries raise the area spanned by the contacts on a 32-sided face from
+    # at worst 67% to at least 75% of the largest five-corner patch, for 0.1-0.4% more step time on average. The worst
+    # case grows faster, the search of the target corners being quadratic in the 2n+1 overlap corners of n vertices.
     polygons = qd.Matrix.zero(gs.qd_float, 16, 3)
     polygons_size = qd.Vector.zero(gs.qd_int, 2)
     # A sphere, an ellipsoid or a capsule has no planar face of positive area, so their overlap with any face is empty.
@@ -2277,36 +2280,52 @@ def func_contact_overlap_axes(
         for i_k0_ in range(n_search - 3):
             i_k0 = (i_k_start + i_k0_) % n_overlap
             corner_0 = qd.Vector([overlap[i_k0, 0], overlap[i_k0, 1]])
+            corner_anchor = corner_0
+            if i_k_origin >= 0:
+                corner_anchor = qd.Vector([overlap[i_k_origin, 0], overlap[i_k_origin, 1]])
+            # Convexity makes each maximizing endpoint advance as the diagonal rotates. Each endpoint traverses
+            # its corner interval once for a fixed first corner, bounding the total search quadratically.
+            i_k1_best_ = i_k0_ + 1
+            i_k3_best_ = i_k0_ + 3
             for i_k2_ in range(i_k0_ + 2, n_search - 1):
                 i_k2 = (i_k_start + i_k2_) % n_overlap
                 corner_2 = qd.Vector([overlap[i_k2, 0], overlap[i_k2, 1]])
-                corner_anchor = corner_0
                 area_origin = gs.qd_float(0.0)
                 if i_k_origin >= 0:
-                    corner_anchor = qd.Vector([overlap[i_k_origin, 0], overlap[i_k_origin, 1]])
                     edge_0, edge_2 = corner_0 - corner_anchor, corner_2 - corner_anchor
                     area_origin = orientation * (edge_0[0] * edge_2[1] - edge_0[1] * edge_2[0])
-                area_mid_best = gs.qd_float(-1.0)
-                area_last_best = gs.qd_float(-1.0)
-                i_k1_best, i_k3_best = 0, 0
-                for i_k_ in range(i_k0_ + 1, n_search):
-                    i_k = (i_k_start + i_k_) % n_overlap
-                    corner = qd.Vector([overlap[i_k, 0], overlap[i_k, 1]])
-                    if i_k_ < i_k2_:
+                i_k3_best_ = qd.max(i_k3_best_, i_k2_ + 1)
+                area_mid_best = gs.qd_float(0.0)
+                area_last_best = gs.qd_float(0.0)
+                for i_side in range(2):
+                    i_k_best_ = i_k1_best_
+                    i_k_end_ = i_k2_
+                    if i_side == 1:
+                        i_k_best_ = i_k3_best_
+                        i_k_end_ = n_search
+                    area_triangle_best = gs.qd_float(-1.0)
+                    for i_k_ in range(i_k_best_, i_k_end_):
+                        i_k = (i_k_start + i_k_) % n_overlap
+                        corner = qd.Vector([overlap[i_k, 0], overlap[i_k, 1]])
                         edge_1, edge_2 = corner - corner_0, corner_2 - corner_0
+                        if i_side == 1:
+                            edge_1, edge_2 = corner_2 - corner_anchor, corner - corner_anchor
                         area = orientation * (edge_1[0] * edge_2[1] - edge_1[1] * edge_2[0])
-                        if area > area_mid_best:
-                            area_mid_best = area
-                            i_k1_best = i_k
-                    elif i_k_ > i_k2_:
-                        edge_2, edge_3 = corner_2 - corner_anchor, corner - corner_anchor
-                        area = orientation * (edge_2[0] * edge_3[1] - edge_2[1] * edge_3[0])
-                        if area > area_last_best:
-                            area_last_best = area
-                            i_k3_best = i_k
+                        if area <= area_triangle_best:
+                            break
+                        area_triangle_best = area
+                        i_k_best_ = i_k_
+                    if i_side == 0:
+                        i_k1_best_ = i_k_best_
+                        area_mid_best = area_triangle_best
+                    else:
+                        i_k3_best_ = i_k_best_
+                        area_last_best = area_triangle_best
                 area = area_origin + area_mid_best + area_last_best
                 if area > area_best:
                     area_best = area
+                    i_k1_best = (i_k_start + i_k1_best_) % n_overlap
+                    i_k3_best = (i_k_start + i_k3_best_) % n_overlap
                     targets = qd.Vector([i_k0, i_k1_best, i_k2, i_k3_best], dt=gs.qd_int)
 
     # A tilt by 'mc_perturbation' about a unit axis deepens the overlap by twice this angle per unit length, both geoms
