@@ -86,27 +86,45 @@ def _cholesky_and_solve_fused_tiled_impl(
             k = k + T
         qd.simt.block.sync()
 
-        for i_d in range(n_dofs):
+        # Two rows per pass, as in func_cholesky_solve_islands, which also halves the reductions and block barriers.
+        for i_pair_ in range((n_dofs + 1) // 2):
+            i_d = 2 * i_pair_
+            i_next_d = qd.min(i_d + 1, n_dofs - 1)
             dot = gs.qd_float(0.0)
+            dot_next = gs.qd_float(0.0)
             j = tid
             while j < i_d:
-                dot = dot + L_sh[i_d, j] * v_sh[j]
+                v_j = v_sh[j]
+                dot = dot + L_sh[i_d, j] * v_j
+                dot_next = dot_next + L_sh[i_next_d, j] * v_j
                 j = j + T
             dot = qd.simt.subgroup.reduce_all_add_tiled(dot, LOG2_T)
+            dot_next = qd.simt.subgroup.reduce_all_add_tiled(dot_next, LOG2_T)
             if tid == 0:
-                v_sh[i_d] = (v_sh[i_d] - dot) / L_sh[i_d, i_d]
+                x_i = (v_sh[i_d] - dot) / L_sh[i_d, i_d]
+                v_sh[i_d] = x_i
+                if i_d + 1 < n_dofs:
+                    v_sh[i_next_d] = (v_sh[i_next_d] - dot_next - L_sh[i_next_d, i_d] * x_i) / L_sh[i_next_d, i_next_d]
             qd.simt.block.sync()
 
-        for i_d_ in range(n_dofs):
-            i_d = n_dofs - 1 - i_d_
+        for i_pair_ in range((n_dofs + 1) // 2):
+            i_d = n_dofs - 1 - 2 * i_pair_
+            i_prev_d = qd.max(i_d - 1, 0)
             dot = gs.qd_float(0.0)
+            dot_prev = gs.qd_float(0.0)
             j = i_d + 1 + tid
             while j < n_dofs:
-                dot = dot + L_sh[j, i_d] * v_sh[j]
+                v_j = v_sh[j]
+                dot = dot + L_sh[j, i_d] * v_j
+                dot_prev = dot_prev + L_sh[j, i_prev_d] * v_j
                 j = j + T
             dot = qd.simt.subgroup.reduce_all_add_tiled(dot, LOG2_T)
+            dot_prev = qd.simt.subgroup.reduce_all_add_tiled(dot_prev, LOG2_T)
             if tid == 0:
-                v_sh[i_d] = (v_sh[i_d] - dot) / L_sh[i_d, i_d]
+                x_i = (v_sh[i_d] - dot) / L_sh[i_d, i_d]
+                v_sh[i_d] = x_i
+                if i_d >= 1:
+                    v_sh[i_prev_d] = (v_sh[i_prev_d] - dot_prev - L_sh[i_d, i_prev_d] * x_i) / L_sh[i_prev_d, i_prev_d]
             qd.simt.block.sync()
 
         k = tid

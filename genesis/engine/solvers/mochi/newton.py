@@ -74,10 +74,11 @@ def func_residual_norms(
     mochi_state: MochiState,
     island_state: MochiIslandState,
     rigid_config: qd.template(),
+    mochi_config: qd.template(),
     skip_ls_done,
 ):
     """Plain and convergence-weighted squared norms of the residual of every running environment, the weighted one
-    also per entity."""
+    also per entity. The residual of a sleeping entity is zeroed first, which keeps it in place (see sleep.py)."""
     n_dofs = mochi_state.res.shape[0]
     n_nodes = island_state.nodes_res_w_sq.shape[0]
     _B = mochi_state.res.shape[1]
@@ -104,6 +105,11 @@ def func_residual_norms(
         i_b = envs[i_slot] if qd.static(not per_env) else i_b_env
         if func_is_env_active(i_b, mochi_state, skip_ls_done):
             r = mochi_state.res[i_d, i_b]
+            if qd.static(mochi_config.use_sleeping):
+                i_n = island_state.dofs_node[i_d]
+                if island_state.nodes_is_asleep[i_n, i_b]:
+                    r = 0.0
+                    mochi_state.res[i_d, i_b] = 0.0
             r_w_sq = mochi_state.conv_w[i_d, i_b] * r * r
             qd.atomic_add(mochi_state.res_norm_sq[i_b], r * r)
             qd.atomic_add(mochi_state.res_w_sq[i_b], r_w_sq)
@@ -115,6 +121,7 @@ def kernel_residual_norms(
     mochi_state: MochiState,
     island_state: MochiIslandState,
     rigid_config: qd.template(),
+    mochi_config: qd.template(),
     skip_ls_done: qd.i32,
 ):
     func_residual_norms(
@@ -125,6 +132,7 @@ def kernel_residual_norms(
         mochi_state,
         island_state,
         rigid_config,
+        mochi_config,
         skip_ls_done,
     )
 

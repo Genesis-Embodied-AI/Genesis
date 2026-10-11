@@ -68,7 +68,9 @@ def test_soft_on_rigid_contacts(show_viewer):
     assert np.all(contacts["geom_a"] == -1)
     assert np.all(contacts["link_b"] == plane.base_link.idx)
     assert np.all(contacts["geom_b"] == plane.geoms[0].idx)
-    assert np.all((contacts["verts_a"] >= 0) & (contacts["verts_a"] < cube.n_vertices))
+    # Boundary samples spread over a triangle: the fourth slot is unused.
+    assert np.all((contacts["verts_a"][:, :3] >= 0) & (contacts["verts_a"][:, :3] < cube.n_vertices))
+    assert np.all(contacts["verts_a"][:, 3] == -1)
     assert_allclose(contacts["bary_a"].sum(axis=1), 1.0, tol=1e-12)
     assert np.all(contacts["verts_b"] == -1)
     assert_allclose(contacts["normal"], np.tile((0.0, 0.0, 1.0), (n_contacts, 1)), tol=1e-12)
@@ -113,10 +115,13 @@ def test_soft_on_soft_contacts(show_viewer):
     assert np.all(contacts["entity_b"][~is_top_a] == top.idx)
     for key in ("link_a", "link_b", "geom_a", "geom_b"):
         assert np.all(contacts[key] == -1)
-    for side in ("a", "b"):
+    # The sample side spreads over a boundary triangle (the fourth slot unused), the collider side over a tetrahedron.
+    for side, n_slots in (("a", 3), ("b", 4)):
         n_vertices = np.where(contacts[f"entity_{side}"] == top.idx, top.n_vertices, bottom.n_vertices)
-        assert np.all((contacts[f"verts_{side}"] >= 0) & (contacts[f"verts_{side}"] < n_vertices[:, None]))
+        verts = contacts[f"verts_{side}"][:, :n_slots]
+        assert np.all((verts >= 0) & (verts < n_vertices[:, None]))
         assert_allclose(contacts[f"bary_{side}"].sum(axis=1), 1.0, tol=1e-12)
+    assert np.all(contacts["verts_a"][:, 3] == -1)
     # A sample point is located inside the collider body (non-negative barycentric weights) and recorded within the
     # smoothing band of the penalty (the rest-shape distance field is slightly positive near the surface).
     assert np.all(contacts["bary_b"] > -1e-12)
@@ -179,7 +184,9 @@ def test_point_cloud_contacts(tmp_path, show_viewer):
     assert np.all(contacts["geom_a"] == -1)
     assert np.all(contacts["link_b"] == ball.base_link.idx)
     assert np.all(contacts["geom_b"] == ball.geoms[0].idx)
-    assert np.all((contacts["verts_a"] >= 0) & (contacts["verts_a"] < cloth.n_vertices))
+    # Boundary samples spread over a triangle: the fourth slot is unused.
+    assert np.all((contacts["verts_a"][:, :3] >= 0) & (contacts["verts_a"][:, :3] < cloth.n_vertices))
+    assert np.all(contacts["verts_a"][:, 3] == -1)
     assert_allclose(contacts["bary_a"].sum(axis=1), 1.0, tol=1e-12)
     assert np.all(contacts["verts_b"] == -1)
     # Records cover the contact range of the penalty (the threshold).

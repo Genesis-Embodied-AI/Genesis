@@ -111,15 +111,16 @@ def test_collider_distance_fields(show_viewer):
     assert bool(is_valid.all())
     assert_allclose(distances, expected, tol=1e-9)
     assert_allclose(gradients, expected_grad, tol=1e-9)
-    # The grid only answers inside its padded extent (10% of the size beyond the surface); a far probe is invalid.
-    grid_offsets = np.array([0.3, -0.4, -0.55, 0.55, 1.4])
-    grid_expected = np.array([-0.2, -0.1, 0.05, 0.05, 0.9])
-    grid_expected_grad = np.array([[1, 0, 0], [-1, 0, 0], [-1, 0, 0], [1, 0, 0], [1, 0, 0]], dtype=float)
+    # The grid spans 10% of the size beyond the surface. Beyond it, the field adds the distance to the grid to the
+    # value at the closest grid point, which is exact along the face normal.
+    grid_offsets = np.array([0.3, -0.4, -0.55, 0.55, 1.4, -0.9])
+    grid_expected = np.array([-0.2, -0.1, 0.05, 0.05, 0.9, 0.4])
+    grid_expected_grad = np.array([[1, 0, 0], [-1, 0, 0], [-1, 0, 0], [1, 0, 0], [1, 0, 0], [-1, 0, 0]], dtype=float)
     points = np.array(grid_box.get_pos().cpu().numpy())[None, :] + grid_offsets[:, None] * np.array([[1.0, 0.0, 0.0]])
     distances, gradients, is_valid = solver.get_collider_distances(grid_box.geoms[0].idx, points)
-    assert_allclose(tensor_to_array(is_valid), [True, True, True, True, False], tol=0.0)
-    assert_allclose(distances[:4], grid_expected[:4], atol=5e-4, rtol=0.0)
-    assert_allclose(gradients[:4], grid_expected_grad[:4], atol=5e-2, rtol=0.0)
+    assert bool(is_valid.all())
+    assert_allclose(distances, grid_expected, atol=5e-4, rtol=0.0)
+    assert_allclose(gradients, grid_expected_grad, atol=5e-2, rtol=0.0)
 
     points = np.array(sphere.get_pos().cpu().numpy())[None, :] + np.array(
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [1.0, 1.0, 0.0]]

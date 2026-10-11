@@ -52,6 +52,7 @@ from .newton import (
     func_store_initial_norms,
     func_update_linear_tolerance,
 )
+from .sleep import func_update_sleep
 from .soft import (
     func_attachments_stage_start,
     func_rod_apply_increment,
@@ -234,6 +235,7 @@ def kernel_step_graph(
         rigid_info,
         mochi_info,
         mochi_state,
+        island_state,
         rigid_config,
         mochi_config,
     )
@@ -367,6 +369,7 @@ def kernel_step_graph(
         mochi_config.has_soft,
         mochi_config.has_dense,
         mochi_config.has_equalities,
+        mochi_config.use_sleeping,
     )
     func_update_conv_weights(
         0,
@@ -688,6 +691,23 @@ def kernel_step_graph(
             func_rod_post_stage(
                 0, False, mochi_state.all_envs, mochi_state.n_envs_all, mochi_state, soft_info, soft_state, rigid_config
             )
+    if qd.static(mochi_config.use_sleeping):
+        func_update_sleep(
+            0,
+            False,
+            mochi_state.all_envs,
+            mochi_state.n_envs_all,
+            n_rigid_entities,
+            dyn_state,
+            dyn_info,
+            mochi_info,
+            mochi_state,
+            soft_info,
+            soft_state,
+            island_state,
+            rigid_config,
+            mochi_config.has_soft,
+        )
     func_update_kinematics(
         mochi_state.all_envs,
         mochi_state.n_envs_all,

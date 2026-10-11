@@ -96,7 +96,8 @@ def func_rod_band_factor(
                     func_rod_band_add(rows[p], rows[q], K[p, q], i_b, soft_state)
     # Contact and attachment blocks on rod vertices: without them the band is only exact while the rod is free, and
     # a rod pressed into a collider costs several extra conjugate-gradient iterations per solve. The couplings with
-    # rigid bodies and with vertices outside the band are dropped, as mochi's per-actor preconditioner drops them.
+    # rigid bodies and with vertices outside the band are dropped, as mochi's per-actor preconditioner drops them. Only
+    # the first three sample vertices can be banded: the fourth carries weight on contact skins of solids alone.
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_h, i_slot in (
         qd.ndrange(soft_state.n_soft_hits_max[None], n_envs[None])
@@ -107,12 +108,14 @@ def func_rod_band_factor(
         if not mochi_state.pcg_is_active[i_b] or i_h >= soft_state.n_soft_hits[i_b]:
             continue
         i_s = soft_state.hit_sample[i_h, i_b]
-        tri = soft_info.samples_tri[i_s]
+        sample_verts = soft_info.samples_verts[i_s]
         bary = soft_info.samples_bary[i_s]
         D = func_sym6_to_mat3(soft_state.hit_D[i_h, i_b])
         for i in qd.static(range(3)):
             for j in qd.static(range(3)):
-                func_rod_band_add_vertex_block(tri[i], tri[j], bary[i] * bary[j], D, i_b, soft_info, soft_state)
+                func_rod_band_add_vertex_block(
+                    sample_verts[i], sample_verts[j], bary[i] * bary[j], D, i_b, soft_info, soft_state
+                )
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_h, i_slot in (
         qd.ndrange(soft_state.n_sc_hits_max[None], n_envs[None])
@@ -125,12 +128,14 @@ def func_rod_band_factor(
         # The collider side of a deformable-collider hit is a tetrahedron, never banded: only the sample side enters.
         if soft_state.sc_hit_kind_a[i_h, i_b] == 1:
             i_s = soft_state.sc_hit_sample_a[i_h, i_b]
-            tri = soft_info.samples_tri[i_s]
+            sample_verts = soft_info.samples_verts[i_s]
             bary = soft_info.samples_bary[i_s]
             D = func_sym6_to_mat3(soft_state.sc_hit_D[i_h, i_b])
             for i in qd.static(range(3)):
                 for j in qd.static(range(3)):
-                    func_rod_band_add_vertex_block(tri[i], tri[j], bary[i] * bary[j], D, i_b, soft_info, soft_state)
+                    func_rod_band_add_vertex_block(
+                        sample_verts[i], sample_verts[j], bary[i] * bary[j], D, i_b, soft_info, soft_state
+                    )
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_h, i_slot in (
         qd.ndrange(soft_state.n_pc_hits_max[None], n_envs[None])
@@ -145,13 +150,15 @@ def func_rod_band_factor(
         func_rod_band_add_vertex_block(i_vb, i_vb, 1.0, D, i_b, soft_info, soft_state)
         if soft_state.pc_hit_kind_a[i_h, i_b] == 1:
             i_s = soft_state.pc_hit_sample_a[i_h, i_b]
-            tri = soft_info.samples_tri[i_s]
+            sample_verts = soft_info.samples_verts[i_s]
             bary = soft_info.samples_bary[i_s]
             for i in qd.static(range(3)):
-                func_rod_band_add_vertex_block(tri[i], i_vb, -bary[i], D, i_b, soft_info, soft_state)
-                func_rod_band_add_vertex_block(i_vb, tri[i], -bary[i], D, i_b, soft_info, soft_state)
+                func_rod_band_add_vertex_block(sample_verts[i], i_vb, -bary[i], D, i_b, soft_info, soft_state)
+                func_rod_band_add_vertex_block(i_vb, sample_verts[i], -bary[i], D, i_b, soft_info, soft_state)
                 for j in qd.static(range(3)):
-                    func_rod_band_add_vertex_block(tri[i], tri[j], bary[i] * bary[j], D, i_b, soft_info, soft_state)
+                    func_rod_band_add_vertex_block(
+                        sample_verts[i], sample_verts[j], bary[i] * bary[j], D, i_b, soft_info, soft_state
+                    )
     n_att = soft_info.att_vert.shape[0]
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_a, i_slot in qd.ndrange(n_att, n_envs[None]) if qd.static(not per_env) else qd.ndrange(n_att, 1):

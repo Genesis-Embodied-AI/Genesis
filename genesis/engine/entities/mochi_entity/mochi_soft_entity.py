@@ -2,6 +2,7 @@
 # (mochi_core / mochi_physics), licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import os
+from typing import NamedTuple
 
 import numpy as np
 import torch
@@ -21,6 +22,13 @@ from .mochi_entity import filter_entity_contacts
 
 TET_NODE_FORMAT = ".node"
 TET_VTK_FORMAT = ".vtk"
+
+
+class ContactSkin(NamedTuple):
+    """Rest vertices and triangles of the surface carrying the contact samples of a solid (see `set_contact_skin`)."""
+
+    verts: np.ndarray
+    faces: np.ndarray
 
 
 def load_tet_files(node_path):
@@ -169,6 +177,7 @@ class MochiSoftEntity(Entity):
         self._vface_start = vface_start
         self._queried_states = QueriedStates()
         self._attachments = []
+        self._contact_skin = None
 
         self.sample()
 
@@ -426,28 +435,8 @@ class MochiSoftEntity(Entity):
         mesh. `pos`, `euler` (degrees) and `scale` place the visual mesh in the frame of the simulation mesh file;
         the entity's morph transform then applies to both. Must be called before the scene is built.
         """
-        if self.is_built:
-            gs.raise_exception("The visual mesh must be set before the scene is built.")
-        if self._is_shell or self._is_rod:
-            gs.raise_exception("Only solid (tetrahedral) entities can carry an embedded visual mesh.")
-        visual_trimesh = trimesh.load(file, force="mesh", process=False)
-        quat = gu.xyz_to_quat(np.asarray(euler, dtype=np.float64), rpy=True, degrees=True)
-        verts = visual_trimesh.vertices * float(scale) @ gu.quat_to_R(quat).T + np.asarray(pos, dtype=np.float64)
-        # Mirror the placement of the simulation mesh: the pre-rotation transform of `sample` (the morph scale and
-        # position for file meshes), then the morph rotation about the simulation mesh's centroid of `instantiate`.
-        morph = self._morph
-        if isinstance(morph, gs.morphs.Mesh):
-            verts = verts * np.asarray(morph.scale, dtype=np.float64)
-        verts = verts + np.asarray(morph.pos, dtype=np.float64)
-        morph_quat = np.array(morph.quat, dtype=gs.np_float)
-        init_quat = gu.transform_quat_by_quat(np.array(morph.offset_quat, dtype=gs.np_float), morph_quat)
-        com = self._instantiate_verts_COM
-        verts = (verts - com) @ gu.quat_to_R(init_quat).T + com
-        verts = verts + gu.transform_by_quat(np.array(morph.offset_pos, dtype=gs.np_float), morph_quat)
-        elems_idx, bary = embed_in_tets(verts, self.init_positions, self.elems)
-        # Keep the loaded mesh's UVs and material; only the vertex positions move into the simulation frame.
-        visual_trimesh = visual_trimesh.copy()
-        visual_trimesh.vertices = verts
+        visual_trimesh = self._load_embedded_mesh(file, pos, euler, scale, "visual mesh")
+        elems_idx, bary = embed_in_tets(visual_trimesh.vertices, self.init_positions, self.elems)
         vmesh = gs.Mesh.from_trimesh(visual_trimesh, surface=self._surface)
         self._vgeoms = gs.List(
             [
@@ -462,6 +451,44 @@ class MochiSoftEntity(Entity):
                 )
             ]
         )
+
+    def set_contact_skin(self, file, pos=(0.0, 0.0, 0.0), euler=(0.0, 0.0, 0.0), scale=1.0):
+        """Carry the contact samples of this solid on a triangle surface embedded in its simulation tetrahedra.
+
+        The samples otherwise lie on the boundary triangles of the tetrahedral mesh, so a coarse mesh contacts through
+        a coarse surface. A detailed skin (fingertip pads, the authored collision surface) places them where the
+        contact actually happens, at the cost of more samples and of contact forces spread over the four vertices of
+        a tetrahedron instead of three. The skin vertices follow the tetrahedra as the visual mesh does (see
+        `set_visual_mesh`, which takes the same placement arguments). The skin carries the samples only: other bodies
+        still collide against the tetrahedra. Must be called before the scene is built.
+        """
+        skin_trimesh = self._load_embedded_mesh(file, pos, euler, scale, "contact skin")
+        self._contact_skin = ContactSkin(skin_trimesh.vertices, skin_trimesh.faces)
+
+    def _load_embedded_mesh(self, file, pos, euler, scale, kind):
+        """Load a triangle mesh and place it in the frame of the simulation mesh (see `set_visual_mesh`)."""
+        if self.is_built:
+            gs.raise_exception(f"The {kind} must be set before the scene is built.")
+        if self._is_shell or self._is_rod:
+            gs.raise_exception(f"Only solid (tetrahedral) entities can carry an embedded {kind}.")
+        mesh = trimesh.load(file, force="mesh", process=False)
+        quat = gu.xyz_to_quat(np.asarray(euler, dtype=np.float64), rpy=True, degrees=True)
+        verts = mesh.vertices * float(scale) @ gu.quat_to_R(quat).T + np.asarray(pos, dtype=np.float64)
+        # Mirror the placement of the simulation mesh: the pre-rotation transform of `sample` (the morph scale and
+        # position for file meshes), then the morph rotation about the simulation mesh's centroid of `instantiate`.
+        morph = self._morph
+        if isinstance(morph, gs.morphs.Mesh):
+            verts = verts * np.asarray(morph.scale, dtype=np.float64)
+        verts = verts + np.asarray(morph.pos, dtype=np.float64)
+        morph_quat = np.array(morph.quat, dtype=gs.np_float)
+        init_quat = gu.transform_quat_by_quat(np.array(morph.offset_quat, dtype=gs.np_float), morph_quat)
+        com = self._instantiate_verts_COM
+        verts = (verts - com) @ gu.quat_to_R(init_quat).T + com
+        verts = verts + gu.transform_by_quat(np.array(morph.offset_pos, dtype=gs.np_float), morph_quat)
+        # Keep the loaded mesh's UVs and material; only the vertex positions move into the simulation frame.
+        mesh = mesh.copy()
+        mesh.vertices = verts
+        return mesh
 
     def get_vertices_position(self, envs_idx=None):
         """World positions of the vertices, shape (n_vertices, 3) or (n_envs, n_vertices, 3)."""
@@ -577,6 +604,11 @@ class MochiSoftEntity(Entity):
     @property
     def surface_triangles(self):
         return self._surface_tri_np
+
+    @property
+    def contact_skin(self):
+        """Rest vertices and triangles of the contact skin, or None when the samples lie on the boundary triangles."""
+        return self._contact_skin
 
     @property
     def n_dofs(self):

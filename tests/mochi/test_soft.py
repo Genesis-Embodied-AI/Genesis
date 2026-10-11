@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 import quadrants as qd
+import trimesh
 
 import genesis as gs
 from genesis.engine.solvers.mochi.linear_solver import kernel_condense_dense
@@ -92,7 +93,7 @@ def test_soft_free_fall(show_viewer):
 
 
 @pytest.mark.precision("64")
-def test_soft_cube_rests_on_plane(show_viewer):
+def test_soft_cube_rests_on_plane(tmp_path, show_viewer):
     E, rho, size = 1e5, 1000.0, 0.2
     scene = _mochi_scene(show_viewer, 1.0 / 60.0, n_newton_iterations=8)
     scene.add_entity(gs.morphs.Plane(), material=gs.materials.Mochi.Rigid())
@@ -100,17 +101,30 @@ def test_soft_cube_rests_on_plane(show_viewer):
         gs.morphs.Box(size=(size, size, size), pos=(0.0, 0.0, 0.5 * size + 0.02), maxvolume=0.0005, nobisect=False),
         material=gs.materials.Mochi.Elastic(E=E, nu=0.45, rho=rho),
     )
+    # The same cube contacting through a contact skin 10% larger than its tetrahedra, which extrapolate it.
+    skinned_cube = scene.add_entity(
+        gs.morphs.Box(size=(size, size, size), pos=(1.0, 0.0, 0.5 * size + 0.04), maxvolume=0.0005, nobisect=False),
+        material=gs.materials.Mochi.Elastic(E=E, nu=0.45, rho=rho),
+    )
+    skin_path = str(tmp_path / "skin.obj")
+    trimesh.creation.box(extents=(1.1 * size,) * 3).subdivide().subdivide().subdivide().export(skin_path)
+    skinned_cube.set_contact_skin(skin_path)
     scene.build()
     for _ in range(120):
         scene.step()
     pos = tensor_to_array(cube.get_vertices_position())
     assert_allclose(cube.get_vertices_velocity(), 0.0, atol=1e-6)
+    assert_allclose(skinned_cube.get_vertices_velocity(), 0.0, atol=1e-6)
     assert int(scene.mochi_solver.get_convergence_info()["status"][0]) == 1
     # Net contact force balances the weight; penetration stays at the penalty compliance.
-    assert_allclose(
-        tensor_to_array(cube.get_vertices_contact_force()).sum(axis=0), (0.0, 0.0, cube.mass * 9.8), tol=1e-3
-    )
+    for body in (cube, skinned_cube):
+        assert_allclose(
+            tensor_to_array(body.get_vertices_contact_force()).sum(axis=0), (0.0, 0.0, body.mass * 9.8), tol=1e-3
+        )
     assert -2e-3 < pos[:, 2].min() < 0.0
+    # The skin, not the tetrahedra, touches the plane: the skinned cube floats by the skin margin.
+    skinned_pos = tensor_to_array(skinned_cube.get_vertices_position())
+    assert_allclose(skinned_pos[:, 2].min() - pos[:, 2].min(), 0.05 * size, atol=5e-4)
     # Compression of a column under its own weight: rho g L / (2 E).
     height = pos[:, 2].max() - pos[:, 2].min()
     assert_allclose(size - height, rho * 9.8 * size * size / (2.0 * E), rtol=0.3)

@@ -55,6 +55,7 @@ from .newton import (
     func_update_linear_tolerance,
 )
 from .rigid_assembly import func_assemble_links
+from .sleep import func_update_sleep
 from .soft import (
     func_assemble_attachments,
     func_attachments_stage_start,
@@ -391,6 +392,7 @@ def func_assemble(
                 soft_info,
                 soft_state,
                 rigid_config,
+                mochi_config,
                 assem_obj,
                 assem_res,
                 assem_dres,
@@ -407,6 +409,7 @@ def func_assemble(
                 soft_info,
                 soft_state,
                 rigid_config,
+                mochi_config,
                 assem_obj,
                 assem_res,
                 assem_dres,
@@ -461,6 +464,7 @@ def func_assemble(
             mochi_state,
             island_state,
             rigid_config,
+            mochi_config,
             skip_ls_done,
         )
 
@@ -620,6 +624,7 @@ def kernel_step_monolith(
             rigid_info,
             mochi_info,
             mochi_state,
+            island_state,
             rigid_config,
             mochi_config,
         )
@@ -770,6 +775,7 @@ def kernel_step_monolith(
             mochi_config.has_soft,
             mochi_config.has_dense,
             mochi_config.has_equalities,
+            mochi_config.use_sleeping,
         )
 
         # Newton iterations with the residual-norm line search. Every round evaluates the residual at the current
@@ -1063,4 +1069,21 @@ def kernel_step_monolith(
                     soft_state,
                     rigid_config,
                 )
+        if qd.static(mochi_config.use_sleeping):
+            func_update_sleep(
+                i_b,
+                True,
+                mochi_state.all_envs,
+                mochi_state.n_envs_all,
+                n_rigid_entities,
+                dyn_state,
+                dyn_info,
+                mochi_info,
+                mochi_state,
+                soft_info,
+                soft_state,
+                island_state,
+                rigid_config,
+                mochi_config.has_soft,
+            )
         func_update_kinematics_env(i_b, geoms_init_AABB, dyn_state, dyn_info, rigid_info, rigid_config, True)

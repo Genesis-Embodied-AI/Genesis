@@ -40,6 +40,7 @@ def make_static_config(**overrides):
         "has_rod_band": False,
         "has_soft_colliders": False,
         "tet_tree_levels": 0,
+        "use_sleeping": False,
     }
     config.update(overrides)
     return MochiStaticConfig(**config)

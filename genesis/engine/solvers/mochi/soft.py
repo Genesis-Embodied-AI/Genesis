@@ -15,6 +15,7 @@ import quadrants as qd
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.engine.entities.mochi_entity.mochi_soft_entity import embed_in_tets
 from genesis.utils import array_class
 
 from .articulated import func_jacobian_times_dofs, func_jacobian_transpose_add, func_link_dof_jacobian
@@ -48,6 +49,7 @@ from .rod import (
 from .rod_solver import func_rod_band_solve
 from .shell import func_shell_elastic, func_shell_rest_data, func_shell_strains
 from .soft_materials import (
+    func_cofactor,
     func_elastic_energy,
     func_elastic_stress,
     func_stiffness_damping_block,
@@ -114,14 +116,43 @@ ENTITY_PARAMS = (
 
 def build_soft_samples(verts, surface_tri, quadrature_bary, quadrature_weights):
     """Boundary contact samples of a tetrahedral mesh: for each boundary triangle, the quadrature points as barycentric
-    coordinates with their rest area weights. Returns (triangles, barycentric coordinates, weights)."""
+    coordinates with their rest area weights.
+
+    Returns the four sample vertices (the triangle, its first vertex repeated), their weights (the barycentric
+    coordinates, then zero) and the sample weights, the layout shared by every kind of contact sample."""
     tri = verts[surface_tri]
     areas_2 = np.linalg.norm(np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=-1)
     n_q = len(quadrature_weights)
     triangles = np.repeat(surface_tri, n_q, axis=0)
     bary = np.tile(quadrature_bary, (len(surface_tri), 1))
     weights = (np.asarray(quadrature_weights)[None, :] * areas_2[:, None]).reshape((-1,))
-    return triangles.astype(gs.np_int), bary.astype(gs.np_float), weights.astype(gs.np_float)
+    samples_verts = np.concatenate((triangles, triangles[:, :1]), axis=1)
+    samples_bary = np.concatenate((bary, np.zeros((len(bary), 1))), axis=1)
+    return samples_verts, samples_bary, weights
+
+
+def build_skin_samples(skin, verts, elems, quadrature_bary, quadrature_weights):
+    """Contact samples on a contact skin embedded in tetrahedra.
+
+    Every skin triangle carries the quadrature points of `build_soft_samples`, each expressed by the barycentric
+    coordinates of the tetrahedron it lies in (extrapolated linearly from the nearest tetrahedron outside the mesh).
+    Returns the four sample vertices, their weights, the rest area weights and the rest normals pulled back to the edge
+    frame of the tetrahedron, m = Dm^T n, so that the deformed normal is the direction of cof(Ds) m.
+    """
+    tri = skin.verts[skin.faces]
+    cross = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    areas_2 = np.linalg.norm(cross, axis=-1)
+    is_valid = areas_2 > 0.0
+    tri, cross, areas_2 = tri[is_valid], cross[is_valid], areas_2[is_valid]
+    n_q = len(quadrature_weights)
+    points = np.einsum("qk,tkd->tqd", quadrature_bary, tri).reshape((len(tri) * n_q, 3))
+    weights = (np.asarray(quadrature_weights)[None, :] * areas_2[:, None]).reshape((len(tri) * n_q,))
+    normals = np.repeat(cross / areas_2[:, None], n_q, axis=0)
+    elems_idx, bary = embed_in_tets(points, verts, elems)
+    tets = elems[elems_idx]
+    x3 = verts[tets[:, 3]]
+    Dm = np.stack([verts[tets[:, k]] - x3 for k in range(3)], axis=-1)
+    return tets, bary, weights, np.einsum("tji,tj->ti", Dm, normals)
 
 
 # ------------------------------------------------------------------------------------
@@ -135,10 +166,12 @@ def kernel_init_soft_fields(
     verts_entity_idx: qd.types.ndarray(),
     elems_v: qd.types.ndarray(),
     elems_entity_idx: qd.types.ndarray(),
-    samples_tri: qd.types.ndarray(),
+    samples_verts: qd.types.ndarray(),
     samples_bary: qd.types.ndarray(),
     samples_weight: qd.types.ndarray(),
     samples_entity_idx: qd.types.ndarray(),
+    skin_samples: qd.types.ndarray(),
+    skin_normal_rest: qd.types.ndarray(),
     entities_params: qd.types.ndarray(),
     entities_links_pair_enabled: qd.types.ndarray(),
     entities_pair_enabled: qd.types.ndarray(),
@@ -149,7 +182,8 @@ def kernel_init_soft_fields(
 ):
     n_verts = verts_rest.shape[0]
     n_elems = elems_v.shape[0]
-    n_samples = samples_tri.shape[0]
+    n_samples = samples_verts.shape[0]
+    n_skin_samples = skin_samples.shape[0]
     n_entities = entities_params.shape[0]
     n_links = entities_links_pair_enabled.shape[1]
     _B = soft_state.verts_pos.shape[1]
@@ -233,11 +267,25 @@ def kernel_init_soft_fields(
 
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_s in range(n_samples):
-        for k in qd.static(range(3)):
-            soft_info.samples_tri[i_s][k] = samples_tri[i_s, k]
-            soft_info.samples_bary[i_s][k] = samples_bary[i_s, k]
+        sample_verts = soft_info.samples_verts[i_s]
+        bary = soft_info.samples_bary[i_s]
+        for k in qd.static(range(sample_verts.n)):
+            sample_verts[k] = samples_verts[i_s, k]
+            bary[k] = samples_bary[i_s, k]
+        soft_info.samples_verts[i_s] = sample_verts
+        soft_info.samples_bary[i_s] = bary
         soft_info.samples_weight[i_s] = samples_weight[i_s]
         soft_info.samples_entity_idx[i_s] = samples_entity_idx[i_s]
+        if qd.static(sample_verts.n == 4):
+            soft_info.samples_skin_row[i_s] = -1
+
+    qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    for i_k in range(n_skin_samples):
+        i_s = skin_samples[i_k]
+        soft_info.skin_samples[i_k] = i_s
+        soft_info.samples_skin_row[i_s] = i_k
+        for k in qd.static(range(3)):
+            soft_info.skin_normal_rest[i_k][k] = skin_normal_rest[i_k, k]
 
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_v, i_b in qd.ndrange(n_verts, _B):
@@ -252,6 +300,40 @@ def kernel_init_soft_fields(
         soft_state.verts_is_fixed[i_v, i_b] = False
         soft_state.verts_target[i_v, i_b] = pos
         soft_state.verts_contact_force[i_v, i_b] = qd.Vector.zero(gs.qd_float, 3)
+
+
+@qd.func
+def func_soft_sample_pos(i_s: int, verts_pos: qd.Tensor, i_b: int, soft_info: MochiSoftInfo):
+    """Position of a contact sample from the vertex positions `verts_pos` (current or stage start)."""
+    sample_verts = soft_info.samples_verts[i_s]
+    bary = soft_info.samples_bary[i_s]
+    pos = qd.Vector.zero(gs.qd_float, 3)
+    for k in qd.static(range(sample_verts.n)):
+        pos += bary[k] * verts_pos[sample_verts[k], i_b]
+    return pos
+
+
+@qd.func
+def func_soft_sample_normal(i_s: int, i_b: int, soft_info: MochiSoftInfo, soft_state: MochiSoftState, EPS: float):
+    """Deformed unit normal of a contact sample.
+
+    A boundary sample takes the normal of its triangle. A contact-skin sample maps the rest normal of the skin through
+    the deformation F = Ds Dm^-1 of its tetrahedron, as F^-T n, whose direction is cof(Ds) Dm^T n (see
+    build_skin_samples).
+    """
+    sample_verts = soft_info.samples_verts[i_s]
+    x0 = soft_state.verts_pos[sample_verts[0], i_b]
+    x1 = soft_state.verts_pos[sample_verts[1], i_b]
+    x2 = soft_state.verts_pos[sample_verts[2], i_b]
+    normal = (x1 - x0).cross(x2 - x0)
+    # Samples carry a fourth vertex only when some entity has a contact skin.
+    if qd.static(sample_verts.n == 4):
+        i_k = soft_info.samples_skin_row[i_s]
+        if i_k >= 0:
+            x3 = soft_state.verts_pos[sample_verts[3], i_b]
+            Ds = qd.Matrix.cols([x0 - x3, x1 - x3, x2 - x3])
+            normal = func_cofactor(Ds) @ soft_info.skin_normal_rest[i_k]
+    return gu.qd_normalize(normal, EPS)
 
 
 @qd.func
@@ -321,8 +403,14 @@ def func_soft_step_start(
         v1 = soft_state.verts_vel[i_v, i_b]
         pos = x1
         vel = v1
-        if qd.static(mochi_config.integrator == INTEGRATOR.BDF2):  # noqa: SIM102
-            if mochi_state.n_hist[i_b] >= 2:
+        if qd.static(mochi_config.integrator == INTEGRATOR.BDF2):
+            is_bdf2 = mochi_state.n_hist[i_b] >= 2
+            if qd.static(mochi_config.use_sleeping):
+                # A sleeping body starts from its previous state, which it keeps (see sleep.py).
+                i_e = soft_info.verts_entity_idx[i_v]
+                if soft_state.entities_is_asleep[i_e, i_b]:
+                    is_bdf2 = False
+            if is_bdf2:
                 pos = x1 + BDF2_ALPHA_2 * (soft_state.verts_pos_prev[1, i_v, i_b] - x1)
                 vel = v1 + BDF2_ALPHA_2 * (soft_state.verts_vel_prev[1, i_v, i_b] - v1)
         soft_state.verts_pos_stage_start[i_v, i_b] = pos
@@ -664,6 +752,7 @@ def func_soft_assemble_elements(
     soft_info: MochiSoftInfo,
     soft_state: MochiSoftState,
     rigid_config: qd.template(),
+    mochi_config: qd.template(),
     assem_obj: qd.template(),
     assem_res: qd.template(),
     assem_dres,
@@ -685,6 +774,11 @@ def func_soft_assemble_elements(
         if vol <= 0.0:
             # Padding element of a scene without solids.
             continue
+        if qd.static(mochi_config.use_sleeping):
+            # A sleeping body keeps its pose: its zero residual needs no element (see sleep.py).
+            i_e = soft_info.elems_entity_idx[i_el]
+            if soft_state.entities_is_asleep[i_e, i_b]:
+                continue
         i_e = soft_info.elems_entity_idx[i_el]
         v = soft_info.elems_v[i_el]
         h = mochi_state.dt_stage[i_b]
@@ -803,6 +897,7 @@ def kernel_soft_assemble_elements(
     soft_info: MochiSoftInfo,
     soft_state: MochiSoftState,
     rigid_config: qd.template(),
+    mochi_config: qd.template(),
     assem_obj: qd.template(),
     assem_res: qd.template(),
     assem_dres: qd.i32,
@@ -818,6 +913,7 @@ def kernel_soft_assemble_elements(
         soft_info,
         soft_state,
         rigid_config,
+        mochi_config,
         assem_obj,
         assem_res,
         assem_dres,
@@ -886,7 +982,7 @@ def func_soft_conservative_bounds(
     rigid_config: qd.template(),
 ):
     """World bounds of every deformable entity that hold for the whole step, from the stage-start positions and
-    velocities of its vertices."""
+    velocities of its vertices and contact-skin samples."""
     n_verts = soft_state.verts_pos.shape[0]
     n_entities = soft_state.entities_step_aabb_min.shape[0]
     _B = soft_state.verts_pos.shape[1]
@@ -908,6 +1004,30 @@ def func_soft_conservative_bounds(
             speed += mochi_info.gravity[i_b].norm() * dt
         pad = margin + speed * dt
         pos = soft_state.verts_pos_stage_start[i_v, i_b]
+        for k in qd.static(range(3)):
+            qd.atomic_min(soft_state.entities_step_aabb_min[i_e, i_b][k], pos[k] - pad)
+            qd.atomic_max(soft_state.entities_step_aabb_max[i_e, i_b][k], pos[k] + pad)
+    # A contact-skin sample outside the tetrahedral mesh extrapolates from its tetrahedron, out of the vertex bounds.
+    # Its speed is at most the weighted sum of the vertex speeds.
+    qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    for i_k, i_slot in (
+        qd.ndrange(soft_info.n_skin_samples[None], n_envs[None])
+        if qd.static(not per_env)
+        else qd.ndrange(soft_info.n_skin_samples[None], 1)
+    ):
+        i_b = envs[i_slot] if qd.static(not per_env) else i_b_env
+        i_s = soft_info.skin_samples[i_k]
+        i_e = soft_info.samples_entity_idx[i_s]
+        sample_verts = soft_info.samples_verts[i_s]
+        bary = soft_info.samples_bary[i_s]
+        speed = gs.qd_float(0.0)
+        for j in qd.static(range(sample_verts.n)):
+            speed += qd.abs(bary[j]) * soft_state.verts_vel_stage_start[sample_verts[j], i_b].norm()
+        speed = CONSERVATIVE_SPEED_SCALE * speed + CONSERVATIVE_MAX_ACCEL * dt
+        if soft_info.entities_has_gravity[i_e]:
+            speed += mochi_info.gravity[i_b].norm() * dt
+        pad = margin + speed * dt
+        pos = func_soft_sample_pos(i_s, soft_state.verts_pos_stage_start, i_b, soft_info)
         for k in qd.static(range(3)):
             qd.atomic_min(soft_state.entities_step_aabb_min[i_e, i_b][k], pos[k] - pad)
             qd.atomic_max(soft_state.entities_step_aabb_max[i_e, i_b][k], pos[k] + pad)
@@ -1072,14 +1192,15 @@ def func_soft_contact_eval(
         if i_s >= soft_info.entities_sample_end[i_e]:
             continue
         i_lb = soft_state.pair_link_b[i_p, i_b]
+        if qd.static(mochi_config.use_sleeping):  # noqa: SIM102
+            # A sleeping body only meets static or sleeping links: its island would have woken otherwise.
+            if soft_state.entities_is_asleep[i_e, i_b]:
+                continue
         i_gb = soft_state.pair_geom_b[i_p, i_b]
 
-        tri = soft_info.samples_tri[i_s]
+        sample_verts = soft_info.samples_verts[i_s]
         bary = soft_info.samples_bary[i_s]
-        x0 = soft_state.verts_pos[tri[0], i_b]
-        x1 = soft_state.verts_pos[tri[1], i_b]
-        x2 = soft_state.verts_pos[tri[2], i_b]
-        pos = bary[0] * x0 + bary[1] * x1 + bary[2] * x2
+        pos = func_soft_sample_pos(i_s, soft_state.verts_pos, i_b, soft_info)
         thr = mochi_info.geoms.penalty_threshold[i_gb]
         h = mochi_info.geoms.penalty_smoothing_half_distance[i_gb]
         # Contact range: the penalty and its derivatives vanish beyond the threshold (mochi's detection range).
@@ -1097,17 +1218,13 @@ def func_soft_contact_eval(
         if not is_valid or d > band:
             continue
 
-        # Colliding normal of the deformed triangle and stage displacement of the sample, in the collider frame. Shell
+        # Colliding normal of the deformed sample and stage displacement of the sample, in the collider frame. Shell
         # samples carry no orientation: the collider gradient serves as their normal.
-        normal_world = gu.qd_normalize((x1 - x0).cross(x2 - x0), EPS)
+        normal_world = func_soft_sample_normal(i_s, i_b, soft_info, soft_state, EPS)
         normal_geom = gu.qd_inv_transform_by_quat(normal_world, quat_g)
         if soft_info.entities_kind[i_e] != SOFT_KIND_SOLID:
             normal_geom = -gu.qd_normalize(grad, EPS)
-        pos_start = (
-            bary[0] * soft_state.verts_pos_stage_start[tri[0], i_b]
-            + bary[1] * soft_state.verts_pos_stage_start[tri[1], i_b]
-            + bary[2] * soft_state.verts_pos_stage_start[tri[2], i_b]
-        )
+        pos_start = func_soft_sample_pos(i_s, soft_state.verts_pos_stage_start, i_b, soft_info)
         pos_geom_start = gu.qd_inv_transform_by_trans_quat(
             pos_start, mochi_state.geoms_pos_stage_start[i_gb, i_b], mochi_state.geoms_quat_stage_start[i_gb, i_b]
         )
@@ -1154,8 +1271,8 @@ def func_soft_contact_eval(
         S_b = skew(r_b)
 
         if qd.static(assem_res):
-            for i in qd.static(range(3)):
-                func_add_soft_vec(mochi_state.res, tri[i], i_b, -(w * bary[i]) * force, soft_info)
+            for i in qd.static(range(sample_verts.n)):
+                func_add_soft_vec(mochi_state.res, sample_verts[i], i_b, -(w * bary[i]) * force, soft_info)
         qd.atomic_add(soft_state.acc_f[i_p, i_b], w * force)
         qd.atomic_add(soft_state.acc_q[i_p, i_b], w * r_b.cross(force))
         qd.atomic_add(soft_state.acc_obj[i_p, i_b], w * energy)
@@ -1167,8 +1284,8 @@ def func_soft_contact_eval(
             qd.atomic_add(soft_state.acc_D[i_p, i_b], func_mat3_to_sym6(D))
             qd.atomic_add(soft_state.acc_SD[i_p, i_b], S_b @ D)
             qd.atomic_add(soft_state.acc_SDS[i_p, i_b], func_mat3_to_sym6(S_b @ D @ S_b))
-            for i in qd.static(range(3)):
-                qd.atomic_add(soft_state.verts_H_diag[tri[i], i_b], (bary[i] * bary[i]) * D)
+            for i in qd.static(range(sample_verts.n)):
+                qd.atomic_add(soft_state.verts_H_diag[sample_verts[i], i_b], (bary[i] * bary[i]) * D)
         if assem_dres or record:
             i_h = qd.atomic_add(soft_state.n_soft_hits[i_b], 1)
             if i_h < max_hits:
@@ -1185,8 +1302,8 @@ def func_soft_contact_eval(
             else:
                 qd.atomic_or(errno[i_b], array_class.ErrorCode.OVERFLOW_MOCHI_CONTACTS)
         if qd.static(record):
-            for i in qd.static(range(3)):
-                qd.atomic_add(soft_state.verts_contact_force[tri[i], i_b], (w * bary[i]) * force)
+            for i in qd.static(range(sample_verts.n)):
+                qd.atomic_add(soft_state.verts_contact_force[sample_verts[i], i_b], (w * bary[i]) * force)
             qd.atomic_add(dyn_state.links.contact_force[i_lb, i_b], -w * force)
 
 
@@ -1596,28 +1713,28 @@ def func_soft_matvec(
             i_h = i_x
             if i_h < soft_state.n_soft_hits[i_b]:
                 i_s = soft_state.hit_sample[i_h, i_b]
-                tri = soft_info.samples_tri[i_s]
+                sample_verts = soft_info.samples_verts[i_s]
                 bary = soft_info.samples_bary[i_s]
                 D = func_sym6_to_mat3(soft_state.hit_D[i_h, i_b])
                 i_lb = soft_state.hit_link_b[i_h, i_b]
                 # Relative displacement of the sample against the collider point.
                 dp = qd.Vector.zero(gs.qd_float, 3)
-                for i in qd.static(range(3)):
-                    if not soft_state.verts_is_fixed[tri[i], i_b]:
-                        dp += bary[i] * func_read_soft_vec(src, tri[i], i_b, soft_info)
+                for i in qd.static(range(sample_verts.n)):
+                    if not soft_state.verts_is_fixed[sample_verts[i], i_b]:
+                        dp += bary[i] * func_read_soft_vec(src, sample_verts[i], i_b, soft_info)
                 r_b = soft_state.hit_r_b[i_h, i_b]
                 if i_lb >= 0:
                     dp -= func_soft_point_displacement(i_lb, i_b, r_b, src, dyn_state, dyn_info, rigid_config)
                 g = D @ dp
-                for i in qd.static(range(3)):
-                    if not soft_state.verts_is_fixed[tri[i], i_b]:
-                        func_add_soft_vec(dst, tri[i], i_b, bary[i] * g, soft_info)
+                for i in qd.static(range(sample_verts.n)):
+                    if not soft_state.verts_is_fixed[sample_verts[i], i_b]:
+                        func_add_soft_vec(dst, sample_verts[i], i_b, bary[i] * g, soft_info)
                 if i_lb >= 0:
                     # The rigid-rigid part J_b^T D J_b is already in the link block; only the coupling remains.
                     g_soft = qd.Vector.zero(gs.qd_float, 3)
-                    for i in qd.static(range(3)):
-                        if not soft_state.verts_is_fixed[tri[i], i_b]:
-                            g_soft += bary[i] * func_read_soft_vec(src, tri[i], i_b, soft_info)
+                    for i in qd.static(range(sample_verts.n)):
+                        if not soft_state.verts_is_fixed[sample_verts[i], i_b]:
+                            g_soft += bary[i] * func_read_soft_vec(src, sample_verts[i], i_b, soft_info)
                     func_soft_point_force_add(i_lb, i_b, r_b, -(D @ g_soft), dst, dyn_state, dyn_info, rigid_config)
         elif i_x < n_h_soft + n_h_sc:
             i_h = i_x - n_h_soft
@@ -1631,12 +1748,12 @@ def func_soft_matvec(
                 # Relative displacement of the colliding point against the collider point (barycentric in its
                 # tetrahedron).
                 dp = qd.Vector.zero(gs.qd_float, 3)
-                tri_a = soft_info.samples_tri[soft_state.sc_hit_sample_a[i_h, i_b]]
+                sample_verts_a = soft_info.samples_verts[soft_state.sc_hit_sample_a[i_h, i_b]]
                 bary_a = soft_info.samples_bary[soft_state.sc_hit_sample_a[i_h, i_b]]
                 if kind_a == 1:
-                    for i in qd.static(range(3)):
-                        if not soft_state.verts_is_fixed[tri_a[i], i_b]:
-                            dp += bary_a[i] * func_read_soft_vec(src, tri_a[i], i_b, soft_info)
+                    for i in qd.static(range(sample_verts_a.n)):
+                        if not soft_state.verts_is_fixed[sample_verts_a[i], i_b]:
+                            dp += bary_a[i] * func_read_soft_vec(src, sample_verts_a[i], i_b, soft_info)
                 elif i_la >= 0:
                     dp += func_soft_point_displacement(i_la, i_b, r_a, src, dyn_state, dyn_info, rigid_config)
                 dp_b = qd.Vector.zero(gs.qd_float, 3)
@@ -1645,9 +1762,9 @@ def func_soft_matvec(
                         dp_b += bary_b[j] * func_read_soft_vec(src, v_b[j], i_b, soft_info)
                 g = D @ (dp - dp_b)
                 if kind_a == 1:
-                    for i in qd.static(range(3)):
-                        if not soft_state.verts_is_fixed[tri_a[i], i_b]:
-                            func_add_soft_vec(dst, tri_a[i], i_b, bary_a[i] * g, soft_info)
+                    for i in qd.static(range(sample_verts_a.n)):
+                        if not soft_state.verts_is_fixed[sample_verts_a[i], i_b]:
+                            func_add_soft_vec(dst, sample_verts_a[i], i_b, bary_a[i] * g, soft_info)
                 elif i_la >= 0:
                     # The rigid-rigid part J_a^T D J_a is already in the link block; only the coupling remains.
                     func_soft_point_force_add(i_la, i_b, r_a, -(D @ dp_b), dst, dyn_state, dyn_info, rigid_config)
@@ -1662,13 +1779,13 @@ def func_soft_matvec(
                 i_la = soft_state.pc_hit_link_a[i_h, i_b]
                 r_a = soft_state.pc_hit_r_a[i_h, i_b]
                 i_vb = soft_state.pc_hit_vert_b[i_h, i_b]
-                tri_a = soft_info.samples_tri[soft_state.pc_hit_sample_a[i_h, i_b]]
+                sample_verts_a = soft_info.samples_verts[soft_state.pc_hit_sample_a[i_h, i_b]]
                 bary_a = soft_info.samples_bary[soft_state.pc_hit_sample_a[i_h, i_b]]
                 dp = qd.Vector.zero(gs.qd_float, 3)
                 if kind_a == 1:
-                    for i in qd.static(range(3)):
-                        if not soft_state.verts_is_fixed[tri_a[i], i_b]:
-                            dp += bary_a[i] * func_read_soft_vec(src, tri_a[i], i_b, soft_info)
+                    for i in qd.static(range(sample_verts_a.n)):
+                        if not soft_state.verts_is_fixed[sample_verts_a[i], i_b]:
+                            dp += bary_a[i] * func_read_soft_vec(src, sample_verts_a[i], i_b, soft_info)
                 elif i_la >= 0:
                     dp += func_soft_point_displacement(i_la, i_b, r_a, src, dyn_state, dyn_info, rigid_config)
                 dp_b = qd.Vector.zero(gs.qd_float, 3)
@@ -1676,9 +1793,9 @@ def func_soft_matvec(
                     dp_b = func_read_soft_vec(src, i_vb, i_b, soft_info)
                 g = D @ (dp - dp_b)
                 if kind_a == 1:
-                    for i in qd.static(range(3)):
-                        if not soft_state.verts_is_fixed[tri_a[i], i_b]:
-                            func_add_soft_vec(dst, tri_a[i], i_b, bary_a[i] * g, soft_info)
+                    for i in qd.static(range(sample_verts_a.n)):
+                        if not soft_state.verts_is_fixed[sample_verts_a[i], i_b]:
+                            func_add_soft_vec(dst, sample_verts_a[i], i_b, bary_a[i] * g, soft_info)
                 elif i_la >= 0:
                     func_soft_point_force_add(i_la, i_b, r_a, -(D @ dp_b), dst, dyn_state, dyn_info, rigid_config)
                 if not soft_state.verts_is_fixed[i_vb, i_b]:
@@ -1806,13 +1923,13 @@ def func_soft_condense_dense(
         if not (mochi_state.is_active[i_b] and island_state.uses_dense[i_b]) or i_h >= soft_state.n_soft_hits[i_b]:
             continue
         i_s = soft_state.hit_sample[i_h, i_b]
-        tri = soft_info.samples_tri[i_s]
+        sample_verts = soft_info.samples_verts[i_s]
         bary = soft_info.samples_bary[i_s]
         D = func_sym6_to_mat3(soft_state.hit_D[i_h, i_b])
-        for i in qd.static(range(3)):
-            for j in qd.static(range(3)):
-                i_d = func_soft_dof(tri[i], 0, soft_info)
-                j_d = func_soft_dof(tri[j], 0, soft_info)
+        for i in qd.static(range(sample_verts.n)):
+            for j in qd.static(range(sample_verts.n)):
+                i_d = func_soft_dof(sample_verts[i], 0, soft_info)
+                j_d = func_soft_dof(sample_verts[j], 0, soft_info)
                 for r in qd.static(range(3)):
                     for c in qd.static(range(3)):
                         qd.atomic_add(mochi_state.H_dense[i_b, i_d + r, j_d + c], bary[i] * bary[j] * D[r, c])
@@ -1825,8 +1942,8 @@ def func_soft_condense_dense(
                 for k_d in range(dyn_info.links.dof_start[I_a], dyn_info.links.dof_end[I_a]):
                     vel, ang = func_link_dof_jacobian(i_lb, k_d, i_b, dyn_state)
                     column = -(D @ (vel + ang.cross(r_b)))
-                    for i in qd.static(range(3)):
-                        i_d = func_soft_dof(tri[i], 0, soft_info)
+                    for i in qd.static(range(sample_verts.n)):
+                        i_d = func_soft_dof(sample_verts[i], 0, soft_info)
                         for r in qd.static(range(3)):
                             qd.atomic_add(mochi_state.H_dense[i_b, i_d + r, k_d], bary[i] * column[r])
                             qd.atomic_add(mochi_state.H_dense[i_b, k_d, i_d + r], bary[i] * column[r])
@@ -1853,12 +1970,12 @@ def func_soft_condense_dense(
                     for c in qd.static(range(3)):
                         qd.atomic_add(mochi_state.H_dense[i_b, j_d + r, l_d + c], bary_b[j] * bary_b[l] * D[r, c])
         if kind_a == 1:
-            tri_a = soft_info.samples_tri[soft_state.sc_hit_sample_a[i_h, i_b]]
+            sample_verts_a = soft_info.samples_verts[soft_state.sc_hit_sample_a[i_h, i_b]]
             bary_a = soft_info.samples_bary[soft_state.sc_hit_sample_a[i_h, i_b]]
-            for i in qd.static(range(3)):
-                i_d = func_soft_dof(tri_a[i], 0, soft_info)
-                for k in qd.static(range(3)):
-                    k_d = func_soft_dof(tri_a[k], 0, soft_info)
+            for i in qd.static(range(sample_verts_a.n)):
+                i_d = func_soft_dof(sample_verts_a[i], 0, soft_info)
+                for k in qd.static(range(sample_verts_a.n)):
+                    k_d = func_soft_dof(sample_verts_a[k], 0, soft_info)
                     for r in qd.static(range(3)):
                         for c in qd.static(range(3)):
                             qd.atomic_add(mochi_state.H_dense[i_b, i_d + r, k_d + c], bary_a[i] * bary_a[k] * D[r, c])
@@ -1902,12 +2019,12 @@ def func_soft_condense_dense(
             for c in qd.static(range(3)):
                 qd.atomic_add(mochi_state.H_dense[i_b, b_d + r, b_d + c], D[r, c])
         if kind_a == 1:
-            tri_a = soft_info.samples_tri[soft_state.pc_hit_sample_a[i_h, i_b]]
+            sample_verts_a = soft_info.samples_verts[soft_state.pc_hit_sample_a[i_h, i_b]]
             bary_a = soft_info.samples_bary[soft_state.pc_hit_sample_a[i_h, i_b]]
-            for i in qd.static(range(3)):
-                i_d = func_soft_dof(tri_a[i], 0, soft_info)
-                for k in qd.static(range(3)):
-                    k_d = func_soft_dof(tri_a[k], 0, soft_info)
+            for i in qd.static(range(sample_verts_a.n)):
+                i_d = func_soft_dof(sample_verts_a[i], 0, soft_info)
+                for k in qd.static(range(sample_verts_a.n)):
+                    k_d = func_soft_dof(sample_verts_a[k], 0, soft_info)
                     for r in qd.static(range(3)):
                         for c in qd.static(range(3)):
                             qd.atomic_add(mochi_state.H_dense[i_b, i_d + r, k_d + c], bary_a[i] * bary_a[k] * D[r, c])
@@ -2517,18 +2634,9 @@ def func_query_point(
         kind_a = 1
         i_sample = i_q - n_rigid
         e_a = soft_info.samples_entity_idx[i_sample]
-        tri = soft_info.samples_tri[i_sample]
-        bary = soft_info.samples_bary[i_sample]
-        x0 = soft_state.verts_pos[tri[0], i_b]
-        x1 = soft_state.verts_pos[tri[1], i_b]
-        x2 = soft_state.verts_pos[tri[2], i_b]
-        pos = bary[0] * x0 + bary[1] * x1 + bary[2] * x2
-        pos_start = (
-            bary[0] * soft_state.verts_pos_stage_start[tri[0], i_b]
-            + bary[1] * soft_state.verts_pos_stage_start[tri[1], i_b]
-            + bary[2] * soft_state.verts_pos_stage_start[tri[2], i_b]
-        )
-        normal_a = gu.qd_normalize((x1 - x0).cross(x2 - x0), EPS)
+        pos = func_soft_sample_pos(i_sample, soft_state.verts_pos, i_b, soft_info)
+        pos_start = func_soft_sample_pos(i_sample, soft_state.verts_pos_stage_start, i_b, soft_info)
+        normal_a = func_soft_sample_normal(i_sample, i_b, soft_info, soft_state, EPS)
         w = soft_info.samples_weight[i_sample]
         k_a = soft_info.entities_penalty_coefficient[e_a]
         falloff_a = soft_info.entities_friction_falloff_vel[e_a]
@@ -2588,6 +2696,15 @@ def func_soft_collider_eval(
         # Descend the hierarchy: a node whose deformed bounds do not contain the sample is skipped with its subtree.
         brute_force = soft_info.tet_tree_brute_force[None] != 0
         i_node = 0
+        if qd.static(mochi_config.use_sleeping):
+            # A sleeping sample only meets sleeping colliders: its island would have woken otherwise (see sleep.py).
+            is_asleep = False
+            if kind_a == 0:
+                is_asleep = mochi_state.links_is_asleep[i_la, i_b]
+            else:
+                is_asleep = soft_state.entities_is_asleep[e_a, i_b]
+            if is_asleep:
+                i_node = n_nodes
         while i_node < n_nodes:
             if not brute_force and (
                 (pos < soft_state.tet_tree_min[i_node, i_b]).any() or (pos > soft_state.tet_tree_max[i_node, i_b]).any()
@@ -2693,10 +2810,10 @@ def func_soft_collider_eval(
                                         qd.atomic_add(mochi_state.links_res[i_la, i_b][kk], -wf[kk])
                                         qd.atomic_add(mochi_state.links_res[i_la, i_b][3 + kk], -torque[kk])
                             else:
-                                tri = soft_info.samples_tri[i_sample]
+                                sample_verts = soft_info.samples_verts[i_sample]
                                 bary = soft_info.samples_bary[i_sample]
-                                for i in qd.static(range(3)):
-                                    func_add_soft_vec(mochi_state.res, tri[i], i_b, -(bary[i]) * wf, soft_info)
+                                for i in qd.static(range(sample_verts.n)):
+                                    func_add_soft_vec(mochi_state.res, sample_verts[i], i_b, -(bary[i]) * wf, soft_info)
                             for j in qd.static(range(4)):
                                 func_add_soft_vec(mochi_state.res, v[j], i_b, bary_b[j] * wf, soft_info)
                         if assem_dres:
@@ -2713,10 +2830,12 @@ def func_soft_collider_eval(
                                             qd.atomic_add(mochi_state.H_diag[i_la, i_b][3 + kk, ll], SD[kk, ll])
                                             qd.atomic_add(mochi_state.H_diag[i_la, i_b][3 + kk, 3 + ll], -SDS[kk, ll])
                             else:
-                                tri = soft_info.samples_tri[i_sample]
+                                sample_verts = soft_info.samples_verts[i_sample]
                                 bary = soft_info.samples_bary[i_sample]
-                                for i in qd.static(range(3)):
-                                    qd.atomic_add(soft_state.verts_H_diag[tri[i], i_b], (bary[i] * bary[i]) * D)
+                                for i in qd.static(range(sample_verts.n)):
+                                    qd.atomic_add(
+                                        soft_state.verts_H_diag[sample_verts[i], i_b], (bary[i] * bary[i]) * D
+                                    )
                             for j in qd.static(range(4)):
                                 qd.atomic_add(soft_state.verts_H_diag[v[j], i_b], (bary_b[j] * bary_b[j]) * D)
                         if assem_dres or record:
@@ -2740,10 +2859,10 @@ def func_soft_collider_eval(
                             if kind_a == 0:
                                 qd.atomic_add(dyn_state.links.contact_force[i_la, i_b], wf)
                             else:
-                                tri = soft_info.samples_tri[i_sample]
+                                sample_verts = soft_info.samples_verts[i_sample]
                                 bary = soft_info.samples_bary[i_sample]
-                                for i in qd.static(range(3)):
-                                    qd.atomic_add(soft_state.verts_contact_force[tri[i], i_b], bary[i] * wf)
+                                for i in qd.static(range(sample_verts.n)):
+                                    qd.atomic_add(soft_state.verts_contact_force[sample_verts[i], i_b], bary[i] * wf)
                             for j in qd.static(range(4)):
                                 qd.atomic_add(soft_state.verts_contact_force[v[j], i_b], -bary_b[j] * wf)
                 i_node += 1
@@ -2962,6 +3081,7 @@ def func_shell_assemble(
     soft_info: MochiSoftInfo,
     soft_state: MochiSoftState,
     rigid_config: qd.template(),
+    mochi_config: qd.template(),
     assem_obj: qd.template(),
     assem_res: qd.template(),
     assem_dres,
@@ -2979,6 +3099,10 @@ def func_shell_assemble(
         if not func_is_env_active(i_b, mochi_state, skip_ls_done):
             continue
         i_e = soft_info.shell_elems_entity_idx[i_t]
+        if qd.static(mochi_config.use_sleeping):  # noqa: SIM102
+            # A sleeping body keeps its pose: its zero residual needs no element (see sleep.py).
+            if soft_state.entities_is_asleep[i_e, i_b]:
+                continue
         nodes = func_shell_nodes(i_t, soft_info)
         is_missing = func_shell_missing(i_t, soft_info)
         h = mochi_state.dt_stage[i_b]
@@ -3081,6 +3205,7 @@ def kernel_shell_assemble(
     soft_info: MochiSoftInfo,
     soft_state: MochiSoftState,
     rigid_config: qd.template(),
+    mochi_config: qd.template(),
     assem_obj: qd.template(),
     assem_res: qd.template(),
     assem_dres: qd.i32,
@@ -3096,6 +3221,7 @@ def kernel_shell_assemble(
         soft_info,
         soft_state,
         rigid_config,
+        mochi_config,
         assem_obj,
         assem_res,
         assem_dres,
@@ -3740,6 +3866,10 @@ def func_pc_collider_eval(
         is_shell_a = kind_a == 1 and soft_info.entities_kind[e_a] != SOFT_KIND_SOLID
         cell_q = func_hash_cell(pos, inv_cell)
         entry = soft_state.pc_hash_heads[func_hash_bin(cell_q, n_bins - 1), i_b]
+        if qd.static(mochi_config.use_sleeping):  # noqa: SIM102
+            # A sleeping sample only meets sleeping colliders: its island would have woken otherwise (see sleep.py).
+            if soft_state.entities_is_asleep[e_a, i_b]:
+                entry = -1
         for _walk in range(8 * n_verts):
             if entry < 0:
                 break
@@ -3781,12 +3911,12 @@ def func_pc_collider_eval(
             if kind_a == 1 and e_a == e_b:
                 # Self-contact: samples lying near the vertex in the rest configuration (its own and the neighboring
                 # elements) never collide with the sphere of that vertex.
-                tri_a = soft_info.samples_tri[i_sample]
+                sample_verts_a = soft_info.samples_verts[i_sample]
                 bary_a = soft_info.samples_bary[i_sample]
                 rest_a = (
-                    bary_a[0] * soft_info.verts_rest[tri_a[0]]
-                    + bary_a[1] * soft_info.verts_rest[tri_a[1]]
-                    + bary_a[2] * soft_info.verts_rest[tri_a[2]]
+                    bary_a[0] * soft_info.verts_rest[sample_verts_a[0]]
+                    + bary_a[1] * soft_info.verts_rest[sample_verts_a[1]]
+                    + bary_a[2] * soft_info.verts_rest[sample_verts_a[2]]
                 )
                 exclusion = radius * soft_info.entities_self_contact_exclusion_ratio[e_b] + thr
                 if (rest_a - soft_info.verts_rest[i_vb]).norm() < exclusion:
@@ -3839,10 +3969,10 @@ def func_pc_collider_eval(
                             qd.atomic_add(mochi_state.links_res[i_la, i_b][kk], -wf[kk])
                             qd.atomic_add(mochi_state.links_res[i_la, i_b][3 + kk], -torque[kk])
                 else:
-                    tri = soft_info.samples_tri[i_sample]
+                    sample_verts = soft_info.samples_verts[i_sample]
                     bary = soft_info.samples_bary[i_sample]
-                    for i in qd.static(range(3)):
-                        func_add_soft_vec(mochi_state.res, tri[i], i_b, -(bary[i]) * wf, soft_info)
+                    for i in qd.static(range(sample_verts.n)):
+                        func_add_soft_vec(mochi_state.res, sample_verts[i], i_b, -(bary[i]) * wf, soft_info)
                 func_add_soft_vec(mochi_state.res, i_vb, i_b, wf, soft_info)
             if assem_dres:
                 if kind_a == 0:
@@ -3858,10 +3988,10 @@ def func_pc_collider_eval(
                                 qd.atomic_add(mochi_state.H_diag[i_la, i_b][3 + kk, ll], SD[kk, ll])
                                 qd.atomic_add(mochi_state.H_diag[i_la, i_b][3 + kk, 3 + ll], -SDS[kk, ll])
                 else:
-                    tri = soft_info.samples_tri[i_sample]
+                    sample_verts = soft_info.samples_verts[i_sample]
                     bary = soft_info.samples_bary[i_sample]
-                    for i in qd.static(range(3)):
-                        qd.atomic_add(soft_state.verts_H_diag[tri[i], i_b], (bary[i] * bary[i]) * D)
+                    for i in qd.static(range(sample_verts.n)):
+                        qd.atomic_add(soft_state.verts_H_diag[sample_verts[i], i_b], (bary[i] * bary[i]) * D)
                 qd.atomic_add(soft_state.verts_H_diag[i_vb, i_b], D)
             if assem_dres or record:
                 i_h = qd.atomic_add(soft_state.n_pc_hits[i_b], 1)
@@ -3883,10 +4013,10 @@ def func_pc_collider_eval(
                 if kind_a == 0:
                     qd.atomic_add(dyn_state.links.contact_force[i_la, i_b], wf)
                 else:
-                    tri = soft_info.samples_tri[i_sample]
+                    sample_verts = soft_info.samples_verts[i_sample]
                     bary = soft_info.samples_bary[i_sample]
-                    for i in qd.static(range(3)):
-                        qd.atomic_add(soft_state.verts_contact_force[tri[i], i_b], bary[i] * wf)
+                    for i in qd.static(range(sample_verts.n)):
+                        qd.atomic_add(soft_state.verts_contact_force[sample_verts[i], i_b], bary[i] * wf)
                 qd.atomic_add(soft_state.verts_contact_force[i_vb, i_b], -wf)
 
 

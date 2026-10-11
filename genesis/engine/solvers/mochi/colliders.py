@@ -13,7 +13,9 @@ from genesis.utils.sdf import sdf_func_is_outside_sdf_grid, sdf_func_true_sdf, s
 from .data import COLLIDER_TYPE, MochiGeomsInfo
 
 # Bound of the gradient norm of a trilinear interpolant of a signed distance field: each partial derivative is an
-# interpolant of unit-bounded finite differences, so the gradient norm is at most sqrt(3).
+# interpolant of unit-bounded finite differences, so the gradient norm is at most sqrt(3). The extrapolation of
+# query_collider outside the grid keeps it: every clamped axis trades its interpolant partial for a component of one
+# unit vector.
 GRID_LIPSCHITZ = 1.7320508075688772
 
 
@@ -28,10 +30,12 @@ def query_collider(
 ):
     """Signed distance of a point (geom frame) to the collider geom and the gradient of the distance field.
 
-    Returns whether the query is inside the region where the field is defined (a grid collider only answers inside
-    its grid; outside, the point is far from the surface by construction of the grid padding), the signed distance and
-    its gradient in the geom frame. Analytic colliders return a unit gradient; the grid gradient is the exact gradient
-    of the trilinear interpolant, whose norm is close to but not exactly one.
+    Returns whether the collider has a field to query, the signed distance and its gradient in the geom frame.
+    Analytic colliders return a unit gradient. Inside its grid, a grid collider returns the trilinear interpolant and
+    its exact gradient, whose norm is close to but not exactly one. Outside, it returns the upper bound of the distance
+    given by the value at the closest grid point plus the distance to it, so that contacts beyond the grid padding
+    (small geoms, wide penalty bands) keep a field continuous across the grid boundary. The gradient then points away
+    from the grid along the clamped axes.
     """
     is_valid = True
     sd = gs.qd_float(0.0)
@@ -71,10 +75,17 @@ def query_collider(
     else:
         if qd.static(mochi_config.has_grid_colliders):
             pos_sdf = gu.qd_transform_by_T(pos_geom, sdf_info.geoms_info.T_mesh_to_sdf[i_g])
+            pos_grid_max = sdf_info.geoms_info.sdf_res[i_g] - 1
+            pos_grid = qd.min(qd.max(pos_sdf, 0.0), pos_grid_max)
+            sd, grad = sdf_func_true_sdf_and_grad(i_g, pos_grid, sdf_info)
             if sdf_func_is_outside_sdf_grid(i_g, pos_sdf, sdf_info):
-                is_valid = False
-            else:
-                sd, grad = sdf_func_true_sdf_and_grad(i_g, pos_sdf, sdf_info)
+                # The SDF frame is a scaled translation of the mesh frame.
+                offset = (pos_sdf - pos_grid) * sdf_info.geoms_info.sdf_cell_size[i_g]
+                offset_norm = offset.norm()
+                sd += offset_norm
+                for k in qd.static(range(3)):
+                    if (pos_sdf[k] < 0.0 or pos_sdf[k] > pos_grid_max[k]) and offset_norm > 0.0:
+                        grad[k] = offset[k] / offset_norm
         else:
             is_valid = False
 
@@ -92,18 +103,19 @@ def query_collider_lower_bound(
     mochi_config: qd.template(),
 ):
     """Lower bound of the signed distance to the collider over a sphere (geom frame), used to prune whole nodes of a
-    sample hierarchy at once: the analytic colliders are exact distance fields (1-Lipschitz), the grid field is the
-    trilinear interpolant of one. A sphere entirely outside a grid holds no contact (nothing is evaluated outside the
-    grid, whose padding exceeds the penalty band); a sphere straddling the grid boundary is kept."""
+    sample hierarchy at once.
+
+    The analytic colliders are exact distance fields (1-Lipschitz). The grid field of query_collider is GRID_LIPSCHITZ-
+    Lipschitz inside and outside its grid. Outside, it is at least the distance to the grid, which is 1-Lipschitz and
+    much cheaper, since the grid padding puts the grid boundary outside the surface."""
     lower = -gs.qd_float(1e30)
     if mochi_geoms_info.collider_type[i_g] == COLLIDER_TYPE.GRID:
         if qd.static(mochi_config.has_grid_colliders):
             pos_sdf = gu.qd_transform_by_T(center_geom, sdf_info.geoms_info.T_mesh_to_sdf[i_g])
-            res = sdf_info.geoms_info.sdf_res[i_g]
-            radius_sdf = radius / sdf_info.geoms_info.sdf_cell_size[i_g]
-            if (pos_sdf + radius_sdf <= 0).any() or (pos_sdf - radius_sdf >= res - 1).any():
-                lower = gs.qd_float(1e30)
-            elif not sdf_func_is_outside_sdf_grid(i_g, pos_sdf, sdf_info):
+            if sdf_func_is_outside_sdf_grid(i_g, pos_sdf, sdf_info):
+                pos_grid = qd.min(qd.max(pos_sdf, 0.0), sdf_info.geoms_info.sdf_res[i_g] - 1)
+                lower = ((pos_sdf - pos_grid) * sdf_info.geoms_info.sdf_cell_size[i_g]).norm() - radius
+            else:
                 lower = sdf_func_true_sdf(i_g, pos_sdf, sdf_info) - GRID_LIPSCHITZ * radius
         else:
             lower = gs.qd_float(1e30)

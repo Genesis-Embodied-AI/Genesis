@@ -19,6 +19,7 @@ from .data import (
     MochiState,
 )
 from .equalities import MochiEqualitiesInfo
+from .sleep import func_wake_islands
 
 
 @qd.func
@@ -68,11 +69,13 @@ def func_build_islands(
     has_soft: qd.template(),
     has_dense: qd.template(),
     has_equalities: qd.template(),
+    use_sleeping: qd.template(),
 ):
     """Group the bodies of every running environment into islands from this step's contact candidates: the
     (link, collider) and (deformable entity, collider) pairs of the broadphase, and the deformable bodies whose
-    conservative bounds overlap those of a deformable collider or of a dynamic link. Then list the degrees of
-    freedom island by island and decide whether the environment is solved by the island-wise direct solver."""
+    conservative bounds overlap those of a deformable collider or of a dynamic link. Then wake the sleeping nodes that
+    an awake node joined, list the degrees of freedom island by island and decide whether the environment is solved
+    by the island-wise direct solver."""
     n_nodes = island_state.nodes_parent.shape[0]
     n_dofs = island_state.dofs_node.shape[0]
     n_links = island_state.links_node.shape[0]
@@ -166,6 +169,8 @@ def func_build_islands(
             root = func_find_root(i_n, i_b, island_state)
             island_state.nodes_island[i_n, i_b] = island_state.nodes_island[root, i_b]
         island_state.n_islands[i_b] = n_islands
+        if qd.static(use_sleeping):
+            func_wake_islands(i_b, n_rigid_entities, mochi_state, soft_state, island_state, has_soft)
 
         # Degrees of freedom grouped by island.
         for i_isl in range(n_nodes):
@@ -210,6 +215,7 @@ def kernel_build_islands(
     has_soft: qd.template(),
     has_dense: qd.template(),
     has_equalities: qd.template(),
+    use_sleeping: qd.template(),
 ):
     func_build_islands(
         0,
@@ -230,6 +236,7 @@ def kernel_build_islands(
         has_soft,
         has_dense,
         has_equalities,
+        use_sleeping,
     )
 
 
@@ -260,6 +267,9 @@ def func_cholesky_solve_islands(
             continue
         s0 = island_state.island_start[i_isl, i_b]
         n = island_state.island_n_dofs[i_isl, i_b]
+        # Every pass handles two rows, whose dot products share the loads of the row they are taken against: the two
+        # accumulation chains are independent, which doubles the work in flight on these latency-bound loops. An odd
+        # last row pairs with itself and only its first copy is stored.
         for i_ in range(n):
             i_d = island_state.island_dofs[s0 + i_, i_b]
             diag = mochi_state.H_dense[i_b, i_d, i_d]
@@ -269,30 +279,54 @@ def func_cholesky_solve_islands(
                 tmp = tmp - mochi_state.H_dense[i_b, i_d, k_d] ** 2
             mochi_state.H_dense[i_b, i_d, i_d] = qd.sqrt(qd.max(tmp, EPS * qd.max(diag, EPS)))
             inv = 1.0 / mochi_state.H_dense[i_b, i_d, i_d]
-            for j_ in range(i_ + 1, n):
+            for j_pair_ in range((n - i_) // 2):
+                j_ = i_ + 1 + 2 * j_pair_
                 j_d = island_state.island_dofs[s0 + j_, i_b]
+                j_next_d = island_state.island_dofs[s0 + qd.min(j_ + 1, n - 1), i_b]
                 dot = gs.qd_float(0.0)
+                dot_next = gs.qd_float(0.0)
                 for k_ in range(i_):
                     k_d = island_state.island_dofs[s0 + k_, i_b]
-                    dot = dot + mochi_state.H_dense[i_b, j_d, k_d] * mochi_state.H_dense[i_b, i_d, k_d]
+                    L_ik = mochi_state.H_dense[i_b, i_d, k_d]
+                    dot = dot + mochi_state.H_dense[i_b, j_d, k_d] * L_ik
+                    dot_next = dot_next + mochi_state.H_dense[i_b, j_next_d, k_d] * L_ik
                 mochi_state.H_dense[i_b, j_d, i_d] = (mochi_state.H_dense[i_b, j_d, i_d] - dot) * inv
-        # L y = res
-        for i_ in range(n):
+                if j_ + 1 < n:
+                    mochi_state.H_dense[i_b, j_next_d, i_d] = (mochi_state.H_dense[i_b, j_next_d, i_d] - dot_next) * inv
+        # L y = res, rows i and i + 1 per pass.
+        for i_pair_ in range((n + 1) // 2):
+            i_ = 2 * i_pair_
             i_d = island_state.island_dofs[s0 + i_, i_b]
+            i_next_d = island_state.island_dofs[s0 + qd.min(i_ + 1, n - 1), i_b]
             s = mochi_state.res[i_d, i_b]
+            s_next = mochi_state.res[i_next_d, i_b]
             for k_ in range(i_):
                 k_d = island_state.island_dofs[s0 + k_, i_b]
-                s = s - mochi_state.H_dense[i_b, i_d, k_d] * mochi_state.dx[k_d, i_b]
-            mochi_state.dx[i_d, i_b] = s / mochi_state.H_dense[i_b, i_d, i_d]
-        # L^T dx = y
-        for i__ in range(n):
-            i_ = n - 1 - i__
+                x_k = mochi_state.dx[k_d, i_b]
+                s = s - mochi_state.H_dense[i_b, i_d, k_d] * x_k
+                s_next = s_next - mochi_state.H_dense[i_b, i_next_d, k_d] * x_k
+            x_i = s / mochi_state.H_dense[i_b, i_d, i_d]
+            mochi_state.dx[i_d, i_b] = x_i
+            if i_ + 1 < n:
+                L_next = mochi_state.H_dense[i_b, i_next_d, i_next_d]
+                mochi_state.dx[i_next_d, i_b] = (s_next - mochi_state.H_dense[i_b, i_next_d, i_d] * x_i) / L_next
+        # L^T dx = y, rows i and i - 1 per pass.
+        for i_pair_ in range((n + 1) // 2):
+            i_ = n - 1 - 2 * i_pair_
             i_d = island_state.island_dofs[s0 + i_, i_b]
+            i_prev_d = island_state.island_dofs[s0 + qd.max(i_ - 1, 0), i_b]
             s = mochi_state.dx[i_d, i_b]
+            s_prev = mochi_state.dx[i_prev_d, i_b]
             for k_ in range(i_ + 1, n):
                 k_d = island_state.island_dofs[s0 + k_, i_b]
-                s = s - mochi_state.H_dense[i_b, k_d, i_d] * mochi_state.dx[k_d, i_b]
-            mochi_state.dx[i_d, i_b] = s / mochi_state.H_dense[i_b, i_d, i_d]
+                x_k = mochi_state.dx[k_d, i_b]
+                s = s - mochi_state.H_dense[i_b, k_d, i_d] * x_k
+                s_prev = s_prev - mochi_state.H_dense[i_b, k_d, i_prev_d] * x_k
+            x_i = s / mochi_state.H_dense[i_b, i_d, i_d]
+            mochi_state.dx[i_d, i_b] = x_i
+            if i_ >= 1:
+                L_prev = mochi_state.H_dense[i_b, i_prev_d, i_prev_d]
+                mochi_state.dx[i_prev_d, i_b] = (s_prev - mochi_state.H_dense[i_b, i_d, i_prev_d] * x_i) / L_prev
 
 
 @qd.kernel

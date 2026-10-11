@@ -11,7 +11,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils import array_class
 
-from .data import INTEGRATOR, N_HISTORY, SOLVE_STATUS, MochiInfo, MochiState
+from .data import INTEGRATOR, N_HISTORY, SOLVE_STATUS, MochiInfo, MochiIslandState, MochiState
 from .lie import sym, vee, vsym_from_omega
 
 # BDF2 extrapolation coefficient of the step before the previous one: x_start = x_-1 + BDF2_ALPHA_2 (x_-2 - x_-1).
@@ -57,11 +57,13 @@ def func_step_start(
     rigid_info: array_class.RigidInfo,
     mochi_info: MochiInfo,
     mochi_state: MochiState,
+    island_state: MochiIslandState,
     rigid_config: qd.template(),
     mochi_config: qd.template(),
 ):
     """Shift the multistep history by one step and build the stage-start reference of the new step: the previous state
-    for backward Euler, the two-step extrapolation for BDF2, which is also the warm start of the Newton solve."""
+    for backward Euler, the two-step extrapolation for BDF2, which is also the warm start of the Newton solve. A
+    sleeping body starts from its previous state, which it keeps (see sleep.py)."""
     n_qs = rigid_info.qpos.shape[0]
     n_dofs = dyn_state.dofs.vel.shape[0]
     n_links = dyn_state.links.pos.shape[0]
@@ -113,6 +115,12 @@ def func_step_start(
         is_bdf2 = False
         if qd.static(mochi_config.integrator == INTEGRATOR.BDF2):
             is_bdf2 = mochi_state.n_hist[i_b] >= 2
+        if qd.static(mochi_config.use_sleeping):
+            dof_start = dyn_info.joints.dof_start[I_j]
+            if dof_start < dyn_info.joints.dof_end[I_j]:
+                i_n = island_state.dofs_node[dof_start]
+                if island_state.nodes_is_asleep[i_n, i_b]:
+                    is_bdf2 = False
         for i_q in range(q_start, q_end):
             x1 = mochi_state.qpos_prev[0, i_q, i_b]
             value = x1
@@ -170,6 +178,7 @@ def kernel_step_start(
     rigid_info: array_class.RigidInfo,
     mochi_info: MochiInfo,
     mochi_state: MochiState,
+    island_state: MochiIslandState,
     rigid_config: qd.template(),
     mochi_config: qd.template(),
 ):
@@ -183,6 +192,7 @@ def kernel_step_start(
         rigid_info,
         mochi_info,
         mochi_state,
+        island_state,
         rigid_config,
         mochi_config,
     )

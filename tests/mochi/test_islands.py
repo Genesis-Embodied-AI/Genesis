@@ -112,3 +112,95 @@ def test_islands_soft_and_rigid(show_viewer):
         atol=2e-3,
     )
     assert_allclose(loose.get_dofs_velocity(), 0.0, atol=1e-4)
+
+
+@pytest.mark.precision("64")
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_sleeping_islands_freeze_and_wake(n_envs, show_viewer):
+    size = 0.1
+    scene = _mochi_scene(show_viewer, 0.01, use_sleeping=True)
+    scene.add_entity(gs.morphs.Plane(), material=gs.materials.Mochi.Rigid())
+    resting = scene.add_entity(
+        gs.morphs.Box(
+            size=(size, size, size),
+            pos=(0.0, 0.0, 0.5 * size),
+        ),
+        material=gs.materials.Mochi.Rigid(),
+    )
+    struck = scene.add_entity(
+        gs.morphs.Box(
+            size=(size, size, size),
+            pos=(1.0, 0.0, 0.5 * size),
+        ),
+        material=gs.materials.Mochi.Rigid(),
+    )
+    dropped = scene.add_entity(
+        gs.morphs.Box(
+            size=(size, size, size),
+            pos=(1.0, 0.0, 1.5),
+        ),
+        material=gs.materials.Mochi.Rigid(),
+    )
+    pushed = scene.add_entity(
+        gs.morphs.Box(
+            size=(size, size, size),
+            pos=(0.0, 1.0, 0.5 * size),
+        ),
+        material=gs.materials.Mochi.Rigid(),
+    )
+    soft_cube = scene.add_entity(
+        gs.morphs.Box(
+            size=(2.0 * size, 2.0 * size, 2.0 * size),
+            pos=(-1.0, 0.0, size),
+            maxvolume=0.001,
+        ),
+        material=gs.materials.Mochi.Elastic(
+            E=1e6,
+            nu=0.45,
+        ),
+    )
+    scene.build(n_envs=n_envs)
+
+    # The boxes resting on the plane settle, then sleep: their pose stops changing at all, to the last bit.
+    for _ in range(40):
+        scene.step()
+    resting_pos = tensor_to_array(resting.get_pos())
+    struck_pos = tensor_to_array(struck.get_pos())
+    pushed_pos = tensor_to_array(pushed.get_pos())
+    soft_cube_pos = tensor_to_array(soft_cube.get_vertices_position())
+    for _ in range(5):
+        scene.step()
+        assert_allclose(resting.get_pos(), resting_pos, tol=0.0)
+        assert_allclose(struck.get_pos(), struck_pos, tol=0.0)
+        assert_allclose(soft_cube.get_vertices_position(), soft_cube_pos, tol=0.0)
+        assert_allclose(resting.get_dofs_velocity(), 0.0, tol=0.0)
+        assert_allclose(soft_cube.get_vertices_velocity(), 0.0, tol=0.0)
+
+    # The falling box reaches the sleeping one, whose island wakes and gives way under the impact, while the resting
+    # box away from it sleeps on.
+    for _ in range(15):
+        scene.step()
+    assert np.all(np.abs(tensor_to_array(struck.get_pos()) - struck_pos).max(axis=-1) > 1e-6)
+    assert np.all(tensor_to_array(dropped.get_pos())[..., 2] < 1.6 * size)
+    assert_allclose(resting.get_pos(), resting_pos, tol=0.0)
+
+    # A control command wakes the body it drives alone: pushed sideways, the sleeping box slides.
+    assert_allclose(pushed.get_pos(), pushed_pos, tol=0.0)
+    pushed.control_dofs_force(20.0, dofs_idx_local=0)
+    for _ in range(10):
+        scene.step()
+    assert np.all(tensor_to_array(pushed.get_pos())[..., 0] > pushed_pos[..., 0] + 0.02)
+    assert_allclose(soft_cube.get_vertices_position(), soft_cube_pos, tol=0.0)
+
+    # A change of gravity wakes every body: tilted beyond the friction cone, it drags the sleeping soft cube sideways.
+    scene.mochi_solver.set_gravity((9.8, 0.0, -9.8))
+    for _ in range(10):
+        scene.step()
+    soft_cube_shift = tensor_to_array(soft_cube.get_vertices_position())[..., 0] - soft_cube_pos[..., 0]
+    assert np.all(soft_cube_shift.mean(axis=-1) > 0.01)
+
+    # Setting the state of a body wakes it: lifted, it falls back onto the plane.
+    resting.set_pos(resting_pos + np.array([0.0, 0.0, 0.1]))
+    for _ in range(10):
+        scene.step()
+    assert np.all(tensor_to_array(resting.get_pos())[..., 2] < resting_pos[..., 2] + 0.1 - 0.02)

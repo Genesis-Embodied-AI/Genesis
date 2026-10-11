@@ -209,9 +209,37 @@ def test_grid_collider_and_pcg_rest(show_viewer):
         material=gs.materials.Mochi.Rigid(),
     )
     sphere = scene.add_entity(gs.morphs.Sphere(radius=0.1, pos=(-0.5, -0.3, 0.5)), material=gs.materials.Mochi.Rigid())
+    # Soft contact over a band wider than the grid padding of a small collider (10% of its size): the pebble resting on
+    # the grid collider floats as high as the one on the analytic box.
+    pebbles = []
+    for i, collider_type in enumerate(("box", "sdf")):
+        scene.add_entity(
+            gs.morphs.Box(
+                size=(0.02, 0.02, 0.02),
+                pos=(3.0, 0.5 * i, 0.01),
+                fixed=True,
+            ),
+            material=gs.materials.Mochi.Rigid(
+                penalty_threshold=8e-3,
+                collider_type=collider_type,
+            ),
+        )
+        pebble = scene.add_entity(
+            gs.morphs.Sphere(
+                radius=0.01,
+                pos=(3.0, 0.5 * i, 0.035),
+            ),
+            material=gs.materials.Mochi.Rigid(
+                penalty_coefficient=1e6,
+            ),
+        )
+        pebbles.append(pebble)
     scene.build()
     for _ in range(200):
         scene.step()
+    gaps = [pebble.get_pos()[2].item() - 0.03 for pebble in pebbles]
+    assert gaps[0] > 2e-3
+    assert_allclose(gaps[1], gaps[0], atol=1e-6)
     # Both bodies come to rest on the table top (z = 0.2) within the contact threshold, lying flat.
     assert -3e-3 < cube.get_pos()[2].item() - 0.35 < 1e-3
     assert -3e-3 < sphere.get_pos()[2].item() - 0.3 < 1e-3

@@ -613,6 +613,12 @@ def func_contact_eval(
         sum_SDS = qd.Matrix.zero(gs.qd_float, 3, 3)
         i_node = mochi_info.links.tree_start[i_la]
         i_node_end = mochi_info.links.tree_end[i_la]
+        if qd.static(mochi_config.use_sleeping):
+            # A pair without an awake dynamic link holds no contact to evaluate (see sleep.py).
+            is_awake_a = mochi_info.links.is_dynamic[i_la] and not mochi_state.links_is_asleep[i_la, i_b]
+            is_awake_b = mochi_info.links.is_dynamic[i_lb] and not mochi_state.links_is_asleep[i_lb, i_b]
+            if not (is_awake_a or is_awake_b):
+                i_node = i_node_end
         while i_node < i_node_end:
             center = gu.qd_transform_by_trans_quat(mochi_info.samples.tree_center[i_node], pos_a, quat_a)
             center_geom = gu.qd_inv_transform_by_trans_quat(center, pos_g, quat_g)
@@ -880,12 +886,12 @@ def func_write_record(
     out_geom_a[i_b, i_rec] = geom_a
     out_geom_b[i_b, i_rec] = geom_b
     for k in qd.static(range(3)):
-        out_verts_a[i_b, i_rec, k] = verts_a[k]
-        out_bary_a[i_b, i_rec, k] = bary_a[k]
         out_pos[i_b, i_rec, k] = pos[k]
         out_normal[i_b, i_rec, k] = normal[k]
         out_force[i_b, i_rec, k] = force[k]
     for k in qd.static(range(4)):
+        out_verts_a[i_b, i_rec, k] = verts_a[k]
+        out_bary_a[i_b, i_rec, k] = bary_a[k]
         out_verts_b[i_b, i_rec, k] = verts_b[k]
         out_bary_b[i_b, i_rec, k] = bary_b[k]
     out_distance[i_b, i_rec] = distance
@@ -894,12 +900,21 @@ def func_write_record(
 
 @qd.func
 def func_soft_sample_verts(i_s, soft_info: MochiSoftInfo):
-    """Entity-local vertices and weights of a deformable contact sample."""
+    """Entity-local vertices and weights of a deformable contact sample, the unused fourth vertex of a boundary sample
+    as -1."""
     i_e = soft_info.samples_entity_idx[i_s]
     v_start = soft_info.entities_vert_start[i_e]
-    tri = soft_info.samples_tri[i_s]
-    verts = qd.Vector([tri[0] - v_start, tri[1] - v_start, tri[2] - v_start], dt=gs.qd_int)
-    return i_e, verts, soft_info.samples_bary[i_s]
+    sample_verts = soft_info.samples_verts[i_s]
+    sample_bary = soft_info.samples_bary[i_s]
+    verts = qd.Vector([-1, -1, -1, -1], dt=gs.qd_int)
+    bary = qd.Vector.zero(gs.qd_float, 4)
+    for k in qd.static(range(sample_verts.n)):
+        verts[k] = sample_verts[k] - v_start
+        bary[k] = sample_bary[k]
+    if qd.static(sample_verts.n == 4):  # noqa: SIM102
+        if soft_info.samples_skin_row[i_s] < 0:
+            verts[3] = -1
+    return i_e, verts, bary
 
 
 @qd.kernel
@@ -956,9 +971,7 @@ def kernel_gather_contact_records(
     largest per-environment count (see kernel_count_contact_records)."""
     max_hits = hit_readback.hit_sample.shape[0]
     _B = out_entity_a.shape[0]
-    no_verts3 = qd.Vector([-1, -1, -1], dt=gs.qd_int)
     no_verts4 = qd.Vector([-1, -1, -1, -1], dt=gs.qd_int)
-    zero3 = qd.Vector.zero(gs.qd_float, 3)
     zero4 = qd.Vector.zero(gs.qd_float, 4)
 
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
@@ -977,8 +990,8 @@ def kernel_gather_contact_records(
             i_lb,
             hit_readback.hit_geom_a[i_h, i_b],
             hit_readback.hit_geom_b[i_h, i_b],
-            no_verts3,
-            zero3,
+            no_verts4,
+            zero4,
             no_verts4,
             zero4,
             hit_readback.hit_pos[i_h, i_b],
@@ -1065,8 +1078,8 @@ def kernel_gather_contact_records(
             entity_a = -1
             link_a = -1
             geom_a = -1
-            verts_a = no_verts3
-            bary_a = zero3
+            verts_a = no_verts4
+            bary_a = zero4
             weight = gs.qd_float(0.0)
             if soft_state.sc_hit_kind_a[i_h, i_b] == 0:
                 link_a = samples_info.link_idx[i_sample]
@@ -1130,8 +1143,8 @@ def kernel_gather_contact_records(
             entity_a = -1
             link_a = -1
             geom_a = -1
-            verts_a = no_verts3
-            bary_a = zero3
+            verts_a = no_verts4
+            bary_a = zero4
             weight = gs.qd_float(0.0)
             if soft_state.pc_hit_kind_a[i_h, i_b] == 0:
                 link_a = samples_info.link_idx[i_sample]

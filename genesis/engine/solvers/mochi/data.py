@@ -97,6 +97,8 @@ class MochiStaticConfig(metaclass=AutoInitMeta):
     has_soft_colliders: bool
     # levels of the bounding-box hierarchy of the collider tetrahedra (the refit runs one task per level)
     tet_tree_levels: int
+    # bodies at rest are put to sleep (the sleep bookkeeping and the work skipping are compiled only then)
+    use_sleeping: bool
 
 
 # =========================================== build-time info ===========================================
@@ -231,6 +233,10 @@ class MochiInfo:
     pcg_rel_tol: qd.Tensor
     pcg_abs_tol: qd.Tensor
     n_newton_iterations: qd.Tensor
+    # Sleeping of bodies at rest (see MochiOptions.use_sleeping).
+    sleep_threshold: qd.Tensor
+    sleep_min_steps: qd.Tensor
+    sleep_max_speed: qd.Tensor
     EPS: qd.Tensor
 
 
@@ -258,6 +264,9 @@ def get_mochi_info(solver):
         pcg_rel_tol=_scalar(gs.qd_float, options.pcg_rel_tol),
         pcg_abs_tol=_scalar(gs.qd_float, options.pcg_abs_tol),
         n_newton_iterations=_scalar(gs.qd_int, options.n_newton_iterations),
+        sleep_threshold=_scalar(gs.qd_float, options.sleep_threshold),
+        sleep_min_steps=_scalar(gs.qd_int, options.sleep_min_steps),
+        sleep_max_speed=_scalar(gs.qd_float, options.sleep_max_speed),
         EPS=_scalar(gs.qd_float, gs.EPS),
     )
 
@@ -290,12 +299,20 @@ class MochiIslandState:
     # environment converges when every one of its entities does, as in mochi.
     nodes_res_w_sq: qd.Tensor
     nodes_res_norm0_w: qd.Tensor
+    # Sleeping (allocated only when enabled): consecutive steps at rest of every node, whether it sleeps, whether it
+    # moved too fast or is actuated this step, and whether an island holds an awake node (scratch of the island-wise
+    # decisions, indexed by island).
+    nodes_rest_steps: qd.Tensor
+    nodes_is_asleep: qd.Tensor
+    nodes_is_restless: qd.Tensor
+    islands_is_awake: qd.Tensor
 
 
 def get_mochi_island_state(solver, links_node, dofs_node):
     _B = solver._B
     n_nodes_ = max(1, len(solver._entities) + len(solver._soft_entities))
     n_dofs_ = solver.n_dofs_total_
+    n_sleep_nodes_, _B_sleep = (n_nodes_, _B) if solver._options.use_sleeping else (1, 1)
     state = MochiIslandState(
         links_node=V(dtype=gs.qd_int, shape=(solver.n_links_,)),
         dofs_node=V(dtype=gs.qd_int, shape=(n_dofs_,)),
@@ -310,6 +327,10 @@ def get_mochi_island_state(solver, links_node, dofs_node):
         uses_dense=V(dtype=gs.qd_bool, shape=(_B,)),
         nodes_res_w_sq=V(dtype=gs.qd_float, shape=(n_nodes_, _B)),
         nodes_res_norm0_w=V(dtype=gs.qd_float, shape=(n_nodes_, _B)),
+        nodes_rest_steps=V(dtype=gs.qd_int, shape=(n_sleep_nodes_, _B_sleep)),
+        nodes_is_asleep=V(dtype=gs.qd_bool, shape=(n_sleep_nodes_, _B_sleep)),
+        nodes_is_restless=V(dtype=gs.qd_bool, shape=(n_sleep_nodes_, _B_sleep)),
+        islands_is_awake=V(dtype=gs.qd_bool, shape=(n_sleep_nodes_, _B_sleep)),
     )
     if len(links_node) > 0:
         state.links_node.from_numpy(np.asarray(links_node, dtype=gs.np_int))
@@ -411,6 +432,8 @@ class MochiState:
     pcg_zTz: qd.Tensor
     pcg_zTz0: qd.Tensor
     pcg_is_active: qd.Tensor
+    # Whether the node of every link sleeps (allocated only when sleeping is enabled, see MochiIslandState).
+    links_is_asleep: qd.Tensor
 
 
 def get_mochi_state(solver, max_pairs, has_dense):
@@ -489,6 +512,7 @@ def get_mochi_state(solver, max_pairs, has_dense):
         pcg_zTz=V(dtype=gs.qd_float, shape=(_B,)),
         pcg_zTz0=V(dtype=gs.qd_float, shape=(_B,)),
         pcg_is_active=V(dtype=gs.qd_bool, shape=(_B,)),
+        links_is_asleep=V(dtype=gs.qd_bool, shape=(n_links_, _B) if solver._options.use_sleeping else (1, 1)),
     )
 
 
@@ -665,11 +689,20 @@ class MochiSoftInfo:
     entities_rod_elem_end: qd.Tensor
     entities_rod_stencil_start: qd.Tensor
     entities_rod_stencil_end: qd.Tensor
-    # Boundary contact samples: triangle vertices, barycentric coordinates, rest area weight and owning entity.
-    samples_tri: qd.Tensor
+    # Contact samples: vertices and their weights (three for a boundary triangle, four for a contact-skin sample, which
+    # takes the tetrahedron it is embedded in, the others then padding with a zero weight), rest area weight and owning
+    # entity. The fourth vertex is allocated only when some entity has a contact skin.
+    samples_verts: qd.Tensor
     samples_bary: qd.Tensor
     samples_weight: qd.Tensor
     samples_entity_idx: qd.Tensor
+    # Contact-skin samples: the row of every sample in the skin tables (-1 off the skin), the sample of every row and
+    # its rest normal pulled back to the edge frame of its tetrahedron (see build_skin_samples); n_skin_samples
+    # bounds the loops (the arrays hold at least one row).
+    samples_skin_row: qd.Tensor
+    skin_samples: qd.Tensor
+    skin_normal_rest: qd.Tensor
+    n_skin_samples: qd.Tensor
     # Rigid-deformable attachments: the attached vertex, its link, the anchor in the link frame and the penalty
     # stiffness and damping of every attachment; n_attachments bounds the loops (the arrays hold at least one row).
     att_vert: qd.Tensor
@@ -757,6 +790,7 @@ def get_mochi_soft_info(solver):
     n_sh_ = solver.n_shell_elems_
     n_re_, n_rs_ = solver.n_rod_elems_, solver.n_rod_stencils_
     n_att_ = solver.n_attachments_
+    has_skins = solver.n_skin_samples > 0
     return MochiSoftInfo(
         verts_rest=V(dtype=gs.qd_vec3, shape=(n_sv_,)),
         verts_mass=V(dtype=gs.qd_float, shape=(n_sv_,)),
@@ -798,10 +832,14 @@ def get_mochi_soft_info(solver):
         entities_rod_elem_end=V(dtype=gs.qd_int, shape=(n_se_,)),
         entities_rod_stencil_start=V(dtype=gs.qd_int, shape=(n_se_,)),
         entities_rod_stencil_end=V(dtype=gs.qd_int, shape=(n_se_,)),
-        samples_tri=V(dtype=gs.qd_ivec3, shape=(n_ss_,)),
-        samples_bary=V(dtype=gs.qd_vec3, shape=(n_ss_,)),
+        samples_verts=V(dtype=gs.qd_ivec4 if has_skins else gs.qd_ivec3, shape=(n_ss_,)),
+        samples_bary=V(dtype=gs.qd_vec4 if has_skins else gs.qd_vec3, shape=(n_ss_,)),
         samples_weight=V(dtype=gs.qd_float, shape=(n_ss_,)),
         samples_entity_idx=V(dtype=gs.qd_int, shape=(n_ss_,)),
+        samples_skin_row=V(dtype=gs.qd_int, shape=(n_ss_ if has_skins else 1,)),
+        skin_samples=V(dtype=gs.qd_int, shape=(solver.n_skin_samples_,)),
+        skin_normal_rest=V(dtype=gs.qd_vec3, shape=(solver.n_skin_samples_,)),
+        n_skin_samples=_scalar(gs.qd_int, solver.n_skin_samples),
         entities_kind=V(dtype=gs.qd_int, shape=(n_se_,)),
         entities_mass=V(dtype=gs.qd_float, shape=(n_se_,)),
         entities_has_gravity=V(dtype=gs.qd_bool, shape=(n_se_,)),
@@ -969,6 +1007,8 @@ class MochiSoftState:
 
     # Attachment violation at the stage start, the reference of the penalty damping.
     att_c_start: qd.Tensor
+    # Whether every deformable entity sleeps (allocated only when sleeping is enabled, see MochiIslandState).
+    entities_is_asleep: qd.Tensor
 
 
 def get_mochi_soft_state(solver, max_soft_pairs, max_soft_hits, max_sc_hits, max_pc_hits):
@@ -983,6 +1023,7 @@ def get_mochi_soft_state(solver, max_soft_pairs, max_soft_hits, max_sc_hits, max
         verts_vel_prev=V(dtype=gs.qd_vec3, shape=(N_HISTORY, n_sv_, _B)),
         verts_pos_stage_start=V(dtype=gs.qd_vec3, shape=(n_sv_, _B)),
         att_c_start=V(dtype=gs.qd_vec3, shape=(solver.n_attachments_, _B)),
+        entities_is_asleep=V(dtype=gs.qd_bool, shape=(n_se_, _B) if solver._options.use_sleeping else (1, 1)),
         verts_vel_stage_start=V(dtype=gs.qd_vec3, shape=(n_sv_, _B)),
         verts_pos_ls_ref=V(dtype=gs.qd_vec3, shape=(n_sv_, _B)),
         verts_is_fixed=V(dtype=gs.qd_bool, shape=(n_sv_, _B)),

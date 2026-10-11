@@ -114,11 +114,13 @@ from .newton import (
 )
 from .rigid_assembly import kernel_assemble_links
 from .sample_tree import build_sample_tree
+from .sleep import kernel_update_sleep, kernel_wake_nodes
 from .soft import (
     ENTITY_PARAMS,
     SOFT_KIND_ROD,
     SOFT_KIND_SHELL,
     SOFT_KIND_SOLID,
+    build_skin_samples,
     build_soft_samples,
     kernel_assemble_attachments,
     kernel_attachments_stage_start,
@@ -257,6 +259,10 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         self._external_state_subscriber = Subscriber(
             frozenset({StateChange.GEOMETRY, StateChange.DYNAMICS}), callback=self._on_external_state_change
         )
+        # Island node of every degree of freedom and the index of every node, for the setters to wake what they change.
+        # Allocated at build when sleeping is enabled.
+        self._dofs_node = None
+        self._nodes_idx = None
         # Deformable bodies live outside the kinematic tree.
         self._soft_entities = gs.List()
         self.soft_info = None
@@ -398,7 +404,12 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         self._links_entity_idx = np.array([link.entity.idx for link in self.links] or [-1], dtype=gs.np_int)
         self._geoms_link_idx = np.array([geom.link.idx for geom in self.geoms] or [-1], dtype=gs.np_int)
         self._soft_entities_idx = np.array([entity.idx for entity in self._soft_entities] or [-1], dtype=gs.np_int)
-        self.island_state = get_mochi_island_state(self, *self._island_nodes())
+        links_node, dofs_node = self._island_nodes()
+        self.island_state = get_mochi_island_state(self, links_node, dofs_node)
+        if self._options.use_sleeping:
+            self._dofs_node = torch.as_tensor(dofs_node, device=gs.device)
+            n_nodes = len(self._entities) + len(self._soft_entities)
+            self._nodes_idx = torch.arange(n_nodes, dtype=gs.tc_int, device=gs.device)
         self._init_sdf()
         self.subscribe(self._external_state_subscriber)
         kernel_reset_history(
@@ -728,6 +739,7 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             has_rod_band=any(e.is_rod and not e.morph.is_closed_loop for e in self._soft_entities),
             has_soft_colliders=self._has_soft_colliders,
             tet_tree_levels=self.n_tet_levels,
+            use_sleeping=options.use_sleeping,
             has_equalities=len(self._equalities) > 0,
             has_attachments=self.n_attachments > 0,
         )
@@ -817,26 +829,37 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 + [np.full(entity.n_elements, entity.idx_in_solver, dtype=gs.np_int) for entity in shells]
             )
             bary, ref_weights = TRIANGLE_QUADRATURES[options.boundary_element_type]
-            samples_tri, samples_bary, samples_weight, samples_entity_idx = [], [], [], []
+            samples_verts, samples_bary, samples_weight, samples_entity_idx = [], [], [], []
+            skin_samples_idx, skin_samples_normal = [np.zeros((0,), dtype=gs.np_int)], [np.zeros((0, 3))]
             entities_sample_range = np.zeros((len(entities), 2), dtype=gs.np_int)
             n_samples = 0
             for entity in entities:
                 if entity.is_rod:
-                    tri, sample_bary, weight = self._rod_samples(entity)
+                    verts, sample_bary, weight = self._rod_samples(entity)
+                elif entity.contact_skin is not None:
+                    verts, sample_bary, weight, normal_rest = build_skin_samples(
+                        entity.contact_skin, entity.init_positions, entity.elems, bary, ref_weights
+                    )
+                    skin_samples_idx.append(n_samples + np.arange(len(weight), dtype=gs.np_int))
+                    skin_samples_normal.append(normal_rest)
                 else:
-                    tri, sample_bary, weight = build_soft_samples(
+                    verts, sample_bary, weight = build_soft_samples(
                         entity.init_positions, entity.surface_triangles, bary, ref_weights
                     )
-                samples_tri.append(tri + entity.v_start)
+                samples_verts.append(verts + entity.v_start)
                 samples_bary.append(sample_bary)
                 samples_weight.append(weight)
                 samples_entity_idx.append(np.full(len(weight), entity.idx_in_solver, dtype=gs.np_int))
                 entities_sample_range[entity.idx_in_solver] = (n_samples, n_samples + len(weight))
                 n_samples += len(weight)
-            samples_tri = np.concatenate(samples_tri).astype(gs.np_int)
+            samples_verts = np.concatenate(samples_verts).astype(gs.np_int)
             samples_bary = np.concatenate(samples_bary).astype(gs.np_float)
             samples_weight = np.concatenate(samples_weight).astype(gs.np_float)
             samples_entity_idx = np.concatenate(samples_entity_idx)
+            skin_samples_idx = np.concatenate(skin_samples_idx)
+            skin_samples_normal = np.concatenate(skin_samples_normal).astype(gs.np_float)
+            if len(skin_samples_idx) == 0:
+                samples_verts, samples_bary = samples_verts[:, :3].copy(), samples_bary[:, :3].copy()
             sdf_grids = [self._build_soft_sdf_grid(entity) for entity in entities]
             sdf_values = np.concatenate([grid["values"] for grid in sdf_grids]).astype(gs.np_float)
             sdf_starts = np.cumsum([0] + [len(grid["values"]) for grid in sdf_grids[:-1]])
@@ -889,8 +912,10 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             rod_elems_axis_ref = np.zeros((0, 3), dtype=gs.np_float)
             rod_stencils_v = np.zeros((0, 3), dtype=gs.np_int)
             rod_stencils_e = np.zeros((0, 2), dtype=gs.np_int)
-            samples_tri = np.zeros((0, 3), dtype=gs.np_int)
+            samples_verts = np.zeros((0, 3), dtype=gs.np_int)
             samples_bary = np.zeros((0, 3), dtype=gs.np_float)
+            skin_samples_idx = np.zeros((0,), dtype=gs.np_int)
+            skin_samples_normal = np.zeros((0, 3), dtype=gs.np_float)
             samples_weight = np.zeros((0,), dtype=gs.np_float)
             samples_entity_idx = np.zeros((0,), dtype=gs.np_int)
             entities_params = np.zeros((0, len(ENTITY_PARAMS)), dtype=gs.np_float)
@@ -898,6 +923,8 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             sdf_values = np.zeros((0,), dtype=gs.np_float)
             n_samples = 0
         self.n_soft_samples_ = max(1, n_samples)
+        self.n_skin_samples = len(skin_samples_idx)
+        self.n_skin_samples_ = max(1, self.n_skin_samples)
         self._max_samples_per_soft_entity = int(
             max(1, (entities_sample_range[:, 1] - entities_sample_range[:, 0]).max(initial=0))
         )
@@ -974,10 +1001,12 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             verts_entity_idx,
             elems_v,
             elems_entity_idx,
-            samples_tri,
+            samples_verts,
             samples_bary,
             samples_weight,
             samples_entity_idx,
+            skin_samples_idx,
+            skin_samples_normal,
             entities_params,
             self._compute_soft_links_pair_enabled(),
             self._compute_soft_pair_enabled(),
@@ -1115,15 +1144,16 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
     @staticmethod
     def _rod_samples(entity):
         """Centerline contact samples of a rod: 3-point Gauss-Legendre quadrature of every segment, weighted by the rest
-        segment length, expressed as degenerate triangles (v0, v1, v1) with barycentric coordinates (1 - s, s, 0)."""
+        segment length, in the four-vertex layout of `build_soft_samples`: (v0, v1, v1, v1) with weights
+        (1 - s, s, 0, 0)."""
         elems = np.asarray(entity.elems, dtype=gs.np_int)
         lengths = np.linalg.norm(entity.init_positions[elems[:, 1]] - entity.init_positions[elems[:, 0]], axis=1)
         points = np.array([0.5 * (1.0 - np.sqrt(0.6)), 0.5, 0.5 * (1.0 + np.sqrt(0.6))])
         weights = np.array([2.5 / 9.0, 4.0 / 9.0, 2.5 / 9.0])
-        tri = np.repeat(np.stack([elems[:, 0], elems[:, 1], elems[:, 1]], axis=-1), 3, axis=0)
-        bary = np.tile(np.stack([1.0 - points, points, np.zeros(3)], axis=-1), (len(elems), 1))
+        verts = np.repeat(np.stack([elems[:, 0], elems[:, 1], elems[:, 1], elems[:, 1]], axis=-1), 3, axis=0)
+        bary = np.tile(np.stack([1.0 - points, points, np.zeros(3), np.zeros(3)], axis=-1), (len(elems), 1))
         sample_weights = (weights[None, :] * lengths[:, None]).reshape((-1,))
-        return tri.astype(gs.np_int), bary.astype(gs.np_float), sample_weights.astype(gs.np_float)
+        return verts, bary, sample_weights
 
     def _init_attachments(self, verts_rest):
         """Static tables of the rigid-deformable attachments, with the anchors expressed in the link frames of the
@@ -1559,7 +1589,23 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 self.mochi_state,
                 self.rigid_config,
             )
+            self._wake_nodes(self._nodes_idx, self._nodes_idx, envs_idx)
             self._external_state_dirty_mask[:] = False
+
+    def _wake_nodes(self, idx, idx_node, envs_idx):
+        """Wake the island nodes of the items `idx` (mapped to nodes by `idx_node`) in the given environments."""
+        if self.mochi_config.use_sleeping:
+            kernel_wake_nodes(
+                envs_idx,
+                idx,
+                len(self._entities),
+                idx_node,
+                self.mochi_state,
+                self.soft_state,
+                self.island_state,
+                self.rigid_config,
+                self.has_soft,
+            )
 
     def _resolve_step_kernel(self):
         """How a step runs: "monolith" (one kernel, one thread per environment; the CPU, and small rigid scenes on
@@ -1673,6 +1719,7 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             self.rigid_info,
             self.mochi_info,
             self.mochi_state,
+            self.island_state,
             self.rigid_config,
             self.mochi_config,
         )
@@ -1743,6 +1790,7 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             self.has_soft,
             self.mochi_config.has_dense,
             self.mochi_config.has_equalities,
+            self.mochi_config.use_sleeping,
         )
         self._select_linear_arms()
         self._newton_solve()
@@ -1753,6 +1801,19 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             kernel_soft_post_stage(self.mochi_state, self.soft_info, self.soft_state, self.rigid_config)
             if self.n_rod_elems > 0:
                 kernel_rod_post_stage(self.mochi_state, self.soft_info, self.soft_state, self.rigid_config)
+        if self.mochi_config.use_sleeping:
+            kernel_update_sleep(
+                len(self._entities),
+                self.dyn_state,
+                self.dyn_info,
+                self.mochi_info,
+                self.mochi_state,
+                self.soft_info,
+                self.soft_state,
+                self.island_state,
+                self.rigid_config,
+                self.has_soft,
+            )
         self._forward_kinematics()
         self._is_forward_pos_updated = True
         self._is_forward_vel_updated = True
@@ -1937,6 +1998,7 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                     self.soft_info,
                     self.soft_state,
                     self.rigid_config,
+                    self.mochi_config,
                     assem_obj,
                     assem_res,
                     assem_dres,
@@ -1949,6 +2011,7 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                     self.soft_info,
                     self.soft_state,
                     self.rigid_config,
+                    self.mochi_config,
                     assem_obj,
                     assem_res,
                     assem_dres,
@@ -1974,7 +2037,9 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             kernel_project_links_residual(
                 self.dyn_state, self.dyn_info, self.mochi_info, self.mochi_state, self.rigid_config, skip_ls_done
             )
-            kernel_residual_norms(self.mochi_state, self.island_state, self.rigid_config, skip_ls_done)
+            kernel_residual_norms(
+                self.mochi_state, self.island_state, self.rigid_config, self.mochi_config, skip_ls_done
+            )
 
     def _select_linear_arms(self):
         """Decide, once per substep, which of the two linear arms have work to do. Islands are rebuilt at the start of
@@ -2304,8 +2369,8 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             "link_b": ints(),
             "geom_a": ints(),
             "geom_b": ints(),
-            "verts_a": ints(3),
-            "bary_a": floats(3),
+            "verts_a": ints(4),
+            "bary_a": floats(4),
             "verts_b": ints(4),
             "bary_b": floats(4),
             "position": floats(3),
@@ -2434,6 +2499,9 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             kernel_set_dofs_limit(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self.rigid_config)
         else:
             gs.raise_exception(f"Invalid `name` {name}.")
+        self._wake_nodes(
+            dofs_idx, self._dofs_node, envs_idx_ if self._options.batch_dofs_info else self._scene._envs_idx
+        )
 
     def set_dofs_kp(self, kp, dofs_idx=None, envs_idx=None):
         self._set_dofs_info([kp], dofs_idx, "kp", envs_idx)
@@ -2584,14 +2652,17 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
     def control_dofs_force(self, force, dofs_idx=None, envs_idx=None):
         force, dofs_idx, envs_idx = self._sanitize_control(force, dofs_idx, envs_idx)
         kernel_control_dofs_force(dofs_idx, envs_idx, force, self.dyn_state, self.rigid_config)
+        self._wake_nodes(dofs_idx, self._dofs_node, envs_idx)
 
     def control_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None):
         velocity, dofs_idx, envs_idx = self._sanitize_control(velocity, dofs_idx, envs_idx)
         kernel_control_dofs_velocity(dofs_idx, envs_idx, velocity, self.dyn_state, self.rigid_config)
+        self._wake_nodes(dofs_idx, self._dofs_node, envs_idx)
 
     def control_dofs_position(self, position, dofs_idx=None, envs_idx=None):
         position, dofs_idx, envs_idx = self._sanitize_control(position, dofs_idx, envs_idx)
         kernel_control_dofs_position(dofs_idx, envs_idx, position, self.dyn_state, self.rigid_config)
+        self._wake_nodes(dofs_idx, self._dofs_node, envs_idx)
 
     def control_dofs_position_velocity(self, position, velocity, dofs_idx=None, envs_idx=None):
         position, dofs_idx, envs_idx_ = self._sanitize_control(position, dofs_idx, envs_idx)
@@ -2599,6 +2670,7 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         kernel_control_dofs_position_velocity(
             dofs_idx, envs_idx_, position, velocity, self.dyn_state, self.rigid_config
         )
+        self._wake_nodes(dofs_idx, self._dofs_node, envs_idx_)
 
     def get_dofs_control_force(self, dofs_idx=None, envs_idx=None):
         _tensor, dofs_idx, envs_idx = self._sanitize_io_variables(None, dofs_idx, self.n_dofs, "dofs_idx", envs_idx)
@@ -2618,6 +2690,7 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             values = qd_to_numpy(field)
             values[geoms_idx] = value
             field.from_numpy(values)
+        self._wake_nodes(self._nodes_idx, self._nodes_idx, self._scene._envs_idx)
 
     @property
     def is_links_info_batched(self) -> bool:
@@ -2665,6 +2738,13 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         values = qd_to_numpy(self.mochi_info.links.has_gravity)
         values[links_idx] = has_gravity
         self.mochi_info.links.has_gravity.from_numpy(values)
+        self._wake_nodes(self._nodes_idx, self._nodes_idx, self._scene._envs_idx)
+
+    def set_gravity(self, gravity, envs_idx=None):
+        """Set the gravity acting on the bodies of this solver, in m/s^2, and wake the environments it reaches."""
+        super().set_gravity(gravity, envs_idx)
+        if self.mochi_config.use_sleeping:
+            self._wake_nodes(self._nodes_idx, self._nodes_idx, self._scene._sanitize_envs_idx(envs_idx))
 
     def enable_layer_contact(self, layer_a: str, layer_b: str, is_enabled: bool = True):
         """Enable or disable contact between two contact layers (symmetric)."""
@@ -2676,6 +2756,7 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 self._compute_soft_links_pair_enabled(), self.soft_info, self.rigid_config
             )
             kernel_soft_set_pair_enabled(self._compute_soft_pair_enabled(), self.soft_info, self.rigid_config)
+        self._wake_nodes(self._nodes_idx, self._nodes_idx, self._scene._envs_idx)
 
     def enable_entity_contact(self, entity_a, entity_b, is_enabled: bool = True):
         """Enable or disable contact between two entities (symmetric)."""
@@ -2696,6 +2777,7 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 self._compute_soft_links_pair_enabled(), self.soft_info, self.rigid_config
             )
             kernel_soft_set_pair_enabled(self._compute_soft_pair_enabled(), self.soft_info, self.rigid_config)
+        self._wake_nodes(self._nodes_idx, self._nodes_idx, self._scene._envs_idx)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
@@ -2872,6 +2954,9 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 f"{tuple(pos.shape)}."
             )
         kernel_soft_set_vertices_target(envs_idx, verts_idx, pos.contiguous(), self.soft_state, self.rigid_config)
+        if self.mochi_config.use_sleeping:
+            i_n = len(self._entities) + entity.idx_in_solver
+            self._wake_nodes(self._nodes_idx[i_n : i_n + 1], self._nodes_idx, envs_idx)
 
     def set_soft_entity_contact_params(self, entity, **params):
         material = entity.material
@@ -2895,6 +2980,7 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         kernel_soft_set_entity_contact_params(
             entity.idx_in_solver, self._pc_hash_cell, np.array(values, dtype=gs.np_float), self.soft_info
         )
+        self._wake_nodes(self._nodes_idx, self._nodes_idx, self._scene._envs_idx)
         self._is_contacts_recorded = False
 
 

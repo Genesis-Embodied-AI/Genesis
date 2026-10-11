@@ -4,7 +4,15 @@ import numpy as np
 from pydantic import PrivateAttr, StrictBool, model_validator
 
 import genesis as gs
-from genesis.typing import NonNegativeFloat, NonNegativeInt, PositiveFloat, PositiveInt, UnitVec4FType, Vec3FType
+from genesis.typing import (
+    NonNegativeFloat,
+    NonNegativeInt,
+    PositiveFloat,
+    PositiveInt,
+    UnitInterval,
+    UnitVec4FType,
+    Vec3FType,
+)
 
 from .options import Options
 
@@ -1070,6 +1078,24 @@ class MochiOptions(GravityMixin, TimeBasedMixin):
     record_contacts : bool, optional
         Whether individual contact points can be read back through `entity.get_contacts()`; their buffers are
         allocated at the first readback. Defaults to True.
+    use_sleeping : bool, optional
+        Whether bodies at rest are put to sleep: a sleeping body keeps its pose exactly and costs neither contact nor
+        element work until an awake body comes near it or a setter changes its state, its controls, the gravity or the
+        contact settings. It pays off for scenes with many settled objects. The cost is physical: slow motion stops for
+        good, such as creep on a slope or the slow settling of a soft body, and the trajectory differs from a run
+        without sleeping. Bodies under an active controller and rods never sleep. Defaults to False.
+    sleep_threshold : float, optional
+        A step counts as at rest for a body when the solve reduced its residual by less than this factor from the
+        warm start, which an unforced body at equilibrium does not improve on. Higher values sleep sooner. Only steps
+        whose solve meets the Newton tolerances count: in single precision, a soft body at rest can stall just above
+        the default `newton_abs_tol` and then never sleeps. A looser tolerance such as 5e-3 lets it sleep, at the cost
+        of accuracy. Defaults to 0.5.
+    sleep_min_steps : int, optional
+        Consecutive steps at rest after which every body of an island at rest goes to sleep. Fewer steps sleep sooner
+        but can freeze a body at the turning point of a slow swing. Defaults to 20.
+    sleep_max_speed : float, optional
+        Speed in m/s above which a body never counts as at rest, whatever its residual: it keeps a body coasting
+        without forces (whose motion the BDF2 warm start predicts exactly) awake. Defaults to 1e-2.
     step_kernel : str, optional
         How a step is executed: "monolith" runs the whole step of every environment in one kernel (one thread per
         environment, one launch per step, no host round trips), "pipeline" runs each stage as its own kernel with the
@@ -1136,6 +1162,10 @@ class MochiOptions(GravityMixin, TimeBasedMixin):
     max_point_cloud_hits_per_query: PositiveInt | None = None
     broadphase_margin: NonNegativeFloat = 0.01
     record_contacts: StrictBool = True
+    use_sleeping: StrictBool = False
+    sleep_threshold: UnitInterval = 0.5
+    sleep_min_steps: PositiveInt = 20
+    sleep_max_speed: NonNegativeFloat = 1e-2
     step_kernel: Literal["auto", "monolith", "pipeline", "graph"] = "auto"
     graph_pcg_unroll: PositiveInt = 1
     joint_limit_stiffness: PositiveFloat = 1e4

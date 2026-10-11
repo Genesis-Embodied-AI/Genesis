@@ -147,7 +147,7 @@ def hit_statistics(solver):
         kind = qd_to_numpy(soft_state.pc_hit_kind_a)[:n_pc, 0]
         sample = qd_to_numpy(soft_state.pc_hit_sample_a)[:n_pc, 0]
         vert_b = qd_to_numpy(soft_state.pc_hit_vert_b)[:n_pc, 0]
-        tri = qd_to_numpy(solver.soft_info.samples_tri)
+        tri = qd_to_numpy(solver.soft_info.samples_verts)[:, :3]
         is_soft = kind == 1
         pairs = set()
         for i_s, i_v in zip(sample[is_soft], vert_b[is_soft]):
