@@ -2465,11 +2465,13 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             return super().get_links_pos(links_idx, envs_idx, relative=relative)
         return tensor[0] if self.n_envs == 0 else tensor
 
-    def get_links_vel(self, links_idx=None, envs_idx=None, *, ref: link_ref_frame = link_ref_frame.link_origin):
+    def get_links_vel(
+        self, links_idx=None, envs_idx=None, *, ref: link_ref_frame = link_ref_frame.link_origin, relative=False
+    ):
         """Link velocities in the requested reference frame, as ``RigidSolver.get_links_vel``."""
         ref_frame = self._sanitize_ref_frame(ref, has_root_COM=False)
         if ref_frame == link_ref_frame.link_origin:
-            return super().get_links_vel(links_idx, envs_idx)
+            return super().get_links_vel(links_idx, envs_idx, relative=relative)
         cd_vel = qd_to_torch(self.dyn_state.links.cd_vel, envs_idx, links_idx, transpose=True, copy=True)
         cd_ang = qd_to_torch(self.dyn_state.links.cd_ang, envs_idx, links_idx, transpose=True)
         i_pos = qd_to_torch(self.dyn_state.links.i_pos, envs_idx, links_idx, transpose=True)
