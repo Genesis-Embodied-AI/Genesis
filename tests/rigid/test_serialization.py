@@ -776,11 +776,12 @@ def test_trajectory_replay(n_envs, checkpoint_scene, tmp_path, show_viewer, capl
     compressed_trajectory = Trajectory(compressed_path, scene=replay_scene)
     assert len(exact_trajectory) == len(compressed_trajectory) == N_STEPS + 2
     assert exact_trajectory.is_exact and not compressed_trajectory.is_exact
-    # A frame holds the wall time of every phase of the step it was reached by. No step led to the first frame, nor to
-    # the state the reset left behind.
+    # A frame holds the wall time of every phase of the latest step at the time it was recorded. No step led to the
+    # first frame, and no step ran between the reset and the stop, which leave the timings as they were.
     for trajectory in (exact_trajectory, compressed_trajectory):
+        assert set(trajectory.timings(0)) == {"step", "period", "physics", "sensors", "recorders", "rendering", "video"}
         assert np.isnan(list(trajectory.timings(0).values())).all()
-        assert np.isnan(list(trajectory.timings(-1).values())).all()
+        assert_equal(list(trajectory.timings(-1).values()), list(trajectory.timings(-2).values()))
         for index in range(1, N_STEPS + 1):
             timings = trajectory.timings(index)
             assert set(timings) == {"step", "period", "physics", "sensors", "recorders", "rendering", "video"}

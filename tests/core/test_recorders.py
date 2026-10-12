@@ -286,9 +286,14 @@ def test_file_writers(tmp_path):
     assert_allclose(data["scale"], 0.5, tol=gs.EPS)
     assert len(data["timestamp"]) == STEPS + 1
 
-    # A reset replaces the state the steps led to, so no step timing describes it any longer
-    scene.reset()
+    # A step a pre-step callback vetoes times nothing, and the next step has no period to measure
+    is_paused = True
+    scene.register_pre_step_callback(lambda: is_paused)
+    scene.step()
     assert not scene.timings
+    is_paused = False
+    scene.step()
+    assert "period" not in scene.timings and scene.timings["step"] > 0.0
 
 
 @pytest.mark.required

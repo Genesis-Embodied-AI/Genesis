@@ -202,6 +202,8 @@ class RunningMean:
     def __init__(self, window: int | None = None, alpha: float | None = None):
         if (window is None) == (alpha is None):
             gs.raise_exception("Exactly one of 'window' and 'alpha' must be given.")
+        if window is not None and window < 1:
+            gs.raise_exception(f"The window of a mean holds one sample at least, got {window}.")
         self._alpha = alpha
         self._samples: collections.deque[float] = collections.deque(maxlen=window)
         self._value = math.nan
@@ -230,9 +232,10 @@ class StepTimer:
     `start_phase` or `stop_phase` where a `with` block would indent too much, and `step` closes it. A recorded step
     leaves in `timings`, until the next one, the wall time of every phase it timed, of the whole step under `step`, and
     of the period from the start of the previous step to its own under `period`. The period covers the time spent
-    between the two steps as well, so its inverse is the rate the loop achieves, and the first step has none. A step
-    left unrecorded leaves `timings` as it was. The code timing a phase declares it with `add_phases` before the first
-    step, so that a log laid out once lists every phase a step may time.
+    between the two steps as well, so its inverse is the rate the loop achieves. A step left unrecorded leaves
+    `timings` empty, as there is nothing to time, and the first step and the one after an unrecorded step have no
+    period. The code timing a phase declares it with `add_phases` before the first step, so that a log laid out once
+    lists every phase a step may time.
     """
 
     def __init__(self):
@@ -257,14 +260,8 @@ class StepTimer:
         """Wall time in seconds of every phase the latest recorded step timed, by phase, empty before any."""
         return self._timings
 
-    def reset(self):
-        """Forget the timings of the latest recorded step, once the state it led to is replaced."""
-        # Rebound rather than cleared, so that a mapping already handed out keeps describing its step
-        self._timings = {}
-
     def start(self):
         """Open a step: the phases timed from here on belong to it."""
-        self._previous_step_start = self._step_start
         self._step_start = time.perf_counter()
         self._phase_open = None
         self._phases_time.clear()
@@ -298,10 +295,14 @@ class StepTimer:
             self._phases_time[phase] = self._phases_time.get(phase, 0.0) + time.perf_counter() - tic
 
     def step(self, record: bool = True):
-        """Close the step, keeping its timings in `timings` if 'record' is set."""
+        """Close the step, keeping its timings in `timings` if 'record' is set and emptying them otherwise."""
         self.stop_phase()
         if record:
             self._phases_time["step"] = time.perf_counter() - self._step_start
             if self._previous_step_start is not None:
                 self._phases_time["period"] = self._step_start - self._previous_step_start
             self._timings = dict(self._phases_time)
+            self._previous_step_start = self._step_start
+        else:
+            self._timings = {}
+            self._previous_step_start = None

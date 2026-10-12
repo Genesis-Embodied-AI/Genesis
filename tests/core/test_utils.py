@@ -969,6 +969,8 @@ def test_running_mean():
     assert math.isclose(exponential_mean.value, 0.25 * 4.0 + 0.75 * 8.0)
     with pytest.raises(gs.GenesisException, match="Exactly one of"):
         RunningMean(window=3, alpha=0.25)
+    with pytest.raises(gs.GenesisException, match="one sample at least"):
+        RunningMean(window=0)
 
 
 @pytest.mark.required

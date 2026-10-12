@@ -58,6 +58,9 @@ ZSTD_LEVEL = 1
 # than a step for a while does not hold the step back. The file is written by a thread of its own, so a slow disk delays
 # the records only, never the release of a frame.
 N_FRAME_SLOTS = 4
+# The completed chunks waiting for the I/O thread at most. A chunk holds many frames compressed, so the queue absorbs a
+# slow disk far more cheaply than frame slots would, and the compression thread waits once it is full.
+N_PENDING_CHUNKS = 8
 CHUNK_MAGIC = b"CHNK"
 # A chunk record: frame count, payload length, payload checksum.
 CHUNK_HEADER = struct.Struct("<IQI")
@@ -329,7 +332,7 @@ class TrajectoryFileWriter(BaseFileWriter):
         self._fault: str | None = None
         self._error: Exception | None = None
         # The completed chunks handed to the I/O thread, in order, then None at the stop
-        self._records: queue.SimpleQueue[tuple[bytes, int] | None] = queue.SimpleQueue()
+        self._records: queue.Queue[tuple[bytes, int] | None] = queue.Queue(maxsize=N_PENDING_CHUNKS)
         self._compression_thread: threading.Thread | None = None
         self._io_thread: threading.Thread | None = None
         self._file: io.BufferedWriter | None = None
@@ -404,8 +407,12 @@ class TrajectoryFileWriter(BaseFileWriter):
         i_slot_pending: int | None = None
         while True:
             i_slot = self._frames.get()
-            if i_slot is not None and self._slots_event[i_slot] is not None:
-                self._slots_event[i_slot].synchronize()
+            # A failure of the copy surfaces here, and is reported like a failure of the compression
+            if i_slot is not None and self._slots_event[i_slot] is not None and self._error is None:
+                try:
+                    self._slots_event[i_slot].synchronize()
+                except Exception as error:
+                    self._error = error
             if i_slot_pending is not None and (i_slot is not None or not self._is_last_dropped):
                 if self._error is None and self._fault is None:
                     try:
