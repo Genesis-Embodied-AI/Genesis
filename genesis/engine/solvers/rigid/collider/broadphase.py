@@ -198,6 +198,8 @@ def _func_broad_phase_sap(
                                 i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
                                 collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
                                 collider_state.contact_cache.penetration[i_pair, i_b] = 0.0
+                                collider_state.contact_cache.has_targets[i_pair, i_b] = False
+                                collider_state.contact_cache.has_outline[i_pair, i_b] = False
                             continue
 
                         if n_broad == collider_info.max_collision_pairs_broad[None]:
@@ -257,6 +259,8 @@ def _func_broad_phase_sap(
                                     i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
                                     collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
                                     collider_state.contact_cache.penetration[i_pair, i_b] = 0.0
+                                    collider_state.contact_cache.has_targets[i_pair, i_b] = False
+                                    collider_state.contact_cache.has_outline[i_pair, i_b] = False
                                 continue
 
                             if n_broad == collider_info.max_collision_pairs_broad[None]:
@@ -295,6 +299,8 @@ def _func_broad_phase_sap(
                                             gs.qd_float, 3
                                         )
                                         collider_state.contact_cache.penetration[i_pair, i_b] = 0.0
+                                        collider_state.contact_cache.has_targets[i_pair, i_b] = False
+                                        collider_state.contact_cache.has_outline[i_pair, i_b] = False
                                     continue
 
                                 if n_broad == collider_info.max_collision_pairs_broad[None]:
@@ -382,6 +388,8 @@ def _func_broad_phase_all_vs_all(
                 i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
                 collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
                 collider_state.contact_cache.penetration[i_pair, i_b] = 0.0
+                collider_state.contact_cache.has_targets[i_pair, i_b] = False
+                collider_state.contact_cache.has_outline[i_pair, i_b] = False
             continue
 
         n_broad = qd.atomic_add(collider_state.n_broad_pairs[i_b], 1)

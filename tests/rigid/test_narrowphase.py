@@ -1326,6 +1326,64 @@ def test_maximum_contact_area(show_viewer, tol):
 
 
 @pytest.mark.required
+@pytest.mark.precision("32")
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_contact_patch_temporal_coherence(n_envs, show_viewer, tol):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_contact_patch=False,
+            disable_constraint=True,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.35, -0.5, 0.55),
+            camera_lookat=(0.04, 0.0, 0.06),
+        ),
+        show_viewer=show_viewer,
+    )
+    entities = []
+    for n_sides, radius, phase, is_fixed in ((32, 0.16, 0.1, True), (7, 0.115, 0.25, False)):
+        angles = phase + 2.0 * np.pi * np.arange(n_sides) / n_sides
+        corners = radius * np.stack((np.cos(angles), np.sin(angles)), axis=-1)
+        vertices = np.column_stack((np.tile(corners, (2, 1)), np.repeat((-0.06, 0.06), n_sides)))
+        mesh = trimesh.Trimesh(vertices=vertices).convex_hull
+        entities.append(
+            scene.add_entity(
+                morph=gs.morphs.MeshSet(
+                    files=(mesh,),
+                    fixed=is_fixed,
+                ),
+                vis_mode="collision",
+            )
+        )
+        if is_fixed:
+            corners_base = corners
+    scene.build(n_envs=n_envs)
+    base, top = entities
+    top.set_qpos((0.12, 0.0, 0.1198, 1.0, 0.0, 0.0, 0.0), zero_velocity=True)
+    top.set_dofs_velocity((0.0, 0.06, 0.0, 0.0, 0.0, 0.5))
+    vertices_idx = []
+    # Prescribed rigid motion isolates contact selection from constraint-solver feedback
+    for _ in range(8):
+        scene.step()
+        contacts = top.get_contacts(with_entity=base, is_padded=True)
+        points = tensor_to_array(contacts["position"])
+        is_valid = tensor_to_array(contacts["valid_mask"])
+        distances = np.linalg.norm(points[..., None, :2] - corners_base, axis=-1)
+        is_corner = (distances.min(axis=-1) < tol) & is_valid
+        indices = distances.argmin(axis=-1)
+        vertices_idx.append(np.where(is_corner, indices, -1).max(axis=-1))
+    vertices_idx = np.stack(vertices_idx)
+    assert (vertices_idx >= 0).all()
+    # A contact crossing the angular origin continues forward in the cyclic boundary order
+    advances = (np.diff(vertices_idx, axis=0) + 16) % 32 - 16
+    assert (advances >= 0).all()
+
+
+@pytest.mark.required
 def test_mesh_support_exactness(show_viewer, tol):
     # The support table of a mesh returns, for any direction, a vertex that supports it, wherever it falls on the grid of
     # directions the table is laid on: across its cells, on their boundaries, along the normals of the hull faces, and

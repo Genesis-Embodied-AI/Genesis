@@ -134,6 +134,8 @@ class Collider:
                 if self.collider_config.has_non_box_plane_convex_convex:
                     qd_to_torch(self.collider_state.contact_cache.normal, copy=False)
                     qd_to_torch(self.collider_state.contact_cache.penetration, copy=False)
+                    qd_to_torch(self.collider_state.contact_cache.has_targets, transpose=True, copy=False)
+                    qd_to_torch(self.collider_state.contact_cache.has_outline, transpose=True, copy=False)
                 for key, name in (
                     ("link_a", "link_a"),
                     ("link_b", "link_b"),
@@ -786,6 +788,10 @@ class Collider:
                 penetration = qd_to_torch(self.collider_state.contact_cache.penetration, copy=False)
                 assign_indexed_tensor(normal, pairs_mask, 0.0)
                 assign_indexed_tensor(penetration, pairs_mask, 0.0)
+                has_targets = qd_to_torch(self.collider_state.contact_cache.has_targets, transpose=True, copy=False)
+                assign_indexed_tensor(has_targets, envs_mask, value=False)
+                has_outline = qd_to_torch(self.collider_state.contact_cache.has_outline, transpose=True, copy=False)
+                assign_indexed_tensor(has_outline, envs_mask, value=False)
 
             if gs.backend == gs.metal:
                 torch.mps.synchronize()

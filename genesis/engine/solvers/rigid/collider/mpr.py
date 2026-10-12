@@ -204,7 +204,9 @@ def support_driver(
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
 ):
+    """Return the support position and its geom-scoped identifier, or -1 when the support has no vertex identifier."""
     v = qd.Vector.zero(gs.qd_float, 3)
+    vid = -1
     geom_type = dyn_info.geoms.type[i_g]
     if geom_type == gs.GEOM_TYPE.SPHERE:
         v, v_, vid = support_field._func_support_sphere(i_g, direction, pos, quat, dyn_info, shrink=False)
@@ -234,7 +236,7 @@ def support_driver(
             exhaustive=qd.static(rigid_config.enable_mujoco_compatibility),
         )
 
-    return v
+    return v, vid
 
 
 @qd.func
@@ -261,7 +263,7 @@ def compute_support(
         side_direction = direction if i_side == 0 else -direction
         pos = pos_a if i_side == 0 else pos_b
         quat = quat_a if i_side == 0 else quat_b
-        v = support_driver(
+        v, _ = support_driver(
             i_g,
             i_b,
             side_direction,

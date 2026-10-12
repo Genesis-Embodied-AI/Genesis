@@ -1273,6 +1273,18 @@ def get_sort_buffer(solver):
 class ContactCache:
     kind: ClassVar[DataKind] = DataKind.WARMSTART
 
+    # Query anchor in each geom frame, and query normal in geom A
+    outline_pos: qd.Tensor
+    outline_pos_b: qd.Tensor
+    outline_normal: qd.Tensor
+    # Cyclic source vertices: geom-local mesh indices and box sign bits offset by the geom vertex start
+    outline_ids: qd.Tensor
+    outline_size: qd.Tensor
+    has_outline: qd.Tensor
+    # Each target stores its incident edge bits. The depth boundary uses bit 16 after the two eight-edge outlines
+    target_tags: qd.Tensor
+    has_targets: qd.Tensor
+
     normal: qd.Tensor
     # Previous-step penetration per pair (reset to 0 when out of contact), the warm-start for the MPR->GJK gate.
     penetration: qd.Tensor
@@ -1282,6 +1294,14 @@ def get_contact_cache(solver, n_possible_pairs, active):
     # Only the convex-convex detection reads the cache, so the other scenes keep it empty
     shape = maybe_shape((max(n_possible_pairs, 1), solver._B), active)
     return ContactCache(
+        outline_pos=V_VEC(3, dtype=gs.qd_float, shape=shape),
+        outline_pos_b=V_VEC(3, dtype=gs.qd_float, shape=shape),
+        outline_normal=V_VEC(3, dtype=gs.qd_float, shape=shape),
+        outline_ids=V_VEC(16, dtype=gs.qd_int, shape=shape),
+        outline_size=V_VEC(2, dtype=gs.qd_int, shape=shape),
+        has_outline=V(dtype=gs.qd_bool, shape=shape),
+        target_tags=V_VEC(4, dtype=gs.qd_int, shape=shape),
+        has_targets=V(dtype=gs.qd_bool, shape=shape),
         normal=V_VEC(3, dtype=gs.qd_float, shape=shape),
         penetration=V(dtype=gs.qd_float, shape=shape),
     )

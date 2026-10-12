@@ -178,6 +178,8 @@ def collider_kernel_reset(
             for i_pair in range(collider_state.contact_cache.normal.shape[0]):
                 collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
                 collider_state.contact_cache.penetration[i_pair, i_b] = 0.0
+                collider_state.contact_cache.has_targets[i_pair, i_b] = False
+                collider_state.contact_cache.has_outline[i_pair, i_b] = False
 
 
 @qd.func
