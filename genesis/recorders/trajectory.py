@@ -28,12 +28,11 @@ import zstandard
 import quadrants as qd
 
 import genesis as gs
-from genesis.engine.solvers import KinematicSolver
-from genesis.engine.states.solvers import KinematicSolverCheckpoint, SimulatorCheckpoint, SolverCheckpoint
+from genesis.engine.states.solvers import SimulatorCheckpoint, SolverCheckpoint
 from genesis.options.recorders import TrajectoryFile
 from genesis.utils import serialization
-from genesis.utils.array_class import CHECKPOINT_KINDS, DataKind
-from genesis.utils.misc import qd_to_numpy, qd_to_torch, tensor_to_array
+from genesis.utils.array_class import CHECKPOINT_KINDS, ArrayItem, ConfigItem, DataKind, ScalarItem
+from genesis.utils.misc import data_to_array, tensor_to_array
 
 from .file_writers import BaseFileWriter
 from .recorder_manager import register_recording
@@ -47,7 +46,7 @@ if TYPE_CHECKING:
 LOGGER = logging.getLogger(__name__)
 
 TRAJECTORY_FORMAT = ".gstraj"
-MAGIC = b"GSTRAJ2\n"
+MAGIC = b"GSTRAJ3\n"
 # The magic of any version of the format, which a file from another version shares up to its version number
 MAGIC_PREFIX = b"GSTRAJ"
 # The fastest level of zstd, so that the compression thread keeps pace with the fastest stepping scene. The levels
@@ -75,10 +74,9 @@ LENGTH = struct.Struct("<Q")
 # therefore kept whole.
 COMPRESSED_KINDS = frozenset((DataKind.INFO, DataKind.STATE))
 EXACT_KINDS = CHECKPOINT_KINDS
-CHECKPOINT_FILE_KINDS = frozenset(DataKind) - {DataKind.CONFIG, DataKind.CONSTANT}
-# The per-environment step counts and the forward-kinematics flags of a solver, which follow the arrays in a frame.
-STEPS_FIELD = "steps"
-FLAGS_SUFFIX = ".forward_flags"
+CHECKPOINT_FILE_KINDS = frozenset(DataKind) - {DataKind.CONSTANT}
+# The name a frame holds the step count of each environment under (see 'Simulator.data')
+STEPS_FIELD = "Simulator.steps"
 # The wall time of each phase of the step a frame was reached by, which closes a frame (see 'StepTimer.timings')
 TIMINGS_PREFIX = "timings/"
 
@@ -138,8 +136,8 @@ def _frame_arrays(frame: np.ndarray, fields: list[FrameField], kinds: frozenset[
 
 
 def _frame_fields(sim: "Simulator", kinds: frozenset[DataKind], drop_unused: bool) -> list[FrameField]:
-    """Lay out one frame of the given kinds (see '_read_frame'): every array, then the step count of each environment,
-    the forward-kinematics flags of every kinematic or rigid solver, and the wall time of every phase of a step.
+    """Lay out one frame of the given kinds (see '_read_frame'): every array, the step count of each environment
+    included, then every scalar (see 'ScalarItem'), and the wall time of every phase of a step.
 
     With 'drop_unused', a 0-d array is listed empty. Every 0-d array of the kinds a step frame holds is the placeholder
     of a feature switched off (see 'maybe_shape'), which a restore leaves as built (see 'check_data').
@@ -147,56 +145,55 @@ def _frame_fields(sim: "Simulator", kinds: frozenset[DataKind], drop_unused: boo
     Where zero-copy views exist, an array keeps the memory order of its view, a permutation of its canonical axes, so
     that a frame is copied from the views as they lie (see 'TrajectoryFileWriter.build'). Otherwise it is canonical.
     """
+    items = list(sim.data(kinds))
     fields = []
     offset = 0
-    for name, value, kind in sim.data(kinds):
-        array = qd_to_numpy(value)
-        if drop_unused and not value.shape:
-            fields.append(FrameField(name, kind, (0,), array.dtype.str, offset, 0, (0,)))
-            continue
-        axes = tuple(range(array.ndim))
-        if gs.use_zerocopy and value.shape:
-            view = qd_to_torch(value, copy=False)
-            # Sorting is stable, so the axes of equal strides, which only a size-1 axis can share, keep their order
-            axes = tuple(sorted(axes, key=view.stride, reverse=True))
-            assert view.permute(axes).is_contiguous()
-        fields.append(FrameField(name, kind, array.shape, array.dtype.str, offset, array.nbytes, axes))
-        offset += array.nbytes
-    steps = tensor_to_array(sim.steps)
-    fields.append(FrameField(STEPS_FIELD, DataKind.STATE, steps.shape, steps.dtype.str, offset, steps.nbytes, (0,)))
-    offset += steps.nbytes
-    for solver in sim.active_solvers:
-        if isinstance(solver, KinematicSolver):
-            name = f"{type(solver).__name__}{FLAGS_SUFFIX}"
-            fields.append(FrameField(name, DataKind.STATE, (2,), "|u1", offset, 2, (0,)))
-            offset += 2
+    for item in items:
+        if isinstance(item, ArrayItem):
+            array = data_to_array(item.array)
+            if drop_unused and not item.array.shape and not isinstance(item.array, torch.Tensor):
+                fields.append(FrameField(item.name, item.kind, (0,), array.dtype.str, offset, 0, (0,)))
+                continue
+            axes = tuple(range(array.ndim))
+            if gs.use_zerocopy and item.array.shape:
+                view = data_to_array(item.array, to_torch=True, copy=False)
+                # Sorting is stable, so the axes of equal strides, which only a size-1 axis can share, keep their order
+                axes = tuple(sorted(axes, key=view.stride, reverse=True))
+                assert view.permute(axes).is_contiguous()
+            fields.append(FrameField(item.name, item.kind, array.shape, array.dtype.str, offset, array.nbytes, axes))
+            offset += array.nbytes
+    for item in items:
+        if isinstance(item, ScalarItem):
+            dtype = np.dtype(type(getattr(item.owner, item.attr)))
+            fields.append(FrameField(item.name, item.kind, (), dtype.str, offset, dtype.itemsize, ()))
+            offset += dtype.itemsize
     for phase in sim.step_timer.phases:
         fields.append(FrameField(f"{TIMINGS_PREFIX}{phase}", DataKind.STATE, (), "<f8", offset, 8, ()))
         offset += 8
     return fields
 
 
-def _frame_tail(sim: "Simulator") -> np.ndarray:
+def _frame_tail(sim: "Simulator", scalars: list[ScalarItem], scalars_fields: list[FrameField]) -> np.ndarray:
     """Return the end of a frame that lives on the host, as a flat uint8 buffer.
 
-    It holds the forward-kinematics flags, then the wall time of every phase of the step the state was reached by, NaN
-    for a phase that step did not time.
+    It holds the given scalars, laid out as their fields state, then the wall time of every phase of the step the state
+    was reached by, NaN for a phase that step did not time. A frame is laid out once, so a scalar whose type changed
+    since raises.
     """
-    flags = np.array(
-        [
-            flag
-            for solver in sim.active_solvers
-            if isinstance(solver, KinematicSolver)
-            for flag in (solver.is_forward_pos_updated, solver.is_forward_vel_updated)
-        ],
-        dtype=np.uint8,
-    )
+    parts = []
+    for item, field in zip(scalars, scalars_fields):
+        scalar = np.array(getattr(item.owner, item.attr))
+        if scalar.dtype.str != field.dtype:
+            gs.raise_exception(
+                f"'{field.name}' holds a {scalar.dtype} value, where a {np.dtype(field.dtype)} one was laid out."
+            )
+        parts.append(scalar.reshape(-1).view(np.uint8))
     phases = sim.step_timer.phases
     step_timings = sim.step_timer.timings
     # A phase timed without being declared would be lost, as the frame is laid out once (see 'StepTimer.add_phases')
     assert step_timings.keys() <= set(phases)
     timings = np.array([step_timings.get(phase, np.nan) for phase in phases])
-    return np.concatenate((flags, timings.view(np.uint8)))
+    return np.concatenate((*parts, timings.view(np.uint8)))
 
 
 def _read_frame(sim: "Simulator", kinds: frozenset[DataKind], fields: list[FrameField]) -> np.ndarray:
@@ -205,14 +202,19 @@ def _read_frame(sim: "Simulator", kinds: frozenset[DataKind], fields: list[Frame
     Where zero-copy views exist the arrays are concatenated on the device and cross to the host once. Otherwise each
     array crosses on its own, to be concatenated on the host.
     """
-    values = [(value, field.axes) for (_, value, _), field in zip(sim.data(kinds), fields) if field.nbytes]
+    items = list(sim.data(kinds))
+    arrays = {item.name: item.array for item in items if isinstance(item, ArrayItem)}
+    scalars = [item for item in items if isinstance(item, ScalarItem)]
+    # The scalars follow the arrays, in the order of their items (see '_frame_fields')
+    tail = _frame_tail(sim, scalars, fields[len(arrays) : len(arrays) + len(scalars)])
+    values = [(arrays[field.name], field.axes) for field in fields if field.name in arrays and field.nbytes]
     if gs.use_zerocopy:
-        parts = [qd_to_torch(value).permute(axes).reshape(-1).view(torch.uint8) for value, axes in values]
-        parts.append(sim.steps.reshape(-1).view(torch.uint8))
-        return np.concatenate((tensor_to_array(torch.cat(parts)), _frame_tail(sim)))
-    parts = [qd_to_numpy(value).transpose(axes).reshape(-1).view(np.uint8) for value, axes in values]
-    parts.append(tensor_to_array(sim.steps).reshape(-1).view(np.uint8))
-    parts.append(_frame_tail(sim))
+        parts = [
+            data_to_array(value, to_torch=True).permute(axes).reshape(-1).view(torch.uint8) for value, axes in values
+        ]
+        return np.concatenate((tensor_to_array(torch.cat(parts)), tail))
+    parts = [data_to_array(value).transpose(axes).reshape(-1).view(np.uint8) for value, axes in values]
+    parts.append(tail)
     return np.concatenate(parts)
 
 
@@ -235,10 +237,10 @@ def _header(
         "dt": sim.dt,
         "layout": {key: _json_value(value) for key, value in dataclasses.asdict(layout).items()},
         "configs": {
-            name: {key: _json_value(value) for key, value in vars(config).items() if not key.startswith("_")}
+            item.name: {key: _json_value(value) for key, value in vars(item.config).items() if not key.startswith("_")}
             for solver in sim.active_solvers
-            for name, config, kind in solver.data
-            if kind == DataKind.CONFIG
+            for item in solver.data
+            if isinstance(item, ConfigItem)
         },
         "fields": _fields_to_json(fields),
         "last_fields": _fields_to_json(last_fields),
@@ -290,9 +292,14 @@ class TrajectoryFileWriter(BaseFileWriter):
         self._last_fields = _frame_fields(sim, CHECKPOINT_FILE_KINDS, drop_unused=False)
         self._frame_size = sum(field.nbytes for field in self._fields)
         self._steps_field = next(field for field in self._fields if field.name == STEPS_FIELD)
-        # The forward-kinematics flags and the step timings close the frame (see '_frame_fields'). They live on the
-        # host, so a frame copy stops short of them and they are written beside it.
-        self._flags_offset = self._steps_field.offset + self._steps_field.nbytes
+        # The scalars and the step timings close the frame (see '_frame_fields'). They live on the host, so a frame copy
+        # stops short of them and they are written beside it.
+        items = list(sim.data(self._kinds))
+        arrays = {item.name: item.array for item in items if isinstance(item, ArrayItem)}
+        self._tail_offset = sum(field.nbytes for field in self._fields if field.name in arrays)
+        # The scalars are collected once, as walking the data of the solvers costs more than a step of a small scene
+        self._scalars = [item for item in items if isinstance(item, ScalarItem)]
+        self._scalars_fields = self._fields[len(arrays) : len(arrays) + len(self._scalars)]
 
         # The arrays of a built scene keep their memory, so the byte view each array is copied from is taken once, in
         # the memory order the frame stores it in (see '_frame_fields'). Without zero-copy views each frame is read
@@ -303,17 +310,15 @@ class TrajectoryFileWriter(BaseFileWriter):
         self._staging: torch.Tensor | None = None
         if gs.use_zerocopy:
             self._frame_views = []
-            for (_, value, _), field in zip(sim.data(self._kinds), self._fields):
-                if field.nbytes:
-                    view = qd_to_torch(value, copy=False).permute(field.axes).view(-1).view(torch.uint8)
+            for field in self._fields:
+                if field.name in arrays and field.nbytes:
+                    array = data_to_array(arrays[field.name], to_torch=True, copy=False)
+                    view = array.permute(field.axes).view(-1).view(torch.uint8)
                     # The views of the CPU backend are host memory already, and numpy concatenates them on the calling
                     # thread. Torch would run the copy on its thread pool, whose wake-up costs more than the copy.
                     self._frame_views.append(view.numpy() if gs.backend == gs.cpu else view)
-            if gs.backend == gs.cpu:
-                self._frame_views.append(sim.steps.numpy().view(np.uint8))
-            else:
-                self._frame_views.append(sim.steps.view(torch.uint8))
-                self._staging = torch.empty((self._flags_offset,), dtype=torch.uint8, device=gs.device)
+            if gs.backend != gs.cpu:
+                self._staging = torch.empty((self._tail_offset,), dtype=torch.uint8, device=gs.device)
 
         # Page-locked on CUDA, so that the copy of a frame from the device runs without blocking the stepping thread
         slots = torch.empty((N_FRAME_SLOTS, self._frame_size), dtype=torch.uint8, pin_memory=gs.backend == gs.cuda)
@@ -365,7 +370,7 @@ class TrajectoryFileWriter(BaseFileWriter):
         i_slot = self._free_slots.get()
         slot = self._slots[i_slot]
         if self._frame_views is not None and gs.backend == gs.cpu:
-            np.concatenate(self._frame_views, out=slot[: self._flags_offset])
+            np.concatenate(self._frame_views, out=slot[: self._tail_offset])
         elif self._frame_views is not None:
             # On Metal, the arrays are written by a queue torch does not wait for
             if gs.backend == gs.metal:
@@ -373,12 +378,12 @@ class TrajectoryFileWriter(BaseFileWriter):
             torch.cat(self._frame_views, out=self._staging)
             # The copy is queued behind the step on the stream both run on, and the compression thread waits for it to
             # land (see '_compress_frames'). On another GPU backend the copy returns once done.
-            self._slots_tc[i_slot, : self._flags_offset].copy_(self._staging, non_blocking=gs.backend == gs.cuda)
+            self._slots_tc[i_slot, : self._tail_offset].copy_(self._staging, non_blocking=gs.backend == gs.cuda)
             if self._slots_event[i_slot] is not None:
                 self._slots_event[i_slot].record()
         else:
-            slot[: self._flags_offset] = _read_frame(sim, self._kinds, self._fields)[: self._flags_offset]
-        slot[self._flags_offset :] = _frame_tail(sim)
+            slot[: self._tail_offset] = _read_frame(sim, self._kinds, self._fields)[: self._tail_offset]
+        slot[self._tail_offset :] = _frame_tail(sim, self._scalars, self._scalars_fields)
         return i_slot
 
     def step(self, global_step: int):
@@ -742,25 +747,13 @@ class Trajectory:
         kinds = EXACT_KINDS if self.is_exact else COMPRESSED_KINDS
         values = self.frame(index, kinds)
         arrays: dict[str, dict[str, np.ndarray]] = {}
-        flags: dict[str, tuple[bool, bool]] = {}
         for name, value in values.items():
-            if name == STEPS_FIELD or name.startswith(TIMINGS_PREFIX):
-                continue
-            solver_name, array_name = name.split(".", 1)
-            if name.endswith(FLAGS_SUFFIX):
-                # Native booleans: the step hands these to kernels as template arguments.
-                flags[solver_name] = tuple(map(bool, value))
-            else:
+            if name != STEPS_FIELD and not name.startswith(TIMINGS_PREFIX):
+                solver_name, array_name = name.split(".", 1)
                 arrays.setdefault(solver_name, {})[array_name] = value
-        solvers = {}
-        for solver_name, solver_arrays in arrays.items():
-            if solver_name in flags:
-                is_pos_updated, is_vel_updated = flags[solver_name]
-                solvers[solver_name] = KinematicSolverCheckpoint(
-                    solver_arrays, {}, kinds, is_pos_updated, is_vel_updated
-                )
-            else:
-                solvers[solver_name] = SolverCheckpoint(solver_arrays, {}, kinds)
+        solvers = {
+            solver_name: SolverCheckpoint(solver_arrays, {}, kinds) for solver_name, solver_arrays in arrays.items()
+        }
         sim = SimulatorCheckpoint(steps=values[STEPS_FIELD], solvers=solvers)
         self._scene.__setstate__(
             self._checkpoint_class(scene=self._scene.desc, digest=self._digest, layout=self._layout, sim=sim)

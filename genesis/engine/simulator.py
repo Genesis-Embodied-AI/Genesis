@@ -7,7 +7,7 @@ import genesis as gs
 from genesis.options.morphs import Morph
 from genesis.options.solvers import IPCCouplerOptions, LegacyCouplerOptions, SAPCouplerOptions
 from genesis.repr_base import RBC
-from genesis.utils.array_class import DataItem, DataKind
+from genesis.utils.array_class import DataItem, DataKind, iter_data
 from genesis.utils.misc import indices_to_mask
 from genesis.utils.tools import StepTimer
 
@@ -261,16 +261,22 @@ class Simulator(RBC):
         self._sensor_manager.reset(envs_idx=envs_idx)
 
     def data(self, kinds: frozenset[DataKind]) -> Iterator[DataItem]:
-        """Yield every item of the given kinds the active solvers hold, each under the class name of its solver."""
+        """Yield every item of the requested kinds that the simulator and its active solvers hold.
+
+        The items of the simulator are named under 'Simulator', and the ones of a solver under its class name.
+        """
         if isinstance(self._coupler, IPCCoupler):
             gs.raise_exception(
                 "A scene coupled by IPC cannot be checkpointed yet: the IPC world holds state of its own."
             )
+        for item in iter_data(self, "steps", DataKind.STATE):
+            if item.kind in kinds:
+                yield item._replace(name=f"Simulator.{item.name}")
         for solver in self._active_solvers:
             prefix = type(solver).__name__
-            for name, value, kind in solver.data:
-                if kind in kinds:
-                    yield DataItem(f"{prefix}.{name}", value, kind)
+            for item in solver.data:
+                if isinstance(item, DataItem) and item.kind in kinds:
+                    yield item._replace(name=f"{prefix}.{item.name}")
 
     def __getstate__(self) -> SimulatorCheckpoint:
         """Return a SimulatorCheckpoint of the simulation, for '__setstate__' to restore."""

@@ -49,7 +49,7 @@ from genesis.recorders import RecorderManager
 from genesis.recorders.trajectory import Trajectory, save_checkpoint
 from genesis.repr_base import RBC
 from genesis.utils import serialization
-from genesis.utils.array_class import check_data
+from genesis.utils.array_class import DataItem, check_data
 from genesis.utils.misc import sanitize_index, tensor_to_array
 from genesis.utils.serialization import ARRAY_MEMBER, MANIFEST_NAME, pixel_less_textures
 from genesis.utils.tools import RunningMean
@@ -1845,7 +1845,8 @@ class Scene(RBC):
             )
         for name, solver in solvers.items():
             record = state.sim.solvers[name]
-            check_data((item for item in solver.data if item.kind in record.kinds), record.arrays)
+            items = (item for item in solver.data if isinstance(item, DataItem) and item.kind in record.kinds)
+            check_data(items, record.arrays)
         # The recorders finish the run first (see 'reset'), and the restart follows the state, so the visualizer draws
         # the state put back.
         self._recorder_manager.record(self._sim.cur_step_global)
