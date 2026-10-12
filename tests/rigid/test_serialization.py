@@ -853,6 +853,11 @@ def test_trajectory_replay(n_envs, checkpoint_scene, tmp_path, show_viewer, capl
         file.write(data[: data.find(CHUNK_MAGIC)])
     with pytest.raises(gs.GenesisException, match="holds no frame"):
         Trajectory(cut_path, scene=replay_scene)
+    # A file written in another version of the format is rejected by that version
+    with open(cut_path, "wb") as file:
+        file.write(b"GSTRAJ1\n" + data[len(b"GSTRAJ1\n") :])
+    with pytest.raises(gs.GenesisException, match="version 1 of the trajectory format"):
+        Trajectory(cut_path, scene=replay_scene)
 
 
 @pytest.mark.required
