@@ -31,23 +31,24 @@ https://creativecommons.org/licenses/by/4.0/
 
 ## Modifications
 
-The original URDF files, STL meshes, and model
-parameters are preserved without modification.
+All three URDF files, the STL meshes, and model_parameters.yaml are copied unchanged from the pinned OneRobotics source revision:
 
-Only the packaging directory and accompanying
-attribution/license documentation are added.
+3db6f614c8443bd9396fcd9304cf64a519f98f2a
+
+Before that source revision was published, the bimanual URDF had undergone non-physical text changes to make mesh paths portable, normalize line endings, and remove exporter contact information.
+
+Those upstream changes did not modify the robot's physical parameters or geometry.
+
+No additional changes to the robot model files were made for this Genesis contribution.
+
+Only the asset directory placement and accompanying documentation were added.
 
 ## Known Model Limitations
 
-The independent-arm models retain the source
-Link7 temporary flange mass and inertia values.
+The independent-arm models retain the source Link7 temporary flange mass and inertia values.
 
-The bimanual model retains the original zero
-effort and velocity placeholders.
+The bimanual model retains the original zero effort and velocity placeholders.
 
-The confirmed actuator parameters are documented
-in model_parameters.yaml.
+The confirmed actuator parameters are documented in model_parameters.yaml.
 
-The bimanual stand model comes from a separate
-CAD revision and is not synthesized from the
-independent-arm models.
+The bimanual stand model comes from a separate CAD revision and is not synthesized from the independent-arm models.
