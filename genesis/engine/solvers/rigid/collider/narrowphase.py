@@ -1943,6 +1943,14 @@ def func_contact_overlap_axes(
                             if distance_min < 0.0 or distance < distance_min:
                                 distance_min = distance
                                 i_e_refine = j_e
+                    # Both directed seed edges span the same segment. Refine toward contact 0 to resolve
+                    # their equal distances geometrically.
+                    if polygons_size[i_g_refine] == 2 and edges_settled[i_g_refine] == 0:
+                        i_k0 = 8 * i_g_refine
+                        edge_x = polygons[i_k0 + 1, 0] - polygons[i_k0, 0]
+                        edge_y = polygons[i_k0 + 1, 1] - polygons[i_k0, 1]
+                        side = edge_y * polygons[i_k0, 0] - edge_x * polygons[i_k0, 1]
+                        i_e_refine = 0 if side <= 0.0 else 1
                     i_g, i_e = i_g_refine, i_e_refine
                     n_points = polygons_size[i_g]
                     i_k0 = 8 * i_g + i_e
