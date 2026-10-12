@@ -9,6 +9,7 @@ import numbers
 import os
 import random
 import sys
+import threading
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import field
@@ -534,6 +535,9 @@ def _is_torch_compile_supported(device_type: str) -> bool:
     return device_type == "mps"
 
 
+_TORCH_COMPILE_LOCK = threading.RLock()
+
+
 def torch_compile(*, elems_ndim: tuple[int, ...]) -> Callable[[Callable], Callable]:
     """Compile a batched torch function into fused kernels, running it eagerly where TorchInductor cannot build them.
 
@@ -577,36 +581,42 @@ def torch_compile(*, elems_ndim: tuple[int, ...]) -> Callable[[Callable], Callab
             n_elems = math.prod(batch_shape)
             device_type = next(tensor for tensor in tensors if tensor is not None).device.type
             is_compiled = _is_torch_compile_supported(device_type)
-            tensors_flat = []
-            for tensor, n in zip(tensors, elems_ndim):
-                if tensor is not None:
-                    elem_shape = tensor.shape[tensor.ndim - n :]
-                    if tensor.shape[: tensor.ndim - n] != batch_shape:
-                        tensor = tensor.expand((*batch_shape, *elem_shape))
-                    # Broadcast inputs and views of a larger tensor would otherwise key graphs by their strides,
-                    # including the stride of a single-element batch, which reshaping normalizes and contiguity ignores.
-                    tensor = tensor.reshape((n_elems, *elem_shape)).contiguous()
-                    if tensor.requires_grad:
-                        is_compiled = False
+            # The marks of the tensors and the call are atomic with respect to tracing. While any thread traces, the
+            # process-wide flag `torch.compiler.is_compiling` sends `mark_static` down its in-graph branch in every
+            # other thread, which raises, and a graph traced without the marks counts towards the recompile limit.
+            with _TORCH_COMPILE_LOCK:
+                tensors_flat = []
+                for tensor, n in zip(tensors, elems_ndim):
+                    if tensor is not None:
+                        elem_shape = tensor.shape[tensor.ndim - n :]
+                        if tensor.shape[: tensor.ndim - n] != batch_shape:
+                            tensor = tensor.expand((*batch_shape, *elem_shape))
+                        # Broadcast inputs and views of a larger tensor would otherwise key graphs by their strides,
+                        # including the stride of a single-element batch, which reshaping normalizes and
+                        # contiguity ignores.
+                        tensor = tensor.reshape((n_elems, *elem_shape)).contiguous()
+                        if tensor.requires_grad:
+                            is_compiled = False
+                        else:
+                            # A view is traced along with its base, whose shape would then key the compiled graphs too.
+                            # Detaching drops the base without copying. A Genesis tensor checks the scene of every
+                            # operation in a hook that cannot be traced, so its plain tensor is passed instead.
+                            tensor = tensor.as_subclass(torch.Tensor).detach()
+                        # The sizes of an element are constants that let the elementwise operations unroll and vectorize
+                        if n > 0:
+                            torch._dynamo.mark_static(tensor, tuple(range(1, tensor.ndim)))
+                    tensors_flat.append(tensor)
+                # A CPU kernel traced for a small batch runs on a single thread whatever the batch size it is later
+                # called with. Bounding the batch size gives small and large batches graphs of their own, each traced
+                # for a batch of its class. Other devices tune their kernels independently of the batch size they are
+                # traced with.
+                if is_compiled and device_type == "cpu" and n_elems > 1:
+                    tensor = next(tensor for tensor in tensors_flat if tensor is not None)
+                    if n_elems < 16384:
+                        torch._dynamo.mark_dynamic(tensor, 0, min=2, max=16383)
                     else:
-                        # A view is traced along with its base, whose shape would then key the compiled graphs too.
-                        # Detaching drops the base without copying. A Genesis tensor checks the scene of every
-                        # operation in a hook that cannot be traced, so its plain tensor is passed instead.
-                        tensor = tensor.as_subclass(torch.Tensor).detach()
-                    # The sizes of an element are constants that let the elementwise operations unroll and vectorize
-                    if n > 0:
-                        torch._dynamo.mark_static(tensor, tuple(range(1, tensor.ndim)))
-                tensors_flat.append(tensor)
-            # A CPU kernel traced for a small batch runs on a single thread whatever the batch size it is later called
-            # with. Bounding the batch size gives small and large batches graphs of their own, each traced for a batch
-            # of its class. Other devices tune their kernels independently of the batch size they are traced with.
-            if is_compiled and device_type == "cpu" and n_elems > 1:
-                tensor = next(tensor for tensor in tensors_flat if tensor is not None)
-                if n_elems < 16384:
-                    torch._dynamo.mark_dynamic(tensor, 0, min=2, max=16383)
-                else:
-                    torch._dynamo.mark_dynamic(tensor, 0, min=16384, max=sys.maxsize)
-            out = (fn_compiled if is_compiled else fn)(*tensors_flat, *args, **kwargs)
+                        torch._dynamo.mark_dynamic(tensor, 0, min=16384, max=sys.maxsize)
+                out = (fn_compiled if is_compiled else fn)(*tensors_flat, *args, **kwargs)
             if len(batch_shape) == 1:
                 return out
             return out.reshape((*batch_shape, *out.shape[1:]))

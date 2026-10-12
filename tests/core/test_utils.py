@@ -2,6 +2,7 @@ import math
 import re
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from unittest.mock import patch
 
@@ -312,8 +313,9 @@ def test_geom_tensor_identity(batch_shape):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("n_threads", [1, 8])
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
-def test_slerp(batch_shape, tol):
+def test_slerp(batch_shape, n_threads, tol):
     INTERP_RATIO = 0.7
 
     numel = math.prod(batch_shape)
@@ -332,13 +334,19 @@ def test_slerp(batch_shape, tol):
         slerp = Slerp([0, 1], rots)
         lerp_from_one_true[i] = slerp([INTERP_RATIO]).as_quat(scalar_first=True)
 
+    # Threads calling slerp while another one traces it, which a graph cached by an earlier test would skip
+    if n_threads > 1:
+        torch._dynamo.reset()
     ratio = np.full(batch_shape, INTERP_RATIO)
     for convert in (lambda x: x, lambda x: gs.tensor(x, dtype=gs.tc_float)):
         q0_batch, q1_batch = convert(q0.reshape((*batch_shape, 4))), convert(q1.reshape((*batch_shape, 4)))
-        lerp = gu.slerp(q0_batch, q1_batch, convert(ratio))
-        assert_allclose(lerp_true.reshape((*batch_shape, 4)), lerp, tol=tol)
+        ratio_batch = convert(ratio)
+        with ThreadPoolExecutor(n_threads) as pool:
+            lerps = tuple(pool.map(lambda _: gu.slerp(q0_batch, q1_batch, ratio_batch), range(2 * n_threads)))
+        for lerp in lerps:
+            assert_allclose(lerp_true.reshape((*batch_shape, 4)), lerp, tol=tol)
         # A single start quaternion is interpolated towards every end quaternion of the batch.
-        lerp = gu.slerp(convert(q0[0]), q1_batch, convert(ratio))
+        lerp = gu.slerp(convert(q0[0]), q1_batch, ratio_batch)
         assert_allclose(lerp_from_one_true.reshape((*batch_shape, 4)), lerp, tol=tol)
 
 
