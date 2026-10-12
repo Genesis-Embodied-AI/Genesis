@@ -776,6 +776,19 @@ def test_trajectory_replay(n_envs, checkpoint_scene, tmp_path, show_viewer, capl
     compressed_trajectory = Trajectory(compressed_path, scene=replay_scene)
     assert len(exact_trajectory) == len(compressed_trajectory) == N_STEPS + 2
     assert exact_trajectory.is_exact and not compressed_trajectory.is_exact
+    # A frame holds the wall time of every phase of the step it was reached by. No step led to the first frame, nor to
+    # the state the reset left behind.
+    for trajectory in (exact_trajectory, compressed_trajectory):
+        assert np.isnan(list(trajectory.timings(0).values())).all()
+        assert np.isnan(list(trajectory.timings(-1).values())).all()
+        for index in range(1, N_STEPS + 1):
+            timings = trajectory.timings(index)
+            assert set(timings) == {"step", "period", "physics", "sensors", "recorders", "rendering", "video"}
+            assert (
+                timings["step"] >= sum(time for phase, time in timings.items() if phase not in ("step", "period")) > 0
+            )
+            # The first step has no previous one to measure its period from
+            assert np.isnan(timings["period"]) == (index == 1)
     for index, (state, ghost_pos, force, time) in enumerate(zip(states, ghosts_pos, forces, times)):
         # An exact frame puts back everything a step reads or writes, so the scene stands exactly where it stood
         exact_trajectory.seek(index)

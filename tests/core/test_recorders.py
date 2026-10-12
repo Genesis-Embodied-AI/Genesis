@@ -249,7 +249,10 @@ def test_file_writers(tmp_path):
     timings = scene.timings
     assert timings["physics"] > 0.0 and timings["recorders"] > 0.0
     assert timings["sensors"] >= timings[f"sensors/{type(contact_sensor).__name__}"] > 0.0
-    assert timings["total"] >= sum(time for phase, time in timings.items() if phase != "total" and "/" not in phase)
+    assert timings["step"] >= sum(
+        time for phase, time in timings.items() if phase not in ("step", "period") and "/" not in phase
+    )
+    assert timings["period"] > 0.0
 
     scene.stop_recording()
 
@@ -282,6 +285,10 @@ def test_file_writers(tmp_path):
     assert "dummy" in data
     assert_allclose(data["scale"], 0.5, tol=gs.EPS)
     assert len(data["timestamp"]) == STEPS + 1
+
+    # A reset replaces the state the steps led to, so no step timing describes it any longer
+    scene.reset()
+    assert not scene.timings
 
 
 @pytest.mark.required

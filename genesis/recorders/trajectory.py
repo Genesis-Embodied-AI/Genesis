@@ -75,6 +75,8 @@ CHECKPOINT_FILE_KINDS = frozenset(DataKind) - {DataKind.CONFIG, DataKind.CONSTAN
 # The per-environment step counts and the forward-kinematics flags of a solver, which follow the arrays in a frame.
 STEPS_FIELD = "steps"
 FLAGS_SUFFIX = ".forward_flags"
+# The wall time of each phase of the step a frame was reached by, which closes a frame (see 'StepTimer.timings')
+TIMINGS_PREFIX = "timings/"
 
 
 class FrameField(NamedTuple):
@@ -126,8 +128,8 @@ def _frame_arrays(frame: np.ndarray, fields: list[FrameField], kinds: frozenset[
 
 
 def _frame_fields(sim: "Simulator", kinds: frozenset[DataKind], drop_unused: bool) -> list[FrameField]:
-    """Lay out one frame of the given kinds (see '_read_frame'): every array, then the step count of each environment
-    and the forward-kinematics flags of every kinematic or rigid solver.
+    """Lay out one frame of the given kinds (see '_read_frame'): every array, then the step count of each environment,
+    the forward-kinematics flags of every kinematic or rigid solver, and the wall time of every phase of a step.
 
     With 'drop_unused', a 0-d array is listed empty. Every 0-d array of the kinds a step frame holds is the placeholder
     of a feature switched off (see 'maybe_shape'), which a restore leaves as built (see 'check_data').
@@ -149,12 +151,19 @@ def _frame_fields(sim: "Simulator", kinds: frozenset[DataKind], drop_unused: boo
             name = f"{type(solver).__name__}{FLAGS_SUFFIX}"
             fields.append(FrameField(name, DataKind.STATE, (2,), "|u1", offset, 2))
             offset += 2
+    for phase in sim.step_timer.phases:
+        fields.append(FrameField(f"{TIMINGS_PREFIX}{phase}", DataKind.STATE, (), "<f8", offset, 8))
+        offset += 8
     return fields
 
 
 def _frame_tail(sim: "Simulator") -> np.ndarray:
-    """Return the end of a frame that lives on the host, as a flat uint8 buffer: the forward-kinematics flags."""
-    return np.array(
+    """Return the end of a frame that lives on the host, as a flat uint8 buffer.
+
+    It holds the forward-kinematics flags, then the wall time of every phase of the step the state was reached by, NaN
+    for a phase that step did not time.
+    """
+    flags = np.array(
         [
             flag
             for solver in sim.active_solvers
@@ -163,6 +172,12 @@ def _frame_tail(sim: "Simulator") -> np.ndarray:
         ],
         dtype=np.uint8,
     )
+    phases = sim.step_timer.phases
+    step_timings = sim.step_timer.timings
+    # A phase timed without being declared would be lost, as the frame is laid out once (see 'StepTimer.add_phases')
+    assert step_timings.keys() <= set(phases)
+    timings = np.array([step_timings.get(phase, np.nan) for phase in phases])
+    return np.concatenate((flags, timings.view(np.uint8)))
 
 
 def _read_frame(sim: "Simulator", kinds: frozenset[DataKind], drop_unused: bool) -> np.ndarray:
@@ -256,8 +271,8 @@ class TrajectoryFileWriter(BaseFileWriter):
         self._last_fields = _frame_fields(sim, CHECKPOINT_FILE_KINDS, drop_unused=False)
         self._frame_size = sum(field.nbytes for field in self._fields)
         self._steps_field = next(field for field in self._fields if field.name == STEPS_FIELD)
-        # The forward-kinematics flags close the frame (see '_frame_fields'). They live on the host, so a frame copy
-        # stops short of them and they are written beside it.
+        # The forward-kinematics flags and the step timings close the frame (see '_frame_fields'). They live on the
+        # host, so a frame copy stops short of them and they are written beside it.
         self._flags_offset = self._steps_field.offset + self._steps_field.nbytes
 
         # The arrays of a built scene keep their memory, so the byte view each array is copied from is taken once. An
@@ -689,6 +704,18 @@ class Trajectory:
         steps = torch.as_tensor(self.frame(index)[STEPS_FIELD], dtype=gs.tc_float, device="cpu")
         return tensor_to_array(steps * self._manifest["dt"])
 
+    def timings(self, index: int) -> dict[str, float]:
+        """The wall time in seconds of every phase of the step a frame was reached by, by phase.
+
+        'index' is the frame, counted from the end when negative. The phases are named as 'Scene.timings' names them. A
+        phase the step did not time is NaN, and so is every phase of a frame no step led to, such as the first.
+        """
+        return {
+            name[len(TIMINGS_PREFIX) :]: value[()]
+            for name, value in self.frame(index, frozenset((DataKind.STATE,))).items()
+            if name.startswith(TIMINGS_PREFIX)
+        }
+
     def seek(self, index: int) -> None:
         """Put the scene in the state of frame 'index', counted from the end when negative.
 
@@ -701,7 +728,7 @@ class Trajectory:
         arrays: dict[str, dict[str, np.ndarray]] = {}
         flags: dict[str, tuple[bool, bool]] = {}
         for name, value in values.items():
-            if name == STEPS_FIELD:
+            if name == STEPS_FIELD or name.startswith(TIMINGS_PREFIX):
                 continue
             solver_name, array_name = name.split(".", 1)
             if name.endswith(FLAGS_SUFFIX):

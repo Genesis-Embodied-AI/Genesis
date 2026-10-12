@@ -19,7 +19,7 @@ import genesis.utils.geom as gu
 from genesis.utils import warnings as warnings_mod
 from genesis.utils.image_exporter import as_grayscale_image
 from genesis.utils.misc import tensor_to_array
-from genesis.utils.tools import FPSTracker
+from genesis.utils.tools import RunningMean
 from genesis.utils.urdf import compose_inertial_properties
 from genesis.utils.warnings import warn_once
 
@@ -953,30 +953,22 @@ def test_as_grayscale_image():
 
 
 @pytest.mark.required
-def test_fps_tracker():
-    n_envs = 23
-    tracker = FPSTracker(alpha=0.0, minimum_interval_seconds=0.1, n_envs=n_envs)
-    tracker.step(current_time=10.0)
-    assert not tracker.step(current_time=10.0)
-    assert not tracker.step(current_time=10.0)
-    assert not tracker.step(current_time=10.0)
-    fps = tracker.step(current_time=10.2)
-    # num envs * [num steps] / (delta time)
-    assert math.isclose(fps, n_envs * 4 / 0.2)
-
-    assert not tracker.step(current_time=10.21)
-    assert not tracker.step(current_time=10.22)
-    assert not tracker.step(current_time=10.29)
-    fps = tracker.step(current_time=10.31)
-    # num envs * [num steps] / (delta time)
-    assert math.isclose(fps, n_envs * 4 / 0.11)
-
-    assert not tracker.step(current_time=10.33)
-    assert not tracker.step(current_time=10.37)
-    assert not tracker.step(current_time=10.39)
-    fps = tracker.step(current_time=10.45)
-    # num envs * [num steps] / (delta time)
-    assert math.isclose(fps, n_envs * 4 / 0.14)
+def test_running_mean():
+    # A window mean covers the latest samples alone once there are enough, and an exponential mean starts from the first
+    window_mean = RunningMean(window=3)
+    for sample in (1.0, 2.0):
+        window_mean.update(sample)
+    assert math.isnan(window_mean.value)
+    for sample in (3.0, 10.0):
+        window_mean.update(sample)
+    assert math.isclose(window_mean.value, (2.0 + 3.0 + 10.0) / 3)
+    exponential_mean = RunningMean(alpha=0.25)
+    assert math.isnan(exponential_mean.value)
+    exponential_mean.update(4.0)
+    exponential_mean.update(8.0)
+    assert math.isclose(exponential_mean.value, 0.25 * 4.0 + 0.75 * 8.0)
+    with pytest.raises(gs.GenesisException, match="Exactly one of"):
+        RunningMean(window=3, alpha=0.25)
 
 
 @pytest.mark.required
