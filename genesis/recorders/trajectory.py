@@ -58,9 +58,10 @@ ZSTD_LEVEL = 1
 # than a step for a while does not hold the step back. The file is written by a thread of its own, so a slow disk delays
 # the records only, never the release of a frame.
 N_FRAME_SLOTS = 4
-# The completed chunks waiting for the I/O thread at most. A chunk holds many frames compressed, so the queue absorbs a
-# slow disk far more cheaply than frame slots would, and the compression thread waits once it is full.
-N_PENDING_CHUNKS = 8
+# The bytes of the completed chunks waiting for the I/O thread at most, one chunk being let through whatever its size. A
+# chunk holds many frames compressed, so this absorbs a slow disk far more cheaply than frame slots would, and the
+# compression thread waits once it is reached. Bytes rather than chunks, since a chunk grows with the environments.
+MAX_PENDING_BYTES = 2**28
 CHUNK_MAGIC = b"CHNK"
 # A chunk record: frame count, payload length, payload checksum.
 CHUNK_HEADER = struct.Struct("<IQI")
@@ -332,7 +333,9 @@ class TrajectoryFileWriter(BaseFileWriter):
         self._fault: str | None = None
         self._error: Exception | None = None
         # The completed chunks handed to the I/O thread, in order, then None at the stop
-        self._records: queue.Queue[tuple[bytes, int] | None] = queue.Queue(maxsize=N_PENDING_CHUNKS)
+        self._records: queue.SimpleQueue[tuple[bytes, int] | None] = queue.SimpleQueue()
+        self._pending_bytes = 0
+        self._pending_bytes_changed = threading.Condition()
         self._compression_thread: threading.Thread | None = None
         self._io_thread: threading.Thread | None = None
         self._file: io.BufferedWriter | None = None
@@ -447,7 +450,13 @@ class TrajectoryFileWriter(BaseFileWriter):
             self._chunk_pieces.append(self._chunk_stream.flush())
             payload = b"".join(self._chunk_pieces)
             chunk_header = CHUNK_MAGIC + CHUNK_HEADER.pack(self._n_chunk_frames, len(payload), zlib.crc32(payload))
-            self._records.put((chunk_header + payload, self._n_chunk_frames))
+            record = chunk_header + payload
+            with self._pending_bytes_changed:
+                self._pending_bytes_changed.wait_for(
+                    lambda: self._pending_bytes == 0 or self._pending_bytes + len(record) <= MAX_PENDING_BYTES
+                )
+                self._pending_bytes += len(record)
+            self._records.put((record, self._n_chunk_frames))
         except Exception as error:
             self._error = error
         self._chunk_pieces.clear()
@@ -463,13 +472,15 @@ class TrajectoryFileWriter(BaseFileWriter):
             item = self._records.get()
             if item is None:
                 break
-            if self._error is not None or self._file is None:
-                continue
             record, n_record_frames = item
-            try:
-                self._write(record, n_record_frames)
-            except Exception as error:
-                self._error = error
+            if self._error is None and self._file is not None:
+                try:
+                    self._write(record, n_record_frames)
+                except Exception as error:
+                    self._error = error
+            with self._pending_bytes_changed:
+                self._pending_bytes -= len(record)
+                self._pending_bytes_changed.notify()
 
     def _write(self, record: bytes, n_record_frames: int):
         """Append one record to the file, with the header ahead of the first, if the file may still grow by that much.

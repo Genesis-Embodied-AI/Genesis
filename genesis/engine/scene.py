@@ -6,7 +6,6 @@ import json
 import math
 import os
 import sys
-import time
 import weakref
 import zipfile
 from collections import Counter
@@ -67,7 +66,7 @@ if TYPE_CHECKING:
 
 
 SCENE_FORMAT = ".gscene"
-# The shortest wall time between two lines of the step rate log, which a fast loop would flood otherwise
+# The stepping time each sample of the step rate log covers, so that its smoothing spans a fixed time whatever the rate
 STEP_RATE_LOG_INTERVAL = 0.05
 
 
@@ -248,9 +247,10 @@ class Scene(RBC):
 
         # simulator
         self._sim = Simulator(scene=self, options=self.options)
-        # The smoothed period of the steps the step rate log reports, and when it last did
-        self._step_period_mean = RunningMean(alpha=self.options.profiling.FPS_tracker_alpha)
-        self._step_rate_logged_at: float | None = None
+        # The smoothed step rate the log reports, and the steps and stepping time of the sample being gathered
+        self._step_rate_mean = RunningMean(alpha=self.options.profiling.FPS_tracker_alpha)
+        self._n_sample_steps = 0
+        self._sample_periods_sum = 0.0
 
         # visualizer
         self._visualizer = Visualizer(
@@ -1100,15 +1100,17 @@ class Scene(RBC):
                 for camera in self._visualizer.cameras:
                     camera.update_recording()
         step_timer.step(record=advance)
-        # The step rate the loop achieves is the inverse of the period of its steps (see 'StepTimer'), logged for every
-        # environment and per environment
+        # The step rate the loop achieves is the inverse of the period of its steps (see 'StepTimer'), sampled over
+        # STEP_RATE_LOG_INTERVAL of stepping and logged for every environment and per environment
         period = step_timer.timings.get("period")
         if advance and self.options.profiling.show_FPS and period is not None:
-            self._step_period_mean.update(period)
-            now = time.perf_counter()
-            if self._step_rate_logged_at is None or now - self._step_rate_logged_at >= STEP_RATE_LOG_INTERVAL:
-                self._step_rate_logged_at = now
-                rate = 1.0 / self._step_period_mean.value
+            self._n_sample_steps += 1
+            self._sample_periods_sum += period
+            if self._sample_periods_sum >= STEP_RATE_LOG_INTERVAL:
+                self._step_rate_mean.update(self._n_sample_steps / self._sample_periods_sum)
+                self._n_sample_steps = 0
+                self._sample_periods_sum = 0.0
+                rate = self._step_rate_mean.value
                 if self.n_envs > 0:
                     gs.logger.info(
                         f"Running at ~<{rate * self.n_envs:,.2f}>~ FPS "
