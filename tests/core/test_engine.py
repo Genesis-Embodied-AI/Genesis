@@ -101,6 +101,78 @@ def test_registered_manual_and_required_systems():
         unregister_system(TestEngine, create_nothing)
 
 
+# Engine creates every declared Action before closing the build window, so a manager invokes one its participant never
+# accessed during build() directly afterwards.
+@pytest.mark.parametrize("backend", [None])
+def test_every_declared_action_is_created_by_build():
+    def add(left, right):
+        return left + right
+
+    class Participant(System):
+        @System.action(kind="host")
+        def host(self):
+            return add, 2
+
+    class ParticipantEngine(Engine):
+        pass
+
+    participant = Participant(object())
+    engine = ParticipantEngine(object())
+    engine.add_system(participant)
+    engine.build()
+
+    assert participant.host.invoke((5,)) == 7
+    assert participant.host is participant.host
+
+
+# A dependency that a class-level Require / Find would turn into an import cycle is looked up during build() instead.
+# The lookup observes the fixed System set: it returns what the Engine holds and adds nothing.
+@pytest.mark.parametrize("backend", [None])
+def test_build_time_find_and_require():
+    scene = object()
+
+    class Held(System):
+        pass
+
+    class Absent(System):
+        pass
+
+    class Looker(System):
+        def build(self):
+            self.held = self.require(Held)
+            self.absent = self.find(Absent)
+
+    class Demanding(System):
+        def build(self):
+            self.require(Absent)
+
+    class LookupEngine(Engine):
+        def build(self):
+            super().build()
+            self.looker = self.require(Looker)
+
+    engine = LookupEngine(scene)
+    held = engine.add_system(Held(scene))
+    looker = engine.add_system(Looker(scene))
+    with pytest.raises(gs.GenesisException):
+        engine.find(Held)
+    engine.build()
+    assert looker.held is held
+    assert looker.absent is None
+    assert engine.looker is looker
+    assert engine.find(Absent) is None
+    assert list(engine.systems) == [Held, Looker]
+    with pytest.raises(gs.GenesisException):
+        looker.find(Held)
+
+    demanding_engine = LookupEngine(scene)
+    demanding_engine.add_system(Looker(scene))
+    demanding_engine.add_system(Held(scene))
+    demanding_engine.add_system(Demanding(scene))
+    with pytest.raises(gs.GenesisException):
+        demanding_engine.build()
+
+
 # System and Engine admit one concrete inheritance layer. Action admits exactly one final class for each of its three
 # kinds, Pipeline is final, and register_system accepts a final Engine class alone and registers functions, not classes.
 @pytest.mark.parametrize("backend", [None])

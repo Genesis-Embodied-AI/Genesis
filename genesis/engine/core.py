@@ -346,6 +346,8 @@ class System:
     deps: ClassVar[MappingProxyType[str, Dep]] = MappingProxyType({})
     # Names of the declared ActionCollections
     action_collections: ClassVar[tuple[str, ...]] = ()
+    # Names of the declared Actions
+    actions: ClassVar[tuple[str, ...]] = ()
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -355,10 +357,13 @@ class System:
         cls.action_collections = tuple(
             name for name, value in vars(cls).items() if isinstance(value, ActionCollectionDeclaration)
         )
+        cls.actions = tuple(name for name, value in vars(cls).items() if isinstance(value, ActionDeclaration))
 
     def __init__(self, scene: "Scene") -> None:
         self._scene = scene
         self.is_building = False
+        # The Systems of the Engine, which it hands over once the System set is fixed (see find)
+        self._systems: MappingProxyType[type["System"], "System"] | None = None
         for name in type(self).action_collections:
             declaration = vars(type(self))[name]
             self.__dict__[name] = ActionCollection(self, name, declaration.kind, declaration.call_args)
@@ -422,8 +427,9 @@ class System:
         """Declare one Action of the given kind.
 
         The decorated method returns `function, *bound_args`. Its first access, which happens during build(), binds
-        them into one Action of the declared kind and caches it, and every later access returns that object. A bound
-        method binds its own System, so `return self.initialize` is a complete Action.
+        them into one Action of the declared kind and caches it, and every later access returns that object. Engine
+        accesses every declared Action before closing the build window, so a manager invokes any of them directly
+        afterwards. A bound method binds its own System, so `return self.initialize` is a complete Action.
 
         `kind` states where the manager invokes the Action. It is required, and it matches the function:
 
@@ -457,6 +463,29 @@ class System:
         annotation (HostAction / InlineAction / StageAction) when the protocol is called.
         """
         return lambda function: ActionDeclaration(function, ACTION_TYPES_MAP[kind])
+
+    def find(self, system_type: type[T]) -> T | None:
+        """Return the System of the given class the Engine holds, or None, valid only during build().
+
+        A dependency is declared on the class with Require / Find unless the two modules would then import each other.
+        Such a dependency is looked up here instead, with the class imported inside build(). The lookup adds nothing:
+        the System set is fixed before build() runs.
+        """
+        if not self.is_building:
+            gs.raise_exception(f"{type(self).__name__}.find is valid only during build().")
+        return self._systems.get(system_type)
+
+    def require(self, system_type: type[T]) -> T:
+        """Return the System of the given class the Engine holds, valid only during build() (see find).
+
+        The System must already be held, which a static Require or a registration ensures: the lookup adds nothing.
+        """
+        system = self.find(system_type)
+        if system is None:
+            gs.raise_exception(
+                f"{type(self).__name__} requires {system_type.__name__}, which the Engine does not hold."
+            )
+        return system
 
     def build(self):
         pass
@@ -591,6 +620,7 @@ class Engine:
     def __init__(self, scene: "Scene") -> None:
         self.scene = scene
         self.systems: dict[type[System], System] = {}
+        self._is_resolved = False
 
     def add_system(self, system: SystemT) -> SystemT:
         """Add a System instance, at most one per class, and return it."""
@@ -599,6 +629,27 @@ class Engine:
         self.systems[type(system)] = system
         # WORKAROUND: expose each System as an attribute so a kernel taking the engine reaches its Data
         setattr(self, f"_system_{len(self.systems)}", system)
+        return system
+
+    def find(self, system_type: type[SystemT]) -> SystemT | None:
+        """Return the System of the given class, or None, valid once build() has fixed the System set.
+
+        For a System whose module would import this Engine's module if the Engine declared it with Require / Find,
+        such as one that registers itself for this Engine. The class is imported inside the overriding build(), after
+        super().build(). The lookup adds nothing.
+        """
+        if not self._is_resolved:
+            gs.raise_exception(f"{type(self).__name__}.find is valid only once build() has fixed the System set.")
+        return self.systems.get(system_type)
+
+    def require(self, system_type: type[SystemT]) -> SystemT:
+        """Return the System of the given class, valid once build() has fixed the System set (see find).
+
+        The System must already be held, which a static Require or a registration ensures: the lookup adds nothing.
+        """
+        system = self.find(system_type)
+        if system is None:
+            gs.raise_exception(f"{type(self).__name__} requires {system_type.__name__}, which it does not hold.")
         return system
 
     def build(self) -> None:
@@ -622,11 +673,17 @@ class Engine:
         for owner in owners:
             for name, dep in owner.deps.items():
                 owner.__dict__[name] = self.systems.get(dep.system_type)
+        self._is_resolved = True
         # Actions are created and protocols called only while the build window is open
         for system in self.systems.values():
+            system._systems = MappingProxyType(self.systems)
             system.is_building = True
         for system in self.systems.values():
             system.build()
+        # Every declared Action is created within the window, so a manager invokes it directly from then on
+        for system in self.systems.values():
+            for name in type(system).actions:
+                getattr(system, name)
         # Closing the window freezes every declared collection, so the graph topology is fixed from here on
         for system in self.systems.values():
             system.is_building = False
