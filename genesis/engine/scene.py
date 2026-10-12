@@ -1095,15 +1095,17 @@ class Scene(RBC):
             with step_timer.phase("rendering"):
                 self._visualizer.update(force=not advance, auto=refresh_visualizer)
 
-        if advance:
-            with step_timer.phase("video"):
-                for camera in self._visualizer.cameras:
-                    camera.update_recording()
-        step_timer.step(record=advance)
+        # A vetoed step never happened for the timings: the next 'start' discards the one it opened
+        if not advance:
+            return
+        with step_timer.phase("video"):
+            for camera in self._visualizer.cameras:
+                camera.update_recording()
+        step_timer.step()
         # The step rate the loop achieves is the inverse of the period of its steps (see 'StepTimer'), sampled over
         # STEP_RATE_LOG_INTERVAL of stepping and logged for every environment and per environment
         period = step_timer.timings.get("period")
-        if advance and self.options.profiling.show_FPS and period is not None:
+        if self.options.profiling.show_FPS and period is not None:
             self._n_sample_steps += 1
             self._sample_periods_sum += period
             if self._sample_periods_sum >= STEP_RATE_LOG_INTERVAL:
@@ -1909,15 +1911,15 @@ class Scene(RBC):
         - recorders: the recorders reading the state.
         - video: the cameras rendering and encoding the frame of a recording.
         - step: the whole call to `step`, the pre-step callbacks included.
-        - period: the wall time from the start of the previous call to `step` to the start of this one, the time spent
-          between the two calls included, so its inverse is the step rate the loop achieves.
+        - period: the wall time from the start of the previous call to `step` that advanced the simulation to the start
+          of this one, the time spent between the two included, so its inverse is the step rate the loop achieves.
 
-        A phase the step left out (the visualizer update skipped) is absent. The mapping is empty before the first step
-        and after a step a pre-step callback vetoed, since the simulation did not advance, and the step that follows
-        either has no `period`. The values are raw, so a quantity read from them every step
-        is smoothed with a `RunningMean` (in genesis.utils.tools). On the GPU backends a phase covers the host work of
-        launching its kernels, which the device completes asynchronously, so the phases split the step on the CPU
-        backend, and `step` holds on every backend once it reads the device back.
+        A phase the step left out (the visualizer update skipped) is absent. A step a pre-step callback vetoed never
+        happened for the timings, which it leaves as they were. The mapping is empty before the first step, and the
+        first step has no `period`. The values are raw, so a quantity read from them every step is smoothed with a
+        `RunningMean` (in genesis.utils.tools). On the GPU backends a phase covers the host work of launching its
+        kernels, which the device completes asynchronously, so the phases split the step on the CPU backend, and `step`
+        holds on every backend once it reads the device back.
         """
         return self._sim.step_timer.timings
 

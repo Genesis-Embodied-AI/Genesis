@@ -751,9 +751,17 @@ def test_trajectory_replay(n_envs, checkpoint_scene, tmp_path, show_viewer, capl
     assert "Recording the state alone" in " ".join(record.getMessage() for record in caplog.records)
     # The inputs of a step are recorded whether a setter or a pre-step callback writes them
     scene.register_pre_step_callback(lambda: arm.control_dofs_position([0.3 + 0.001 * scene.sim.cur_step_global, -0.3]))
+    # A step a pre-step callback vetoes records no frame
+    VETO_STEP = N_STEPS // 3
+    is_paused = False
+    scene.register_pre_step_callback(lambda: is_paused)
     # A frame is the state a step starts from, so the record of frame i is read right before step i
     states, ghosts_pos, forces, times = [], [], [], []
     for i_step in range(N_STEPS):
+        if i_step == VETO_STEP:
+            is_paused = True
+            scene.step()
+            is_paused = False
         ghost.set_dofs_position([0.01 * i_step, 0.0, 0.0, 0.0, 0.0, 0.0])
         states.append(scene.sim.rigid_solver.get_state())
         ghosts_pos.append(ghost.get_links_pos())
@@ -776,8 +784,9 @@ def test_trajectory_replay(n_envs, checkpoint_scene, tmp_path, show_viewer, capl
     compressed_trajectory = Trajectory(compressed_path, scene=replay_scene)
     assert len(exact_trajectory) == len(compressed_trajectory) == N_STEPS + 2
     assert exact_trajectory.is_exact and not compressed_trajectory.is_exact
-    # A frame holds the wall time of every phase of the latest step at the time it was recorded. No step led to the
-    # first frame, and no step ran between the reset and the stop, which leave the timings as they were.
+    # A frame holds the wall time of every phase of the step that reached its state, which a vetoed step in between
+    # leaves as it is. No step led to the first frame, and no step ran between the reset and the stop, which leave the
+    # timings as they were.
     for trajectory in (exact_trajectory, compressed_trajectory):
         assert set(trajectory.timings(0)) == {"step", "period", "physics", "sensors", "recorders", "rendering", "video"}
         assert np.isnan(list(trajectory.timings(0).values())).all()

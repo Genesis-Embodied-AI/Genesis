@@ -229,13 +229,12 @@ class StepTimer:
     """Times the phases of the steps of a stepped process.
 
     A step opens with `start`, its phases run under `phase`, named freely, or between `start_phase` and the next
-    `start_phase` or `stop_phase` where a `with` block would indent too much, and `step` closes it. A recorded step
-    leaves in `timings`, until the next one, the wall time of every phase it timed, of the whole step under `step`, and
-    of the period from the start of the previous step to its own under `period`. The period covers the time spent
-    between the two steps as well, so its inverse is the rate the loop achieves. A step left unrecorded leaves
-    `timings` empty, as there is nothing to time, and the first step and the one after an unrecorded step have no
-    period. The code timing a phase declares it with `add_phases` before the first step, so that a log laid out once
-    lists every phase a step may time.
+    `start_phase` or `stop_phase` where a `with` block would indent too much, and `step` closes it. A closed step leaves
+    in `timings`, until the next one, the wall time of every phase it timed, of the whole step under `step`, and of the
+    period from the start of the previous step to its own under `period`. The period covers the time spent between the
+    two steps as well, so its inverse is the rate the loop achieves. A step that `start` opens and `step` never closes
+    leaves no trace, as the next `start` discards it. The first step has no period. The code timing a phase declares it
+    with `add_phases` before the first step, so that a log laid out once lists every phase a step may time.
     """
 
     def __init__(self):
@@ -294,15 +293,11 @@ class StepTimer:
         finally:
             self._phases_time[phase] = self._phases_time.get(phase, 0.0) + time.perf_counter() - tic
 
-    def step(self, record: bool = True):
-        """Close the step, keeping its timings in `timings` if 'record' is set and emptying them otherwise."""
+    def step(self):
+        """Close the step, keeping its timings in `timings` until the next one."""
         self.stop_phase()
-        if record:
-            self._phases_time["step"] = time.perf_counter() - self._step_start
-            if self._previous_step_start is not None:
-                self._phases_time["period"] = self._step_start - self._previous_step_start
-            self._timings = dict(self._phases_time)
-            self._previous_step_start = self._step_start
-        else:
-            self._timings = {}
-            self._previous_step_start = None
+        self._phases_time["step"] = time.perf_counter() - self._step_start
+        if self._previous_step_start is not None:
+            self._phases_time["period"] = self._step_start - self._previous_step_start
+        self._timings = dict(self._phases_time)
+        self._previous_step_start = self._step_start
