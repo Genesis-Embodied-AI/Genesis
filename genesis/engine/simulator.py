@@ -28,7 +28,7 @@ from .solvers.base_solver import GravityMixin, TimeBasedMixin
 from .states.cache import QueriedStates
 from .states.solvers import SimState, SimulatorCheckpoint
 from .core import Pipeline
-from .systems import RigidSolverSystem, SimulatorEngine, Substepper
+from .systems import SimulatorEngine
 
 if TYPE_CHECKING:
     from genesis.engine.entities.base_entity import Entity, EntityDescription
@@ -117,7 +117,8 @@ class Simulator(RBC):
 
         # The engine running the substep phases of the solvers and of the coupler, built with them
         self._engine: SimulatorEngine | None = None
-        self._substepper: Substepper | None = None
+        self._input_pipeline: Pipeline | None = None
+        self._substep_pipeline: Pipeline | None = None
         self._rigid_substep_pipeline: Pipeline | None = None
 
         # states
@@ -234,17 +235,20 @@ class Simulator(RBC):
                 if not isinstance(solver, RigidSolver):
                     self._rigid_only = False
 
+        # The engine owns the data of the rigid and kinematic solvers, which it initializes from the entities they have
+        # built, so it is built once they are and before the coupler reads that data. An IPC coupler steps the solvers
+        # through the legacy substep of this simulator instead of the Substepper.
+        self._engine = SimulatorEngine(self.scene)
+        self._engine.build()
+        self._engine.init_pipeline.run()
+        if not isinstance(self._coupler, IPCCoupler):
+            self._input_pipeline = self._engine.input_pipeline
+            self._substep_pipeline = self._engine.substep_pipeline
+        if self.rigid_solver.is_active:
+            self._rigid_substep_pipeline = self._engine.rigid_substep_pipeline
+
         # A coupler exchanges state once per substep, so it is built once the rate that loop runs at is known.
         self._coupler.build()
-
-        # The engine wraps the active solvers and the coupler, so it is built once they are. An IPC coupler steps the
-        # solvers through the legacy substep of this simulator instead, so it builds no engine.
-        if not isinstance(self._coupler, IPCCoupler):
-            self._engine = SimulatorEngine(self.scene)
-            self._engine.build()
-            self._substepper = self._engine.systems[Substepper]
-            if self.rigid_solver.is_active:
-                self._rigid_substep_pipeline = self._engine.systems[RigidSolverSystem].substep_pipeline
 
         if self.n_envs > 0 and self.sf_solver.is_active:
             gs.raise_exception("Batching is not supported for SF solver as of now.")
@@ -407,8 +411,8 @@ class Simulator(RBC):
         setting _tgt state using external commands
         note that external inputs are given at step level, not substep
         """
-        if self._substepper is not None:
-            self._substepper.input_pipeline.run(in_backward)
+        if self._input_pipeline is not None:
+            self._input_pipeline.run(in_backward)
             return
         for solver in self._active_solvers:
             solver.process_input(in_backward=in_backward)
@@ -418,8 +422,8 @@ class Simulator(RBC):
             solver.process_input_grad()
 
     def substep(self, f):
-        if self._substepper is not None:
-            self._substepper.substep_pipeline.run(f)
+        if self._substep_pipeline is not None:
+            self._substep_pipeline.run(f)
             return
         self._coupler.preprocess(f)
         self.substep_pre_coupling(f)

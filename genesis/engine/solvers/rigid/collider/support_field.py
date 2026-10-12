@@ -11,11 +11,11 @@ import genesis.utils.geom as gu
 
 
 if TYPE_CHECKING:
-    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
+    from genesis.engine.systems.rigid_solver_system import RigidSolverSystem
 
 
 class SupportField:
-    def __init__(self, rigid_solver: "RigidSolver") -> None:
+    def __init__(self, rigid_solver: "RigidSolverSystem") -> None:
         self.solver = rigid_solver
         self._support_res = 180
         self._support_field_info = array_class.get_support_field_info(0, 0, self._support_res)

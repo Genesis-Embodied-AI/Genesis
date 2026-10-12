@@ -14,6 +14,9 @@ if TYPE_CHECKING:
     from genesis.engine.scene import Scene
 
 
+# FIXME: thin wrapper. The PBD solver still owns its data and runs each phase as a host method launching its own
+# kernels. The System owns that data and exposes its phases as Actions over it, the solver forwarding to it, once the
+# solver is inverted as the rigid solver is (see RigidSolverSystem).
 class PBDSolverSystem(System):
     """System wrapping the PBD solver of the scene."""
 

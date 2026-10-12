@@ -1,11 +1,16 @@
-"""System of the collision detection of the rigid solver, which opens the second graph of every rigid substep."""
+"""System of the contact between rigid geoms, which opens the second graph of every rigid substep."""
 
 from typing import TYPE_CHECKING
 
 import quadrants as qd
 
 from genesis.engine.core import Require, System, register_system
-from genesis.engine.solvers.rigid.collider.collider import func_detection
+from genesis.engine.solvers.rigid.collider.collider import (
+    collider_clear,
+    collider_detection,
+    collider_reset,
+    func_detection,
+)
 
 from .rigid_solver_system import RigidSolverSystem
 from .simulator_engine import SimulatorEngine
@@ -14,17 +19,22 @@ if TYPE_CHECKING:
     from genesis.engine.scene import Scene
 
 
-class ColliderSystem(System):
-    """System running the collision detection of the rigid solver, which the scene adds when it enables collisions.
+@qd.data_oriented
+class RigidRigidContactSystem(System):
+    """System detecting the contacts between the rigid geoms of the scene, which it adds when it enables collisions.
 
-    The collider of the rigid solver keeps owning its data, which RigidSolverData exposes to the substep graphs.
+    It covers every pair of rigid geoms, terrains and planes included, and hands the contacts to the constraint solve.
+    The contacts of other solvers with rigid geoms belong to their couplings. The collision data belongs to the rigid
+    data for now (see ColliderData), which the substep graphs read through RigidSolverData. Its Actions bind this
+    System, which the Initializer has record the static configuration of the detection once the rigid data exists, and
+    the graphs read it when they compile.
     """
 
     rigid_solver_system = Require(RigidSolverSystem)
 
-    def __init__(self, scene: "Scene") -> None:
-        super().__init__(scene)
-        self.collider = scene.sim.rigid_solver.collider
+    @System.action(kind="host")
+    def initialize(self):
+        return self.record_configuration
 
     @System.action(kind="host")
     def prepare(self):
@@ -32,45 +42,63 @@ class ColliderSystem(System):
 
     @System.action(kind="stage")
     def detect(self):
-        collider = self.collider
-        return (
-            func_substep_detection,
-            self.rigid_solver_system.data,
-            self.rigid_solver_system.rigid_config,
-            collider.collider_config,
-            collider.gjk.gjk_config,
-            collider._n_possible_pairs > 0,
-            collider._use_split_narrowphase,
-            collider._use_coop_dedup,
-        )
+        return func_substep_detection, self
+
+    @System.action(kind="host")
+    def detect_kernels(self):
+        return self.detect_launching_kernels
+
+    @System.action(kind="host")
+    def reset(self):
+        return self.reset_contacts
+
+    @System.action(kind="host")
+    def clear(self):
+        return self.clear_contacts
 
     def build(self):
-        self.rigid_solver_system.on_detect(prepare=self.prepare, detect=self.detect)
+        self.rigid_solver_system.on_detect(prepare=self.prepare, detect=self.detect, detect_kernels=self.detect_kernels)
+        self.rigid_solver_system.on_reset(reset=self.reset, clear=self.clear)
+
+    def record_configuration(self) -> None:
+        """Record the static configuration of the collision detection, which the detection graph compiles against."""
+        collider_data = self.rigid_solver_system.collider_data
+        self.collider_data = collider_data
+        self.collider_config = collider_data.collider_config
+        self.gjk_config = collider_data.gjk.gjk_config
+        self.has_possible_pairs = collider_data._n_possible_pairs > 0
+        self.split_narrowphase = collider_data._use_split_narrowphase
+        self.coop_dedup = collider_data._use_coop_dedup
 
     def clear_contact_data_cache(self) -> None:
         """Drop the contacts read back during the previous substep, which the detection is about to replace."""
-        self.collider._contact_data_cache.clear()
+        self.collider_data._contact_data_cache.clear()
+
+    def detect_launching_kernels(self) -> None:
+        """Detect the contacts between rigid geoms of a substep through the detection kernel alone."""
+        collider_detection(self.collider_data, self.rigid_solver_system)
+
+    def reset_contacts(self, envs_idx) -> None:
+        """Restart the warm start of the detection in the given environments."""
+        collider_reset(self.collider_data, self.rigid_solver_system, envs_idx)
+
+    def clear_contacts(self, envs_idx) -> None:
+        """Clear the contacts and the warm start of the detection in the given environments."""
+        collider_clear(self.collider_data, self.rigid_solver_system, envs_idx)
 
 
 @register_system(SimulatorEngine)
-def create_collider_system(scene: "Scene") -> ColliderSystem | None:
-    """Create the collision detection of the rigid substep, unless the scene disables collisions."""
+def create_rigid_rigid_contact_system(scene: "Scene") -> RigidRigidContactSystem | None:
+    """Create the contact between rigid geoms, unless the scene disables collisions."""
     rigid_solver = scene.sim.rigid_solver
-    return ColliderSystem(scene) if rigid_solver.is_active and rigid_solver._enable_collision else None
+    return RigidRigidContactSystem(scene) if rigid_solver.is_active and rigid_solver._enable_collision else None
 
 
 @qd.func(requires_top_level=True)
-def func_substep_detection(
-    rigid_data: qd.template(),
-    rigid_config: qd.template(),
-    collider_static_config: qd.template(),
-    gjk_static_config: qd.template(),
-    has_possible_pairs: qd.template(),
-    split_narrowphase: qd.template(),
-    coop_dedup: qd.template(),
-):
-    """Detect the collisions of a substep, configured by has_possible_pairs, split_narrowphase and coop_dedup (see
-    func_detection)."""
+def func_substep_detection(contact_system: qd.template()):
+    """Detect the contacts between rigid geoms of a substep, configured by the static configuration the System
+    records (see func_detection)."""
+    rigid_data = contact_system.rigid_solver_system.data
     func_detection(
         geoms_init_AABB=rigid_data.geoms_init_AABB,
         dyn_state=rigid_data.dyn_state,
@@ -86,11 +114,11 @@ def func_substep_detection(
         dyn_info=rigid_data.dyn_info,
         rigid_info=rigid_data.rigid_info,
         collider_info=rigid_data.collider_info,
-        rigid_config=rigid_config,
-        collider_static_config=collider_static_config,
-        gjk_static_config=gjk_static_config,
-        has_possible_pairs=has_possible_pairs,
-        split_narrowphase=split_narrowphase,
-        coop_dedup=coop_dedup,
+        rigid_config=contact_system.rigid_solver_system.rigid_config,
+        collider_static_config=contact_system.collider_config,
+        gjk_static_config=contact_system.gjk_config,
+        has_possible_pairs=contact_system.has_possible_pairs,
+        split_narrowphase=contact_system.split_narrowphase,
+        coop_dedup=contact_system.coop_dedup,
         errno=rigid_data.errno,
     )

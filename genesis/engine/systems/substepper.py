@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from genesis.engine.core import Find, Pipeline, Require, System, register_system
+from genesis.engine.core import Find, Require, System, register_system
 
 from .coupler_system import CouplerSystem
 from .fem_solver_system import FEMSolverSystem
@@ -21,15 +21,15 @@ if TYPE_CHECKING:
 
 class Substepper(System):
     """Manager of one substep: the preprocess of the coupler, every pre-coupling phase, the coupling, then every
-    post-coupling phase.
+    post-coupling phase, each in the order substep states.
 
-    Every solver System it finds takes part in the input and in both phases around the coupling, in the order build()
-    states.
+    A solver System takes part when it has entities to advance: the rigid and kinematic Systems own their data whether
+    or not their solver holds an entity, the other solver Systems only exist when theirs does.
     """
 
     tool = Find(ToolSolverSystem)
-    rigid = Find(RigidSolverSystem)
-    kinematic = Find(KinematicSolverSystem)
+    rigid = Require(RigidSolverSystem)
+    kinematic = Require(KinematicSolverSystem)
     mpm = Find(MPMSolverSystem)
     sph = Find(SPHSolverSystem)
     pbd = Find(PBDSolverSystem)
@@ -37,25 +37,24 @@ class Substepper(System):
     sf = Find(SFSolverSystem)
     coupler = Require(CouplerSystem)
 
-    def build(self):
-        # The rigid solver advances before the MPM solver, whose p2g reads the rigid geoms and links that the rigid
-        # substep moves. Within one phase the other solvers touch nothing of one another, so their order only keeps the
-        # results reproducible.
-        solver_systems = (self.tool, self.rigid, self.kinematic, self.mpm, self.sph, self.pbd, self.fem, self.sf)
-        solver_systems = tuple(system for system in solver_systems if system is not None)
-        # Actions are created only while the build window is open, so the substep runs the ones gathered here
-        self.inputs = tuple(system.process_input for system in solver_systems)
-        self.pre_couplings = tuple(system.pre_coupling for system in solver_systems)
-        self.post_couplings = tuple(system.post_coupling for system in solver_systems)
-        self.preprocess = self.coupler.preprocess
-        self.couple = self.coupler.couple
-        self.input_pipeline = Pipeline(self.process_input)
-        self.substep_pipeline = Pipeline(self.substep)
-
     def process_input(self, in_backward: bool) -> None:
-        """Apply the external commands of one step to every solver."""
-        for action in self.inputs:
-            action.invoke((in_backward,))
+        """Apply the external commands of one step to every solver, each of which applies its own."""
+        if self.tool is not None:
+            self.tool.process_input.invoke((in_backward,))
+        if self.rigid.is_active:
+            self.rigid.process_input.invoke((in_backward,))
+        if self.kinematic.is_active:
+            self.kinematic.process_input.invoke((in_backward,))
+        if self.mpm is not None:
+            self.mpm.process_input.invoke((in_backward,))
+        if self.sph is not None:
+            self.sph.process_input.invoke((in_backward,))
+        if self.pbd is not None:
+            self.pbd.process_input.invoke((in_backward,))
+        if self.fem is not None:
+            self.fem.process_input.invoke((in_backward,))
+        if self.sf is not None:
+            self.sf.process_input.invoke((in_backward,))
 
     # FIXME: the substep runs on the host, since the phases it calls launch their own kernels around host logic. The
     # DFSPH and implicit FEM iterations read their convergence back on the host every iteration, the rigid constraint
@@ -64,15 +63,47 @@ class Substepper(System):
     # one graph once every phase is a stage Action whose loops run as device-side graph loops, and once quadrants#966
     # lets such a graph use fastcache.
     def substep(self, f: int) -> None:
-        """Advance every solver by substep f: the coupler preprocess, every pre-coupling phase, the coupling, then every
-        post-coupling phase. A scene simulating rigid entities alone advances through RigidSolverSystem.substep_pipeline
-        instead."""
-        self.preprocess.invoke((f,))
-        for action in self.pre_couplings:
-            action.invoke((f,))
-        self.couple.invoke((f,))
-        for action in self.post_couplings:
-            action.invoke((f,))
+        """Advance every solver by substep f. A scene simulating rigid entities alone advances through
+        SimulatorEngine.rigid_substep_pipeline instead."""
+        self.coupler.preprocess.invoke((f,))
+
+        if self.tool is not None:
+            self.tool.pre_coupling.invoke((f,))
+        if self.rigid.is_active:
+            self.rigid.pre_coupling.invoke((f,))
+        if self.kinematic.is_active:
+            self.kinematic.pre_coupling.invoke((f,))
+        # The p2g of the MPM solver reads the rigid geoms and links that the rigid substep has just moved
+        if self.mpm is not None:
+            self.mpm.pre_coupling.invoke((f,))
+        if self.sph is not None:
+            self.sph.pre_coupling.invoke((f,))
+        if self.pbd is not None:
+            self.pbd.pre_coupling.invoke((f,))
+        if self.fem is not None:
+            self.fem.pre_coupling.invoke((f,))
+        if self.sf is not None:
+            self.sf.pre_coupling.invoke((f,))
+
+        self.coupler.couple.invoke((f,))
+
+        if self.tool is not None:
+            self.tool.post_coupling.invoke((f,))
+        if self.rigid.is_active:
+            self.rigid.post_coupling.invoke((f,))
+        if self.kinematic.is_active:
+            self.kinematic.post_coupling.invoke((f,))
+        # The g2p of the MPM solver reads the rigid links that the rigid post-coupling phase has completed
+        if self.mpm is not None:
+            self.mpm.post_coupling.invoke((f,))
+        if self.sph is not None:
+            self.sph.post_coupling.invoke((f,))
+        if self.pbd is not None:
+            self.pbd.post_coupling.invoke((f,))
+        if self.fem is not None:
+            self.fem.post_coupling.invoke((f,))
+        if self.sf is not None:
+            self.sf.post_coupling.invoke((f,))
 
 
 @register_system(SimulatorEngine)

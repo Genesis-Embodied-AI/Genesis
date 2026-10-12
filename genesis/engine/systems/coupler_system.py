@@ -10,16 +10,9 @@ if TYPE_CHECKING:
     from genesis.engine.scene import Scene
 
 
-def preprocess_coupler(coupler, f):
-    """Prepare the coupling of substep f."""
-    coupler.preprocess(f)
-
-
-def couple_coupler(coupler, f):
-    """Exchange state between the solvers within substep f."""
-    coupler.couple(f)
-
-
+# FIXME: thin wrapper. The coupler still owns its data and runs its preprocess and its coupling as host methods over the
+# data of every solver. Each coupling becomes a System defined between the two Systems it couples, joining them through
+# their protocols, once the solvers it reads are inverted.
 class CouplerSystem(System):
     """System wrapping the coupler of the scene, whichever coupler the scene options select."""
 
@@ -27,15 +20,13 @@ class CouplerSystem(System):
         super().__init__(scene)
         self.coupler = scene.sim.coupler
 
-    # The couplers name the substep argument differently, so free functions give every coupler the `f` argument the
-    # Substepper calls them with
     @System.action(kind="host")
     def preprocess(self):
-        return preprocess_coupler, self.coupler
+        return self.coupler.preprocess
 
     @System.action(kind="host")
     def couple(self):
-        return couple_coupler, self.coupler
+        return self.coupler.couple
 
 
 @register_system(SimulatorEngine)
