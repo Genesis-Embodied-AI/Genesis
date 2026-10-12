@@ -69,6 +69,7 @@ def checkpoint_scene(mimic_hinges, requires_grad, show_viewer):
     scene.add_entity(
         morph=gs.morphs.Box(
             pos=(0.0, -0.6, 0.5),
+            quat=(1.0, 0.0, 0.0, 1.0),
             size=(0.1, 0.1, 0.1),
         ),
         material=gs.materials.Rigid() if requires_grad else gs.materials.Kinematic(),
@@ -212,8 +213,9 @@ def test_export_and_load_rigid(
     holder = scene.add_entity(
         morph=gs.morphs.Box(
             pos=(50.0, 50.0, 1.0),
-            size=(0.2, 0.2, 0.2),
+            quat=(1.0, 0.0, 0.0, 1.0),
             fixed=True,
+            size=(0.2, 0.2, 0.2),
         ),
     )
     mounted = scene.add_entity(
@@ -257,6 +259,14 @@ def test_export_and_load_rigid(
         morph=gs.morphs.URDF(
             file=urdf_with_external_assets,
             pos=(80.0, 80.0, 1.0),
+        ),
+    )
+    # A GLTF file is Y-up, so a Z-up claim on it is held as a compensating offset orientation
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            pos=(90.0, 90.0, 1.0),
+            file="meshes/camera/camera.glb",
+            file_meshes_are_zup=True,
         ),
     )
     # A sensor and a recorder observe the scene rather than taking part in it, and a file holds no code to run.
@@ -410,7 +420,9 @@ def test_export_and_load_rigid(
             assert np.shares_memory(geom.mesh.get_vert_adjacency()[0], twin_geom.mesh.get_vert_adjacency()[0])
             assert geom.mesh.inertial is twin_geom.mesh.inertial
 
-    # A restored scene keeps exactly the description it loaded, so a second export produces the same file
+    # A restored scene keeps exactly the description it loaded, orientations included to the last bit, so a second
+    # export produces the same file and a state saved by either scene restores into the other
+    assert description_digest(restored.desc) == description_digest(scene.desc)
     again = tmp_path / f"again{SCENE_FORMAT}"
     restored.export(again)
     with zipfile.ZipFile(exported) as first, zipfile.ZipFile(again) as second:
@@ -660,6 +672,11 @@ def test_pickle_resume(n_envs, requires_grad, checkpoint_scene, tmp_path, show_v
     assert_equal(reloaded_state.links_pos, landing_state.links_pos)
     assert_equal(ghost.get_links_pos(), landing_ghost_pos)
     assert_equal(box.get_contacts()["force_a"], landing_contacts["force_a"])
+
+    # A checkpoint file restores into the very scene that wrote it
+    Trajectory(checkpoint_path, scene=scene).seek(-1)
+    assert_equal(scene.get_time(), read_time)
+    assert_equal(arm.get_qpos(), read_arm_qpos)
 
     # A checkpoint file holds the whole state, so a scene loaded from it steps on where the original went
     loaded_scene = gs.Scene.load_checkpoint(checkpoint_path, show_viewer=show_viewer)
