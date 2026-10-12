@@ -1,0 +1,75 @@
+schema_version: 2
+manufacturer: OneRobotics
+robot: OneRobotics A1
+configuration: independent fixed-base 7-DoF arms and fixed-stand bimanual 14-DoF robot
+asset_license: CC-BY-4.0
+
+model_revisions:
+  independent_arms:
+    configuration: two independent fixed-base 7-DoF arms
+    urdf_files: [a1_r.urdf, a1_l.urdf]
+    mesh_count: 16
+    source_bundle_sha256: 9dfa9f0e1b7fa8d05b12b47dd67ab0484bc376b4db60ce541ee832455a0be8c9
+    gripper_included: false
+  bimanual_stand:
+    configuration: fixed-stand bimanual 14-DoF robot
+    urdf_file: bimanual_stand/a1_bimanual_stand.urdf
+    mesh_count: 17
+    raw_baseline_sha256: 29ee4a14696c3827a0ed2611b1d32fb27d5204a89cae07eee3e30a02085b4ecb
+    hardware_source_sha256: 3ae0bc193bdaa3aed205655e03fd20584a594d5e76e7f9cf6511ab82b761486f
+    publication_candidate_sha256: 4719154dd2395498a646f60a468ccdd3c72e9f9754478c4df74eb495e605ef9d
+    cad_revision_relation: distinct_from_independent_arms
+    revolute_joint_count: 14
+    raw_effort_limit_nm: 0.0
+    raw_velocity_limit_rad_s: 0.0
+    control_limits_source: confirmed_hardware_overlay_below
+    gripper_included: false
+
+timing:
+  physics_frequency_hz: 200
+  policy_frequency_hz: 50
+  decimation: 4
+
+motors:
+  "4340":
+    applies_to_each_arm_joint_indices: [1, 2, 3]
+    joint_indices: [1, 2, 3]
+    reduction_ratio: 48.19
+    rotor_inertia_kg_m2: 2.193e-5
+    reflected_inertia_kg_m2: 0.050927514873
+    rated_output_torque_nm: 15.0
+    peak_output_torque_nm: 26.859
+    rated_output_speed_rpm: 25.0
+    rated_output_speed_rad_s: 2.6179938779914944
+  "4310":
+    applies_to_each_arm_joint_indices: [4, 5, 6, 7]
+    joint_indices: [4, 5, 6, 7]
+    reduction_ratio: 10.0
+    rotor_inertia_kg_m2: 2.193e-5
+    reflected_inertia_kg_m2: 0.002193
+    rated_output_torque_nm: 3.0
+    peak_output_torque_nm: 5.975
+    rated_output_speed_rpm: 120.0
+    rated_output_speed_rad_s: 12.566370614359172
+
+joint_pd:
+  joint1: {kp: 150.0, kd: 4.0}
+  joint2: {kp: 150.0, kd: 4.0}
+  joint3: {kp: 150.0, kd: 4.0}
+  joint4: {kp: 150.0, kd: 4.0}
+  joint5: {kp: 40.0, kd: 1.0}
+  joint6: {kp: 40.0, kd: 1.0}
+  joint7: {kp: 40.0, kd: 1.0}
+
+modeling_scope:
+  hardware_overlay_applies_per_7dof_arm: true
+  bimanual_raw_zero_effort_velocity_overridden: true
+  torque_limit: peak_output_torque
+  peak_torque_modeled: true
+  peak_torque_duration_limit_modeled: false
+  thermal_derating_modeled: false
+  velocity_limit: rated_output_speed
+  gripper_included: false
+
+known_limitations:
+  link7_mass_inertia: source_urdf_v1_placeholder
