@@ -1135,6 +1135,9 @@ def test_multi_contact_overlap_corners(gjk_collision, n_base_sides, show_viewer,
     yaw_aligned = 0.5 * np.pi * np.random.randint(4, size=is_aligned.sum())
     yaw[is_aligned] = yaw_aligned + np.random.uniform(-1e-3, 1e-3, is_aligned.sum())
     offset = np.random.uniform(-0.6, 0.6, (N_ENVS, 2))
+    # A thin rim overlap still needs contacts spanning its separated corners
+    yaw[0] = 3.101833136188562
+    offset[0] = (0.00690993398559525, 0.49528428141735137)
     box_z = BASE_SIZE[2] + 0.5 * BOX_SIZE[2] - PENETRATION
     corners_tol = scene.rigid_solver.collider._mc_tolerance * 0.5 * np.linalg.norm(BOX_SIZE)
     box.set_pos(np.concatenate((offset, np.full((N_ENVS, 1), box_z)), axis=-1))
