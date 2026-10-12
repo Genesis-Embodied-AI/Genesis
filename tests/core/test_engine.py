@@ -1,7 +1,3 @@
-import importlib
-from pathlib import Path
-
-import numpy as np
 import pytest
 
 import quadrants as qd
@@ -9,6 +5,7 @@ import quadrants as qd
 import genesis as gs
 from genesis.engine.core import (
     Action,
+    Data,
     Engine,
     Find,
     HostAction,
@@ -354,35 +351,108 @@ def test_pipeline_distinguishes_host_func_and_checkpointed_kernel_entries():
     assert qd_to_numpy(data.value) == 11
 
 
-# The split example is the end-to-end contract: registration selects Rigid from the scene, Require adds Integrator,
-# every participant exchanges state through Actions, and the device Pipeline advances the assembled DOFs.
+# The end-to-end contract: registration selects a participant from the scene, a participant is added by hand, Require
+# adds their manager, every participant exchanges state through its Actions, and the device Pipeline advances it.
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_registered_system_actions_integrate_global_dofs(monkeypatch):
-    monkeypatch.syspath_prepend(str(Path(__file__).parents[2] / "examples" / "engine"))
+def test_registered_system_actions_integrate_global_dofs():
+    @qd.data_oriented
+    class TotalState(Data):
+        value: qd.Tensor
 
-    Cloth = importlib.import_module("cloth_system").Cloth
-    integrator_module = importlib.import_module("integrator_engine")
-    Integrator = integrator_module.Integrator
-    IntegratorEngine = integrator_module.IntegratorEngine
-    Rigid = importlib.import_module("rigid_system").Rigid
+    @qd.data_oriented
+    class Total(System):
+        def __init__(self, scene):
+            super().__init__(scene)
+            self.state = TotalState()
 
-    scene = gs.Scene(sim_options=gs.options.SimOptions(dt=0.5), show_viewer=False)
-    scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1)))
-    engine = IntegratorEngine(scene)
-    cloth = engine.add_system(Cloth(scene))
-    engine.build()
-    engine.init_pipeline.run()
-    engine.step_pipeline.run()
-    engine.step_pipeline.run()
+        @System.action_collection(kind="host")
+        def inits(self):
+            """Host Actions that fill the Data of each participant."""
 
-    assert list(engine.systems) == [Cloth, Rigid, Integrator]
-    assert_allclose(
-        qd_to_numpy(engine.integrator.state.dofs_pos),
-        np.array((0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 110.0, 0.0, 0.0, 210.0, 0.0, 0.0), dtype=gs.np_float),
-        tol=gs.EPS,
-    )
-    assert_allclose(
-        qd_to_numpy(cloth.state.verts_pos),
-        np.array(((110.0, 0.0, 0.0), (210.0, 0.0, 0.0)), dtype=gs.np_float),
-        tol=gs.EPS,
-    )
+        @System.action_collection(kind="stage", call_args=("total",))
+        def contributions(self):
+            """Stage Actions that add the share of each participant to `total`."""
+
+        @System.protocol
+        def on_total(self, *, init: HostAction, contribute: StageAction):
+            """Join the total with an `init` HostAction and a `contribute` StageAction taking `total`."""
+            self.inits += init
+            self.contributions += contribute
+
+        def init(self):
+            self.state.value = V(dtype=gs.qd_float, shape=())
+            self.state.value.fill(0.0)
+            for action in self.inits.actions:
+                action.invoke()
+
+    @qd.data_oriented
+    class ShareState(Data):
+        value: qd.Tensor
+
+    @qd.func(requires_top_level=True)
+    def func_contribute(share_state: qd.template(), total: qd.template()):
+        for _ in range(1):
+            total.value[()] += share_state.value[()]
+
+    def make_share_system(share):
+        @qd.data_oriented
+        class Share(System):
+            total = Require(Total)
+
+            def __init__(self, scene):
+                super().__init__(scene)
+                self.state = ShareState()
+
+            @System.action(kind="host")
+            def init(self):
+                return self.fill
+
+            @System.action(kind="stage")
+            def contribute(self):
+                return func_contribute, self.state
+
+            def build(self):
+                self.total.on_total(init=self.init, contribute=self.contribute)
+
+            def fill(self):
+                self.state.value = V(dtype=gs.qd_float, shape=())
+                self.state.value.fill(share)
+
+        return Share
+
+    Registered = make_share_system(1.0)
+    Manual = make_share_system(2.0)
+
+    @qd.data_oriented
+    class TotalEngine(Engine):
+        total = Require(Total)
+
+        def build(self):
+            super().build()
+            self.init_pipeline = Pipeline(self.total.init)
+            self.step_pipeline = Pipeline(kernel_step, self)
+
+    @qd.kernel(graph=True)
+    def kernel_step(engine: qd.template()):
+        for action in qd.static(engine.total.contributions.actions):
+            action.invoke((engine.total.state,))
+
+    def create_registered(scene):
+        return Registered(scene) if scene.sim.rigid_solver.is_active else None
+
+    register_system(TotalEngine)(create_registered)
+    try:
+        scene = gs.Scene(show_viewer=False)
+        scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1)))
+        engine = TotalEngine(scene)
+        manual = engine.add_system(Manual(scene))
+        engine.build()
+        engine.init_pipeline.run()
+        engine.step_pipeline.run()
+        engine.step_pipeline.run()
+
+        assert list(engine.systems) == [Manual, Registered, Total]
+        assert engine.total is manual.total
+        assert_allclose(qd_to_numpy(engine.total.state.value), 6.0, tol=gs.EPS)
+    finally:
+        unregister_system(TotalEngine, create_registered)
