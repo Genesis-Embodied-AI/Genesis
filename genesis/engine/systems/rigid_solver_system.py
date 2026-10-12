@@ -4,12 +4,11 @@ from typing import TYPE_CHECKING
 
 import quadrants as qd
 
-from genesis.engine.core import Data, HostAction, Pipeline, Require, StageAction, System, register_system
+from genesis.engine.core import Data, HostAction, Pipeline, StageAction, System, register_system
 from genesis.engine.couplers import SAPCoupler
 from genesis.engine.solvers.rigid.rigid_solver import func_step_1, func_step_2
 
 from .simulator_engine import SimulatorEngine
-from .substepper import Substepper
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -54,8 +53,6 @@ class RigidSolverSystem(System):
     size while one more graph replay costs next to nothing. The collision detection and the constraint solve join
     through on_detect and on_constrain, from Systems the scene adds only when it enables them.
     """
-
-    substepper = Require(Substepper)
 
     def __init__(self, scene: "Scene") -> None:
         super().__init__(scene)
@@ -140,12 +137,6 @@ class RigidSolverSystem(System):
         return self.substep_post_coupling
 
     def build(self):
-        self.substepper.on_substep(
-            process_input=self.process_input,
-            pre_coupling=self.pre_coupling,
-            post_coupling=self.post_coupling,
-            rank=self._scene.sim.solvers.index(self.solver),
-        )
         # A scene simulating rigid entities alone advances the rigid solver directly, skipping the inputs, which only
         # feed the differentiable tape, and the coupler, which has nothing to exchange
         self.substep_pipeline = Pipeline(self.substep)

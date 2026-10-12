@@ -1,70 +1,60 @@
 """Manager System that runs the phases of the solvers and of the coupler in the order of one simulator substep."""
 
-from genesis.engine.core import HostAction, System
+from typing import TYPE_CHECKING
+
+from genesis.engine.core import Find, Pipeline, Require, System, register_system
+
+from .coupler_system import CouplerSystem
+from .fem_solver_system import FEMSolverSystem
+from .kinematic_solver_system import KinematicSolverSystem
+from .mpm_solver_system import MPMSolverSystem
+from .pbd_solver_system import PBDSolverSystem
+from .rigid_solver_system import RigidSolverSystem
+from .sf_solver_system import SFSolverSystem
+from .simulator_engine import SimulatorEngine
+from .sph_solver_system import SPHSolverSystem
+from .tool_solver_system import ToolSolverSystem
+
+if TYPE_CHECKING:
+    from genesis.engine.scene import Scene
 
 
 class Substepper(System):
     """Manager of one substep: the preprocess of the coupler, every pre-coupling phase, the coupling, then every
     post-coupling phase.
 
-    A solver joins through on_substep with its rank, which is its position in the solver list of the simulator, so the
-    frozen order of every phase matches the order the simulator steps the solvers in.
+    Every solver System it finds takes part in the input and in both phases around the coupling, in the order build()
+    states.
     """
 
-    @System.action_collection(kind="host", call_args=("in_backward",))
-    def inputs(self):
-        """Host Actions that apply the external commands of one step, given whether it replays a backward window."""
+    tool = Find(ToolSolverSystem)
+    rigid = Find(RigidSolverSystem)
+    kinematic = Find(KinematicSolverSystem)
+    mpm = Find(MPMSolverSystem)
+    sph = Find(SPHSolverSystem)
+    pbd = Find(PBDSolverSystem)
+    fem = Find(FEMSolverSystem)
+    sf = Find(SFSolverSystem)
+    coupler = Require(CouplerSystem)
 
-    @System.action_collection(kind="host", call_args=("f",))
-    def pre_couplings(self):
-        """Host Actions that advance one solver up to the coupling of substep f."""
-
-    @System.action_collection(kind="host", call_args=("f",))
-    def post_couplings(self):
-        """Host Actions that complete substep f of one solver once the coupling has run."""
-
-    @System.action_collection(kind="host", call_args=("f",))
-    def preprocesses(self):
-        """Host Actions that prepare the coupling of substep f before any solver advances."""
-
-    @System.action_collection(kind="host", call_args=("f",))
-    def couplings(self):
-        """Host Actions that exchange state between the solvers within substep f."""
-
-    @System.protocol
-    def on_substep(
-        self,
-        *,
-        process_input: HostAction,
-        pre_coupling: HostAction,
-        post_coupling: HostAction,
-        rank: int | None = None,
-    ):
-        """Join the substep loop with the three phases of one solver, calling it once from build().
-
-        process_input  HostAction  `function(*bound_args, in_backward)`, run once per step before its substeps
-        pre_coupling   HostAction  `function(*bound_args, f)`, run before the coupling of substep f
-        post_coupling  HostAction  `function(*bound_args, f)`, run after the coupling of substep f
-        rank           int | None  the position of the solver among the solvers of the simulator
-        """
-        # The same rank in all three collections keeps the solvers in one order across the phases
-        self.inputs.add(process_input, rank=rank)
-        self.pre_couplings.add(pre_coupling, rank=rank)
-        self.post_couplings.add(post_coupling, rank=rank)
-
-    @System.protocol
-    def on_couple(self, *, preprocess: HostAction, couple: HostAction):
-        """Join the substep loop with the two phases of one coupler, calling it once from build().
-
-        preprocess  HostAction  `function(*bound_args, f)`, run before any solver advances substep f
-        couple      HostAction  `function(*bound_args, f)`, run between the pre-coupling and post-coupling phases
-        """
-        self.preprocesses += preprocess
-        self.couplings += couple
+    def build(self):
+        # The rigid solver advances before the MPM solver, whose p2g reads the rigid geoms and links that the rigid
+        # substep moves. Within one phase the other solvers touch nothing of one another, so their order only keeps the
+        # results reproducible.
+        solver_systems = (self.tool, self.rigid, self.kinematic, self.mpm, self.sph, self.pbd, self.fem, self.sf)
+        solver_systems = tuple(system for system in solver_systems if system is not None)
+        # Actions are created only while the build window is open, so the substep runs the ones gathered here
+        self.inputs = tuple(system.process_input for system in solver_systems)
+        self.pre_couplings = tuple(system.pre_coupling for system in solver_systems)
+        self.post_couplings = tuple(system.post_coupling for system in solver_systems)
+        self.preprocess = self.coupler.preprocess
+        self.couple = self.coupler.couple
+        self.input_pipeline = Pipeline(self.process_input)
+        self.substep_pipeline = Pipeline(self.substep)
 
     def process_input(self, in_backward: bool) -> None:
         """Apply the external commands of one step to every solver."""
-        for action in self.inputs.actions:
+        for action in self.inputs:
             action.invoke((in_backward,))
 
     # FIXME: the substep runs on the host, since the phases it calls launch their own kernels around host logic. The
@@ -75,13 +65,17 @@ class Substepper(System):
     # lets such a graph use fastcache.
     def substep(self, f: int) -> None:
         """Advance every solver by substep f: the coupler preprocess, every pre-coupling phase, the coupling, then every
-        post-coupling phase, each phase in the rank order of the solvers. A scene simulating rigid entities alone
-        advances through RigidSolverSystem.substep_pipeline instead."""
-        for action in self.preprocesses.actions:
+        post-coupling phase. A scene simulating rigid entities alone advances through RigidSolverSystem.substep_pipeline
+        instead."""
+        self.preprocess.invoke((f,))
+        for action in self.pre_couplings:
             action.invoke((f,))
-        for action in self.pre_couplings.actions:
+        self.couple.invoke((f,))
+        for action in self.post_couplings:
             action.invoke((f,))
-        for action in self.couplings.actions:
-            action.invoke((f,))
-        for action in self.post_couplings.actions:
-            action.invoke((f,))
+
+
+@register_system(SimulatorEngine)
+def create_substepper(scene: "Scene") -> Substepper:
+    """Create the manager of the substep, which every scene stepped by the engine has."""
+    return Substepper(scene)

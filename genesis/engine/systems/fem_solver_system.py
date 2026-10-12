@@ -1,4 +1,4 @@
-"""System wrapping the FEM solver, whose phases run through the Substepper.
+"""System wrapping the FEM solver, whose phases the Substepper calls.
 
 The FEM solver keeps owning its data and running its own kernels; the System hands its phases to the Substepper as host
 Actions.
@@ -6,10 +6,9 @@ Actions.
 
 from typing import TYPE_CHECKING
 
-from genesis.engine.core import Require, System, register_system
+from genesis.engine.core import System, register_system
 
 from .simulator_engine import SimulatorEngine
-from .substepper import Substepper
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -17,8 +16,6 @@ if TYPE_CHECKING:
 
 class FEMSolverSystem(System):
     """System wrapping the FEM solver of the scene."""
-
-    substepper = Require(Substepper)
 
     def __init__(self, scene: "Scene") -> None:
         super().__init__(scene)
@@ -35,14 +32,6 @@ class FEMSolverSystem(System):
     @System.action(kind="host")
     def post_coupling(self):
         return self.solver.substep_post_coupling
-
-    def build(self):
-        self.substepper.on_substep(
-            process_input=self.process_input,
-            pre_coupling=self.pre_coupling,
-            post_coupling=self.post_coupling,
-            rank=self._scene.sim.solvers.index(self.solver),
-        )
 
 
 @register_system(SimulatorEngine)

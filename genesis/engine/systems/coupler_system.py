@@ -1,11 +1,10 @@
-"""System wrapping the coupler of the scene, whose phases run through the Substepper."""
+"""System wrapping the coupler of the scene, whose phases the Substepper calls."""
 
 from typing import TYPE_CHECKING
 
-from genesis.engine.core import Require, System, register_system
+from genesis.engine.core import System, register_system
 
 from .simulator_engine import SimulatorEngine
-from .substepper import Substepper
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -21,11 +20,8 @@ def couple_coupler(coupler, f):
     coupler.couple(f)
 
 
-@register_system(SimulatorEngine)
 class CouplerSystem(System):
     """System wrapping the coupler of the scene, whichever coupler the scene options select."""
-
-    substepper = Require(Substepper)
 
     def __init__(self, scene: "Scene") -> None:
         super().__init__(scene)
@@ -41,5 +37,8 @@ class CouplerSystem(System):
     def couple(self):
         return couple_coupler, self.coupler
 
-    def build(self):
-        self.substepper.on_couple(preprocess=self.preprocess, couple=self.couple)
+
+@register_system(SimulatorEngine)
+def create_coupler_system(scene: "Scene") -> CouplerSystem:
+    """Create the System wrapping the coupler, which every scene stepped by the engine has."""
+    return CouplerSystem(scene)

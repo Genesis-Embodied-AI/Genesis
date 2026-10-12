@@ -559,7 +559,9 @@ def register_system(engine_cls: type["Engine"]) -> Callable[[CreateFunT], Create
         gs.raise_exception(f"Systems are registered for a final Engine subclass, got {engine_cls!r}.")
 
     def register(create_fun: CreateFunT) -> CreateFunT:
-        assert isinstance(create_fun, Callable)
+        # A create function decides from the scene whether the System exists at all, which a class cannot express
+        if isinstance(create_fun, type) or not isinstance(create_fun, Callable):
+            gs.raise_exception(f"register_system takes a function that creates a System, got {create_fun!r}.")
         _system_registry.setdefault(engine_cls, []).append(create_fun)
         return create_fun
 

@@ -102,7 +102,7 @@ def test_registered_manual_and_required_systems():
 
 
 # System and Engine admit one concrete inheritance layer. Action admits exactly one final class for each of its three
-# kinds, Pipeline is final, and register_system accepts a final Engine class alone.
+# kinds, Pipeline is final, and register_system accepts a final Engine class alone and registers functions, not classes.
 @pytest.mark.parametrize("backend", [None])
 def test_inheritance_and_action_kinds():
     class DirectSystem(System):
@@ -133,6 +133,8 @@ def test_inheritance_and_action_kinds():
         register_system(Engine)
     with pytest.raises(gs.GenesisException):
         register_system(int)
+    with pytest.raises(gs.GenesisException):
+        register_system(DirectEngine)(DirectSystem)
 
 
 # @System.action is a build-time declaration whose first access creates and caches one partial application. The declared

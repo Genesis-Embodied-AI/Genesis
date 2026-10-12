@@ -28,7 +28,7 @@ from .solvers.base_solver import GravityMixin, TimeBasedMixin
 from .states.cache import QueriedStates
 from .states.solvers import SimState, SimulatorCheckpoint
 from .core import Pipeline
-from .systems import RigidSolverSystem, SimulatorEngine
+from .systems import RigidSolverSystem, SimulatorEngine, Substepper
 
 if TYPE_CHECKING:
     from genesis.engine.entities.base_entity import Entity, EntityDescription
@@ -117,6 +117,7 @@ class Simulator(RBC):
 
         # The engine running the substep phases of the solvers and of the coupler, built with them
         self._engine: SimulatorEngine | None = None
+        self._substepper: Substepper | None = None
         self._rigid_substep_pipeline: Pipeline | None = None
 
         # states
@@ -241,6 +242,7 @@ class Simulator(RBC):
         if not isinstance(self._coupler, IPCCoupler):
             self._engine = SimulatorEngine(self.scene)
             self._engine.build()
+            self._substepper = self._engine.systems[Substepper]
             if self.rigid_solver.is_active:
                 self._rigid_substep_pipeline = self._engine.systems[RigidSolverSystem].substep_pipeline
 
@@ -405,8 +407,8 @@ class Simulator(RBC):
         setting _tgt state using external commands
         note that external inputs are given at step level, not substep
         """
-        if self._engine is not None:
-            self._engine.input_pipeline.run(in_backward)
+        if self._substepper is not None:
+            self._substepper.input_pipeline.run(in_backward)
             return
         for solver in self._active_solvers:
             solver.process_input(in_backward=in_backward)
@@ -416,8 +418,8 @@ class Simulator(RBC):
             solver.process_input_grad()
 
     def substep(self, f):
-        if self._engine is not None:
-            self._engine.substep_pipeline.run(f)
+        if self._substepper is not None:
+            self._substepper.substep_pipeline.run(f)
             return
         self._coupler.preprocess(f)
         self.substep_pre_coupling(f)
