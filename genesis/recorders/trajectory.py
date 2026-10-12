@@ -84,8 +84,11 @@ TIMINGS_PREFIX = "timings/"
 
 
 class FrameField(NamedTuple):
-    """Where one array stands in a frame: its name, kind, canonical shape, numpy dtype string, byte offset and byte
-    length.
+    """Where one array stands in a frame: its name, kind, canonical shape, numpy dtype string, byte offset, byte length
+    and memory order.
+
+    The memory order lists the canonical axes from the slowest-varying to the fastest-varying one. A frame stores each
+    array in the memory order of the scene that wrote it, so that a layout-tagged array is copied as it lies.
     """
 
     name: str
@@ -94,6 +97,7 @@ class FrameField(NamedTuple):
     dtype: str
     offset: int
     nbytes: int
+    axes: tuple[int, ...]
 
 
 def _json_value(value):
@@ -110,25 +114,27 @@ def _json_value(value):
 def _fields_to_json(fields: list[FrameField]) -> list:
     """Return the frame layout as the JSON rows the file header holds."""
     return [
-        [field.name, field.kind.name, list(field.shape), field.dtype, field.offset, field.nbytes] for field in fields
+        [field.name, field.kind.name, list(field.shape), field.dtype, field.offset, field.nbytes, list(field.axes)]
+        for field in fields
     ]
 
 
 def _fields_from_json(rows: list) -> list[FrameField]:
     """Return the frame layout the JSON rows of a file header hold."""
     return [
-        FrameField(name, DataKind[kind], tuple(shape), dtype, offset, nbytes)
-        for name, kind, shape, dtype, offset, nbytes in rows
+        FrameField(name, DataKind[kind], tuple(shape), dtype, offset, nbytes, tuple(axes))
+        for name, kind, shape, dtype, offset, nbytes, axes in rows
     ]
 
 
 def _frame_arrays(frame: np.ndarray, fields: list[FrameField], kinds: frozenset[DataKind]) -> dict[str, np.ndarray]:
     """Return the arrays of the given kinds that a frame holds, by name, shaped as the scene holds them."""
-    return {
-        field.name: frame[field.offset : field.offset + field.nbytes].view(field.dtype).reshape(field.shape)
-        for field in fields
-        if field.kind in kinds
-    }
+    arrays = {}
+    for field in fields:
+        if field.kind in kinds:
+            array = frame[field.offset : field.offset + field.nbytes].view(field.dtype)
+            arrays[field.name] = array.reshape([field.shape[i] for i in field.axes]).transpose(np.argsort(field.axes))
+    return arrays
 
 
 def _frame_fields(sim: "Simulator", kinds: frozenset[DataKind], drop_unused: bool) -> list[FrameField]:
@@ -137,26 +143,35 @@ def _frame_fields(sim: "Simulator", kinds: frozenset[DataKind], drop_unused: boo
 
     With 'drop_unused', a 0-d array is listed empty. Every 0-d array of the kinds a step frame holds is the placeholder
     of a feature switched off (see 'maybe_shape'), which a restore leaves as built (see 'check_data').
+
+    Where zero-copy views exist, an array keeps the memory order of its view, a permutation of its canonical axes, so
+    that a frame is copied from the views as they lie (see 'TrajectoryFileWriter.build'). Otherwise it is canonical.
     """
     fields = []
     offset = 0
     for name, value, kind in sim.data(kinds):
         array = qd_to_numpy(value)
         if drop_unused and not value.shape:
-            fields.append(FrameField(name, kind, (0,), array.dtype.str, offset, 0))
+            fields.append(FrameField(name, kind, (0,), array.dtype.str, offset, 0, (0,)))
             continue
-        fields.append(FrameField(name, kind, array.shape, array.dtype.str, offset, array.nbytes))
+        axes = tuple(range(array.ndim))
+        if gs.use_zerocopy and value.shape:
+            view = qd_to_torch(value, copy=False)
+            # Sorting is stable, so the axes of equal strides, which only a size-1 axis can share, keep their order
+            axes = tuple(sorted(axes, key=view.stride, reverse=True))
+            assert view.permute(axes).is_contiguous()
+        fields.append(FrameField(name, kind, array.shape, array.dtype.str, offset, array.nbytes, axes))
         offset += array.nbytes
     steps = tensor_to_array(sim.steps)
-    fields.append(FrameField(STEPS_FIELD, DataKind.STATE, steps.shape, steps.dtype.str, offset, steps.nbytes))
+    fields.append(FrameField(STEPS_FIELD, DataKind.STATE, steps.shape, steps.dtype.str, offset, steps.nbytes, (0,)))
     offset += steps.nbytes
     for solver in sim.active_solvers:
         if isinstance(solver, KinematicSolver):
             name = f"{type(solver).__name__}{FLAGS_SUFFIX}"
-            fields.append(FrameField(name, DataKind.STATE, (2,), "|u1", offset, 2))
+            fields.append(FrameField(name, DataKind.STATE, (2,), "|u1", offset, 2, (0,)))
             offset += 2
     for phase in sim.step_timer.phases:
-        fields.append(FrameField(f"{TIMINGS_PREFIX}{phase}", DataKind.STATE, (), "<f8", offset, 8))
+        fields.append(FrameField(f"{TIMINGS_PREFIX}{phase}", DataKind.STATE, (), "<f8", offset, 8, ()))
         offset += 8
     return fields
 
@@ -184,18 +199,18 @@ def _frame_tail(sim: "Simulator") -> np.ndarray:
     return np.concatenate((flags, timings.view(np.uint8)))
 
 
-def _read_frame(sim: "Simulator", kinds: frozenset[DataKind], drop_unused: bool) -> np.ndarray:
-    """Return one frame as a flat uint8 buffer laid out as '_frame_fields' states it.
+def _read_frame(sim: "Simulator", kinds: frozenset[DataKind], fields: list[FrameField]) -> np.ndarray:
+    """Return one frame of the given kinds as a flat uint8 buffer laid out as 'fields' states it (see '_frame_fields').
 
-    'drop_unused' must match the one the layout was made with. Where zero-copy views exist the arrays are concatenated
-    on the device and cross to the host once. Otherwise each array crosses on its own, to be concatenated on the host.
+    Where zero-copy views exist the arrays are concatenated on the device and cross to the host once. Otherwise each
+    array crosses on its own, to be concatenated on the host.
     """
-    values = [value for _, value, _ in sim.data(kinds) if value.shape or not drop_unused]
+    values = [(value, field.axes) for (_, value, _), field in zip(sim.data(kinds), fields) if field.nbytes]
     if gs.use_zerocopy:
-        parts = [qd_to_torch(value).contiguous().reshape(-1).view(torch.uint8) for value in values]
+        parts = [qd_to_torch(value).permute(axes).reshape(-1).view(torch.uint8) for value, axes in values]
         parts.append(sim.steps.reshape(-1).view(torch.uint8))
         return np.concatenate((tensor_to_array(torch.cat(parts)), _frame_tail(sim)))
-    parts = [qd_to_numpy(value).reshape(-1).view(np.uint8) for value in values]
+    parts = [qd_to_numpy(value).transpose(axes).reshape(-1).view(np.uint8) for value, axes in values]
     parts.append(tensor_to_array(sim.steps).reshape(-1).view(np.uint8))
     parts.append(_frame_tail(sim))
     return np.concatenate(parts)
@@ -240,7 +255,7 @@ def save_checkpoint(path: str | os.PathLike, source: "TrajectorySource") -> None
     with open(path, "wb") as file:
         file.write(_header(source, exact=True, chunk_size=1, fields=fields, last_fields=fields))
         payload = zstandard.ZstdCompressor(level=ZSTD_LEVEL).compress(
-            _read_frame(source.sim, CHECKPOINT_FILE_KINDS, drop_unused=False)
+            _read_frame(source.sim, CHECKPOINT_FILE_KINDS, fields)
         )
         file.write(LAST_MAGIC + LAST_HEADER.pack(len(payload), zlib.crc32(payload)) + payload)
 
@@ -279,30 +294,21 @@ class TrajectoryFileWriter(BaseFileWriter):
         # host, so a frame copy stops short of them and they are written beside it.
         self._flags_offset = self._steps_field.offset + self._steps_field.nbytes
 
-        # The arrays of a built scene keep their memory, so the byte view each array is copied from is taken once. An
-        # array whose view is not contiguous, as a layout-tagged array is on GPU, is read again at each frame. Without
-        # zero-copy views each frame is read whole (see '_read_frame').
+        # The arrays of a built scene keep their memory, so the byte view each array is copied from is taken once, in
+        # the memory order the frame stores it in (see '_frame_fields'). Without zero-copy views each frame is read
+        # whole (see '_read_frame').
         # FIXME: quadrants#970 - a 0-d field has no zero-copy view, and reading one per frame runs a copy kernel. The
         # step frames leave out the 0-d arrays (see '_frame_fields'), whose content the step frames therefore lack.
-        self._frame_values = [value for _, value, _ in sim.data(self._kinds) if value.shape]
-        self._frame_views: list[np.ndarray | torch.Tensor | None] | None = None
+        self._frame_views: list[np.ndarray | torch.Tensor] | None = None
         self._staging: torch.Tensor | None = None
         if gs.use_zerocopy:
             self._frame_views = []
-            for value in self._frame_values:
-                view = None
-                # The views of the CPU backend are host memory already, and numpy concatenates them on the calling
-                # thread. Torch would run the copy on its thread pool, whose wake-up costs more than the copy.
-                if gs.backend == gs.cpu:
-                    array = qd_to_numpy(value, copy=False)
-                    if array.flags.c_contiguous:
-                        view = array.reshape(-1).view(np.uint8)
-                else:
-                    tensor = qd_to_torch(value, copy=False)
-                    if tensor.is_contiguous():
-                        view = tensor.view(-1).view(torch.uint8)
-                self._frame_views.append(view)
-            self._frame_values.append(None)
+            for (_, value, _), field in zip(sim.data(self._kinds), self._fields):
+                if field.nbytes:
+                    view = qd_to_torch(value, copy=False).permute(field.axes).view(-1).view(torch.uint8)
+                    # The views of the CPU backend are host memory already, and numpy concatenates them on the calling
+                    # thread. Torch would run the copy on its thread pool, whose wake-up costs more than the copy.
+                    self._frame_views.append(view.numpy() if gs.backend == gs.cpu else view)
             if gs.backend == gs.cpu:
                 self._frame_views.append(sim.steps.numpy().view(np.uint8))
             else:
@@ -359,27 +365,19 @@ class TrajectoryFileWriter(BaseFileWriter):
         i_slot = self._free_slots.get()
         slot = self._slots[i_slot]
         if self._frame_views is not None and gs.backend == gs.cpu:
-            parts = [
-                view if view is not None else qd_to_numpy(value).reshape(-1).view(np.uint8)
-                for view, value in zip(self._frame_views, self._frame_values)
-            ]
-            np.concatenate(parts, out=slot[: self._flags_offset])
+            np.concatenate(self._frame_views, out=slot[: self._flags_offset])
         elif self._frame_views is not None:
             # On Metal, the arrays are written by a queue torch does not wait for
             if gs.backend == gs.metal:
                 qd.sync()
-            parts = [
-                view if view is not None else qd_to_torch(value).contiguous().reshape(-1).view(torch.uint8)
-                for view, value in zip(self._frame_views, self._frame_values)
-            ]
-            torch.cat(parts, out=self._staging)
+            torch.cat(self._frame_views, out=self._staging)
             # The copy is queued behind the step on the stream both run on, and the compression thread waits for it to
             # land (see '_compress_frames'). On another GPU backend the copy returns once done.
             self._slots_tc[i_slot, : self._flags_offset].copy_(self._staging, non_blocking=gs.backend == gs.cuda)
             if self._slots_event[i_slot] is not None:
                 self._slots_event[i_slot].record()
         else:
-            slot[: self._flags_offset] = _read_frame(sim, self._kinds, drop_unused=True)[: self._flags_offset]
+            slot[: self._flags_offset] = _read_frame(sim, self._kinds, self._fields)[: self._flags_offset]
         slot[self._flags_offset :] = _frame_tail(sim)
         return i_slot
 
@@ -535,7 +533,7 @@ class TrajectoryFileWriter(BaseFileWriter):
             self._io_thread = None
         try:
             if self._error is None and self._file is not None:
-                payload = self._compressor.compress(_read_frame(sim, CHECKPOINT_FILE_KINDS, drop_unused=False))
+                payload = self._compressor.compress(_read_frame(sim, CHECKPOINT_FILE_KINDS, self._last_fields))
                 self._write(LAST_MAGIC + LAST_HEADER.pack(len(payload), zlib.crc32(payload)) + payload, 1)
         finally:
             if self._file is not None:
