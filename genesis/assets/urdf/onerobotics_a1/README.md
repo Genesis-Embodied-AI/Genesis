@@ -22,9 +22,9 @@ edits from the OneRobotics SDK asset bundle whose SHA-256 is:
 - `model_parameters.yaml`: shared model and simulation-control metadata.
 
 The 36 robot-model files and `model_parameters.yaml` are Copyright 2026
-OneRobotics and are distributed under CC BY 4.0 as declared in the
-repository's `ASSET_LICENSE_STATUS.md`. Neither CAD revision includes a
-gripper.
+OneRobotics and are distributed under CC BY 4.0. See `ATTRIBUTION.md`
+and `LICENSE-CC-BY-4.0.txt` in this directory. Neither CAD revision
+includes a gripper.
 
 ## Isaac Lab review set
 
