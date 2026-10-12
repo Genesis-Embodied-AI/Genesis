@@ -67,8 +67,16 @@ class Substepper(System):
         for action in self.inputs.actions:
             action.invoke((in_backward,))
 
+    # FIXME: the substep runs on the host, since the phases it calls launch their own kernels around host logic. The
+    # DFSPH and implicit FEM iterations read their convergence back on the host every iteration, the rigid constraint
+    # solve selects its kernels on the host and one of them is a graph itself, the SAP coupler iterates Newton, PCG and
+    # line search on the host, and the phases of the legacy coupler are kernels rather than funcs. The substep becomes
+    # one graph once every phase is a stage Action whose loops run as device-side graph loops, and once quadrants#966
+    # lets such a graph use fastcache.
     def substep(self, f: int) -> None:
-        """Advance every solver by substep f, coupling them midway."""
+        """Advance every solver by substep f: the coupler preprocess, every pre-coupling phase, the coupling, then every
+        post-coupling phase, each phase in the rank order of the solvers. A scene simulating rigid entities alone
+        advances through RigidSolverSystem.substep_pipeline instead."""
         for action in self.preprocesses.actions:
             action.invoke((f,))
         for action in self.pre_couplings.actions:

@@ -1255,7 +1255,8 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
 
         A SAP-coupled substep replaces the constraint solve by the coupler's own, so it keeps its own launches.
         FIXME: quadrants#946 - a graph refuses the ndarrays that own a gradient, so a scene tracking gradients launches
-        the substep kernels one by one. Every other substep is captured as graphs by RigidSolverSystem.substep.
+        the substep kernels one by one. An IPC-coupled scene steps through the legacy substep of the simulator, which
+        calls this one. Every other substep is captured as graphs by RigidSolverSystem.substep.
         """
         from genesis.engine.couplers import SAPCoupler
 
@@ -1542,6 +1543,20 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 links_idx, envs_idx, pos, force, torque, self.dyn_state, self.rigid_config, ref_frame, local
             )
 
+    def substep_pre_coupling(self, f):
+        if self.is_active:
+            # Skip rigid body computation when using IPCCoupler (IPC handles rigid simulation)
+            from genesis.engine.couplers import IPCCoupler
+
+            if isinstance(self.sim.coupler, IPCCoupler):
+                # If any rigid entity is coupled to IPC, skip pre-coupling rigid simulation
+                # The rigid simulation will be done in post-coupling phase instead
+                if self.sim.coupler.has_any_rigid_coupling:
+                    return
+
+            # Run Genesis rigid simulation step for non-IPC couplers
+            self.substep(f)
+
     def reset_grad(self):
         # Rigid additionally owns `geoms_state`, `entities_state`, and the `*_adjoint_cache` structs written by the
         # backward substep chain. All carry `needs_grad=True` fields that accumulate via `atomic_add` during backward,
@@ -1658,6 +1673,20 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
 
         # Change back to forward mode
         self._is_backward = False
+
+    def substep_post_coupling(self, f):
+        from genesis.engine.couplers import SAPCoupler, IPCCoupler
+
+        if not self.is_active:
+            return
+
+        if isinstance(self.sim.coupler, SAPCoupler):
+            self.finish_sap_substep()
+        elif isinstance(self.sim.coupler, IPCCoupler):
+            # If any rigid entity is coupled to IPC, perform rigid simulation in post-coupling phase.
+            # Collision exclusion for IPC-coupled links is handled in the collider at build time.
+            if self.sim.coupler.has_any_rigid_coupling:
+                self.substep(f)
 
     def finish_sap_substep(self):
         """Finish a SAP-coupled substep from the velocities the coupler has solved for, which RigidSolver.substep

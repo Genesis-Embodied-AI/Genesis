@@ -4,10 +4,11 @@ from typing import TYPE_CHECKING
 
 import quadrants as qd
 
-from genesis.engine.core import Data, HostAction, Require, StageAction, System
-from genesis.engine.couplers import IPCCoupler, SAPCoupler
+from genesis.engine.core import Data, HostAction, Pipeline, Require, StageAction, System, register_system
+from genesis.engine.couplers import SAPCoupler
 from genesis.engine.solvers.rigid.rigid_solver import func_step_1, func_step_2
 
+from .simulator_engine import SimulatorEngine
 from .substepper import Substepper
 
 if TYPE_CHECKING:
@@ -132,7 +133,7 @@ class RigidSolverSystem(System):
 
     @System.action(kind="host")
     def pre_coupling(self):
-        return self.substep_pre_coupling
+        return self.substep
 
     @System.action(kind="host")
     def post_coupling(self):
@@ -145,6 +146,9 @@ class RigidSolverSystem(System):
             post_coupling=self.post_coupling,
             rank=self._scene.sim.solvers.index(self.solver),
         )
+        # A scene simulating rigid entities alone advances the rigid solver directly, skipping the inputs, which only
+        # feed the differentiable tape, and the coupler, which has nothing to exchange
+        self.substep_pipeline = Pipeline(self.substep)
 
     def substep(self, f: int) -> None:
         """Advance the rigid solver by substep f."""
@@ -162,21 +166,17 @@ class RigidSolverSystem(System):
         kernel_substep_post(self)
         solver.mark_forward_updated()
 
-    def substep_pre_coupling(self, f: int) -> None:
-        """Advance the rigid solver by substep f ahead of the coupling, unless an IPC coupler simulates rigid entities,
-        which the rigid solver then advances after the coupling."""
-        coupler = self.solver.sim.coupler
-        if not (isinstance(coupler, IPCCoupler) and coupler.has_any_rigid_coupling):
-            self.substep(f)
-
     def substep_post_coupling(self, f: int) -> None:
-        """Complete substep f once the coupling has run."""
-        coupler = self.solver.sim.coupler
-        if isinstance(coupler, SAPCoupler):
+        """Complete substep f once a SAP coupler has solved for the velocities."""
+        if isinstance(self.solver.sim.coupler, SAPCoupler):
             self.solver.finish_sap_substep()
-        elif isinstance(coupler, IPCCoupler) and coupler.has_any_rigid_coupling:
-            # The collider excludes the links coupled to IPC from its collisions at build time
-            self.substep(f)
+
+
+@register_system(SimulatorEngine)
+def create_rigid_solver_system(scene: "Scene") -> RigidSolverSystem | None:
+    """Create the manager of the rigid substep whenever the rigid solver simulates an entity, before which its data
+    does not exist."""
+    return RigidSolverSystem(scene) if scene.sim.rigid_solver.is_active else None
 
 
 @qd.func(requires_top_level=True)

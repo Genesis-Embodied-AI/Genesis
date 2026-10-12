@@ -27,7 +27,8 @@ from .solvers import (
 from .solvers.base_solver import GravityMixin, TimeBasedMixin
 from .states.cache import QueriedStates
 from .states.solvers import SimState, SimulatorCheckpoint
-from .systems import SimulatorEngine
+from .core import Pipeline
+from .systems import RigidSolverSystem, SimulatorEngine
 
 if TYPE_CHECKING:
     from genesis.engine.entities.base_entity import Entity, EntityDescription
@@ -116,6 +117,7 @@ class Simulator(RBC):
 
         # The engine running the substep phases of the solvers and of the coupler, built with them
         self._engine: SimulatorEngine | None = None
+        self._rigid_substep_pipeline: Pipeline | None = None
 
         # states
         self._queried_states = QueriedStates()
@@ -234,9 +236,13 @@ class Simulator(RBC):
         # A coupler exchanges state once per substep, so it is built once the rate that loop runs at is known.
         self._coupler.build()
 
-        # The engine wraps the active solvers and the coupler, so it is built once they are
-        self._engine = SimulatorEngine(self.scene)
-        self._engine.build()
+        # The engine wraps the active solvers and the coupler, so it is built once they are. An IPC coupler steps the
+        # solvers through the legacy substep of this simulator instead, so it builds no engine.
+        if not isinstance(self._coupler, IPCCoupler):
+            self._engine = SimulatorEngine(self.scene)
+            self._engine.build()
+            if self.rigid_solver.is_active:
+                self._rigid_substep_pipeline = self._engine.systems[RigidSolverSystem].substep_pipeline
 
         if self.n_envs > 0 and self.sf_solver.is_active:
             gs.raise_exception("Batching is not supported for SF solver as of now.")
@@ -366,12 +372,12 @@ class Simulator(RBC):
         with self._fps_tracker.phase("physics"):
             if self._rigid_only and not self._requires_grad:  # "Only Advance!" --Thomas Wade :P
                 for _ in range(self._substeps):
-                    self._engine.rigid_substep_pipeline.run(self.cur_substep_local)
+                    self._rigid_substep_pipeline.run(self.cur_substep_local)
                     self._cur_substep_global += 1
             else:
-                self._engine.input_pipeline.run(in_backward)
+                self.process_input(in_backward=in_backward)
                 for _ in range(self._substeps):
-                    self._engine.substep_pipeline.run(self.cur_substep_local)
+                    self.substep(self.cur_substep_local)
 
                     self._cur_substep_global += 1
                     if self.cur_substep_local == 0 and not in_backward:
@@ -394,9 +400,29 @@ class Simulator(RBC):
 
         self.process_input_grad()
 
+    def process_input(self, in_backward=False):
+        """
+        setting _tgt state using external commands
+        note that external inputs are given at step level, not substep
+        """
+        if self._engine is not None:
+            self._engine.input_pipeline.run(in_backward)
+            return
+        for solver in self._active_solvers:
+            solver.process_input(in_backward=in_backward)
+
     def process_input_grad(self):
         for solver in reversed(self._active_solvers):
             solver.process_input_grad()
+
+    def substep(self, f):
+        if self._engine is not None:
+            self._engine.substep_pipeline.run(f)
+            return
+        self._coupler.preprocess(f)
+        self.substep_pre_coupling(f)
+        self._coupler.couple(f)
+        self.substep_post_coupling(f)
 
     def sub_step_grad(self, f):
         self.substep_post_coupling_grad(f)
@@ -404,11 +430,19 @@ class Simulator(RBC):
         self.substep_pre_coupling_grad(f)
 
     # -------------- pre coupling --------------
+    def substep_pre_coupling(self, f):
+        for solver in self._active_solvers:
+            solver.substep_pre_coupling(f)
+
     def substep_pre_coupling_grad(self, f):
         for solver in reversed(self._active_solvers):
             solver.substep_pre_coupling_grad(f)
 
     # -------------- post coupling --------------
+    def substep_post_coupling(self, f):
+        for solver in self._active_solvers:
+            solver.substep_post_coupling(f)
+
     def substep_post_coupling_grad(self, f):
         for solver in reversed(self._active_solvers):
             solver.substep_post_coupling_grad(f)

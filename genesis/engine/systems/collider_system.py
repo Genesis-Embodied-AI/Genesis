@@ -4,10 +4,11 @@ from typing import TYPE_CHECKING
 
 import quadrants as qd
 
-from genesis.engine.core import Require, System
+from genesis.engine.core import Require, System, register_system
 from genesis.engine.solvers.rigid.collider.collider import func_detection
 
 from .rigid_solver_system import RigidSolverSystem
+from .simulator_engine import SimulatorEngine
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -49,6 +50,13 @@ class ColliderSystem(System):
     def clear_contact_data_cache(self) -> None:
         """Drop the contacts read back during the previous substep, which the detection is about to replace."""
         self.collider._contact_data_cache.clear()
+
+
+@register_system(SimulatorEngine)
+def create_collider_system(scene: "Scene") -> ColliderSystem | None:
+    """Create the collision detection of the rigid substep, unless the scene disables collisions."""
+    rigid_solver = scene.sim.rigid_solver
+    return ColliderSystem(scene) if rigid_solver.is_active and rigid_solver._enable_collision else None
 
 
 @qd.func(requires_top_level=True)

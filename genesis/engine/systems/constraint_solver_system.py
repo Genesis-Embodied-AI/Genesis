@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 import quadrants as qd
 
-from genesis.engine.core import Require, System
+from genesis.engine.core import Require, System, register_system
 from genesis.engine.solvers.rigid.constraint.solver import (
     func_add_equality_constraints,
     func_add_inequality_constraints,
@@ -13,6 +13,7 @@ from genesis.engine.solvers.rigid.constraint.solver import (
 )
 
 from .rigid_solver_system import RigidSolverData, RigidSolverSystem
+from .simulator_engine import SimulatorEngine
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -84,6 +85,13 @@ class ConstraintSolverSystem(System):
         """Drop the equality constraints read back during the previous substep, which the assembly is about to
         replace."""
         self.constraint_solver._eq_const_info_cache.clear()
+
+
+@register_system(SimulatorEngine)
+def create_constraint_solver_system(scene: "Scene") -> ConstraintSolverSystem | None:
+    """Create the constraint solve of the rigid substep, unless the scene disables constraints."""
+    rigid_solver = scene.sim.rigid_solver
+    return ConstraintSolverSystem(scene) if rigid_solver.is_active and not rigid_solver._disable_constraint else None
 
 
 @qd.func(requires_top_level=True)

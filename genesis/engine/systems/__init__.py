@@ -1,1 +1,14 @@
 from .simulator_engine import SimulatorEngine
+
+# Each module registers its System for SimulatorEngine on import, in the order the simulator lists its solvers
+from .tool_solver_system import ToolSolverSystem
+from .rigid_solver_system import RigidSolverSystem
+from .collider_system import ColliderSystem
+from .constraint_solver_system import ConstraintSolverSystem
+from .kinematic_solver_system import KinematicSolverSystem
+from .mpm_solver_system import MPMSolverSystem
+from .sph_solver_system import SPHSolverSystem
+from .pbd_solver_system import PBDSolverSystem
+from .fem_solver_system import FEMSolverSystem
+from .sf_solver_system import SFSolverSystem
+from .coupler_system import CouplerSystem
