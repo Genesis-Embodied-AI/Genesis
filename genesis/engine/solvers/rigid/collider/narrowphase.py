@@ -1908,6 +1908,8 @@ def func_contact_overlap_axes(
         # Prioritize edges nearest contact 0 so the vertex budget resolves the portion around the contact first.
         # Surviving edges retain their settled bits when an insertion removes the visible chain.
         edges_settled = qd.Vector.zero(gs.qd_int, 2)
+        # Truncating refinement near the contact can replace several patch corners under small pose changes.
+        # Allow up to sixteen samples to reduce these switches while bounding support-query and clipping costs.
         polygons_capacity = qd.Vector([8, 8])
         i_g_refine = 0
         i_e_refine = 0
