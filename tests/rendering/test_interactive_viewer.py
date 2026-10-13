@@ -62,47 +62,8 @@ def test_disable_defaults():
 
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
-def test_setter_redraw_is_not_paced_to_realtime(monkeypatch):
-    scene = gs.Scene(
-        viewer_options=gs.options.ViewerOptions(
-            run_in_thread=(sys.platform == "linux"),
-            enable_help_text=False,
-            enable_default_keybinds=False,
-        ),
-        profiling_options=gs.options.ProfilingOptions(
-            show_FPS=False,
-        ),
-        show_viewer=True,
-    )
-    box = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1)))
-    scene.build()
-
-    realtime_pacer = scene.visualizer.viewer._realtime_pacer
-    n_paced = 0
-    pace = realtime_pacer.sleep
-
-    def counting_pace():
-        nonlocal n_paced
-        n_paced += 1
-        pace()
-
-    monkeypatch.setattr(realtime_pacer, "sleep", counting_pace)
-
-    # A setter redraws the viewer right away but does not advance the simulation, so it must not wait for real time:
-    # a loop of setters (e.g. an optimizer evaluating forward kinematics) would otherwise sleep one step per call.
-    for _ in range(5):
-        box.set_pos((0.0, 0.0, 1.0))
-    assert n_paced == 0
-
-    # Stepping is still paced, once per step
-    scene.step()
-    assert n_paced == 1
-
-
-@pytest.mark.required
-@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_default_plugin(n_envs):
+def test_default_plugin(n_envs, monkeypatch):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             res=CAM_RES,
@@ -122,7 +83,7 @@ def test_default_plugin(n_envs):
     scene.add_entity(
         morph=gs.morphs.Plane(),
     )
-    scene.add_entity(
+    box = scene.add_entity(
         morph=gs.morphs.Box(
             pos=(0.0, 0.0, 0.2),
             size=(0.2, 0.2, 0.2),
@@ -133,6 +94,26 @@ def test_default_plugin(n_envs):
 
     pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
     assert pyrender_viewer.is_active
+
+    # Only stepping is paced to real time. A redraw that does not advance the simulation, whether triggered by a setter
+    # or requested manually, shows the state right away: a loop of setters (e.g. an optimizer evaluating forward
+    # kinematics) would otherwise sleep one step per call.
+    realtime_pacer = scene.visualizer.viewer._realtime_pacer
+    n_paced = 0
+    pace = realtime_pacer.sleep
+
+    def counting_pace():
+        nonlocal n_paced
+        n_paced += 1
+        pace()
+
+    monkeypatch.setattr(realtime_pacer, "sleep", counting_pace)
+    for _ in range(5):
+        box.set_pos((0.0, 0.0, 0.2))
+    scene.visualizer.update(force=True)
+    assert n_paced == 0
+    scene.step()
+    assert n_paced == 1
 
     assert len(pyrender_viewer._keybindings) > 0, "Expected default keybindings to be registered."
 

@@ -1094,6 +1094,10 @@ class Scene(RBC):
             # like a GUI joint slider calling set_qpos - are still drawn and the viewer does not appear frozen.
             with step_timer.phase("rendering"):
                 self._visualizer.update(force=not advance, auto=refresh_visualizer)
+                # Only stepping is paced to real time: a redraw outside of it (a setter, a scene reset, a manual
+                # 'visualizer.update') shows the state right away without sleeping.
+                if self._visualizer.viewer is not None:
+                    self._visualizer.viewer.pace_realtime()
 
         # A vetoed step never happened for the timings: the next 'start' discards the one it opened
         if not advance:
