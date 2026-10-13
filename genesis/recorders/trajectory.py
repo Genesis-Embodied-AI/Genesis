@@ -55,6 +55,9 @@ MAGIC_PREFIX = b"GSTRAJ"
 # The fastest level of zstd, so that the compression thread keeps pace with the fastest stepping scene. The levels
 # above shrink frame differences by a few percent only.
 ZSTD_LEVEL = 1
+# The worker threads of zstd, which compress the frames outside the interpreter lock and in parallel, so that the
+# compression thread only hands them over. Beyond a few, the compression of the largest frames shortens little.
+ZSTD_THREADS = 4
 # The frames a writer holds at once: the one being filled, the one the compression thread takes the next difference
 # against, the one it holds back for the stop to drop (see 'cleanup'), and one more queued so that a compression slower
 # than a step for a while does not hold the step back. The file is written by a thread of its own, so a slow disk delays
@@ -558,7 +561,7 @@ class TrajectoryFileWriter(BaseFileWriter):
         self._is_last_dropped = False
 
         # The chunk the compression thread is filling: its compressor, its compressed pieces and its frame count
-        self._compressor = zstandard.ZstdCompressor(level=ZSTD_LEVEL)
+        self._compressor = zstandard.ZstdCompressor(level=ZSTD_LEVEL, threads=ZSTD_THREADS)
         self._info_compressor = zstandard.ZstdCompressor(level=ZSTD_LEVEL)
         self._chunk_stream = self._compressor.compressobj()
         self._chunk_pieces: list[bytes] = []
