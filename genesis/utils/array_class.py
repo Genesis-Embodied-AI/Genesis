@@ -122,25 +122,29 @@ class DataKind(IntEnum):
     select by.
 
     CONSTANT is an array the build computes from the scene description once. INFO is a model parameter the setters
-    write, such as mass, friction, gains or limits. STATE is the reduced-space configuration, velocities,
-    accelerations, control inputs, contacts and constraint solution. WARMSTART is a cache the next solve reads to
-    reproduce the previous result bit-for-bit. Forward kinematics and dynamics recompute DERIVED from STATE. A step or
-    a solve writes SCRATCH before it reads it.
+    write, such as mass, friction, gains or limits. STATE is what specifies the scene with INFO: the reduced-space
+    configuration, velocities, accelerations, control inputs and the warm starts of the collision detection and the
+    constraint solve, which change the result of the next step. DERIVED is what the next step or forward kinematics
+    recomputes from STATE and INFO, such as the link poses, the contacts and the constraint forces, and recomputing it
+    changes the result at the last bits at most. A step or a solve writes SCRATCH before it reads it.
+
+    The kinds decide what a minimal trajectory records (see TrajectoryFile), so every solver classifies its arrays by
+    one rule: an array the next step reads before writing it is STATE or INFO, and a DERIVED array is recomputed
+    before it is read, by the next step or by the restore of a record without it (see 'Solver.__setstate__').
     """
 
     CONSTANT = 0
     INFO = 1
     STATE = 2
-    WARMSTART = 3
-    DERIVED = 4
-    SCRATCH = 5
+    DERIVED = 3
+    SCRATCH = 4
 
 
 # Metadata key under which 'of_kind' stores the kind of a field.
 KIND = "kind"
-# The kinds a checkpoint carries: INFO, STATE, WARMSTART and DERIVED. The static configs travel in a separate field of
-# the checkpoint as provenance.
-CHECKPOINT_KINDS = frozenset((DataKind.INFO, DataKind.STATE, DataKind.WARMSTART, DataKind.DERIVED))
+# The kinds a checkpoint carries: INFO, STATE and DERIVED. The static configs travel in a separate field of the
+# checkpoint as provenance.
+CHECKPOINT_KINDS = frozenset((DataKind.INFO, DataKind.STATE, DataKind.DERIVED))
 
 
 def of_kind(kind: DataKind):
@@ -913,20 +917,20 @@ class ConstraintState:
 
     # Union-find partition of links into contact islands, read by the per-island Newton solve and hibernation.
     island: IslandState
-    is_warmstart: qd.Tensor = of_kind(DataKind.WARMSTART)
-    n_constraints: qd.Tensor = of_kind(DataKind.STATE)
+    is_warmstart: qd.Tensor = of_kind(DataKind.STATE)
+    n_constraints: qd.Tensor = of_kind(DataKind.DERIVED)
     qd_n_equalities: qd.Tensor = of_kind(DataKind.STATE)
     jac: qd.Tensor
     diag: qd.Tensor
     aref: qd.Tensor
     jac_dofs_idx: qd.Tensor
     jac_n_dofs: qd.Tensor
-    n_constraints_equality: qd.Tensor = of_kind(DataKind.STATE)
-    n_constraints_frictionloss: qd.Tensor = of_kind(DataKind.STATE)
+    n_constraints_equality: qd.Tensor = of_kind(DataKind.DERIVED)
+    n_constraints_frictionloss: qd.Tensor = of_kind(DataKind.DERIVED)
     # Number of elliptic-cone contact rows (rows_per_contact per contact), laid out contiguously at the start of the
     # collision segment. Zero for the pyramidal cone. The cone rows occupy
     # [ne + n_frictionloss, ne + n_frictionloss + n_cone).
-    n_constraints_cone: qd.Tensor = of_kind(DataKind.STATE)
+    n_constraints_cone: qd.Tensor = of_kind(DataKind.DERIVED)
     improved: qd.Tensor
     Jaref: qd.Tensor
     Ma: qd.Tensor
@@ -946,12 +950,12 @@ class ConstraintState:
     # contact sliding friction coefficient read by the cone solver, and with torsional friction the spin row carries
     # the torsional coefficient the same way (the tangent rows hold 0).
     efc_frictionloss: qd.Tensor
-    efc_force: qd.Tensor = of_kind(DataKind.STATE)
-    active: qd.Tensor = of_kind(DataKind.STATE)
+    efc_force: qd.Tensor = of_kind(DataKind.DERIVED)
+    active: qd.Tensor = of_kind(DataKind.DERIVED)
     prev_active: qd.Tensor
     qfrc_constraint: qd.Tensor = of_kind(DataKind.STATE)
     qacc: qd.Tensor = of_kind(DataKind.STATE)
-    qacc_ws: qd.Tensor = of_kind(DataKind.WARMSTART)
+    qacc_ws: qd.Tensor = of_kind(DataKind.STATE)
     cost_ws: qd.Tensor
     cost: qd.Tensor
     mv: qd.Tensor
@@ -1212,7 +1216,7 @@ def get_constraint_state(constraint_solver, solver, collider):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class ContactData:
-    kind: ClassVar[DataKind] = DataKind.STATE
+    kind: ClassVar[DataKind] = DataKind.DERIVED
 
     geom_a: qd.Tensor
     geom_b: qd.Tensor
@@ -1302,7 +1306,7 @@ def get_diff_contact_input(_B, max_contacts_per_pair, is_active, requires_grad=F
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class SortBuffer:
-    kind: ClassVar[DataKind] = DataKind.WARMSTART
+    kind: ClassVar[DataKind] = DataKind.STATE
 
     value: qd.Tensor
     i_g: qd.Tensor
@@ -1321,7 +1325,7 @@ def get_sort_buffer(solver):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class ContactCache:
-    kind: ClassVar[DataKind] = DataKind.WARMSTART
+    kind: ClassVar[DataKind] = DataKind.STATE
 
     normal: qd.Tensor
     # Previous-step penetration per pair (reset to 0 when out of contact), the warm-start for the MPR->GJK gate.
@@ -1404,19 +1408,19 @@ class ColliderState:
     box_pu: qd.Tensor
     xyz_max_min: qd.Tensor
     prism: qd.Tensor
-    n_contacts: qd.Tensor = of_kind(DataKind.STATE)
+    n_contacts: qd.Tensor = of_kind(DataKind.DERIVED)
     # Kept contacts of the sleepers, at the front of the contact buffer with the identity permutation: a hibernated
     # link's contacts against fixed bodies are carried from step to step with the force of the last solve they took
     # part in, for the contact getters and the per-link contact force alone. Every per-step pass (prune, sort, island
     # edges, constraint rows, noslip) walks the live contacts after them, [n_contacts_hibernated, n_contacts).
-    n_contacts_hibernated: qd.Tensor = of_kind(DataKind.STATE)
-    first_time: qd.Tensor = of_kind(DataKind.WARMSTART)
+    n_contacts_hibernated: qd.Tensor = of_kind(DataKind.DERIVED)
+    first_time: qd.Tensor = of_kind(DataKind.STATE)
     contact_cache: ContactCache
     # Input data for differentiable contact detection used in the backward pass
     diff_contact_input: DiffContactInput
     narrowphase_work_queues: NarrowphaseWorkQueues
     contact_sort_key: qd.Tensor
-    contact_sort_idx: qd.Tensor = of_kind(DataKind.STATE)
+    contact_sort_idx: qd.Tensor = of_kind(DataKind.DERIVED)
     contact_proj_v: qd.Tensor
     contact_keep: qd.Tensor
     contact_hull_stack: qd.Tensor

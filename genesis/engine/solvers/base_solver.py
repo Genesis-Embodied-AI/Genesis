@@ -36,12 +36,13 @@ class StateChange(enum.Enum):
 
     Solver-agnostic: it names what kind of state changed, never an index space (links, dofs, particles, ...), which
     differs from one solver to the next. GEOMETRY is the kinematic configuration that places or deforms the world
-    surface (link poses, qpos, vertices); DYNAMICS is the velocity state. Model parameters (mass, inertia, friction,
-    gains, limits) are not scene state and are never broadcast.
+    surface (link poses, qpos, vertices). DYNAMICS is the velocity state. MODEL is the model parameters (mass,
+    inertia, friction, gains, limits, gravity).
     """
 
     GEOMETRY = enum.auto()
     DYNAMICS = enum.auto()
+    MODEL = enum.auto()
 
 
 class MutatedLinks(enum.Enum):
@@ -262,6 +263,7 @@ class GravityMixin:
         self._gravity.from_numpy(np.tile(np.array(self._options.gravity, dtype=gs.np_float), (self._B, 1)))
 
     @gs.assert_built
+    @mutates(StateChange.MODEL)
     def set_gravity(self, gravity, envs_idx=None):
         """
         Set the gravity acting on the bodies of this solver, in m/s^2.
@@ -386,7 +388,11 @@ class Solver(RBC):
         return SolverCheckpoint(arrays=arrays, configs=configs, kinds=array_class.CHECKPOINT_KINDS)
 
     def __setstate__(self, state: SolverCheckpoint) -> None:
-        """Write back the arrays of the kinds a record holds, rejecting a record read from another build."""
+        """Write back the arrays of the kinds a record holds, rejecting a record read from another build.
+
+        A solver whose step reads a DERIVED array before recomputing it overrides this to recompute or invalidate that
+        array when the record lacks DERIVED (see 'DataKind').
+        """
         items = (item for item in self.data if isinstance(item, array_class.DataItem) and item.kind in state.kinds)
         array_class.fill_data(items, state.arrays)
 
