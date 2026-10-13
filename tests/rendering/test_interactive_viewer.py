@@ -9,6 +9,7 @@ import pytest
 
 import genesis as gs
 from genesis.options.sensors import RasterizerCameraOptions
+from genesis.recorders.trajectory import TRAJECTORY_FORMAT, Trajectory
 from genesis.utils.misc import tensor_to_array
 from genesis.vis.keybindings import Key, KeyAction, Keybind, KeyMod, MouseButton
 from genesis.vis.viewer_plugins.plugins.mouse_interaction import GRAB_ACC
@@ -63,7 +64,7 @@ def test_disable_defaults():
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_default_plugin(n_envs, monkeypatch):
+def test_default_plugin(n_envs, monkeypatch, tmp_path):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             res=CAM_RES,
@@ -90,6 +91,8 @@ def test_default_plugin(n_envs, monkeypatch):
             euler=(30, 40, 0),
         )
     )
+    trajectory_path = tmp_path / f"run{TRAJECTORY_FORMAT}"
+    scene.start_recording(gs.recorders.TrajectoryFile(filename=str(trajectory_path)))
     scene.build(n_envs=n_envs)
 
     pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
@@ -114,6 +117,14 @@ def test_default_plugin(n_envs, monkeypatch):
     assert n_paced == 0
     scene.step()
     assert n_paced == 1
+
+    # Replaying a trajectory seeks its frames rather than stepping, and still plays each frame at one step of wall time
+    scene.step()
+    scene.stop_recording()
+    trajectory = Trajectory(trajectory_path, scene=scene)
+    n_paced = 0
+    trajectory.play()
+    assert n_paced == len(trajectory)
 
     assert len(pyrender_viewer._keybindings) > 0, "Expected default keybindings to be registered."
 

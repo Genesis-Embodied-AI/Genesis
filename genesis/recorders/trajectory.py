@@ -16,7 +16,6 @@ import os
 import queue
 import struct
 import threading
-import time
 import zlib
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -1059,8 +1058,9 @@ class Trajectory:
         viewer = self._scene.viewer
         if loop and viewer is None:
             gs.raise_exception("Looping a trajectory needs an interactive viewer.")
-        # The viewer holds each redraw to one step of wall time (see ViewerOptions.realtime_factor). A frame spanning
-        # more steps than one, as frames recorded every few steps do, waits for the steps beyond that one as well.
+        # Seeking is not stepping, so the viewer does not pace it: each frame is held here for one step of wall time
+        # (see ViewerOptions.realtime_factor), and a frame spanning more steps than one, as frames recorded every few
+        # steps do, for each of them. The pacer keeps one schedule across frames, which a plain sleep would throw off.
         is_paced = viewer is not None and viewer.realtime_factor is not None
         while True:
             steps_prev = None
@@ -1070,8 +1070,11 @@ class Trajectory:
                     return
                 steps = self.frame(index)[STEPS_FIELD]
                 if is_paced and steps_prev is not None:
-                    time.sleep(max((steps - steps_prev).max() - 1, 0) * self._manifest["dt"] / viewer.realtime_factor)
+                    for _ in range((steps - steps_prev).max() - 1):
+                        viewer.pace_realtime()
                 self.seek(index)
+                if is_paced:
+                    viewer.pace_realtime()
                 steps_prev = steps
             if not loop:
                 return
