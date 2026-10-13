@@ -14,8 +14,9 @@ def qd_block_sum(value, log2_size: qd.template() = 5):
 def qd_block_scan(value):
     """Inclusive prefix sum of value over the 32 lanes of a block, returning this lane's prefix and the block total,
     the total the bits the last lane holds so every lane carries the same running count across chunks."""
-    value_incl = qd.simt.subgroup.inclusive_add(value)
-    return value_incl, qd.simt.subgroup.broadcast(value_incl, qd.u32(31))
+    value_incl = qd.simt.subgroup.inclusive_add_tiled(value, 5)
+    tile_last_lane = qd.simt.subgroup.invocation_id() | qd.u32(31)
+    return value_incl, qd.simt.subgroup.shuffle(value_incl, tile_last_lane)
 
 
 @qd.func
