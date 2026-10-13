@@ -10,6 +10,7 @@ import bisect
 import dataclasses
 import enum
 import io
+import itertools
 import json
 import logging
 import os
@@ -287,6 +288,34 @@ def _read_frame(sim: "Simulator", kinds: frozenset[DataKind], fields: list[Frame
     return frame
 
 
+def _encode_device_frame(
+    frame_views: list[torch.Tensor],
+    staging: torch.Tensor,
+    device_end: int,
+    i_staging: int,
+    is_delta: bool,
+    blocks: torch.Tensor,
+    is_block_changed: torch.Tensor,
+) -> None:
+    """Gather on the device the blocks of a frame that hold a non-zero byte, of its difference with the previous frame.
+
+    The frame is concatenated from its views into the buffer 'i_staging' of the two in 'staging'. With 'is_delta', the
+    other buffer, which holds the previous frame, takes the difference. The changed blocks go to the front of 'blocks',
+    in order, and 'is_block_changed' receives which blocks they are. The number of gathered indices is fixed, so that
+    nothing waits on the device and the operations can be captured in a CUDA graph.
+    """
+    frame = staging[i_staging]
+    torch.cat(frame_views, out=frame[:device_end])
+    if is_delta:
+        frame_prev = staging[1 - i_staging]
+        frame = torch.bitwise_xor(frame_prev, frame, out=frame_prev)
+    frame_blocks = frame.view(torch.int64).view((-1, BLOCK_SIZE // 8))
+    is_frame_block_changed = (frame_blocks != 0).any(dim=1)
+    blocks_idx = torch.nonzero_static(is_frame_block_changed, size=frame_blocks.shape[0], fill_value=0)[:, 0]
+    torch.index_select(frame_blocks, 0, blocks_idx, out=blocks)
+    is_block_changed.copy_(is_frame_block_changed, non_blocking=True)
+
+
 @nb.jit(nopython=True, cache=True, nogil=True)
 def _encode_blocks(words: np.ndarray, words_prev: np.ndarray, is_delta: bool, bitmap: np.ndarray, blocks: np.ndarray):
     """Encode a frame block-sparse (see BLOCK_SIZE), or its difference with the previous one.
@@ -457,6 +486,7 @@ class TrajectoryFileWriter(BaseFileWriter):
         self._slots_mask_tc: torch.Tensor | None = None
         self._slots_mask: np.ndarray | None = None
         self._copy_stream: torch.cuda.Stream | None = None
+        self._encode_graphs: dict[tuple[int, int, bool], torch.cuda.CUDAGraph] = {}
         if gs.use_zerocopy:
             self._frame_views = []
             for field in self._fields[: len(arrays)]:
@@ -480,6 +510,29 @@ class TrajectoryFileWriter(BaseFileWriter):
             self._slots_mask_tc = slots_mask
             self._slots_mask = slots_mask.numpy()
             self._copy_stream = torch.cuda.Stream()
+            # Launching each operation of the encoding costs more host time than the device takes to run them all, so
+            # they are captured once in a CUDA graph per slot, staging buffer and encoding, a frame launching one. The
+            # graphs run one after the other, so they share their memory pool. A first run outside capture lets torch
+            # initialize what the operations need.
+            warmup_stream = torch.cuda.Stream()
+            warmup_stream.wait_stream(torch.cuda.current_stream())
+            graphs_pool = torch.cuda.graph_pool_handle()
+            for i_slot, i_staging, is_delta in itertools.product(range(N_FRAME_SLOTS), range(2), (False, True)):
+                encode_args = (
+                    self._frame_views,
+                    self._staging,
+                    self._device_end,
+                    i_staging,
+                    is_delta,
+                    self._device_blocks[i_slot],
+                    self._slots_mask_tc[i_slot],
+                )
+                with torch.cuda.stream(warmup_stream):
+                    _encode_device_frame(*encode_args)
+                graph = torch.cuda.CUDAGraph()
+                with torch.cuda.graph(graph, pool=graphs_pool):
+                    _encode_device_frame(*encode_args)
+                self._encode_graphs[(i_slot, i_staging, is_delta)] = graph
 
         # Page-locked on CUDA, so that the copy of a frame from the device runs without blocking the stepping thread.
         # The bytes between the arrays and the scalars stay zeros.
@@ -565,20 +618,10 @@ class TrajectoryFileWriter(BaseFileWriter):
         elif self._is_device_encoded:
             # The first frame of a chunk is stored whole, the others as their difference with the previous frame (see
             # '_compress_frames'). The buffer of the previous frame takes the difference, and the next frame is
-            # concatenated into it once the work queued before has read it.
-            frame = self._staging[self._i_frame % 2]
-            torch.cat(self._frame_views, out=frame[: self._device_end])
-            if self._i_frame % self._options.chunk_size != 0:
-                frame_prev = self._staging[(self._i_frame + 1) % 2]
-                frame = torch.bitwise_xor(frame_prev, frame, out=frame_prev)
-            # The changed blocks are gathered at the front of the buffer of the slot, in order, with a fixed number of
-            # indices so that nothing waits on the device. The work is queued behind the step on the stream both run
-            # on, and the compression thread waits for it to land (see '_compress_frames').
-            blocks = frame.view(torch.int64).view((-1, BLOCK_SIZE // 8))
-            is_block_changed = (blocks != 0).any(dim=1)
-            blocks_idx = torch.nonzero_static(is_block_changed, size=blocks.shape[0], fill_value=0)[:, 0]
-            torch.index_select(blocks, 0, blocks_idx, out=self._device_blocks[i_slot])
-            self._slots_mask_tc[i_slot].copy_(is_block_changed, non_blocking=True)
+            # concatenated into it once the work queued before has read it. The graph is launched behind the step on
+            # the stream both run on, and the compression thread waits for it to land (see '_compress_frames').
+            is_delta = self._i_frame % self._options.chunk_size != 0
+            self._encode_graphs[(i_slot, self._i_frame % 2, is_delta)].replay()
             self._slots_event[i_slot].record()
         elif self._frame_views is not None:
             frame = self._staging[0]
