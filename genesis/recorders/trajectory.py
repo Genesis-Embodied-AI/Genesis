@@ -483,6 +483,7 @@ class TrajectoryFileWriter(BaseFileWriter):
         # (see '_get_frame'), so that the frame copy carries them alone
         self._is_device_encoded = gs.use_zerocopy and gs.backend == gs.cuda
         self._device_blocks: torch.Tensor | None = None
+        self._device_blocks_bytes: list[torch.Tensor] = []
         self._slots_mask_tc: torch.Tensor | None = None
         self._slots_mask: np.ndarray | None = None
         self._copy_stream: torch.cuda.Stream | None = None
@@ -506,6 +507,8 @@ class TrajectoryFileWriter(BaseFileWriter):
             self._device_blocks = torch.empty(
                 (N_FRAME_SLOTS, n_device_blocks, BLOCK_SIZE // 8), dtype=torch.int64, device=gs.device
             )
+            # The bytes of each slot, which the compression thread copies (see '_compress_frames')
+            self._device_blocks_bytes = [blocks.view(-1).view(torch.uint8) for blocks in self._device_blocks]
             slots_mask = torch.empty((N_FRAME_SLOTS, n_device_blocks), dtype=torch.bool, pin_memory=True)
             self._slots_mask_tc = slots_mask
             self._slots_mask = slots_mask.numpy()
@@ -658,6 +661,10 @@ class TrajectoryFileWriter(BaseFileWriter):
         'cleanup'). A failure is raised on the stepping thread (see 'step'), and the frames that follow are released
         unwritten so the stepping thread never waits on a slot.
         """
+        # The changed blocks are copied on a stream of their own, made current for this thread once, as switching to it
+        # for each frame costs more host time than the copy
+        if self._is_device_encoded:
+            torch.cuda.set_stream(self._copy_stream)
         i_slot_prev: int | None = None
         i_slot_pending: int | None = None
         while True:
@@ -690,9 +697,8 @@ class TrajectoryFileWriter(BaseFileWriter):
                             # blocks (see '_get_frame'), so only these cross to the host
                             is_block_changed = self._slots_mask[i_slot_pending]
                             n_device_bytes = np.count_nonzero(is_block_changed) * BLOCK_SIZE
-                            with torch.cuda.stream(self._copy_stream):
-                                blocks = self._device_blocks[i_slot_pending].view(-1).view(torch.uint8)
-                                self._slots_tc[i_slot_pending, :n_device_bytes].copy_(blocks[:n_device_bytes])
+                            blocks = self._device_blocks_bytes[i_slot_pending][:n_device_bytes]
+                            self._slots_tc[i_slot_pending, :n_device_bytes].copy_(blocks, non_blocking=True)
                             self._copy_stream.synchronize()
                             n_blocks = _encode_blocks(
                                 frame[self._tail_offset :].view(np.uint64),
