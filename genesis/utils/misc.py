@@ -516,22 +516,28 @@ def tensor_to_array(x: torch.Tensor, dtype: type[np.generic] | None = None) -> n
     return np.asarray(tensor_to_cpu(x), dtype=dtype)
 
 
-def data_to_array(data):
-    """Recursively move any GPU tensor nested in ``data`` to a CPU numpy array, preserving container structure.
+def data_to_array(data, *, to_torch: bool = False, copy: bool | None = None):
+    """Recursively move every tensor and Quadrants array nested in a container to a CPU numpy array, keeping its layout.
 
-    A named tuple, such as the reading of a sensor with several outputs, becomes a dict mapping its field names to their
-    values, which is the form recorders label their data by.
+    With 'to_torch', each one becomes a torch tensor where it lives instead. With 'copy', the result shares no memory
+    with the tensor or Quadrants array it comes from. A numpy array is returned as it is. A named tuple, such as the
+    reading of a sensor with several outputs, becomes a dict mapping its field names to their values, which is the form
+    recorders label their data by.
     """
     if isinstance(data, torch.Tensor):
-        return tensor_to_array(data)
+        if copy:
+            data = data.clone()
+        return data if to_torch else tensor_to_array(data)
+    if isinstance(data, (qd.Tensor, qd.Field, qd.Ndarray)):
+        return qd_to_torch(data, copy=copy) if to_torch else qd_to_numpy(data, copy=copy)
     if isinstance(data, np.ndarray):
         return data
     if isinstance(data, tuple) and (data_asdict := getattr(data, "_asdict", None)) is not None:
-        return {k: data_to_array(v) for k, v in data_asdict().items()}
+        return {k: data_to_array(v, to_torch=to_torch, copy=copy) for k, v in data_asdict().items()}
     if isinstance(data, Mapping):
-        return {k: data_to_array(v) for k, v in data.items()}
+        return {k: data_to_array(v, to_torch=to_torch, copy=copy) for k, v in data.items()}
     if is_sequence(data):
-        return type(data)(data_to_array(v) for v in data)
+        return type(data)(data_to_array(v, to_torch=to_torch, copy=copy) for v in data)
     return data
 
 
