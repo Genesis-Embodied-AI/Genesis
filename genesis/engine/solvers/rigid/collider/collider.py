@@ -154,8 +154,8 @@ class Collider:
         self.clear()
 
     @property
-    def data(self) -> Iterator[array_class.DataItem]:
-        """Yield every array and static config of the collider, tagged by kind (see 'Solver.data')."""
+    def data(self) -> Iterator[array_class.DataItem | array_class.ConfigItem]:
+        """Yield every array and static config of the collider (see 'Solver.data')."""
         structs = [
             (self, "collider_config"),
             (self.gjk, "gjk_config"),
@@ -169,7 +169,7 @@ class Collider:
         elif self.collider_config.has_non_box_plane_convex_convex:
             structs.append((self.gjk, "gjk_state"))
         for owner, name in structs:
-            yield from array_class.iter_data(getattr(owner, name), name)
+            yield from array_class.iter_data(owner, name)
 
     def _init_static_config(self) -> None:
         # Identify the convex collision detection (ccd) algorithm

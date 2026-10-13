@@ -12,7 +12,7 @@ import genesis.utils.geom as gu
 from genesis.constants import link_ref_frame
 from genesis.engine.entities import DroneEntity, RigidEntity, TerrainEntity
 from genesis.engine.materials import Rigid
-from genesis.engine.states import KinematicSolverCheckpoint, RigidSolverState
+from genesis.engine.states import RigidSolverState, SolverCheckpoint
 from genesis.options.morphs import Drone, Morph, Terrain
 from genesis.options.solvers import RigidOptions
 from genesis.utils.misc import (
@@ -1934,7 +1934,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         self._restart()
 
     @property
-    def data(self) -> Iterator[array_class.DataItem]:
+    def data(self) -> Iterator[array_class.DataItem | array_class.ConfigItem]:
         yield from super().data
         yield from self.collider.data
         yield from self.constraint_solver.data
@@ -1950,7 +1950,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 entity._prev_prop_t = -1
 
     @mutates(StateChange.GEOMETRY, StateChange.DYNAMICS)
-    def __setstate__(self, state: KinematicSolverCheckpoint) -> None:
+    def __setstate__(self, state: SolverCheckpoint) -> None:
         super().__setstate__(state)
         self._restart()
 

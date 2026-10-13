@@ -25,20 +25,6 @@ class SolverCheckpoint:
 
 
 @dataclasses.dataclass
-class KinematicSolverCheckpoint(SolverCheckpoint):
-    """A SolverCheckpoint plus the two forward-kinematics flags of a kinematic or rigid solver,
-    'is_forward_pos_updated' and 'is_forward_vel_updated'.
-
-    The flags decide whether the next step recomputes the Cartesian pose and velocity of the links. Recomputing them
-    where the saved scene skipped it rounds differently on some backends, so the flags travel with the derived arrays
-    they describe.
-    """
-
-    is_forward_pos_updated: bool
-    is_forward_vel_updated: bool
-
-
-@dataclasses.dataclass
 class SimulatorCheckpoint:
     """The state a simulation stands in.
 

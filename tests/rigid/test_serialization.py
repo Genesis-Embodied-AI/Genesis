@@ -647,8 +647,6 @@ def test_pickle_resume(n_envs, requires_grad, checkpoint_scene, tmp_path, show_v
     twin_checkpoint = twin_scene.__getstate__()
     assert_equal(twin_checkpoint.sim.steps, checkpoint.sim.steps)
     for name, record in checkpoint.sim.solvers.items():
-        assert twin_checkpoint.sim.solvers[name].is_forward_pos_updated == record.is_forward_pos_updated
-        assert twin_checkpoint.sim.solvers[name].is_forward_vel_updated == record.is_forward_vel_updated
         for array_name, array in record.arrays.items():
             assert_equal(twin_checkpoint.sim.solvers[name].arrays[array_name], array)
     for _ in range(10):
@@ -878,8 +876,8 @@ def test_trajectory_replay(n_envs, checkpoint_scene, tmp_path, show_viewer, capl
         Trajectory(cut_path, scene=replay_scene)
     # A file written in another version of the format is rejected by that version
     with open(cut_path, "wb") as file:
-        file.write(b"GSTRAJ1\n" + data[len(b"GSTRAJ1\n") :])
-    with pytest.raises(gs.GenesisException, match="version 1 of the trajectory format"):
+        file.write(b"GSTRAJ2\n" + data[len(b"GSTRAJ2\n") :])
+    with pytest.raises(gs.GenesisException, match="version 2 of the trajectory format"):
         Trajectory(cut_path, scene=replay_scene)
 
 
