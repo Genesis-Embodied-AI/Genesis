@@ -9,6 +9,7 @@ every array, scratch included.
 import bisect
 import dataclasses
 import enum
+import functools
 import io
 import itertools
 import json
@@ -58,11 +59,15 @@ ZSTD_LEVEL = 1
 # The worker threads of zstd, which compress the frames outside the interpreter lock and in parallel, so that the
 # compression thread only hands them over. Beyond a few, the compression of the largest frames shortens little.
 ZSTD_THREADS = 4
-# The frames a writer holds at once: the one being filled, the one the compression thread takes the next difference
-# against, the one it holds back for the stop to drop (see 'cleanup'), and one more queued so that a compression slower
-# than a step for a while does not hold the step back. The file is written by a thread of its own, so a slow disk delays
-# the records only, never the release of a frame.
+# The slots of frames a writer holds at once: the one being filled, the one the compression thread is encoding, the one
+# holding the frame it takes the next difference against, and one more queued so that a compression slower than a step
+# for a while does not hold the step back. The file is written by a thread of its own, so a slow disk delays the records
+# only, never the release of a slot.
 N_FRAME_SLOTS = 4
+# The bytes of the frames a slot holds at most, when frames are small enough for several to fit. A slot costs the
+# compression thread the same work under the interpreter lock whatever its size, and the stepping thread waits on that
+# lock, so small frames share their slot.
+SLOT_BYTES = 2**20
 # The bytes of the completed chunks waiting for the I/O thread at most, one chunk being let through whatever its size. A
 # chunk holds many frames compressed, so this absorbs a slow disk far more cheaply than frame slots would, and the
 # compression thread waits once it is reached. Bytes rather than chunks, since a chunk grows with the environments.
@@ -118,6 +123,13 @@ class FrameField(NamedTuple):
     offset: int
     nbytes: int
     axes: tuple[int, ...]
+
+
+class SlotFrames(NamedTuple):
+    """The frames of a slot handed to the compression thread: the slot and how many frames it holds."""
+
+    i_slot: int
+    n_frames: int
 
 
 class InfoRecord(NamedTuple):
@@ -313,38 +325,68 @@ def _encode_device_frame(
         frame_prev = staging[1 - i_staging]
         frame = torch.bitwise_xor(frame_prev, frame, out=frame_prev)
     frame_blocks = frame.view(torch.int64).view((-1, BLOCK_SIZE // 8))
-    is_frame_block_changed = (frame_blocks != 0).any(dim=1)
+    is_frame_block_changed = frame_blocks.any(dim=1)
     blocks_idx = torch.nonzero_static(is_frame_block_changed, size=frame_blocks.shape[0], fill_value=0)[:, 0]
     torch.index_select(frame_blocks, 0, blocks_idx, out=blocks)
     is_block_changed.copy_(is_frame_block_changed, non_blocking=True)
 
 
-@nb.jit(nopython=True, cache=True, nogil=True)
-def _encode_blocks(words: np.ndarray, words_prev: np.ndarray, is_delta: bool, bitmap: np.ndarray, blocks: np.ndarray):
-    """Encode a frame block-sparse (see BLOCK_SIZE), or its difference with the previous one.
+def _copy_device_frame(
+    frame_views: list[torch.Tensor], staging: torch.Tensor, device_end: int, slot: torch.Tensor
+) -> None:
+    """Concatenate a frame on the device from its views, then copy it to the host without waiting for it to land.
 
-    The difference is encoded if 'is_delta' is set. 'words' and 'words_prev' are the two frames viewed as uint64. Write
-    into 'bitmap' one bit per block, set if it holds a non-zero word, the lowest bit first, and into 'blocks' the words
-    of these blocks back to back. Return their count.
+    'staging' receives the concatenated frame, and 'slot', page-locked, its copy.
+    """
+    torch.cat(frame_views, out=staging[:device_end])
+    slot.copy_(staging, non_blocking=True)
+
+
+@nb.jit(nopython=True, cache=True, nogil=True)
+def _encode_frames(
+    frames: np.ndarray, frame_prev: np.ndarray, is_delta: bool, encoded: np.ndarray, blocks: np.ndarray
+) -> int:
+    """Encode consecutive frames block-sparse (see BLOCK_SIZE), each as its difference with the one before it.
+
+    'frames' holds the frames as rows of bytes, each a whole number of bitmap bytes long (see FRAME_ALIGNMENT), and
+    'frame_prev' the frame before the first, whose difference the first takes if 'is_delta' is set. Write into
+    'encoded' the frames back to back, each as a bitmap of one bit per block, set if it holds a non-zero byte, the
+    lowest bit first, then these blocks. 'blocks' is a uint64 scratch the size of a frame. Return the bytes written.
     """
     n_words = BLOCK_SIZE // 8
-    n_blocks = 0
-    for i_byte in range(bitmap.size):
-        byte = 0
-        for i_bit in range(8):
-            i_word_start = (8 * i_byte + i_bit) * n_words
-            is_nonzero = False
-            for i_word in range(n_words):
-                word = words[i_word_start + i_word]
-                if is_delta:
-                    word ^= words_prev[i_word_start + i_word]
-                blocks[n_blocks * n_words + i_word] = word
-                is_nonzero |= word != 0
-            if is_nonzero:
-                byte |= 1 << i_bit
-                n_blocks += 1
-        bitmap[i_byte] = byte
-    return n_blocks
+    n_bitmap_bytes = frames.shape[1] // FRAME_ALIGNMENT
+    blocks_bytes = blocks.view(np.uint8)
+    i_encoded = 0
+    for i_frame in range(frames.shape[0]):
+        frame_ref = frame_prev if i_frame == 0 else frames[i_frame - 1]
+        # The previous frame drops out of the difference of a frame stored whole
+        words_ref_mask = np.uint64(0xFFFFFFFFFFFFFFFF) if is_delta or i_frame > 0 else np.uint64(0)
+        words = frames[i_frame].view(np.uint64)
+        words_ref = frame_ref.view(np.uint64)
+        n_blocks = 0
+        for i_byte in range(n_bitmap_bytes):
+            byte = 0
+            for i_bit in range(8):
+                i_word_start = (8 * i_byte + i_bit) * n_words
+                # Most blocks of a frame are unchanged, so a block is reduced first and copied only if it holds a
+                # non-zero word, which spares the writes of the others
+                words_or = np.uint64(0)
+                for i_word in range(i_word_start, i_word_start + n_words):
+                    words_or |= words[i_word] ^ (words_ref[i_word] & words_ref_mask)
+                if words_or != 0:
+                    for i_word in range(n_words):
+                        i_word_frame = i_word_start + i_word
+                        word = words[i_word_frame] ^ (words_ref[i_word_frame] & words_ref_mask)
+                        blocks[n_blocks * n_words + i_word] = word
+                    byte |= 1 << i_bit
+                    n_blocks += 1
+            encoded[i_encoded + i_byte] = byte
+        # The blocks follow the bitmap at any byte, so they are gathered as aligned words first, then copied
+        i_encoded += n_bitmap_bytes
+        n_blocks_bytes = n_blocks * BLOCK_SIZE
+        encoded[i_encoded : i_encoded + n_blocks_bytes] = blocks_bytes[:n_blocks_bytes]
+        i_encoded += n_blocks_bytes
+    return i_encoded
 
 
 def _header(
@@ -419,14 +461,15 @@ class TrajectoryFileWriter(BaseFileWriter):
     """Write the frames of a scene to a trajectory file (see TrajectoryFile), one chunk at a time.
 
     Each frame captures the state a step starts from, control inputs included, since it is read before the step. The
-    stepping thread copies each frame into one of a few frame slots allocated at build and hands it to a compression
-    thread, which streams it through the compressor as its XOR with the previous frame of its chunk. Unchanged bytes
-    thus become zeros the compressor removes. On a GPU backend the device takes the XOR before the copy, which spares
-    the compression thread a pass over the frame. A completed chunk goes to a third thread, which appends it to the
-    file. A step costs one copy of the frame, issued without waiting for a GPU to finish the step: the compression
-    thread waits for the copy to land instead. The step waits only when every slot is taken, which happens when the
-    frames are compressed slower than the scene steps. The model parameters change through setters alone, so they are
-    recorded ahead of the first frame and of the first frame after a setter changed them, in a record of their own.
+    stepping thread copies each frame into one of a few slots allocated at build, small frames sharing a slot, and hands
+    a full slot to a compression thread, which streams its frames through the compressor as their XOR with the previous
+    frame of their chunk. Unchanged bytes thus become zeros the compressor removes. On CUDA the device takes the XOR of
+    a frame filling a slot alone before the copy, which spares the compression thread a pass over the frame and the copy
+    the unchanged bytes. A completed chunk goes to a third thread, which appends it to the file. A step costs one copy
+    of the frame, issued without waiting for a GPU to finish the step: the compression thread waits for the copy to land
+    instead. The step waits only when every slot is taken, which happens when the frames are compressed slower than the
+    scene steps. The model parameters change through setters alone, so they are recorded ahead of the first frame and of
+    the first frame after a setter changed them, in a record of their own.
     """
 
     def build(self):
@@ -482,15 +525,19 @@ class TrajectoryFileWriter(BaseFileWriter):
         # step frames leave out the 0-d arrays (see '_frame_fields'), whose content the step frames therefore lack.
         self._frame_views: list[np.ndarray | torch.Tensor] | None = None
         self._staging: torch.Tensor | None = None
+        # A slot holds several frames when they are small, at most a chunk of them, and a slot is handed over at the end
+        # of a chunk (see '_get_frame'), so that its frames all belong to one chunk
+        self._n_slot_frames = max(1, min(self._options.chunk_size, SLOT_BYTES // self._frame_size))
         # On CUDA the device takes the difference of a frame with the previous one and gathers the blocks it changed
-        # (see '_get_frame'), so that the frame copy carries them alone
-        self._is_device_encoded = gs.use_zerocopy and gs.backend == gs.cuda
+        # (see '_get_frame'), so that the frame copy carries them alone. Frames sharing a slot are small enough to cross
+        # to the host whole, for less than the device takes to encode them.
+        self._is_device_encoded = gs.use_zerocopy and gs.backend == gs.cuda and self._n_slot_frames == 1
         self._device_blocks: torch.Tensor | None = None
         self._device_blocks_bytes: list[torch.Tensor] = []
         self._slots_mask_tc: torch.Tensor | None = None
         self._slots_mask: np.ndarray | None = None
         self._copy_stream: torch.cuda.Stream | None = None
-        self._encode_graphs: dict[tuple[int, int, bool], torch.cuda.CUDAGraph] = {}
+        self._frame_graphs: dict[tuple[int, ...], torch.cuda.CUDAGraph] = {}
         if gs.use_zerocopy:
             self._frame_views = []
             for field in self._fields[: len(arrays)]:
@@ -501,9 +548,18 @@ class TrajectoryFileWriter(BaseFileWriter):
                     # thread. Torch would run the copy on its thread pool, whose wake-up costs more than the copy.
                     self._frame_views.append(view.numpy() if gs.backend == gs.cpu else view)
             if gs.backend != gs.cpu:
-                # The two latest frames in turn, the one before the latest taking its difference with it (see
-                # '_get_frame'). The bytes between the arrays and the scalars stay zeros.
-                self._staging = torch.zeros((2, self._tail_offset), dtype=torch.uint8, device=gs.device)
+                # The frame on its way to the host, or the two latest frames in turn when the device encodes them, the
+                # one before the latest taking its difference with it (see '_get_frame'). The bytes between the arrays
+                # and the scalars stay zeros.
+                n_staging = 2 if self._is_device_encoded else 1
+                self._staging = torch.zeros((n_staging, self._tail_offset), dtype=torch.uint8, device=gs.device)
+        # Page-locked on CUDA, so that the copy of a frame from the device runs without blocking the stepping thread.
+        # The bytes between the arrays and the scalars stay zeros.
+        slots = torch.zeros(
+            (N_FRAME_SLOTS, self._n_slot_frames, self._frame_size), dtype=torch.uint8, pin_memory=gs.backend == gs.cuda
+        )
+        self._slots_tc = slots
+        self._slots = slots.numpy()
         if self._is_device_encoded:
             # The changed blocks of each frame, gathered on the device, and which blocks they are on the host
             n_device_blocks = self._tail_offset // BLOCK_SIZE
@@ -516,49 +572,63 @@ class TrajectoryFileWriter(BaseFileWriter):
             self._slots_mask_tc = slots_mask
             self._slots_mask = slots_mask.numpy()
             self._copy_stream = torch.cuda.Stream()
-            # Launching each operation of the encoding costs more host time than the device takes to run them all, so
-            # they are captured once in a CUDA graph per slot, staging buffer and encoding, a frame launching one. The
-            # graphs run one after the other, so they share their memory pool. A first run outside capture lets torch
-            # initialize what the operations need.
+        if gs.use_zerocopy and gs.backend == gs.cuda:
+            # Launching each operation of a frame copy costs more host time than the device takes to run them all, so
+            # they are captured once in a CUDA graph per place of the frame in the slots, and per staging buffer and
+            # encoding when the device encodes it, a frame launching one. The graphs run one after the other, so they
+            # share their memory pool. A first run outside capture lets torch initialize what the operations need.
+            if self._is_device_encoded:
+                captures = {
+                    (i_slot, i_staging, is_delta): functools.partial(
+                        _encode_device_frame,
+                        self._frame_views,
+                        self._staging,
+                        self._device_end,
+                        i_staging,
+                        is_delta,
+                        self._device_blocks[i_slot],
+                        self._slots_mask_tc[i_slot],
+                    )
+                    for i_slot, i_staging, is_delta in itertools.product(range(N_FRAME_SLOTS), range(2), (False, True))
+                }
+            else:
+                captures = {
+                    (i_slot, i_slot_frame): functools.partial(
+                        _copy_device_frame,
+                        self._frame_views,
+                        self._staging[0],
+                        self._device_end,
+                        self._slots_tc[i_slot, i_slot_frame, : self._tail_offset],
+                    )
+                    for i_slot, i_slot_frame in itertools.product(range(N_FRAME_SLOTS), range(self._n_slot_frames))
+                }
             warmup_stream = torch.cuda.Stream()
             warmup_stream.wait_stream(torch.cuda.current_stream())
             graphs_pool = torch.cuda.graph_pool_handle()
-            for i_slot, i_staging, is_delta in itertools.product(range(N_FRAME_SLOTS), range(2), (False, True)):
-                encode_args = (
-                    self._frame_views,
-                    self._staging,
-                    self._device_end,
-                    i_staging,
-                    is_delta,
-                    self._device_blocks[i_slot],
-                    self._slots_mask_tc[i_slot],
-                )
+            for key, capture in captures.items():
                 with torch.cuda.stream(warmup_stream):
-                    _encode_device_frame(*encode_args)
+                    capture()
                 graph = torch.cuda.CUDAGraph()
                 with torch.cuda.graph(graph, pool=graphs_pool):
-                    _encode_device_frame(*encode_args)
-                self._encode_graphs[(i_slot, i_staging, is_delta)] = graph
+                    capture()
+                self._frame_graphs[key] = graph
 
-        # Page-locked on CUDA, so that the copy of a frame from the device runs without blocking the stepping thread.
-        # The bytes between the arrays and the scalars stay zeros.
-        slots = torch.zeros((N_FRAME_SLOTS, self._frame_size), dtype=torch.uint8, pin_memory=gs.backend == gs.cuda)
-        self._slots_tc = slots
-        self._slots = slots.numpy()
         self._slots_event = [torch.cuda.Event() if gs.backend == gs.cuda else None for _ in range(N_FRAME_SLOTS)]
-        # The block-sparse encoding of a frame (see '_encode_blocks'), of its host-side end alone when the device
-        # encodes the rest
+        # The block-sparse encoding of the frames of a slot and its scratch (see '_encode_frames'), of the host-side end
+        # of the frame alone when the device encodes the rest
         encoded_size = self._frame_size - (self._tail_offset if self._is_device_encoded else 0)
-        self._bitmap = np.empty((encoded_size // FRAME_ALIGNMENT,), dtype=np.uint8)
-        self._blocks = np.empty((encoded_size // 8,), dtype=np.uint64)
+        self._encoded = np.empty((self._n_slot_frames * (encoded_size // FRAME_ALIGNMENT + encoded_size),), np.uint8)
+        self._encoded_blocks = np.empty((encoded_size // 8,), dtype=np.uint64)
         self._free_slots: queue.SimpleQueue[int] = queue.SimpleQueue()
         for i_slot in range(N_FRAME_SLOTS):
             self._free_slots.put(i_slot)
-        # The frames handed to the compression thread in step order, each preceded by the model parameters it holds if
-        # they changed, then None at the stop
-        self._frames: queue.SimpleQueue[int | InfoRecord | None] = queue.SimpleQueue()
-        self._i_last_slot: int | None = None
-        self._is_last_dropped = False
+        # The slot being filled, its frame count, and whether it takes no more frames
+        self._i_slot: int | None = None
+        self._n_slot_filled = 0
+        self._is_slot_full = False
+        # The slots handed to the compression thread in step order, each preceded by the model parameters of its frames
+        # that changed, then None at the stop
+        self._frames: queue.SimpleQueue[SlotFrames | InfoRecord | None] = queue.SimpleQueue()
 
         # The chunk the compression thread is filling: its compressor, its compressed pieces and its frame count
         self._compressor = zstandard.ZstdCompressor(level=ZSTD_LEVEL, threads=ZSTD_THREADS)
@@ -603,14 +673,21 @@ class TrajectoryFileWriter(BaseFileWriter):
         self._io_thread.start()
 
     def _get_frame(self):
-        """Copy the frame of the current state into a free slot and return the slot.
+        """Copy the frame of the current state into the slot being filled and return the slot.
 
-        The model parameters go to the compression thread ahead of the frame, when it is the first or a setter changed
-        them since the previous one.
+        A full slot goes to the compression thread when the next frame comes, so that the stop can drop the frame it
+        recorded (see 'cleanup'). The model parameters go to the compression thread ahead of the slot of the frame, when
+        it is the first or a setter changed them since the previous one.
         """
         sim = self._source.sim
-        i_slot = self._free_slots.get()
-        slot = self._slots[i_slot]
+        if self._is_slot_full:
+            self._frames.put(SlotFrames(self._i_slot, self._n_slot_filled))
+            self._i_slot = None
+        if self._i_slot is None:
+            self._i_slot = self._free_slots.get()
+            self._n_slot_filled = 0
+        i_slot = self._i_slot
+        slot = self._slots[i_slot, self._n_slot_filled]
         # On Metal, the arrays are written by a queue torch does not wait for
         if self._frame_views is not None and gs.backend == gs.metal:
             qd.sync()
@@ -627,18 +704,26 @@ class TrajectoryFileWriter(BaseFileWriter):
             # concatenated into it once the work queued before has read it. The graph is launched behind the step on
             # the stream both run on, and the compression thread waits for it to land (see '_compress_frames').
             is_delta = self._i_frame % self._options.chunk_size != 0
-            self._encode_graphs[(i_slot, self._i_frame % 2, is_delta)].replay()
-            self._slots_event[i_slot].record()
+            self._frame_graphs[(i_slot, self._i_frame % 2, is_delta)].replay()
+        elif self._frame_views is not None and gs.backend == gs.cuda:
+            # The copy runs behind the step on the stream both run on, and the next frame is concatenated once it has
+            # read the staging buffer
+            self._frame_graphs[(i_slot, self._n_slot_filled)].replay()
         elif self._frame_views is not None:
             frame = self._staging[0]
             torch.cat(self._frame_views, out=frame[: self._device_end])
-            self._slots_tc[i_slot, : self._tail_offset].copy_(frame)
+            self._slots_tc[i_slot, self._n_slot_filled, : self._tail_offset].copy_(frame)
         else:
             frame = _read_frame(sim, self._kinds, self._fields, self._frame_size)
             slot[: self._tail_offset] = frame[: self._tail_offset]
         tail = _frame_tail(sim, self._scalars, self._scalars_fields)
         slot[self._tail_offset : self._tail_offset + tail.size] = tail
         self._i_frame += 1
+        self._n_slot_filled += 1
+        self._is_slot_full = self._n_slot_filled == self._n_slot_frames or self._i_frame % self._options.chunk_size == 0
+        # The compression thread waits for the copies of a full slot to land (see '_compress_frames')
+        if self._is_slot_full and self._slots_event[i_slot] is not None:
+            self._slots_event[i_slot].record()
         return i_slot
 
     def step(self, global_step: int):
@@ -654,88 +739,87 @@ class TrajectoryFileWriter(BaseFileWriter):
         super().step(global_step)
 
     def process(self, data, cur_time):
-        self._i_last_slot = data
-        self._frames.put(data)
+        # The frames reach the compression thread by slot (see '_get_frame')
+        pass
 
     def _compress_frames(self):
-        """Take the frames off the queue in step order and append them to the open chunk, on the compression thread.
+        """Append the frames of the queued slots to the open chunk in step order, on the compression thread.
 
-        Each frame is held back until the next one arrives, so that the stop can drop the frame it recorded (see
-        'cleanup'). A failure is raised on the stepping thread (see 'step'), and the frames that follow are released
-        unwritten so the stepping thread never waits on a slot.
+        The slot holding the previous frame is kept until the next slot takes its difference with it. A failure is
+        raised on the stepping thread (see 'step'), and the slots that follow are released unwritten so the stepping
+        thread never waits on one.
         """
         # The changed blocks are copied on a stream of their own, made current for this thread once, as switching to it
         # for each frame costs more host time than the copy
         if self._is_device_encoded:
             torch.cuda.set_stream(self._copy_stream)
         i_slot_prev: int | None = None
-        i_slot_pending: int | None = None
+        n_frames_prev = 0
         while True:
-            i_slot = self._frames.get()
-            if isinstance(i_slot, InfoRecord):
+            item = self._frames.get()
+            if item is None:
+                break
+            if isinstance(item, InfoRecord):
                 if self._error is None and self._fault is None:
                     try:
-                        payload = self._info_compressor.compress(i_slot.payload)
-                        record = INFO_MAGIC + INFO_HEADER.pack(i_slot.i_frame, len(payload), zlib.crc32(payload))
+                        payload = self._info_compressor.compress(item.payload)
+                        record = INFO_MAGIC + INFO_HEADER.pack(item.i_frame, len(payload), zlib.crc32(payload))
                         self._info_records.append(record + payload)
                     except Exception as error:
                         self._error = error
                 continue
+            i_slot, n_frames = item
             # A failure of the copy surfaces here, and is reported like a failure of the compression
-            if i_slot is not None and self._slots_event[i_slot] is not None and self._error is None:
+            if self._slots_event[i_slot] is not None and self._error is None:
                 try:
                     self._slots_event[i_slot].synchronize()
                 except Exception as error:
                     self._error = error
-            if i_slot_pending is not None and (i_slot is not None or not self._is_last_dropped):
-                if self._error is None and self._fault is None:
-                    try:
-                        # The first frame of a chunk is stored whole, the others as their difference with the
-                        # previous frame, block-sparse either way (see BLOCK_SIZE)
-                        is_delta = self._n_chunk_frames > 0 and i_slot_prev is not None
-                        frame = self._slots[i_slot_pending]
-                        frame_prev = self._slots[i_slot_prev] if is_delta else frame
-                        if self._is_device_encoded:
-                            # The device took the difference of the part before the scalars and gathered its changed
-                            # blocks (see '_get_frame'), so only these cross to the host
-                            is_block_changed = self._slots_mask[i_slot_pending]
-                            n_device_bytes = np.count_nonzero(is_block_changed) * BLOCK_SIZE
-                            blocks = self._device_blocks_bytes[i_slot_pending][:n_device_bytes]
-                            self._slots_tc[i_slot_pending, :n_device_bytes].copy_(blocks, non_blocking=True)
-                            self._copy_stream.synchronize()
-                            n_blocks = _encode_blocks(
-                                frame[self._tail_offset :].view(np.uint64),
-                                frame_prev[self._tail_offset :].view(np.uint64),
-                                is_delta,
-                                self._bitmap,
-                                self._blocks,
-                            )
-                            bitmap = np.packbits(is_block_changed, bitorder="little")
-                            self._chunk_pieces.append(self._chunk_stream.compress(bitmap))
-                            self._chunk_pieces.append(self._chunk_stream.compress(self._bitmap))
-                            self._chunk_pieces.append(self._chunk_stream.compress(frame[:n_device_bytes]))
-                        else:
-                            n_blocks = _encode_blocks(
-                                frame.view(np.uint64), frame_prev.view(np.uint64), is_delta, self._bitmap, self._blocks
-                            )
-                            self._chunk_pieces.append(self._chunk_stream.compress(self._bitmap))
-                        blocks = self._blocks[: n_blocks * (BLOCK_SIZE // 8)]
-                        self._chunk_pieces.append(self._chunk_stream.compress(blocks))
-                        self._n_chunk_frames += 1
-                        if self._n_chunk_frames == self._options.chunk_size:
-                            self._close_chunk()
-                    except Exception as error:
-                        self._error = error
-                if i_slot_prev is not None:
-                    self._free_slots.put(i_slot_prev)
-                i_slot_prev, i_slot_pending = i_slot_pending, None
-            if i_slot is None:
-                break
-            i_slot_pending = i_slot
+            if self._error is None and self._fault is None:
+                try:
+                    # The first frame of a chunk is stored whole, the others as their difference with the previous
+                    # frame, block-sparse either way (see BLOCK_SIZE)
+                    is_delta = self._n_chunk_frames > 0
+                    frames = self._slots[i_slot, :n_frames]
+                    frame_prev = self._slots[i_slot_prev, n_frames_prev - 1] if is_delta else frames[0]
+                    if self._is_device_encoded:
+                        # The device took the difference of the part before the scalars and gathered its changed
+                        # blocks (see '_get_frame'), so only these cross to the host
+                        frame = frames[0]
+                        is_block_changed = self._slots_mask[i_slot]
+                        n_device_bytes = np.count_nonzero(is_block_changed) * BLOCK_SIZE
+                        blocks = self._device_blocks_bytes[i_slot][:n_device_bytes]
+                        self._slots_tc[i_slot, 0, :n_device_bytes].copy_(blocks, non_blocking=True)
+                        self._copy_stream.synchronize()
+                        n_encoded = _encode_frames(
+                            frame[np.newaxis, self._tail_offset :],
+                            frame_prev[self._tail_offset :],
+                            is_delta,
+                            self._encoded,
+                            self._encoded_blocks,
+                        )
+                        # The bitmap of the whole frame precedes its blocks
+                        n_tail_bitmap_bytes = (self._frame_size - self._tail_offset) // FRAME_ALIGNMENT
+                        bitmap = np.packbits(is_block_changed, bitorder="little")
+                        self._chunk_pieces.append(self._chunk_stream.compress(bitmap))
+                        self._chunk_pieces.append(self._chunk_stream.compress(self._encoded[:n_tail_bitmap_bytes]))
+                        self._chunk_pieces.append(self._chunk_stream.compress(frame[:n_device_bytes]))
+                        encoded = self._encoded[n_tail_bitmap_bytes:n_encoded]
+                    else:
+                        n_encoded = _encode_frames(frames, frame_prev, is_delta, self._encoded, self._encoded_blocks)
+                        encoded = self._encoded[:n_encoded]
+                    self._chunk_pieces.append(self._chunk_stream.compress(encoded))
+                    self._n_chunk_frames += n_frames
+                    if self._n_chunk_frames == self._options.chunk_size:
+                        self._close_chunk()
+                except Exception as error:
+                    self._error = error
+            if i_slot_prev is not None:
+                self._free_slots.put(i_slot_prev)
+            i_slot_prev, n_frames_prev = i_slot, n_frames
         self._close_chunk()
-        for i_slot in (i_slot_prev, i_slot_pending):
-            if i_slot is not None:
-                self._free_slots.put(i_slot)
+        if i_slot_prev is not None:
+            self._free_slots.put(i_slot_prev)
 
     def _close_chunk(self):
         """Close the open chunk and hand it to the I/O thread, on the compression thread."""
@@ -816,18 +900,25 @@ class TrajectoryFileWriter(BaseFileWriter):
         sim = self._source.sim
         if self._compression_thread is not None:
             # The frame the stop recorded carries the step counts of the live state. The whole state ends the file in
-            # its place (see CHECKPOINT_FILE_KINDS), so it is dropped. The compression thread holds that frame back
-            # until told, so its slot is still intact.
-            if self._i_last_slot is not None:
-                if self._slots_event[self._i_last_slot] is not None:
-                    self._slots_event[self._i_last_slot].synchronize()
+            # its place (see CHECKPOINT_FILE_KINDS), so it is dropped. It is the last of the slot being filled, which
+            # the compression thread has not been handed yet.
+            if self._i_slot is not None:
+                if self._slots_event[self._i_slot] is not None:
+                    self._slots_event[self._i_slot].record()
+                    self._slots_event[self._i_slot].synchronize()
                 field = self._steps_field
-                frame = self._slots[self._i_last_slot]
+                frame = self._slots[self._i_slot, self._n_slot_filled - 1]
                 # The slot holds the changed blocks when the device encodes the frame, which keeps the last frame
                 if self._is_device_encoded:
                     frame = tensor_to_array(self._staging[(self._i_frame - 1) % 2])
                 steps = frame[field.offset : field.offset + field.nbytes].view(field.dtype).reshape(field.shape)
-                self._is_last_dropped = np.array_equal(steps, tensor_to_array(sim.steps))
+                n_frames = self._n_slot_filled - np.array_equal(steps, tensor_to_array(sim.steps))
+                if n_frames > 0:
+                    self._frames.put(SlotFrames(self._i_slot, n_frames))
+                else:
+                    self._free_slots.put(self._i_slot)
+                self._i_slot = None
+                self._is_slot_full = False
             self._frames.put(None)
             self._compression_thread.join()
             self._compression_thread = None
