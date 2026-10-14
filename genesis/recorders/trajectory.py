@@ -119,7 +119,7 @@ class FrameField(NamedTuple):
     and memory order.
 
     The memory order lists the canonical axes from the slowest-varying to the fastest-varying one. A frame stores each
-    array in the memory order of the scene that wrote it, so that a layout-tagged array is copied as it lies.
+    array in the memory order of the scene that wrote it.
     """
 
     name: str
@@ -139,11 +139,7 @@ class SlotFrames(NamedTuple):
 
 
 class FileRecord(NamedTuple):
-    """A record to append to a trajectory file: its buffers in order, their byte count and the frames it holds.
-
-    The buffers are written one after the other, so that a record is never joined into one while holding the
-    interpreter lock the stepping thread waits on.
-    """
+    """A record to append to a trajectory file: its buffers in order, their byte count and the frames it holds."""
 
     buffers: list[bytes]
     n_bytes: int
@@ -200,21 +196,22 @@ def _frame_arrays(frame: np.ndarray, fields: list[FrameField], kinds: frozenset[
 def _arrays_fields(sim: "Simulator", kinds: frozenset[DataKind], drop_unused: bool) -> list[FrameField]:
     """Lay out the arrays of the given kinds back to back, from the start of a frame.
 
-    With 'drop_unused', an unused array is listed empty. Every unused array of the kinds a step frame holds is the
-    placeholder of a feature switched off (see 'maybe_shape'), which a restore leaves as built (see 'check_data').
-
-    Where zero-copy views exist, an array keeps the memory order of its view, a permutation of its canonical axes, so
-    that a frame is copied from the views as they lie (see 'TrajectoryFileWriter.build'). Otherwise it is canonical.
+    With 'drop_unused', an unused array is listed empty. Where zero-copy views exist, an array keeps the memory order
+    of its view, a permutation of its canonical axes. Otherwise it is canonical.
     """
     fields = []
     offset = 0
     for item in sim.data(kinds):
         if isinstance(item, ArrayItem):
             array = data_to_array(item.array)
+            # Every unused array of the kinds a step frame holds is the placeholder of a feature switched off (see
+            # 'maybe_shape'), which a restore leaves as built (see 'check_data')
             if drop_unused and not item.array.shape and not isinstance(item.array, torch.Tensor):
                 fields.append(FrameField(item.name, item.kind, (0,), array.dtype.str, offset, 0, (0,)))
                 continue
             axes = tuple(range(array.ndim))
+            # The memory order of the view, so that a frame is copied from the views as they lie, layout-tagged arrays
+            # included (see 'TrajectoryFileWriter.build')
             if gs.use_zerocopy and item.array.shape:
                 view = data_to_array(item.array, to_torch=True, copy=False)
                 # Sorting is stable, so the axes of equal strides, which only a size-1 axis can share, keep their order
@@ -254,8 +251,8 @@ def _frame_fields(sim: "Simulator", kinds: frozenset[DataKind], drop_unused: boo
     """Lay out one frame of the given kinds (see '_read_frame'), and return its fields and its size.
 
     A frame holds every array (see '_arrays_fields'), the step count of each environment included, then the scalars
-    (see 'ScalarItem') and the wall time of every phase of a step. The scalars and the timings live on the host, so
-    they start on a multiple of FRAME_ALIGNMENT, and so does the size of the frame. The bytes in between are zeros.
+    (see 'ScalarItem') and the wall time of every phase of a step. The scalars and the timings start on a multiple of
+    FRAME_ALIGNMENT, and so does the size of the frame. The bytes in between are zeros.
     """
     fields = _arrays_fields(sim, kinds, drop_unused)
     offset = sum(field.nbytes for field in fields)
@@ -291,14 +288,12 @@ def _write_frame_tail(
 
 
 def _read_arrays(arrays: dict[str, ArrayItem], fields: list[FrameField]) -> np.ndarray:
-    """Return the given arrays as a flat uint8 buffer, laid out as their fields state (see '_arrays_fields').
-
-    Where zero-copy views exist the arrays are concatenated on the device and cross to the host once. Otherwise each
-    array crosses on its own, to be concatenated on the host.
-    """
+    """Return the given arrays as a flat uint8 buffer, laid out as their fields state (see '_arrays_fields')."""
     parts = [(arrays[field.name].array, field.axes) for field in fields if field.name in arrays and field.nbytes]
     if not parts:
         return np.empty((0,), dtype=np.uint8)
+    # Where zero-copy views exist the arrays are concatenated on the device and cross to the host once. Otherwise each
+    # array crosses on its own, to be concatenated on the host.
     if gs.use_zerocopy:
         views = [
             data_to_array(array, to_torch=True).permute(axes).reshape(-1).view(torch.uint8) for array, axes in parts
@@ -338,9 +333,9 @@ def _encode_device_frame(
     """Gather on the device the blocks of a frame that hold a non-zero byte, of its difference with the previous frame.
 
     The frame is concatenated from its views into the buffer 'i_staging' of the two in 'staging'. With 'is_delta', the
-    other buffer, which holds the previous frame, takes the difference. The changed blocks go to the front of 'blocks',
-    in order, and 'is_block_changed' receives which blocks they are. 'event' is recorded once both have landed. The
-    number of gathered indices is fixed, so that nothing waits on the device and a CUDA graph can capture the whole.
+    other buffer, which holds the previous frame, takes the difference. 'blocks', as large as the frame, receives the
+    changed blocks at its front, in order, and 'is_block_changed' which blocks they are. 'event' is recorded once both
+    have landed.
     """
     frame = staging[i_staging]
     torch.cat(frame_views, out=frame[:device_end])
@@ -349,6 +344,9 @@ def _encode_device_frame(
         frame = torch.bitwise_xor(frame_prev, frame, out=frame_prev)
     frame_blocks = frame.view(torch.int64).view((-1, BLOCK_SIZE // 8))
     is_frame_block_changed = frame_blocks.any(dim=1)
+    # The indices of the changed blocks are padded with the first block up to the number of blocks, so that nothing
+    # waits on the device for their count and a CUDA graph can capture the whole. Only the leading gathered blocks are
+    # changed ones, as many as the mask marks.
     blocks_idx = torch.nonzero_static(is_frame_block_changed, size=frame_blocks.shape[0], fill_value=0)[:, 0]
     torch.index_select(frame_blocks, 0, blocks_idx, out=blocks)
     is_block_changed.copy_(is_frame_block_changed, non_blocking=True)
@@ -486,15 +484,14 @@ class TrajectoryFileWriter(BaseFileWriter):
     """Write the frames of a scene to a trajectory file (see TrajectoryFile), one chunk at a time.
 
     Each frame captures the state a step starts from, control inputs included, since it is read before the step. The
-    stepping thread copies each frame into one of a few slots allocated at build, small frames sharing a slot, and hands
-    a full slot to a compression thread, which streams its frames through the compressor as their XOR with the previous
-    frame of their chunk. Unchanged bytes thus become zeros the compressor removes. On CUDA the device takes the XOR of
-    a frame filling a slot alone before the copy, which spares the compression thread a pass over the frame and the copy
-    the unchanged bytes. A completed chunk goes to a third thread, which appends it to the file. A step costs one copy
-    of the frame, issued without waiting for a GPU to finish the step: the compression thread waits for the copy to land
-    instead. The step waits only when every slot is taken, which happens when the frames are compressed slower than the
-    scene steps. The model parameters change through setters alone, so they are recorded ahead of the first frame and of
-    the first frame after a setter changed them, in a record of their own.
+    stepping thread copies each frame into one of a few slots allocated at build (see SLOT_BYTES) and hands full slots
+    to a compression thread, which streams their frames through the compressor as their XOR with the previous frame of
+    their chunk. Unchanged bytes thus become zeros the compressor removes. A completed chunk goes to a third thread,
+    which appends it to the file. A step costs one copy of the frame, issued without waiting for a GPU to finish the
+    step: the compression thread waits for the copy to land instead. The step waits only when every slot is taken,
+    which happens when the frames are compressed slower than the scene steps. The model parameters change through
+    setters alone, so they are recorded ahead of the first frame and of the first frame after a setter changed them, in
+    a record of their own.
     """
 
     def build(self):
@@ -714,11 +711,12 @@ class TrajectoryFileWriter(BaseFileWriter):
     def _get_frame(self):
         """Copy the frame of the current state into the slot being filled and return the slot.
 
-        A full slot goes to the compression thread when the next frame comes, so that the stop can drop the frame it
-        recorded (see 'cleanup'). The model parameters go to the compression thread ahead of the slot of the frame, when
-        it is the first or a setter changed them since the previous one.
+        The model parameters go to the compression thread ahead of the slot of the frame, when it is the first or a
+        setter changed them since the previous one.
         """
         sim = self._source.sim
+        # A full slot goes to the compression thread when the next frame comes, so that the stop can drop the frame it
+        # recorded (see 'cleanup')
         if self._is_slot_full:
             self._frames.put(SlotFrames(self._i_slot, self._n_slot_filled))
             self._i_slot = None
@@ -782,9 +780,8 @@ class TrajectoryFileWriter(BaseFileWriter):
     def _compress_frames(self):
         """Append the frames of the queued slots to the open chunk in step order, on the compression thread.
 
-        The slot holding the previous frame is kept until the next slot takes its difference with it. A failure is
-        raised on the stepping thread (see 'step'), and the slots that follow are released unwritten so the stepping
-        thread never waits on one.
+        A failure is raised on the stepping thread (see 'step'), and the slots that follow are released unwritten so the
+        stepping thread never waits on one.
         """
         # The changed blocks are copied on a stream of their own, made current for this thread once, as switching to it
         # for each frame costs more host time than the copy
@@ -851,6 +848,7 @@ class TrajectoryFileWriter(BaseFileWriter):
                         self._close_chunk()
                 except Exception as error:
                     self._error = error
+            # The slot holding the previous frame is kept until the next slot takes its difference with it
             if i_slot_prev is not None:
                 self._free_slots.put(i_slot_prev)
             i_slot_prev, n_frames_prev = i_slot, n_frames
@@ -870,7 +868,9 @@ class TrajectoryFileWriter(BaseFileWriter):
             payload_size = sum(len(piece) for piece in self._chunk_pieces)
             chunk_header = CHUNK_MAGIC + CHUNK_HEADER.pack(self._n_chunk_frames, payload_size, payload_crc)
             # The records of model parameters go ahead of the chunk whose frames hold them, in one record, so that a
-            # file closed at its max_size never ends on parameters without their frames
+            # file closed at its max_size never ends on parameters without their frames. The pieces are written one
+            # after the other, as joining them would copy the chunk while holding the interpreter lock the stepping
+            # thread waits on.
             buffers = [*self._info_records, chunk_header, *self._chunk_pieces]
             record = FileRecord(buffers, sum(len(buffer) for buffer in buffers), self._n_chunk_frames)
             self._info_records.clear()
@@ -1129,8 +1129,9 @@ class Trajectory:
         return self._layout.n_envs
 
     def frame(self, index: int, kinds: frozenset[DataKind] = frozenset(DataKind)) -> dict[str, np.ndarray]:
-        """Return the arrays of frame 'index' of the given kinds by name, shaped as the scene holds them. A negative
-        'index' counts from the end.
+        """Return the arrays of the given kinds that a frame holds, by name, shaped as the scene holds them.
+
+        'index' is the frame, counted from the end when negative.
         """
         try:
             index = range(len(self))[index]
