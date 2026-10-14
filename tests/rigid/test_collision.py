@@ -641,10 +641,13 @@ def test_box_contact_minimal_separation(detection, show_viewer, tol):
             assert (normals_overlap[is_deepest] - depths[is_deepest] <= contacts_tol[is_deepest]).all()
 
             # A contact lies midway between its witnesses, each on the surface of its own box. Rebuilt along the normal,
-            # the witnesses of GJK and MPR, which lie apart along another direction, may land past the surfaces by up to
-            # twice the tolerance, and those of a perturbed contact, whose depth is a lower bound, inside the boxes by
-            # up to five times it.
-            witnesses_tol_out, witnesses_tol_in = (1.0, 1.0) if detection == "box_box" else (2.0, 5.0)
+            # the witnesses of GJK, which lie apart along another direction, may land past the surfaces by up to twice
+            # the tolerance, and those of a perturbed contact, whose depth is a lower bound, inside the boxes by up to
+            # five times it. MPR approximates the depth of a perturbed contact further, up to five times the tolerance
+            # either way.
+            witnesses_tol_out, witnesses_tol_in = {"box_box": (1.0, 1.0), "gjk": (2.0, 5.0), "mpr": (5.0, 5.0)}[
+                detection
+            ]
             witnesses = (
                 positions[:, None] + 0.5 * np.array((1.0, -1.0))[:, None] * depths[:, None, None] * normals_ab[:, None]
             )
@@ -1112,7 +1115,9 @@ def test_convex_collision_across_geom_scales(gjk_collision, show_viewer, tol):
     assert (contacts["penetration"][is_box & ~is_pressed] <= GEOM_SIZE).all()
     is_lamp = contacts["geom_b"] == lamp.geoms[0].idx
     assert is_lamp.any()
-    assert_allclose(contacts["penetration"][is_lamp].max(), hull_depth, atol=1e-7)
+    # MPR stops refining the depth once it moves by less than its convergence tolerance, relative to the pair scale
+    depth_tol = 1e-7 if gjk_collision else 1e-5 * 0.5 * np.linalg.norm(np.ptp(finger_verts, axis=0))
+    assert_allclose(contacts["penetration"][is_lamp].max(), hull_depth, atol=depth_tol)
     offset = (geom_grazing.get_pos() - box.get_pos()) @ face_normal
     assert face_offset - tol <= offset <= face_offset + GEOM_SIZE
 

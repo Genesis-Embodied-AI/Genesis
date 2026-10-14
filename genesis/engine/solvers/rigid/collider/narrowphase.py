@@ -1818,7 +1818,6 @@ def func_prefer_gjk_refinement(
     gb_pos: qd.types.vector(3),
     gb_quat: qd.types.vector(4),
     geom_pair_scale: float,
-    tolerance: float,
     collider_state: array_class.ColliderState,
     mpr_state: array_class.MPRState,
     dyn_info: array_class.DynInfo,
@@ -1827,40 +1826,18 @@ def func_prefer_gjk_refinement(
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
 ):
-    """Whether GJK should refine the contact MPR resolved, decided on what that contact's depth is worth.
+    """Whether GJK should refine the contact MPR resolved, on an unconverged portal or a cold non-minimal one.
 
-    Nothing guarantees the portal MPR converged on is the globally minimal one, and the risk it is not grows with the
-    overlap, so the depth is compared against a threshold bounded inside [tolerance, overlap_ratio * pair scale]: a
-    depth at or below the manifold tolerance never refines - it carries nothing a refinement could act on, and the
-    refinement is the arm that can fail to return a contact at all - while a depth past the overlap cap always does.
-    An EXACT portal recovers the true depth (Thm 4.2) and earns the larger cap once a warm cache corroborates it; the
-    warm cache also tightens the threshold to the jump over the cached depth, so a depth that grew by more than
-    mpr_to_gjk_penetration_ratio in one step refines. A cold pair whose portal only bounds the depth gates on the
-    tolerance, as does a depth MPR could not stand behind at all - unconverged, or read off an extrapolation of the
-    portal's plane - whatever the cache says.
-
-    A cold contact the threshold would accept is checked against the overlap of both geoms along the frame axes of
-    either: a depth exceeding it along one of them proves the portal non-minimal, and refines whatever its value. MPR
+    A depth MPR could not converge on always refines. A cold contact is also checked against the overlap of both geoms
+    along the frame axes of either: a depth exceeding it along one of them proves the portal non-minimal and refines. MPR
     searches along the line joining the geom centers, which runs sideways between flat geoms stacked near their edges,
-    so a shallow depth may still come with a wrong normal.
+    so a shallow depth may still come with a wrong normal. Every other contact keeps the portal of MPR, whose depth may
+    exceed the minimal one by a margin that leaves the dynamics plausible.
     """
     cached_penetration = collider_state.contact_cache.penetration[i_pair, i_b]
-    overlap_ratio = collider_info.mpr_to_gjk_overlap_ratio[None]
-    if portal_status == PORTAL_STATUS.EXACT and cached_penetration > 0.0:
-        overlap_ratio = collider_info.mpr_to_gjk_overlap_ratio_valid[None]
-    gjk_threshold = qd.max(overlap_ratio * geom_pair_scale, tolerance)
-    if cached_penetration > 0.0:
-        gjk_threshold = qd.math.clamp(
-            collider_info.mpr_to_gjk_penetration_ratio[None] * cached_penetration, tolerance, gjk_threshold
-        )
-    elif portal_status != PORTAL_STATUS.EXACT:
-        # A cold pair carries no history to weigh the depth against, so MPR is trusted to the overlap cap only on a
-        # portal that recovers the true depth; anything less gates on the tolerance until the cache warms.
-        gjk_threshold = tolerance
-    if (portal_status == PORTAL_STATUS.UNCONVERGED) or (portal_status == PORTAL_STATUS.EXTRAPOLATED):
-        gjk_threshold = tolerance
-    # The support queries are too costly for every contact, so a warm pair relies on the jump of its depth above
-    if cached_penetration <= 0.0 and 0.0 < penetration and penetration <= gjk_threshold:
+    is_gjk_preferred = portal_status == PORTAL_STATUS.UNCONVERGED
+    # The support queries are too costly for every contact, so only a cold one is checked
+    if not is_gjk_preferred and cached_penetration <= 0.0 and 0.0 < penetration:
         EPS = rigid_info.EPS[None]
         R_a = gu.qd_quat_to_R(ga_quat, EPS)
         R_b = gu.qd_quat_to_R(gb_quat, EPS)
@@ -1911,9 +1888,8 @@ def func_prefer_gjk_refinement(
                     has_point = True
             if has_point:
                 depths_lower = qd.max(depths_lower, directions @ point)
-        if is_portal_non_minimal:
-            gjk_threshold = gs.qd_float(0.0)
-    return penetration > gjk_threshold
+        is_gjk_preferred = is_portal_non_minimal
+    return is_gjk_preferred and 0.0 < penetration
 
 
 @qd.func
@@ -2696,7 +2672,6 @@ def func_convex_convex_contact(
                                 gb_pos_current,
                                 gb_quat_current,
                                 geom_pair_scale,
-                                tolerance,
                                 collider_state,
                                 mpr_state,
                                 dyn_info,
@@ -3321,7 +3296,6 @@ def _func_multicontact_detect(
                                 gb_pos_current,
                                 gb_quat_current,
                                 geom_pair_scale,
-                                tolerance,
                                 collider_state,
                                 mpr_state,
                                 dyn_info,
@@ -4077,7 +4051,6 @@ def func_narrowphase_contact0(
                             gb_pos,
                             gb_quat,
                             geom_pair_scale,
-                            tolerance,
                             collider_state,
                             mpr_state,
                             dyn_info,

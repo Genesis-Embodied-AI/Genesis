@@ -2163,9 +2163,6 @@ class ColliderInfo:
     # multi contact perturbation and tolerance
     mc_perturbation: qd.Tensor
     mc_tolerance: qd.Tensor
-    mpr_to_gjk_overlap_ratio: qd.Tensor
-    mpr_to_gjk_overlap_ratio_valid: qd.Tensor
-    mpr_to_gjk_penetration_ratio: qd.Tensor
     # differentiable contact tolerance
     diff_pos_tolerance: qd.Tensor
     diff_normal_tolerance: qd.Tensor
@@ -2215,9 +2212,6 @@ def get_collider_info(
         terrain_xyz_maxmin=V(dtype=gs.qd_float, shape=(6,)),
         mc_perturbation=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mc_perturbation"]),
         mc_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mc_tolerance"]),
-        mpr_to_gjk_overlap_ratio=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mpr_to_gjk_overlap_ratio"]),
-        mpr_to_gjk_overlap_ratio_valid=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mpr_to_gjk_overlap_ratio_valid"]),
-        mpr_to_gjk_penetration_ratio=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mpr_to_gjk_penetration_ratio"]),
         diff_pos_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["diff_pos_tolerance"]),
         diff_normal_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["diff_normal_tolerance"]),
         contact_pruning_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["contact_pruning_tolerance"]),
