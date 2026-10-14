@@ -197,8 +197,13 @@ def test_partition_logics(show_viewer, n_envs, multi_free_body_path):
 def test_partition_maximal_and_invariance(show_viewer, fixed_base_dual_arm):
     # The dual arm hanging from a fixed torso against its twin whose free torso is welded to the world at runtime:
     # the twin is one island throughout, the fixed one splits per arm until the arms touch, and both fall alike. The
-    # arms of the first env start lower, so its islands merge first.
+    # arms of the first env start lower, so its islands merge first. The arms start off mirror images, since their
+    # contact would otherwise have two directions of least penetration, and the elliptic friction cone holds them at
+    # rest against each other, where the pyramidal one lets them creep at a rate that differs between the twins.
     scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            friction_cone=gs.friction_cone.elliptic,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.5, -4.0, 1.5),
             camera_lookat=(1.5, 0.0, 0.8),
@@ -221,8 +226,8 @@ def test_partition_maximal_and_invariance(show_viewer, fixed_base_dual_arm):
     )
     scene.build(n_envs=2)
     scene.rigid_solver.add_weld_constraint(dual_arm_welded.base_link_idx, plane.base_link_idx)
-    dual_arm.set_dofs_position([[0.9, -0.9], [0.0, 0.0]])
-    dual_arm_welded.set_dofs_position([[0.9, -0.9], [0.0, 0.0]], dofs_idx_local=[6, 7])
+    dual_arm.set_dofs_position([[0.9, -0.8], [0.1, 0.0]])
+    dual_arm_welded.set_dofs_position([[0.9, -0.8], [0.1, 0.0]], dofs_idx_local=[6, 7])
     n_islands = scene.rigid_solver.constraint_solver.constraint_state.island.n_islands
 
     # The welded dual arm is one island, the two arms of the fixed dual arm are two islands until they touch, one from
