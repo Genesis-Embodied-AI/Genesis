@@ -9,7 +9,7 @@ import pytest
 
 import genesis as gs
 from genesis.options.sensors import RasterizerCameraOptions
-from genesis.recorders.trajectory import TRAJECTORY_FORMAT, Trajectory
+from genesis.recorders.trajectory import STEPS_FIELD, TRAJECTORY_FORMAT, Trajectory
 from genesis.utils.misc import tensor_to_array
 from genesis.vis.keybindings import Key, KeyAction, Keybind, KeyMod, MouseButton
 from genesis.vis.viewer_plugins.plugins.mouse_interaction import GRAB_ACC
@@ -91,8 +91,9 @@ def test_default_plugin(n_envs, monkeypatch, tmp_path):
             euler=(30, 40, 0),
         )
     )
+    # Frames recorded every other step, so that replaying them holds each frame for the two steps it spans
     trajectory_path = tmp_path / f"run{TRAJECTORY_FORMAT}"
-    scene.start_recording(gs.recorders.TrajectoryFile(filename=str(trajectory_path)))
+    scene.start_recording(gs.recorders.TrajectoryFile(filename=str(trajectory_path), hz=50.0))
     scene.build(n_envs=n_envs)
 
     pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
@@ -118,13 +119,17 @@ def test_default_plugin(n_envs, monkeypatch, tmp_path):
     scene.step()
     assert n_paced == 1
 
-    # Replaying a trajectory seeks its frames rather than stepping, and still plays each frame at one step of wall time
-    scene.step()
+    # Replaying a trajectory seeks its frames rather than stepping, and still plays it at one step of wall time per
+    # step: the first frame for one, and every next frame for each step since the previous one.
+    for _ in range(4):
+        scene.step()
     scene.stop_recording()
     trajectory = Trajectory(trajectory_path, scene=scene)
+    steps_first, steps_last = (trajectory.frame(index)[STEPS_FIELD].max() for index in (0, -1))
+    assert len(trajectory) < steps_last - steps_first + 1
     n_paced = 0
     trajectory.play()
-    assert n_paced == len(trajectory)
+    assert n_paced == steps_last - steps_first + 1
 
     assert len(pyrender_viewer._keybindings) > 0, "Expected default keybindings to be registered."
 
