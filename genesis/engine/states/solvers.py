@@ -1,5 +1,4 @@
 import dataclasses
-from typing import NamedTuple
 
 import numpy as np
 import torch
@@ -23,34 +22,6 @@ class SolverCheckpoint:
     arrays: dict[str, np.ndarray | torch.Tensor]
     configs: dict[str, object]
     kinds: frozenset[DataKind]
-
-
-@dataclasses.dataclass
-class KinematicSolverCheckpoint(SolverCheckpoint):
-    """A SolverCheckpoint plus the two forward-kinematics flags of a kinematic or rigid solver,
-    'is_forward_pos_updated' and 'is_forward_vel_updated'.
-
-    The flags decide whether the next step recomputes the Cartesian pose and velocity of the links. Recomputing them
-    where the saved scene skipped it rounds differently on some backends, so the flags travel with the derived arrays
-    they describe.
-    """
-
-    is_forward_pos_updated: bool
-    is_forward_vel_updated: bool
-
-
-class FrameField(NamedTuple):
-    """Where one array stands in a trajectory frame.
-
-    The name, canonical shape, numpy dtype string, byte offset and byte length cut a frame back into its arrays without
-    the scene.
-    """
-
-    name: str
-    shape: tuple[int, ...]
-    dtype: str
-    offset: int
-    nbytes: int
 
 
 @dataclasses.dataclass

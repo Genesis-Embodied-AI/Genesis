@@ -7,9 +7,9 @@ import genesis as gs
 from genesis.options.morphs import Morph
 from genesis.options.solvers import IPCCouplerOptions, LegacyCouplerOptions, SAPCouplerOptions
 from genesis.repr_base import RBC
-from genesis.utils.array_class import DataItem, DataKind
+from genesis.utils.array_class import DataItem, DataKind, iter_data
 from genesis.utils.misc import indices_to_mask
-from genesis.utils.tools import FPSTracker
+from genesis.utils.tools import StepTimer
 
 from .couplers import IPCCoupler, LegacyCoupler, SAPCoupler
 from .entities import HybridEntity
@@ -55,13 +55,7 @@ class Simulator(RBC):
 
     def __init__(self, scene: "Scene", options: "SceneOptions"):
         self._scene = scene
-        # The environment count the FPS log reports is known at `build`
-        self._fps_tracker = FPSTracker(
-            n_envs=0,
-            alpha=options.profiling.FPS_tracker_alpha,
-            timings_window=options.profiling.timings_window,
-            log=options.profiling.show_FPS,
-        )
+        self._step_timer = StepTimer()
 
         # options
         self.options = options.sim
@@ -163,7 +157,6 @@ class Simulator(RBC):
 
     def build(self):
         self.n_envs = self.scene.n_envs
-        self._fps_tracker.n_envs = self.n_envs
         self._B = self.scene._B
         self._para_level = self.scene._para_level
 
@@ -238,6 +231,7 @@ class Simulator(RBC):
             if isinstance(entity, HybridEntity):
                 entity.build()
 
+        self._step_timer.add_phases("physics", "sensors")
         self._sensor_manager.build()
 
     def destroy(self):
@@ -267,16 +261,22 @@ class Simulator(RBC):
         self._sensor_manager.reset(envs_idx=envs_idx)
 
     def data(self, kinds: frozenset[DataKind]) -> Iterator[DataItem]:
-        """Yield every item of the given kinds the active solvers hold, each under the class name of its solver."""
+        """Yield every item of the requested kinds that the simulator and its active solvers hold.
+
+        The items of the simulator are named under 'Simulator', and the ones of a solver under its class name.
+        """
         if isinstance(self._coupler, IPCCoupler):
             gs.raise_exception(
                 "A scene coupled by IPC cannot be checkpointed yet: the IPC world holds state of its own."
             )
+        for item in iter_data(self, "steps", DataKind.STATE):
+            if item.kind in kinds:
+                yield item._replace(name=f"Simulator.{item.name}")
         for solver in self._active_solvers:
             prefix = type(solver).__name__
-            for name, value, kind in solver.data:
-                if kind in kinds:
-                    yield DataItem(f"{prefix}.{name}", value, kind)
+            for item in solver.data:
+                if isinstance(item, DataItem) and item.kind in kinds:
+                    yield item._replace(name=f"{prefix}.{item.name}")
 
     def __getstate__(self) -> SimulatorCheckpoint:
         """Return a SimulatorCheckpoint of the simulation, for '__setstate__' to restore."""
@@ -355,7 +355,7 @@ class Simulator(RBC):
         if not in_backward:
             self._steps += 1
 
-        with self._fps_tracker.phase("physics"):
+        with self._step_timer.phase("physics"):
             if self._rigid_only and not self._requires_grad:  # "Only Advance!" --Thomas Wade :P
                 for _ in range(self._substeps):
                     self.rigid_solver.substep(self.cur_substep_local)
@@ -372,7 +372,7 @@ class Simulator(RBC):
             if self.rigid_solver.is_active:
                 self.rigid_solver.clear_external_force()
 
-        with self._fps_tracker.phase("sensors"):
+        with self._step_timer.phase("sensors"):
             self._sensor_manager.step()
 
     def _step_grad(self):
@@ -581,9 +581,9 @@ class Simulator(RBC):
         return self.f_global_to_s_local(self._cur_substep_global)
 
     @property
-    def fps_tracker(self):
-        """The tracker timing the phases of the steps and logging the step rate (FPSTracker in genesis.utils.tools)."""
-        return self._fps_tracker
+    def step_timer(self) -> StepTimer:
+        """The timer of the phases of the steps."""
+        return self._step_timer
 
     @property
     def cur_step_global(self):

@@ -19,7 +19,7 @@ import genesis.utils.geom as gu
 from genesis.utils import warnings as warnings_mod
 from genesis.utils.image_exporter import as_grayscale_image
 from genesis.utils.misc import tensor_to_array
-from genesis.utils.tools import FPSTracker
+from genesis.utils.tools import RunningMean
 from genesis.utils.urdf import compose_inertial_properties
 from genesis.utils.warnings import warn_once
 
@@ -174,6 +174,12 @@ def test_geom_quadrants_vs_tensor_consistency(batch_shape):
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
 def test_geom_numpy_vs_torch_consistency(batch_shape, tol):
     for py_func, shapes_in, shapes_out in (
+        (gu.quat_to_R, [[4]], [[3, 3]]),
+        (gu.quat_to_xyz, [[4]], [[3]]),
+        (partial(gu.quat_to_xyz, rpy=True), [[4]], [[3]]),
+        (partial(gu.xyz_to_quat, rpy=True), [[3]], [[4]]),
+        (gu.transform_by_quat, [[3], [4]], [[3]]),
+        (gu.transform_quat_by_quat, [[4], [4]], [[4]]),
         (gu.slerp, [[4], [4], [1]], [[4]]),
         (gu.z_up_to_R, [[3]], [[3, 3]]),
         (gu.z_up_to_R, [[3], [3], [3, 3]], [[3, 3]]),
@@ -190,6 +196,17 @@ def test_geom_numpy_vs_torch_consistency(batch_shape, tol):
             # Axis-aligned vectors hit the degenerate branches: poles, up colinear with z, coincident pos and lookat
             if batch_shape and shape_args[i] == [3]:
                 np_arg[..., :6, :] = np.concatenate((np.eye(3), -np.eye(3)))
+            # Quaternions of Euler angles away from the gimbal lock, near which fp32 angles lose all precision, then
+            # quaternions of pitch +-pi/2 at the gimbal lock, of both conventions for the last two
+            if shape_args[i] == [4]:
+                np_arg = gu.xyz_to_quat(np_arg[..., :3])
+            if batch_shape and shape_args[i] == [4]:
+                np_arg[..., :4, :] = (
+                    (0.5 * math.sqrt(2.0), 0.0, 0.5 * math.sqrt(2.0), 0.0),
+                    (0.5 * math.sqrt(2.0), 0.0, -0.5 * math.sqrt(2.0), 0.0),
+                    (0.5, 0.5, 0.5, 0.5),
+                    (0.5, -0.5, 0.5, 0.5),
+                )
             tc_arg = torch.as_tensor(np_arg, dtype=gs.tc_float, device=gs.device)
 
             if i < num_inputs:
@@ -296,7 +313,9 @@ def test_geom_tensor_identity(batch_shape):
         np_args, tc_args = [], []
         for shape_arg in (*shape_args, shape_args[0]):
             if tuple(shape_arg) == (3, 3):
-                np_arg = gu.rotvec_to_R(np.random.randn(*batch_shape, 3).clip(-1.0, 1.0).astype(gs.np_float))
+                # Rotation angles up to pi give rotation matrices of negative trace, whose quaternion pivots elsewhere
+                rotvec = np.random.randn(*batch_shape, 3).clip(-1.0, 1.0) * (math.pi / math.sqrt(3.0))
+                np_arg = gu.rotvec_to_R(rotvec.astype(gs.np_float))
             else:
                 np_arg = np.random.randn(*batch_shape, *shape_arg).clip(-1.0, 1.0).astype(gs.np_float)
             tc_arg = torch.as_tensor(np_arg, dtype=gs.tc_float, device=gs.device)
@@ -317,9 +336,10 @@ def test_slerp(batch_shape, tol):
     INTERP_RATIO = 0.7
 
     numel = math.prod(batch_shape)
-    q0 = np.random.rand(numel, 4)
+    # Quaternions of both signs, so that some pairs interpolate along the arc towards the opposite of the end one
+    q0 = np.random.randn(numel, 4)
     q0 /= np.linalg.norm(q0)
-    q1 = np.random.rand(numel, 4)
+    q1 = np.random.randn(numel, 4)
     q1 /= np.linalg.norm(q1)
 
     lerp_true = np.empty_like(q0)
@@ -340,6 +360,42 @@ def test_slerp(batch_shape, tol):
         # A single start quaternion is interpolated towards every end quaternion of the batch.
         lerp = gu.slerp(convert(q0[0]), q1_batch, convert(ratio))
         assert_allclose(lerp_from_one_true.reshape((*batch_shape, 4)), lerp, tol=tol)
+
+
+@pytest.mark.required
+def test_geom_torch_inside_enclosing_torch_compile(tol):
+    def fn(xyz, quat, other, vec_strided, vec_col, quat_row, ratio):
+        return (
+            gu.xyz_to_quat(xyz),
+            gu.quat_to_R(quat),
+            gu.quat_to_xyz(quat, rpy=True),
+            gu.R_to_quat(gu.quat_to_R(quat)),
+            gu.transform_quat_by_quat(quat, other),
+            gu.transform_by_quat(vec_strided, quat),
+            gu.inv_transform_by_quat(vec_col, quat_row),
+            gu.transform_by_quat(vec_col[0, 0], gu.inv_quat(quat)),
+            gu.slerp(quat, other, ratio),
+            gu.z_up_to_R(vec_strided),
+            gu.z_up_to_R(vec_strided, vec_col[0, 0]),
+        )
+
+    # Tracing alone checks that the functions build a single graph, without any compiler being needed
+    fn_compiled = torch.compile(fn, fullgraph=True, backend="eager")
+    # A second batch size makes the enclosing graph recompile with dynamic shapes
+    for n_a, n_b in ((6, 5), (3, 2)):
+        # A non-contiguous batch (transposed), a broadcast pair (n_a, 1) x (1, n_b), a single element against a batch
+        args = (
+            torch.randn((n_a, n_b, 3), dtype=gs.tc_float, device=gs.device),
+            gu.xyz_to_quat(torch.randn((n_a, n_b, 3), dtype=gs.tc_float, device=gs.device)),
+            gu.xyz_to_quat(torch.randn((n_a, n_b, 3), dtype=gs.tc_float, device=gs.device)),
+            torch.randn((n_b, n_a, 3), dtype=gs.tc_float, device=gs.device).transpose(0, 1),
+            torch.randn((n_a, 1, 3), dtype=gs.tc_float, device=gs.device),
+            gu.xyz_to_quat(torch.randn((1, n_b, 3), dtype=gs.tc_float, device=gs.device)),
+            torch.rand((n_a, n_b), dtype=gs.tc_float, device=gs.device),
+        )
+        for value_true, value in zip(fn(*args), fn_compiled(*args)):
+            assert value.shape == value_true.shape
+            assert_allclose(value, value_true, tol=tol)
 
 
 @pytest.mark.required
@@ -953,30 +1009,24 @@ def test_as_grayscale_image():
 
 
 @pytest.mark.required
-def test_fps_tracker():
-    n_envs = 23
-    tracker = FPSTracker(alpha=0.0, minimum_interval_seconds=0.1, n_envs=n_envs)
-    tracker.step(current_time=10.0)
-    assert not tracker.step(current_time=10.0)
-    assert not tracker.step(current_time=10.0)
-    assert not tracker.step(current_time=10.0)
-    fps = tracker.step(current_time=10.2)
-    # num envs * [num steps] / (delta time)
-    assert math.isclose(fps, n_envs * 4 / 0.2)
-
-    assert not tracker.step(current_time=10.21)
-    assert not tracker.step(current_time=10.22)
-    assert not tracker.step(current_time=10.29)
-    fps = tracker.step(current_time=10.31)
-    # num envs * [num steps] / (delta time)
-    assert math.isclose(fps, n_envs * 4 / 0.11)
-
-    assert not tracker.step(current_time=10.33)
-    assert not tracker.step(current_time=10.37)
-    assert not tracker.step(current_time=10.39)
-    fps = tracker.step(current_time=10.45)
-    # num envs * [num steps] / (delta time)
-    assert math.isclose(fps, n_envs * 4 / 0.14)
+def test_running_mean():
+    # A window mean covers the latest samples alone once there are enough, and an exponential mean starts from the first
+    window_mean = RunningMean(window=3)
+    for sample in (1.0, 2.0):
+        window_mean.update(sample)
+    assert math.isnan(window_mean.value)
+    for sample in (3.0, 10.0):
+        window_mean.update(sample)
+    assert math.isclose(window_mean.value, (2.0 + 3.0 + 10.0) / 3)
+    exponential_mean = RunningMean(alpha=0.25)
+    assert math.isnan(exponential_mean.value)
+    exponential_mean.update(4.0)
+    exponential_mean.update(8.0)
+    assert math.isclose(exponential_mean.value, 0.25 * 4.0 + 0.75 * 8.0)
+    with pytest.raises(gs.GenesisException, match="Exactly one of"):
+        RunningMean(window=3, alpha=0.25)
+    with pytest.raises(gs.GenesisException, match="one sample at least"):
+        RunningMean(window=0)
 
 
 @pytest.mark.required

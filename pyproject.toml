@@ -27,6 +27,8 @@ dependencies = [
     "moviepy>=2.0.0",
     # Streams video frames to file, for 'camera.start_recording' and the 'VideoFile' recorder
     "av",
+    # Compresses the frames of trajectory files, fast enough for the writer thread to keep pace with stepping
+    "zstandard",
     # Used by `pyrender` to manage onscreen graphical windows
     # * 2.1.8 breaks headless windowing, which is used in unit tests of the interactive viewer.
     # * 2.0.15 <= 2.1.8 breaks old-style option overwrite for string literal.
