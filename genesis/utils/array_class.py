@@ -1592,7 +1592,6 @@ class MPRInfo:
     CCD_EPS: qd.Tensor
     CCD_TOLERANCE: qd.Tensor
     CCD_ITERATIONS: qd.Tensor
-    CCD_EXTRAPOLATION_TOL: qd.Tensor
 
 
 def get_mpr_info(**kwargs):
@@ -1600,7 +1599,6 @@ def get_mpr_info(**kwargs):
         CCD_EPS=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["CCD_EPS"]),
         CCD_TOLERANCE=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["CCD_TOLERANCE"]),
         CCD_ITERATIONS=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["CCD_ITERATIONS"]),
-        CCD_EXTRAPOLATION_TOL=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["CCD_EXTRAPOLATION_TOL"]),
     )
 
 

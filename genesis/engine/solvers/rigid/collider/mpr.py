@@ -23,10 +23,6 @@ class MPR:
             CCD_TOLERANCE=1e-6 if rigid_solver._enable_mujoco_compatibility else 1e-5,
             # Bounds that refinement, which is not otherwise guaranteed to terminate.
             CCD_ITERATIONS=50,
-            # How far the origin's projection may extrapolate beyond the portal triangle, as a fraction of the triangle
-            # (barycentric), before the infinite-plane penetration is deemed an unreliable extrapolation (portal
-            # EXTRAPOLATED -> refine with GJK).
-            CCD_EXTRAPOLATION_TOL=1.0,
         )
         self.mpr_state = array_class.get_mpr_state(self._solver._B)
         # The scratch states of the split narrowphase, at the smallest size until 'activate' sizes them when it runs
@@ -533,12 +529,9 @@ def mpr_find_penetration(
                 penetration = direction.dot(mpr_state.simplex_support.v[1, i_b])
                 normal = -direction
 
-            # Classify what the depth is worth by how far the origin's projection extrapolates beyond the portal
-            # triangle. b1,b2,b3 are the (unnormalized) barycentric coordinates of that projection; all >= 0 means the
-            # origin projects inside, so the depth is exact (Thm 4.2 -> EXACT). Outside, -min(b)/sum is the
-            # extrapolation as a fraction of the triangle: a small overshoot leaves the depth a valid lower bound
-            # (Thm 4.3 -> LOWER_BOUND), a large one makes the infinite-plane depth an unreliable extrapolation
-            # (-> EXTRAPOLATED). The extrapolation is the criterion; the triangle's own shape matters only through it.
+            # Classify what the depth is worth by where the origin projects onto the portal triangle. b1,b2,b3 are the
+            # (unnormalized) barycentric coordinates of that projection: all >= 0 means the origin projects inside, so
+            # the depth is exact (Thm 4.2 -> EXACT), otherwise it is read off the plane of the triangle (-> APPROXIMATE).
             pv1 = mpr_state.simplex_support.v[1, i_b]
             pv2 = mpr_state.simplex_support.v[2, i_b]
             pv3 = mpr_state.simplex_support.v[3, i_b]
@@ -550,16 +543,12 @@ def mpr_find_penetration(
             min_b = qd.min(b1, qd.min(b2, b3))
             if not reached:
                 mpr_state.portal_status[i_b] = PORTAL_STATUS.UNCONVERGED
-            elif bsum <= collider_info.mpr.CCD_EPS[None] * babs:
-                # A portal spanning no area leaves every coordinate at zero, which satisfies min_b >= 0: the
-                # degeneracy test must come first or a portal whose depth means nothing reads as exact.
-                mpr_state.portal_status[i_b] = PORTAL_STATUS.EXTRAPOLATED
-            elif min_b >= 0.0:
+            elif min_b >= 0.0 and bsum > collider_info.mpr.CCD_EPS[None] * babs:
+                # A portal spanning no area leaves every coordinate at zero, which satisfies min_b >= 0, so it is
+                # excluded explicitly or a portal whose depth means nothing reads as exact.
                 mpr_state.portal_status[i_b] = PORTAL_STATUS.EXACT
-            elif (-min_b) <= collider_info.mpr.CCD_EXTRAPOLATION_TOL[None] * bsum:
-                mpr_state.portal_status[i_b] = PORTAL_STATUS.LOWER_BOUND
             else:
-                mpr_state.portal_status[i_b] = PORTAL_STATUS.EXTRAPOLATED
+                mpr_state.portal_status[i_b] = PORTAL_STATUS.APPROXIMATE
 
             is_col = True
             pos = mpr_find_pos(i_ga, i_gb, i_b, mpr_state, collider_info, rigid_config)
