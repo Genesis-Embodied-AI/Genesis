@@ -1806,14 +1806,26 @@ def func_recompute_perturbed_contact(
 
 @qd.func
 def func_prefer_gjk_refinement(
+    i_ga: int,
+    i_gb: int,
     i_pair: int,
     i_b: int,
+    i_scratch: int,
     portal_status: int,
     penetration: float,
+    ga_pos: qd.types.vector(3),
+    ga_quat: qd.types.vector(4),
+    gb_pos: qd.types.vector(3),
+    gb_quat: qd.types.vector(4),
     geom_pair_scale: float,
     tolerance: float,
     collider_state: array_class.ColliderState,
+    mpr_state: array_class.MPRState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
+    rigid_config: qd.template(),
+    collider_static_config: qd.template(),
 ):
     """Whether GJK should refine the contact MPR resolved, decided on what that contact's depth is worth.
 
@@ -1826,6 +1838,11 @@ def func_prefer_gjk_refinement(
     mpr_to_gjk_penetration_ratio in one step refines. A cold pair whose portal only bounds the depth gates on the
     tolerance, as does a depth MPR could not stand behind at all - unconverged, or read off an extrapolation of the
     portal's plane - whatever the cache says.
+
+    A cold contact the threshold would accept is checked against the overlap of both geoms along the frame axes of
+    either: a depth exceeding it along one of them proves the portal non-minimal, and refines whatever its value. MPR
+    searches along the line joining the geom centers, which runs sideways between flat geoms stacked near their edges,
+    so a shallow depth may still come with a wrong normal.
     """
     cached_penetration = collider_state.contact_cache.penetration[i_pair, i_b]
     overlap_ratio = collider_info.mpr_to_gjk_overlap_ratio[None]
@@ -1842,6 +1859,60 @@ def func_prefer_gjk_refinement(
         gjk_threshold = tolerance
     if (portal_status == PORTAL_STATUS.UNCONVERGED) or (portal_status == PORTAL_STATUS.EXTRAPOLATED):
         gjk_threshold = tolerance
+    # The support queries are too costly for every contact, so a warm pair relies on the jump of its depth above
+    if cached_penetration <= 0.0 and 0.0 < penetration and penetration <= gjk_threshold:
+        EPS = rigid_info.EPS[None]
+        R_a = gu.qd_quat_to_R(ga_quat, EPS)
+        R_b = gu.qd_quat_to_R(gb_quat, EPS)
+        # Both senses of the frame axes of either geom, one per row
+        directions = qd.Matrix.zero(gs.qd_float, 12, 3)
+        for i_dir in qd.static(range(12)):
+            for k in qd.static(range(3)):
+                if qd.static(i_dir < 6):
+                    directions[i_dir, k] = R_a[k, i_dir // 2]
+                else:
+                    directions[i_dir, k] = R_b[k, i_dir // 2 - 3]
+                if qd.static(i_dir % 2 == 1):
+                    directions[i_dir, k] = -directions[i_dir, k]
+        # The MPR convergence tolerance absorbs the depth error of a portal that is the minimal one
+        depth_max = penetration - collider_info.mpr.CCD_TOLERANCE[None] * geom_pair_scale
+        # Any known point of the Minkowski difference bounds from below its depth along every direction, so a direction
+        # is only queried while no known point rules it out. The portal vertices come first when MPR built a portal,
+        # its degenerate paths leaving them unwritten, then every support found.
+        depths_lower = qd.Vector([-1e20] * 12, dt=gs.qd_float)
+        is_portal_non_minimal = False
+        for i_point in range(15):
+            has_point = False
+            point = qd.Vector.zero(gs.qd_float, 3)
+            if i_point < 3:
+                if portal_status != PORTAL_STATUS.NONE:
+                    point = mpr_state.simplex_support.v[i_point + 1, i_scratch]
+                    has_point = True
+            elif not is_portal_non_minimal:
+                i_dir = i_point - 3
+                direction = qd.Vector([directions[i_dir, 0], directions[i_dir, 1], directions[i_dir, 2]])
+                if depths_lower[i_dir] < depth_max:
+                    point, _, _ = mpr.compute_support(
+                        i_ga,
+                        i_gb,
+                        i_b,
+                        direction,
+                        ga_pos,
+                        ga_quat,
+                        gb_pos,
+                        gb_quat,
+                        collider_state,
+                        dyn_info,
+                        collider_info,
+                        rigid_config,
+                        collider_static_config,
+                    )
+                    is_portal_non_minimal = direction.dot(point) < depth_max
+                    has_point = True
+            if has_point:
+                depths_lower = qd.max(depths_lower, directions @ point)
+        if is_portal_non_minimal:
+            gjk_threshold = gs.qd_float(0.0)
     return penetration > gjk_threshold
 
 
@@ -2613,14 +2684,26 @@ def func_convex_convex_contact(
 
                         if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
                             prefer_gjk = func_prefer_gjk_refinement(
+                                i_ga,
+                                i_gb,
                                 i_pair,
+                                i_b,
                                 i_b,
                                 mpr_state.portal_status[i_b],
                                 penetration,
+                                ga_pos_current,
+                                ga_quat_current,
+                                gb_pos_current,
+                                gb_quat_current,
                                 geom_pair_scale,
                                 tolerance,
                                 collider_state,
+                                mpr_state,
+                                dyn_info,
+                                rigid_info,
                                 collider_info,
+                                rigid_config,
+                                collider_static_config,
                             )
 
                     ### GJK, MJ_GJK
@@ -3226,14 +3309,26 @@ def _func_multicontact_detect(
                         # upgrading the whole pair, which keeps the MPR-first model.
                         if not is_initial_detection and is_col and not use_gjk:
                             is_gjk_preferred = func_prefer_gjk_refinement(
+                                i_ga,
+                                i_gb,
                                 i_pair,
                                 i_b,
+                                i_scratch,
                                 mpr_state.portal_status[i_scratch],
                                 penetration,
+                                ga_pos_current,
+                                ga_quat_current,
+                                gb_pos_current,
+                                gb_quat_current,
                                 geom_pair_scale,
                                 tolerance,
                                 collider_state,
+                                mpr_state,
+                                dyn_info,
+                                rigid_info,
                                 collider_info,
+                                rigid_config,
+                                collider_static_config,
                             )
                             if is_gjk_preferred:
                                 use_gjk = True
@@ -3970,14 +4065,26 @@ def func_narrowphase_contact0(
 
                     if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
                         prefer_gjk = func_prefer_gjk_refinement(
+                            i_ga,
+                            i_gb,
                             i_pair,
                             i_b,
+                            flat_idx,
                             mpr_state.portal_status[flat_idx],
                             penetration,
+                            ga_pos,
+                            ga_quat,
+                            gb_pos,
+                            gb_quat,
                             geom_pair_scale,
                             tolerance,
                             collider_state,
+                            mpr_state,
+                            dyn_info,
+                            rigid_info,
                             collider_info,
+                            rigid_config,
+                            collider_static_config,
                         )
 
             if is_col:
