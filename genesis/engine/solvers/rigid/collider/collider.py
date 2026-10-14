@@ -6,6 +6,7 @@ including broad-phase (sweep-and-prune), narrow-phase (convex-convex, SDF-based,
 terrain), and contact management.
 """
 
+import os
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
@@ -253,6 +254,11 @@ class Collider:
             has_prunable_contacts=has_prunable_contacts,
             n_contacts_per_convex_pair=n_contacts_per_convex_pair,
             n_contacts_per_nonconvex_pair=n_contacts_per_nonconvex_pair,
+            # PROTOTYPE: GS_SDF_PARALLEL=0 restores the serial non-convex vertex scan, for A/B comparisons.
+            nonconvex_parallel_scan=has_nonconvex_nonterrain and os.environ.get("GS_SDF_PARALLEL", "1") != "0",
+            nonconvex_scan_slots=16,
+            nonconvex_scan_chunks=64,
+            nonconvex_scan_keep=8,
             ccd_algorithm=ccd_algorithm,
         )
 
