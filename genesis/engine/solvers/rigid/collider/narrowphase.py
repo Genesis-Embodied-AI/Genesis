@@ -1877,15 +1877,17 @@ def func_prefer_gjk_refinement(
         # The MPR convergence tolerance absorbs the depth error of a portal that is the minimal one
         depth_max = penetration - collider_info.mpr.CCD_TOLERANCE[None] * geom_pair_scale
         # Any known point of the Minkowski difference bounds from below its depth along every direction, so a direction
-        # is only queried while no known point rules it out. The portal vertices come first, then every support found.
+        # is only queried while no known point rules it out. The portal vertices come first when MPR built a portal,
+        # its degenerate paths leaving them unwritten, then every support found.
         depths_lower = qd.Vector([-1e20] * 12, dt=gs.qd_float)
         is_portal_non_minimal = False
         for i_point in range(15):
             has_point = False
             point = qd.Vector.zero(gs.qd_float, 3)
             if i_point < 3:
-                point = mpr_state.simplex_support.v[i_point + 1, i_scratch]
-                has_point = True
+                if portal_status != PORTAL_STATUS.NONE:
+                    point = mpr_state.simplex_support.v[i_point + 1, i_scratch]
+                    has_point = True
             elif not is_portal_non_minimal:
                 i_dir = i_point - 3
                 direction = qd.Vector([directions[i_dir, 0], directions[i_dir, 1], directions[i_dir, 2]])

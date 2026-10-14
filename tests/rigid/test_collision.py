@@ -622,13 +622,13 @@ def test_box_contact_minimal_separation(detection, show_viewer, tol):
                 is_axis_followed = np.arccos(np.minimum(axes_cos, 1.0)) < MPR_AXIS_ANGLE_TOL
                 assert is_axis_followed.any(axis=-1).all()
                 if i_step == 0:
-                    # Detected from scratch, that axis overlaps no more than the face normals of either box, since a
-                    # face normal overlapping less proves the portal non-minimal and has GJK refine the contact, up to
-                    # the tilt of the perturbed contacts. Nearly parallel axes may both be followed, in which case the
-                    # normal can follow the shallower one.
+                    # Detected from scratch, the axis of every contact overlaps no more than the face normals of either
+                    # box, since a face normal overlapping less proves the portal non-minimal and has GJK refine the
+                    # contact, up to the tilt of the perturbed contacts. Nearly parallel axes may both be followed, in
+                    # which case the normal can follow the shallower one.
                     axes_depth_followed = np.where(is_axis_followed, axes_depth[envs_idx, pairs_idx], np.inf)
-                    pairs_axis_depth = np.full((N_ENVS, n_pairs), np.inf)
-                    np.minimum.at(pairs_axis_depth, (envs_idx, pairs_idx), axes_depth_followed.min(axis=-1))
+                    pairs_axis_depth = np.full((N_ENVS, n_pairs), -np.inf)
+                    np.maximum.at(pairs_axis_depth, (envs_idx, pairs_idx), axes_depth_followed.min(axis=-1))
                     pairs_faces_depth = axes_depth[..., :6].min(axis=-1)
                     assert (pairs_axis_depth - pairs_faces_depth <= pairs_tol)[is_pair_detected].all()
             else:
