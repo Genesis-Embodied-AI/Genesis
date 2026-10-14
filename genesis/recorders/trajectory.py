@@ -138,6 +138,18 @@ class SlotFrames(NamedTuple):
     n_frames: int
 
 
+class FileRecord(NamedTuple):
+    """A record to append to a trajectory file: its buffers in order, their byte count and the frames it holds.
+
+    The buffers are written one after the other, so that a record is never joined into one while holding the
+    interpreter lock the stepping thread waits on.
+    """
+
+    buffers: list[bytes]
+    n_bytes: int
+    n_frames: int
+
+
 class InfoRecord(NamedTuple):
     """The model parameters of the frames from a given one on, as a flat uint8 buffer.
 
@@ -540,6 +552,10 @@ class TrajectoryFileWriter(BaseFileWriter):
         # step frames leave out the 0-d arrays (see '_frame_fields'), whose content the step frames therefore lack.
         self._frame_views: list[np.ndarray | torch.Tensor] | None = None
         self._staging: torch.Tensor | None = None
+        # See DEVICE_ENCODED_FRAME_BYTES
+        self._is_device_encoded = (
+            gs.use_zerocopy and gs.backend == gs.cuda and self._frame_size > DEVICE_ENCODED_FRAME_BYTES
+        )
         # A slot holds several frames when they are small, at most a chunk of them, and a slot is handed over at the end
         # of a chunk (see '_get_frame'), so that its frames all belong to one chunk
         self._n_slot_frames = 1
@@ -551,10 +567,6 @@ class TrajectoryFileWriter(BaseFileWriter):
         self._slots_mask: np.ndarray | None = None
         self._copy_stream: torch.cuda.Stream | None = None
         self._frame_graphs: dict[tuple[int, ...], torch.cuda.CUDAGraph] = {}
-        # See DEVICE_ENCODED_FRAME_BYTES
-        self._is_device_encoded = (
-            gs.use_zerocopy and gs.backend == gs.cuda and self._frame_size > DEVICE_ENCODED_FRAME_BYTES
-        )
         if gs.use_zerocopy:
             self._frame_views = []
             for field in self._fields[: len(arrays)]:
@@ -668,7 +680,7 @@ class TrajectoryFileWriter(BaseFileWriter):
         self._fault: str | None = None
         self._error: Exception | None = None
         # The completed chunks handed to the I/O thread, in order, then None at the stop
-        self._records: queue.SimpleQueue[tuple[bytes, int] | None] = queue.SimpleQueue()
+        self._records: queue.SimpleQueue[FileRecord | None] = queue.SimpleQueue()
         self._pending_bytes = 0
         self._pending_bytes_changed = threading.Condition()
         self._compression_thread: threading.Thread | None = None
@@ -850,18 +862,22 @@ class TrajectoryFileWriter(BaseFileWriter):
             return
         try:
             self._chunk_pieces.append(self._chunk_stream.flush())
-            payload = b"".join(self._chunk_pieces)
-            chunk_header = CHUNK_MAGIC + CHUNK_HEADER.pack(self._n_chunk_frames, len(payload), zlib.crc32(payload))
-            # The records of model parameters go ahead of the chunk whose frames hold them, in one write, so that a file
-            # closed at its max_size never ends on parameters without their frames
-            record = b"".join((*self._info_records, chunk_header, payload))
+            payload_crc = 0
+            for piece in self._chunk_pieces:
+                payload_crc = zlib.crc32(piece, payload_crc)
+            payload_size = sum(len(piece) for piece in self._chunk_pieces)
+            chunk_header = CHUNK_MAGIC + CHUNK_HEADER.pack(self._n_chunk_frames, payload_size, payload_crc)
+            # The records of model parameters go ahead of the chunk whose frames hold them, in one record, so that a
+            # file closed at its max_size never ends on parameters without their frames
+            buffers = [*self._info_records, chunk_header, *self._chunk_pieces]
+            record = FileRecord(buffers, sum(len(buffer) for buffer in buffers), self._n_chunk_frames)
             self._info_records.clear()
             with self._pending_bytes_changed:
                 self._pending_bytes_changed.wait_for(
-                    lambda: self._pending_bytes == 0 or self._pending_bytes + len(record) <= MAX_PENDING_BYTES
+                    lambda: self._pending_bytes == 0 or self._pending_bytes + record.n_bytes <= MAX_PENDING_BYTES
                 )
-                self._pending_bytes += len(record)
-            self._records.put((record, self._n_chunk_frames))
+                self._pending_bytes += record.n_bytes
+            self._records.put(record)
         except Exception as error:
             self._error = error
         self._chunk_pieces.clear()
@@ -874,26 +890,24 @@ class TrajectoryFileWriter(BaseFileWriter):
         A failure is raised on the stepping thread (see 'step'), and the chunks that follow are dropped.
         """
         while True:
-            item = self._records.get()
-            if item is None:
+            record = self._records.get()
+            if record is None:
                 break
-            record, n_record_frames = item
             if self._error is None and self._file is not None:
                 try:
-                    self._write(record, n_record_frames)
+                    self._write(record)
                 except Exception as error:
                     self._error = error
             with self._pending_bytes_changed:
-                self._pending_bytes -= len(record)
+                self._pending_bytes -= record.n_bytes
                 self._pending_bytes_changed.notify()
 
-    def _write(self, record: bytes, n_record_frames: int):
+    def _write(self, record: FileRecord):
         """Append one record to the file, with the header ahead of the first, if the file may still grow by that much.
 
-        'n_record_frames' is the number of frames the record holds. A record the file cannot hold closes it and records
-        the fault.
+        A record the file cannot hold closes it and records the fault.
         """
-        n_bytes = len(self._header) + len(record)
+        n_bytes = len(self._header) + record.n_bytes
         if self._options.max_size is not None and self._written + n_bytes > self._options.max_size:
             self._file.close()
             self._file = None
@@ -910,14 +924,14 @@ class TrajectoryFileWriter(BaseFileWriter):
                     f"{self._n_frames} frames, and was closed."
                 )
             return
-        # Joining the header and the record would copy the description of the scene, megabytes with its meshes, while
-        # holding the interpreter lock the stepping thread waits on
+        # The header holds the description of the scene, megabytes with its meshes, so it is written on its own too
         self._file.write(self._header)
-        self._file.write(record)
+        for buffer in record.buffers:
+            self._file.write(buffer)
         self._file.flush()
         self._header = b""
         self._written += n_bytes
-        self._n_frames += n_record_frames
+        self._n_frames += record.n_frames
 
     def cleanup(self):
         sim = self._source.sim
@@ -952,7 +966,8 @@ class TrajectoryFileWriter(BaseFileWriter):
                 payload = self._compressor.compress(
                     _read_frame(sim, CHECKPOINT_FILE_KINDS, self._last_fields, self._last_frame_size)
                 )
-                self._write(LAST_MAGIC + LAST_HEADER.pack(len(payload), zlib.crc32(payload)) + payload, 1)
+                last_header = LAST_MAGIC + LAST_HEADER.pack(len(payload), zlib.crc32(payload))
+                self._write(FileRecord([last_header, payload], len(last_header) + len(payload), 1))
         finally:
             if self._file is not None:
                 self._file.close()
