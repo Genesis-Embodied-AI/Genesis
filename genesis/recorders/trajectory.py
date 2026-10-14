@@ -311,13 +311,14 @@ def _encode_device_frame(
     is_delta: bool,
     blocks: torch.Tensor,
     is_block_changed: torch.Tensor,
+    event: torch.cuda.Event,
 ) -> None:
     """Gather on the device the blocks of a frame that hold a non-zero byte, of its difference with the previous frame.
 
     The frame is concatenated from its views into the buffer 'i_staging' of the two in 'staging'. With 'is_delta', the
     other buffer, which holds the previous frame, takes the difference. The changed blocks go to the front of 'blocks',
-    in order, and 'is_block_changed' receives which blocks they are. The number of gathered indices is fixed, so that
-    nothing waits on the device and the operations can be captured in a CUDA graph.
+    in order, and 'is_block_changed' receives which blocks they are. 'event' is recorded once both have landed. The
+    number of gathered indices is fixed, so that nothing waits on the device and a CUDA graph can capture the whole.
     """
     frame = staging[i_staging]
     torch.cat(frame_views, out=frame[:device_end])
@@ -329,17 +330,19 @@ def _encode_device_frame(
     blocks_idx = torch.nonzero_static(is_frame_block_changed, size=frame_blocks.shape[0], fill_value=0)[:, 0]
     torch.index_select(frame_blocks, 0, blocks_idx, out=blocks)
     is_block_changed.copy_(is_frame_block_changed, non_blocking=True)
+    event.record()
 
 
 def _copy_device_frame(
-    frame_views: list[torch.Tensor], staging: torch.Tensor, device_end: int, slot: torch.Tensor
+    frame_views: list[torch.Tensor], staging: torch.Tensor, device_end: int, slot: torch.Tensor, event: torch.cuda.Event
 ) -> None:
     """Concatenate a frame on the device from its views, then copy it to the host without waiting for it to land.
 
-    'staging' receives the concatenated frame, and 'slot', page-locked, its copy.
+    'staging' receives the concatenated frame and 'slot', page-locked, its copy. 'event' is recorded once it lands.
     """
     torch.cat(frame_views, out=staging[:device_end])
     slot.copy_(staging, non_blocking=True)
+    event.record()
 
 
 @nb.jit(nopython=True, cache=True, nogil=True)
@@ -572,7 +575,12 @@ class TrajectoryFileWriter(BaseFileWriter):
             self._slots_mask_tc = slots_mask
             self._slots_mask = slots_mask.numpy()
             self._copy_stream = torch.cuda.Stream()
+        # The compression thread waits on the event of a slot for the copies of its frames to land (see
+        # '_compress_frames'). The frame graphs record them, which takes external events for the host to see the
+        # records of each replay.
+        self._slots_event: list[torch.cuda.Event | None] = [None] * N_FRAME_SLOTS
         if gs.use_zerocopy and gs.backend == gs.cuda:
+            self._slots_event = [torch.cuda.Event(external=True) for _ in range(N_FRAME_SLOTS)]
             # Launching each operation of a frame copy costs more host time than the device takes to run them all, so
             # they are captured once in a CUDA graph per place of the frame in the slots, and per staging buffer and
             # encoding when the device encodes it, a frame launching one. The graphs run one after the other, so they
@@ -588,6 +596,7 @@ class TrajectoryFileWriter(BaseFileWriter):
                         is_delta,
                         self._device_blocks[i_slot],
                         self._slots_mask_tc[i_slot],
+                        self._slots_event[i_slot],
                     )
                     for i_slot, i_staging, is_delta in itertools.product(range(N_FRAME_SLOTS), range(2), (False, True))
                 }
@@ -599,6 +608,7 @@ class TrajectoryFileWriter(BaseFileWriter):
                         self._staging[0],
                         self._device_end,
                         self._slots_tc[i_slot, i_slot_frame, : self._tail_offset],
+                        self._slots_event[i_slot],
                     )
                     for i_slot, i_slot_frame in itertools.product(range(N_FRAME_SLOTS), range(self._n_slot_frames))
                 }
@@ -613,7 +623,6 @@ class TrajectoryFileWriter(BaseFileWriter):
                     capture()
                 self._frame_graphs[key] = graph
 
-        self._slots_event = [torch.cuda.Event() if gs.backend == gs.cuda else None for _ in range(N_FRAME_SLOTS)]
         # The block-sparse encoding of the frames of a slot and its scratch (see '_encode_frames'), of the host-side end
         # of the frame alone when the device encodes the rest
         encoded_size = self._frame_size - (self._tail_offset if self._is_device_encoded else 0)
@@ -721,9 +730,6 @@ class TrajectoryFileWriter(BaseFileWriter):
         self._i_frame += 1
         self._n_slot_filled += 1
         self._is_slot_full = self._n_slot_filled == self._n_slot_frames or self._i_frame % self._options.chunk_size == 0
-        # The compression thread waits for the copies of a full slot to land (see '_compress_frames')
-        if self._is_slot_full and self._slots_event[i_slot] is not None:
-            self._slots_event[i_slot].record()
         return i_slot
 
     def step(self, global_step: int):
@@ -904,7 +910,6 @@ class TrajectoryFileWriter(BaseFileWriter):
             # the compression thread has not been handed yet.
             if self._i_slot is not None:
                 if self._slots_event[self._i_slot] is not None:
-                    self._slots_event[self._i_slot].record()
                     self._slots_event[self._i_slot].synchronize()
                 field = self._steps_field
                 frame = self._slots[self._i_slot, self._n_slot_filled - 1]
