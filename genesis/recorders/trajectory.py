@@ -554,7 +554,7 @@ class TrajectoryFileWriter(BaseFileWriter):
         self._staging: torch.Tensor | None = None
         # See DEVICE_ENCODED_FRAME_BYTES
         self._is_device_encoded = (
-            gs.use_zerocopy and gs.backend == gs.cuda and self._frame_size > DEVICE_ENCODED_FRAME_BYTES
+            gs.use_zerocopy and gs.device.type == "cuda" and self._frame_size > DEVICE_ENCODED_FRAME_BYTES
         )
         # A slot holds several frames when they are small, at most a chunk of them, and a slot is handed over at the end
         # of a chunk (see '_get_frame'), so that its frames all belong to one chunk
@@ -585,7 +585,9 @@ class TrajectoryFileWriter(BaseFileWriter):
         # Page-locked on CUDA, so that the copy of a frame from the device runs without blocking the stepping thread.
         # The bytes between the arrays and the scalars stay zeros.
         slots = torch.zeros(
-            (N_FRAME_SLOTS, self._n_slot_frames, self._frame_size), dtype=torch.uint8, pin_memory=gs.backend == gs.cuda
+            (N_FRAME_SLOTS, self._n_slot_frames, self._frame_size),
+            dtype=torch.uint8,
+            pin_memory=gs.device.type == "cuda",
         )
         self._slots_tc = slots
         self._slots = slots.numpy()
@@ -605,7 +607,7 @@ class TrajectoryFileWriter(BaseFileWriter):
         # '_compress_frames'). The frame graphs record them, which takes external events for the host to see the
         # records of each replay.
         self._slots_event: list[torch.cuda.Event | None] = [None] * N_FRAME_SLOTS
-        if gs.use_zerocopy and gs.backend == gs.cuda:
+        if gs.use_zerocopy and gs.device.type == "cuda":
             self._slots_event = [torch.cuda.Event(external=True) for _ in range(N_FRAME_SLOTS)]
             # Launching each operation of a frame copy costs more host time than the device takes to run them all, so
             # they are captured once in a CUDA graph per place of the frame in the slots, and per staging buffer and
@@ -744,7 +746,7 @@ class TrajectoryFileWriter(BaseFileWriter):
             # the stream both run on, and the compression thread waits for it to land (see '_compress_frames').
             is_delta = self._i_frame % self._options.chunk_size != 0
             self._frame_graphs[(i_slot, self._i_frame % 2, is_delta)].replay()
-        elif self._frame_views is not None and gs.backend == gs.cuda:
+        elif self._frame_views is not None and gs.device.type == "cuda":
             # The copy runs behind the step on the stream both run on, and the next frame is concatenated once it has
             # read the staging buffer
             self._frame_graphs[(i_slot, self._n_slot_filled)].replay()
