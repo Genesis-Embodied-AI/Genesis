@@ -66,8 +66,13 @@ ZSTD_THREADS = 4
 N_FRAME_SLOTS = 4
 # The bytes of the frames a slot holds at most, when frames are small enough for several to fit. A slot costs the
 # compression thread the same work under the interpreter lock whatever its size, and the stepping thread waits on that
-# lock, so small frames share their slot.
-SLOT_BYTES = 2**20
+# lock, so small frames share their slot. The slots left to the stepping thread while the compression thread closes a
+# chunk must also hold the frames of the steps that closing it takes, or a step waits for a slot.
+SLOT_BYTES = 2**22
+# The bytes of a frame above which CUDA takes its difference with the previous frame and gathers the blocks it changed
+# on the device, a frame per slot, so that the copy carries them alone. Smaller frames cross to the host whole, for less
+# than the device takes to encode them.
+DEVICE_ENCODED_FRAME_BYTES = 2**19
 # The bytes of the completed chunks waiting for the I/O thread at most, one chunk being let through whatever its size. A
 # chunk holds many frames compressed, so this absorbs a slow disk far more cheaply than frame slots would, and the
 # compression thread waits once it is reached. Bytes rather than chunks, since a chunk grows with the environments.
@@ -536,17 +541,19 @@ class TrajectoryFileWriter(BaseFileWriter):
         self._staging: torch.Tensor | None = None
         # A slot holds several frames when they are small, at most a chunk of them, and a slot is handed over at the end
         # of a chunk (see '_get_frame'), so that its frames all belong to one chunk
-        self._n_slot_frames = max(1, min(self._options.chunk_size, SLOT_BYTES // self._frame_size))
-        # On CUDA the device takes the difference of a frame with the previous one and gathers the blocks it changed
-        # (see '_get_frame'), so that the frame copy carries them alone. Frames sharing a slot are small enough to cross
-        # to the host whole, for less than the device takes to encode them.
-        self._is_device_encoded = gs.use_zerocopy and gs.backend == gs.cuda and self._n_slot_frames == 1
+        self._n_slot_frames = 1
+        if not self._is_device_encoded:
+            self._n_slot_frames = max(1, min(self._options.chunk_size, SLOT_BYTES // self._frame_size))
         self._device_blocks: torch.Tensor | None = None
         self._device_blocks_bytes: list[torch.Tensor] = []
         self._slots_mask_tc: torch.Tensor | None = None
         self._slots_mask: np.ndarray | None = None
         self._copy_stream: torch.cuda.Stream | None = None
         self._frame_graphs: dict[tuple[int, ...], torch.cuda.CUDAGraph] = {}
+        # See DEVICE_ENCODED_FRAME_BYTES
+        self._is_device_encoded = (
+            gs.use_zerocopy and gs.backend == gs.cuda and self._frame_size > DEVICE_ENCODED_FRAME_BYTES
+        )
         if gs.use_zerocopy:
             self._frame_views = []
             for field in self._fields[: len(arrays)]:
