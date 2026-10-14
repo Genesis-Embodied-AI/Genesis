@@ -218,20 +218,18 @@ def _scalars_fields(sim: "Simulator", kinds: frozenset[DataKind], offset: int) -
     return fields
 
 
-def _read_scalars(scalars: list[ScalarItem], scalars_fields: list[FrameField]) -> np.ndarray:
-    """Return the given scalars as a flat uint8 buffer, laid out as their fields state.
+def _write_scalars(scalars: list[ScalarItem], scalars_fields: list[FrameField], buffer: np.ndarray) -> None:
+    """Write the given scalars into a flat uint8 buffer, where their fields lay them out.
 
     A frame is laid out once, so a scalar whose type changed since raises.
     """
-    parts = [np.empty((0,), dtype=np.uint8)]
     for item, field in zip(scalars, scalars_fields):
         scalar = np.array(getattr(item.owner, item.attr))
         if scalar.dtype.str != field.dtype:
             gs.raise_exception(
                 f"'{field.name}' holds a {scalar.dtype} value, where a {np.dtype(field.dtype)} one was laid out."
             )
-        parts.append(scalar.reshape(-1).view(np.uint8))
-    return np.concatenate(parts)
+        buffer[field.offset : field.offset + field.nbytes] = scalar.reshape(-1).view(np.uint8)
 
 
 def _frame_fields(sim: "Simulator", kinds: frozenset[DataKind], drop_unused: bool) -> tuple[list[FrameField], int]:
@@ -253,18 +251,25 @@ def _frame_fields(sim: "Simulator", kinds: frozenset[DataKind], drop_unused: boo
     return fields, -(-offset // FRAME_ALIGNMENT) * FRAME_ALIGNMENT
 
 
-def _frame_tail(sim: "Simulator", scalars: list[ScalarItem], scalars_fields: list[FrameField]) -> np.ndarray:
-    """Return the end of a frame that lives on the host, as a flat uint8 buffer.
+def _write_frame_tail(
+    sim: "Simulator",
+    scalars: list[ScalarItem],
+    scalars_fields: list[FrameField],
+    timings_field: FrameField,
+    frame: np.ndarray,
+) -> None:
+    """Write into a frame, a flat uint8 buffer, its end that lives on the host.
 
-    It holds the given scalars, laid out as their fields state, then the wall time of every phase of the step the state
-    was reached by, NaN for a phase that step did not time.
+    It holds the given scalars, where their fields lay them out, then from 'timings_field' on the wall time of every
+    phase of the step the state was reached by, NaN for a phase that step did not time.
     """
     phases = sim.step_timer.phases
     step_timings = sim.step_timer.timings
     # A phase timed without being declared would be lost, as the frame is laid out once (see 'StepTimer.add_phases')
     assert step_timings.keys() <= set(phases)
-    timings = np.array([step_timings.get(phase, np.nan) for phase in phases])
-    return np.concatenate((_read_scalars(scalars, scalars_fields), timings.view(np.uint8)))
+    _write_scalars(scalars, scalars_fields, frame)
+    timings = frame[timings_field.offset : timings_field.offset + timings_field.nbytes * len(phases)]
+    timings.view(timings_field.dtype)[:] = [step_timings.get(phase, np.nan) for phase in phases]
 
 
 def _read_arrays(arrays: dict[str, ArrayItem], fields: list[FrameField]) -> np.ndarray:
@@ -295,11 +300,10 @@ def _read_frame(sim: "Simulator", kinds: frozenset[DataKind], fields: list[Frame
     # Every array of the given kinds has a field, and these fields come first, followed by the ones of the scalars in
     # the order of their items
     device_part = _read_arrays(arrays, fields[: len(arrays)])
-    tail = _frame_tail(sim, scalars, fields[len(arrays) : len(arrays) + len(scalars)])
-    tail_offset = fields[len(arrays)].offset
     frame = np.zeros((frame_size,), dtype=np.uint8)
     frame[: device_part.size] = device_part
-    frame[tail_offset : tail_offset + tail.size] = tail
+    scalars_fields = fields[len(arrays) : len(arrays) + len(scalars)]
+    _write_frame_tail(sim, scalars, scalars_fields, fields[len(arrays) + len(scalars)], frame)
     return frame
 
 
@@ -506,7 +510,8 @@ class TrajectoryFileWriter(BaseFileWriter):
         info_items = list(sim.data(INFO_KINDS))
         self._info_arrays = {item.name: item for item in info_items if isinstance(item, ArrayItem)}
         self._info_scalars = [item for item in info_items if isinstance(item, ScalarItem)]
-        self._has_info = any(field.nbytes for field in self._info_fields)
+        self._info_size = sum(field.nbytes for field in self._info_fields)
+        self._has_info = self._info_size > 0
         self._info_subscriber = Subscriber(frozenset((StateChange.MODEL,)))
         for solver in sim.active_solvers:
             solver.subscribe(self._info_subscriber)
@@ -520,6 +525,7 @@ class TrajectoryFileWriter(BaseFileWriter):
         self._tail_offset = self._fields[len(arrays)].offset
         self._scalars = [item for item in items if isinstance(item, ScalarItem)]
         self._scalars_fields = self._fields[len(arrays) : len(arrays) + len(self._scalars)]
+        self._timings_field = self._fields[len(arrays) + len(self._scalars)]
 
         # The arrays of a built scene keep their memory, so the byte view each array is copied from is taken once, in
         # the memory order the frame stores it in (see '_frame_fields'). Without zero-copy views each frame is read
@@ -703,8 +709,10 @@ class TrajectoryFileWriter(BaseFileWriter):
         if self._has_info and (self._i_frame == 0 or self._info_subscriber.pending):
             self._info_subscriber.clear()
             info_arrays = _read_arrays(self._info_arrays, self._info_fields)
-            info_scalars = _read_scalars(self._info_scalars, self._info_scalars_fields)
-            self._frames.put(InfoRecord(self._i_frame, np.concatenate((info_arrays, info_scalars))))
+            info = np.empty((self._info_size,), dtype=np.uint8)
+            info[: info_arrays.size] = info_arrays
+            _write_scalars(self._info_scalars, self._info_scalars_fields, info)
+            self._frames.put(InfoRecord(self._i_frame, info))
         if self._frame_views is not None and gs.backend == gs.cpu:
             np.concatenate(self._frame_views, out=slot[: self._device_end])
         elif self._is_device_encoded:
@@ -725,8 +733,7 @@ class TrajectoryFileWriter(BaseFileWriter):
         else:
             frame = _read_frame(sim, self._kinds, self._fields, self._frame_size)
             slot[: self._tail_offset] = frame[: self._tail_offset]
-        tail = _frame_tail(sim, self._scalars, self._scalars_fields)
-        slot[self._tail_offset : self._tail_offset + tail.size] = tail
+        _write_frame_tail(sim, self._scalars, self._scalars_fields, self._timings_field, slot)
         self._i_frame += 1
         self._n_slot_filled += 1
         self._is_slot_full = self._n_slot_filled == self._n_slot_frames or self._i_frame % self._options.chunk_size == 0
