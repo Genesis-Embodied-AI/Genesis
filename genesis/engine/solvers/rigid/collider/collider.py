@@ -72,17 +72,6 @@ class Collider:
 
         self._mc_perturbation = 1e-3 if self._solver._enable_mujoco_compatibility else 3e-3
         self._mc_tolerance = 1e-3 if self._solver._enable_mujoco_compatibility else 1.5e-2
-        # Overlap depth (as a fraction of the pair bounding-box diagonal) past which MPR is upgraded to GJK. It is
-        # portal-dependent: only an EXACT portal corroborated by a warm cache recovers a depth trusted deeper (valid
-        # ratio); every other portal bounds the depth at best and falls back sooner (base ratio). The valid ratio is
-        # capped below the point where trusting deep exact portals lets contacts pump energy.
-        self._mpr_to_gjk_overlap_ratio = 0.2
-        self._mpr_to_gjk_overlap_ratio_valid = 0.6
-        # Minimum ratio of the current penetration to the cached warm-start penetration for MPR to be treated as
-        # having resolved a deeper, non-minimal portal (then upgraded to GJK). The jump only moves the threshold
-        # inside [tolerance, overlap_ratio * geom_pair_scale]: a depth at or below the manifold tolerance never
-        # refines, and one past the overlap cap always does.
-        self._mpr_to_gjk_penetration_ratio = 5.0
         self._box_MAXCONPAIR = 16
         self._diff_pos_tolerance = 1e-2
         self._diff_normal_tolerance = 1e-2
@@ -275,9 +264,6 @@ class Collider:
             self._sdf._sdf_info,
             mc_perturbation=self._mc_perturbation,
             mc_tolerance=self._mc_tolerance,
-            mpr_to_gjk_overlap_ratio=self._mpr_to_gjk_overlap_ratio,
-            mpr_to_gjk_overlap_ratio_valid=self._mpr_to_gjk_overlap_ratio_valid,
-            mpr_to_gjk_penetration_ratio=self._mpr_to_gjk_penetration_ratio,
             diff_pos_tolerance=self._diff_pos_tolerance,
             diff_normal_tolerance=self._diff_normal_tolerance,
             contact_pruning_tolerance=self._solver._options.contact_pruning_tolerance or 0.0,

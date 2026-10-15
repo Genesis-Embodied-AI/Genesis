@@ -79,7 +79,7 @@ def test_frictionloss_advanced(show_viewer, tol):
     )
     box = scene.add_entity(
         gs.morphs.Box(
-            pos=(0.1, 0.0, 0.6),
+            pos=(0.1, 0.0, 0.595),
             size=(0.025, 0.025, 0.025),
         ),
     )

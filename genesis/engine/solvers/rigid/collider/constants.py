@@ -49,15 +49,12 @@ class PORTAL_STATUS(IntEnum):
     NONE = 0
     # MPR hit its iteration cap, so the depth means nothing
     UNCONVERGED = 1
-    # The origin's projection falls so far beyond the portal triangle that the depth is read off an extrapolation of its
-    # plane, or the triangle is degenerate. Untrustworthy.
-    EXTRAPOLATED = 2
-    # The origin's projection falls just outside the triangle, so the depth is a valid lower bound of the true one
-    # (Theorem 4.3), but the portal is not the exact contact face
-    LOWER_BOUND = 3
+    # The origin projects outside the converged portal, or the portal is degenerate, so the depth is read off the plane
+    # of a triangle that is not the exact contact face
+    APPROXIMATE = 2
     # The origin projects inside the converged portal, so the depth is exact (Theorem 4.2). The only status whose portal
     # may be reused.
-    EXACT = 4
+    EXACT = 3
 
 
 class CONTACT_ORDER(IntEnum):
