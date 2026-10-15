@@ -3,37 +3,48 @@ import quadrants as qd
 
 @qd.func
 def qd_block_sum(value, log2_size: qd.template() = 5):
-    """Sum value over the 2**log2_size lanes of a block, every lane receiving the bits lane 0 holds."""
+    """Sum a value over the lanes of a block, every lane receiving the bits the first lane of its block holds.
+
+    A block is 2**log2_size consecutive lanes of the subgroup, so a subgroup wider than the block (64-lane AMDGPU
+    wavefronts) holds several blocks, each summed on its own.
+    """
     # The butterfly adds the same operands on the two lanes of every pair, but the compiler contracts the multiply that
     # produced a lane's own operand into that add, so the two lanes round differently, and a decision every lane takes
-    # on the sum then diverges.
-    return qd.simt.subgroup.broadcast(qd.simt.subgroup.reduce_all_add_tiled(value, log2_size), qd.u32(0))
+    # on the sum then diverges. The source lane differs between the blocks of a subgroup, which SPIR-V allows for a
+    # shuffle alone, its broadcast requiring the same source lane on every lane of the subgroup.
+    value_sum = qd.simt.subgroup.reduce_all_add_tiled(value, log2_size)
+    return qd.simt.subgroup.shuffle(value_sum, qd.u32(qd.simt.subgroup.invocation_id() >> log2_size << log2_size))
 
 
 @qd.func
 def qd_block_scan(value):
-    """Inclusive prefix sum of value over the 32 lanes of a block, returning this lane's prefix and the block total,
-    the total the bits the last lane holds so every lane carries the same running count across chunks."""
-    value_incl = qd.simt.subgroup.inclusive_add(value)
-    return value_incl, qd.simt.subgroup.broadcast(value_incl, qd.u32(31))
+    """Inclusive prefix sum of a value over the 32 lanes of a block, returning this lane's prefix and the block total.
+
+    Every lane receives as total the bits the last lane of its block holds, so every lane carries the same running
+    count across chunks. See qd_block_sum for the blocks and the source lane.
+    """
+    value_incl = qd.simt.subgroup.inclusive_add_tiled(value, 5)
+    return value_incl, qd.simt.subgroup.shuffle(value_incl, qd.u32(qd.simt.subgroup.invocation_id() | 31))
 
 
 @qd.func
 def qd_block_min(value):
-    """Minimum of value over the 32 lanes of a block, every lane receiving the bits lane 0 holds.
+    """Minimum of a value over the 32 lanes of a block, every lane receiving the bits the first lane of its block holds.
 
-    See qd_block_sum for why lane 0's bits are broadcast.
+    See qd_block_sum for the blocks and the source lane.
     """
-    return qd.simt.subgroup.broadcast(qd.simt.subgroup.reduce_all_min_tiled(value, 5), qd.u32(0))
+    value_min = qd.simt.subgroup.reduce_all_min_tiled(value, 5)
+    return qd.simt.subgroup.shuffle(value_min, qd.u32(qd.simt.subgroup.invocation_id() >> 5 << 5))
 
 
 @qd.func
 def qd_block_max(value):
-    """Maximum of value over the 32 lanes of a block, every lane receiving the bits lane 0 holds.
+    """Maximum of a value over the 32 lanes of a block, every lane receiving the bits the first lane of its block holds.
 
-    See qd_block_sum for why lane 0's bits are broadcast.
+    See qd_block_sum for the blocks and the source lane.
     """
-    return qd.simt.subgroup.broadcast(qd.simt.subgroup.reduce_all_max_tiled(value, 5), qd.u32(0))
+    value_max = qd.simt.subgroup.reduce_all_max_tiled(value, 5)
+    return qd.simt.subgroup.shuffle(value_max, qd.u32(qd.simt.subgroup.invocation_id() >> 5 << 5))
 
 
 @qd.func
