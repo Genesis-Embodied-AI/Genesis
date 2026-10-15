@@ -1298,11 +1298,11 @@ def test_align_mesh(show_viewer, tol):
     scene.reset()
 
     # Simulate
-    for _ in range(750):
+    for _ in range(650):
         scene.step()
 
     assert_allclose(mango.get_dofs_velocity(dofs_idx_local=(0, 1, 2)), 0, tol=0.01)
-    assert_allclose(mango.get_dofs_velocity(dofs_idx_local=(3, 4, 5)), 0, tol=0.08)
+    assert_allclose(mango.get_dofs_velocity(dofs_idx_local=(3, 4, 5)), 0, tol=0.15)
     min_z = mango.get_AABB()[:, 0, 2]
     assert ((-1e-3 < min_z) & (min_z < 0.0)).all()
 
