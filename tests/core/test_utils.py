@@ -3,6 +3,7 @@ import re
 import subprocess
 import sys
 from functools import partial
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
@@ -18,7 +19,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils import warnings as warnings_mod
 from genesis.utils.image_exporter import as_grayscale_image
-from genesis.utils.misc import tensor_to_array
+from genesis.utils.misc import get_gpu_shared_tile_sizes, tensor_to_array
 from genesis.utils.tools import RunningMean
 from genesis.utils.urdf import compose_inertial_properties
 from genesis.utils.warnings import warn_once
@@ -1006,6 +1007,45 @@ def test_as_grayscale_image():
         for is_black_to_white, depth_expected in ((False, [[255, 127, 0]]), (True, [[0, 127, 255]])):
             depth_image = as_grayscale_image(depth, enable_log_scale=True, black_to_white=is_black_to_white)
             assert_equal(depth_image, depth_expected)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("device_backend", [gs.amdgpu, gs.cuda])
+@pytest.mark.parametrize("precision, largest_size", [("32", 120), ("64", 88)])
+@pytest.mark.parametrize("max_n_sizes", [1, 2, 8])
+def test_gpu_shared_tile_sizes(device_backend, precision, largest_size, max_n_sizes):
+    if device_backend == gs.amdgpu:
+        device_property = SimpleNamespace(
+            shared_memory_per_multiprocessor=65536,
+            max_threads_per_multi_processor=2048,
+            warp_size=32,
+        )
+    else:
+        device_property = SimpleNamespace(
+            shared_memory_per_multiprocessor=102400,
+            shared_memory_per_block_optin=101376,
+            max_threads_per_multi_processor=2048,
+            warp_size=32,
+            major=8,
+            minor=6,
+        )
+    with (
+        patch.object(gs, "backend", device_backend),
+        patch.object(torch.version, "hip", "7.2.4" if device_backend == gs.amdgpu else None),
+        patch.object(torch.cuda, "is_available", return_value=True),
+        patch.object(torch.cuda, "current_device", return_value=0),
+        patch.object(torch.cuda, "get_device_properties", return_value=device_property),
+        patch("quadrants.lang.impl.get_max_shared_memory_bytes", return_value=65536),
+    ):
+        tile_sizes = get_gpu_shared_tile_sizes(max_n_sizes)
+
+    assert 1 <= len(tile_sizes) <= max_n_sizes
+    assert_equal(tile_sizes, sorted(set(tile_sizes)))
+    assert all(size > 0 and size % 8 == 0 for size in tile_sizes)
+    assert_equal(tile_sizes[-1], largest_size)
+    itemsize = 4 if precision == "32" else 8
+    assert all(size * (size + 1) * itemsize <= 65536 for size in tile_sizes)
+    assert (largest_size + 8) * (largest_size + 9) * itemsize > 65536
 
 
 @pytest.mark.required
