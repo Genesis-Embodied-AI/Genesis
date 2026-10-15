@@ -1368,11 +1368,13 @@ def test_mesh_support_exactness(show_viewer, tol):
         directions: qd.types.ndarray(),
         supports: qd.types.ndarray(),
         supports_count: qd.types.ndarray(),
+        supports_idx: qd.types.ndarray(),
         collider_info: array_class.ColliderInfo,
     ):
         for i_d in range(directions.shape[0]):
             direction = qd.Vector([directions[i_d, 0], directions[i_d, 1], directions[i_d, 2]], dt=gs.qd_float)
-            support, _ = support_field._func_support_mesh(i_g, direction, collider_info)
+            support, i_v = support_field._func_support_mesh(i_g, direction, collider_info)
+            supports_idx[i_d] = i_v
             for k in qd.static(range(3)):
                 supports[i_d, k] = support[k]
             supports_count[i_d] = support_field._func_count_supports_mesh(i_g, direction, collider_info)
@@ -1411,7 +1413,11 @@ def test_mesh_support_exactness(show_viewer, tol):
         directions = (directions / np.linalg.norm(directions, axis=-1, keepdims=True)).astype(gs.np_float)
         supports = np.zeros_like(directions)
         supports_count = np.zeros(len(directions), dtype=gs.np_int)
-        query_supports(geom.idx, directions, supports, supports_count, scene.rigid_solver.collider.collider_info)
+        supports_idx = np.empty(len(directions), dtype=gs.np_int)
+        query_supports(
+            geom.idx, directions, supports, supports_count, supports_idx, scene.rigid_solver.collider.collider_info
+        )
+        assert_allclose(supports, verts[supports_idx - geom.vert_start], tol=tol)
         assert_allclose((supports * directions).sum(axis=-1), (directions @ verts.T).max(axis=-1), tol=tol)
 
     # A direction in a coordinate plane ties exactly two corners of the box, along an arc between two face normals that
@@ -1423,7 +1429,13 @@ def test_mesh_support_exactness(show_viewer, tol):
     directions = (directions / np.linalg.norm(directions, axis=-1, keepdims=True)).astype(gs.np_float)
     supports = np.zeros_like(directions)
     supports_count = np.zeros(len(directions), dtype=gs.np_int)
+    supports_idx = np.empty(len(directions), dtype=gs.np_int)
     query_supports(
-        entities[0].geoms[0].idx, directions, supports, supports_count, scene.rigid_solver.collider.collider_info
+        entities[0].geoms[0].idx,
+        directions,
+        supports,
+        supports_count,
+        supports_idx,
+        scene.rigid_solver.collider.collider_info,
     )
     assert_equal(supports_count, np.repeat((2, 4), (N_RANDOM_DIRECTIONS, 6)))
