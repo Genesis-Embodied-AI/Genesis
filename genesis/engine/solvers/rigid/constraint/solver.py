@@ -742,6 +742,7 @@ def _add_friction_constraint(
 
     con_n_dofs = 0
     jac_qvel = gs.qd_float(0.0)
+
     # Ancestors share a root center of mass. Factor the angular projection using (w x r) . n = w . (r x n).
     offset_a = contact_data_pos - dyn_state.links.root_COM[link_a, i_b]
     offset_b = gs.qd_vec3(0.0, 0.0, 0.0)
@@ -749,6 +750,7 @@ def _add_friction_constraint(
         offset_b = contact_data_pos - dyn_state.links.root_COM[link_b, i_b]
     direction_ang_a = offset_a.cross(n) + n_ang
     direction_ang_b = offset_b.cross(n) + n_ang
+
     # Shared ancestors contribute equal contact velocities. Descending link order stops both walks where they meet.
     i_la, i_lb = link_a, link_b
     for i_walk in range(dyn_state.links.pos.shape[0]):
