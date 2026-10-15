@@ -252,7 +252,8 @@ def get_gpu_shared_tile_sizes(max_n_sizes: int) -> tuple[int, ...]:
 
     The shared memory of a block only bounds how many blocks a compute unit runs at once. Each candidate is the largest
     multiple of 8 (keeping the padded row stride odd) that runs a given count of resident one-warp blocks, as bounded by
-    the shared memory of a compute unit and of a block, the driver reservation per block and the warp slots.
+    the shared memory of a compute unit and of a block, the driver reservation and allocation granularity per block and
+    the warp slots.
 
     At most max_n_sizes candidates are kept, so that the static values of a kernel stay a small fixed set: those
     minimizing the mean drop in resident blocks that rounding a row count n up to the next kept size causes against its
@@ -264,16 +265,27 @@ def get_gpu_shared_tile_sizes(max_n_sizes: int) -> tuple[int, ...]:
     if gs.backend == gs.cpu:
         gs.raise_exception("CPU backend not supported by this method.")
     itemsize = 4 if gs.qd_float == qd.f32 else 8
+    # FIXME: quadrants#976 - the shared memory of a block is a 64 KiB lower bound on AMDGPU, which caps the tiles of
+    # CDNA4 (gfx950) below what its 160 KiB per block holds.
     block_bytes = qd.lang.impl.get_max_shared_memory_bytes(is_lowerbound_ok=True)
-    unit_bytes, reserved_bytes, max_blocks = block_bytes, 0, block_bytes // (8 * 9 * itemsize)
+    unit_bytes, reserved_bytes, granule_bytes, max_blocks = block_bytes, 0, 1, block_bytes // (8 * 9 * itemsize)
     if torch.cuda.is_available():
-        # CUDA and ROCm alike: a block of these tiles is one warp (wavefront), so the warp slots bound the resident
-        # blocks, and the driver reserves the shared memory of a compute unit beyond what one block may opt in to.
+        # CUDA and ROCm alike: a block of these tiles is one warp (wavefront), whose slots bound the resident blocks.
         device_property = torch.cuda.get_device_properties(torch.cuda.current_device())
         unit_bytes = device_property.shared_memory_per_multiprocessor
-        reserved_bytes = max(unit_bytes - device_property.shared_memory_per_block_optin, 0)
         max_blocks = device_property.max_threads_per_multi_processor // device_property.warp_size
-        if not torch.version.hip:
+        if torch.version.hip:
+            # FIXME: torch exposes no allocation granularity of the local data share (LDS), which AMD sets per
+            # instruction set (see the LLVM AMDGPU usage guide), a block taking its shared memory in whole granules.
+            if device_property.gcnArchName.startswith("gfx950"):
+                granule_bytes = 1280
+            elif device_property.gcnArchName.startswith("gfx125"):
+                granule_bytes = 2048
+            else:
+                granule_bytes = 512
+        else:
+            # The driver reserves the shared memory of a compute unit beyond what one block may opt in to.
+            reserved_bytes = max(unit_bytes - device_property.shared_memory_per_block_optin, 0)
             # FIXME: torch exposes no cap on the resident blocks of a streaming multiprocessor, which NVIDIA sets per
             # compute capability below the warp slots (see the CUDA C++ programming guide).
             compute_capability = (device_property.major, device_property.minor)
@@ -287,8 +299,8 @@ def get_gpu_shared_tile_sizes(max_n_sizes: int) -> tuple[int, ...]:
     # The largest count of resident blocks of each candidate size
     resident_blocks: dict[int, int] = {}
     for n_blocks in range(1, max_blocks + 1):
-        n_bytes = min(unit_bytes // n_blocks - reserved_bytes, block_bytes)
-        tile_size = int((math.sqrt(1.0 + 4.0 * n_bytes / itemsize) - 1.0) / 2.0) // 8 * 8
+        n_bytes = (min(unit_bytes // n_blocks - reserved_bytes, block_bytes) // granule_bytes) * granule_bytes
+        tile_size = (int((math.sqrt(1.0 + 4.0 * n_bytes / itemsize) - 1.0) / 2.0) // 8) * 8
         if tile_size >= 8:
             resident_blocks[tile_size] = max(resident_blocks.get(tile_size, 0), n_blocks)
     tile_sizes = sorted(resident_blocks)
