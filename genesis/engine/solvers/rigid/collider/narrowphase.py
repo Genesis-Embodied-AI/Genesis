@@ -1625,13 +1625,31 @@ def func_recompute_perturbed_contact(
             if used_gjk:
                 i_f = gjk_state.nearest_face[i_scratch]
                 i_pv = gjk_state.polytope_faces.verts_idx[i_scratch, i_f][i_v]
-                # Local supports avoid rounding through the perturbed world pose during surface reconstruction
-                support_a = gu.qd_transform_by_trans_quat(
-                    gjk_state.polytope_verts.local_obj1[i_scratch, i_pv], ga_pos_original, ga_quat_original
-                )
-                support_b = gu.qd_transform_by_trans_quat(
-                    gjk_state.polytope_verts.local_obj2[i_scratch, i_pv], gb_pos_original, gb_quat_original
-                )
+                # Boxes, meshes and spheres provide native local supports. Other supports are stored in world space.
+                geom_type_a = dyn_info.geoms.type[i_ga]
+                geom_type_b = dyn_info.geoms.type[i_gb]
+                if (
+                    geom_type_a == gs.GEOM_TYPE.BOX
+                    or geom_type_a == gs.GEOM_TYPE.MESH
+                    or geom_type_a == gs.GEOM_TYPE.SPHERE
+                ):
+                    support_a = gu.qd_transform_by_trans_quat(
+                        gjk_state.polytope_verts.local_obj1[i_scratch, i_pv], ga_pos_original, ga_quat_original
+                    )
+                else:
+                    support_a = gjk_state.polytope_verts.obj1[i_scratch, i_pv]
+                    support_a = R_inv @ (support_a - contact_pos_0) + contact_pos_0
+                if (
+                    geom_type_b == gs.GEOM_TYPE.BOX
+                    or geom_type_b == gs.GEOM_TYPE.MESH
+                    or geom_type_b == gs.GEOM_TYPE.SPHERE
+                ):
+                    support_b = gu.qd_transform_by_trans_quat(
+                        gjk_state.polytope_verts.local_obj2[i_scratch, i_pv], gb_pos_original, gb_quat_original
+                    )
+                else:
+                    support_b = gjk_state.polytope_verts.obj2[i_scratch, i_pv]
+                    support_b = R @ (support_b - contact_pos_0) + contact_pos_0
             else:
                 support_a = mpr_state.simplex_support.v1[i_v + 1, i_scratch]
                 support_b = mpr_state.simplex_support.v2[i_v + 1, i_scratch]

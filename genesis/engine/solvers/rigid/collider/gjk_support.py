@@ -56,7 +56,7 @@ def support_mesh(
     gjk_state.support_mesh_prev_vertex_id[i_b, i_o] = vid
 
     v_world = gu.qd_transform_by_trans_quat(v, pos, quat)
-    return v_world, vid
+    return v_world, v, vid
 
 
 @qd.func
@@ -98,7 +98,7 @@ def support_driver(
             v, vid = support_field._func_support_prism(i_b, direction, collider_state)
     elif geom_type == gs.GEOM_TYPE.MESH and rigid_config.enable_mujoco_compatibility:
         # If mujoco-compatible, do exhaustive search for the vertex
-        v, vid = support_mesh(i_g, i_b, i_o, direction, pos, quat, gjk_state, dyn_info, collider_info)
+        v, v_, vid = support_mesh(i_g, i_b, i_o, direction, pos, quat, gjk_state, dyn_info, collider_info)
     else:
         v, v_, vid = support_field._func_support_world(
             i_g,
