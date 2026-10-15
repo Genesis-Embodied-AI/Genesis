@@ -1160,9 +1160,9 @@ def func_clamp_prune_contacts(
 
     The pruning logic groups contacts by canonical (min(link_a, link_b), max(link_a, link_b)), splits each bucket into
     patches of normals lying along one axis (see func_contact_group_by_normal) and, for each patch of >= 3 contacts
-    whose positions lie in a single plane (perpendicular to the patch's folded mean normal), keeps the 2D convex
-    hull vertices and the deepest original corner beyond rounding tolerance. Patches whose positions span multiple
-    planes are left untouched. Each surviving contact retains its normal. The patch's mean normal defines the projection.
+    whose positions lie in a single plane (perpendicular to the patch's folded mean normal), keeps the 2D convex hull
+    vertices and the deepest original corner beyond rounding tolerance. Patches whose positions span multiple planes are
+    left untouched. Surviving contacts retain their normals. The patch mean normal sets the projection direction.
 
     The ``tol`` parameter bounds the angle in radians between the normals of a patch, and the depth gate as a
     dimensionless slop fraction:
