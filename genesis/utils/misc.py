@@ -299,8 +299,8 @@ def get_gpu_shared_tile_sizes(max_n_sizes: int) -> tuple[int, ...]:
     # The largest count of resident blocks of each candidate size
     resident_blocks: dict[int, int] = {}
     for n_blocks in range(1, max_blocks + 1):
-        n_bytes = min(unit_bytes // n_blocks - reserved_bytes, block_bytes) // granule_bytes * granule_bytes
-        tile_size = int((math.sqrt(1.0 + 4.0 * n_bytes / itemsize) - 1.0) / 2.0) // 8 * 8
+        n_bytes = (min(unit_bytes // n_blocks - reserved_bytes, block_bytes) // granule_bytes) * granule_bytes
+        tile_size = (int((math.sqrt(1.0 + 4.0 * n_bytes / itemsize) - 1.0) / 2.0) // 8) * 8
         if tile_size >= 8:
             resident_blocks[tile_size] = max(resident_blocks.get(tile_size, 0), n_blocks)
     tile_sizes = sorted(resident_blocks)
