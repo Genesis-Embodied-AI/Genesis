@@ -11,10 +11,12 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.element as eu
 import genesis.utils.geom as gu
+import genesis.utils.linalg as lu
 from genesis.constants import IntEnum
 from genesis.engine.bvh import build_bvh, func_bvh_query_leaves, func_no_filter, get_bvh_data
 from genesis.options.solvers import SAPCouplerOptions
 from genesis.repr_base import RBC
+from genesis.utils.sort import func_sort_segments, get_segment_sort_data
 
 if TYPE_CHECKING:
     from genesis.engine.simulator import Simulator
@@ -354,10 +356,11 @@ class SAPCoupler(RBC):
                 rigid_volume_elems.append(elems + offset)
                 rigid_volume_verts_geom_idx.append(np.full(len(verts), geom.idx, dtype=gs.np_int))
                 rigid_volume_elems_geom_idx.append(np.full(len(elems), geom.idx, dtype=gs.np_int))
-                signed_distance, *_ = igl.signed_distance(verts, geom.init_verts, geom.init_faces)
-                signed_distance = signed_distance.astype(gs.np_float, copy=False)
-
-                distance_unsigned = np.abs(signed_distance)
+                # See FEMEntity.compute_pressure_field for the unsigned query.
+                distance_unsigned, *_ = igl.signed_distance(
+                    verts, geom.init_verts, geom.init_faces, sign_type=igl.SIGNED_DISTANCE_TYPE_UNSIGNED
+                )
+                distance_unsigned = distance_unsigned.astype(gs.np_float, copy=False)
                 distance_max = np.max(distance_unsigned)
                 if distance_max < gs.EPS:
                     gs.raise_exception(
@@ -539,6 +542,15 @@ class SAPCoupler(RBC):
             shape=(self.sim._B, self.fem_solver.n_vertices), needs_grad=False, layout=qd.Layout.SOA
         )
 
+        # The elastic contribution of an element to each of its 4 vertices, summed by every vertex over its corners in
+        # the order of fem_solver.vertices_corner, so that the result does not depend on the scheduling of the threads.
+        self.elements_corner = qd.field(gs.qd_vec3, shape=(self.sim._B, max(self.fem_solver.n_elements, 1), 4))
+
+        # Terms of the sums over the vertices and over the elements of each batch entry, three sums at most at once,
+        # and their partial sums (see lu.get_sum_fields)
+        self.fem_terms_v, self.fem_partials_v = lu.get_sum_fields(self.sim._B, self.fem_solver.n_vertices, n_sums=3)
+        self.fem_terms_el, self.fem_partials_el = lu.get_sum_fields(self.sim._B, self.fem_solver.n_elements, n_sums=1)
+
     def _init_rigid_fields(self):
         rigid_state_dof = qd.types.struct(
             v=gs.qd_float,  # vertex velocity
@@ -570,6 +582,12 @@ class SAPCoupler(RBC):
         )
         self.linesearch_rigid_state_dof = linesearch_rigid_state_dof.field(
             shape=(self.sim._B, self.rigid_solver.n_dofs), needs_grad=False, layout=qd.Layout.SOA
+        )
+
+        # Terms of the sums over the dofs of each batch entry, three sums at most at once, and their partial sums (see
+        # lu.get_sum_fields)
+        self.rigid_terms_dof, self.rigid_partials_dof = lu.get_sum_fields(
+            self.sim._B, self.rigid_solver.n_dofs, n_sums=3
         )
 
     def _init_pcg_fields(self):
@@ -696,6 +714,7 @@ class SAPCoupler(RBC):
                 contact_queries_state=contact_queries_state,
             )
             has_contact |= contact.n_contact_pairs[None] > 0
+            contact.sort_pairs()
             contact.compute_jacobian(links_info=links_info, dofs_state=dofs_state, links_state=links_state)
         return has_contact, overflow
 
@@ -848,9 +867,85 @@ class SAPCoupler(RBC):
             # line search
             self.exact_linesearch(i_step)
 
+    # ------------------------------------------------------------------------------------
+    # -------------------------------- Fixed-order sums ----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    # Every sum over the vertices, the elements or the dofs of a batch entry runs in fixed order, so that it is bitwise
+    # reproducible (see lu.get_sum_fields): the loop updating the items writes their terms, and the per-batch loop that
+    # follows sums the partial sums in order. The sums over the constraints or the contact pairs of a batch entry, a
+    # segment of a flat array, run one thread per chunk of the segment, which sums its items in order into a partial
+    # sum (see lu.func_chunk_range).
+
+    @qd.func
+    def func_sum_vertices_dofs_batch(self, i_b: int, k: int):
+        """Return the sum of the partial sums over the FEM vertices and the rigid dofs of one batch entry.
+
+        The partial sums are those of slot k of batch entry i_b.
+        """
+        value_sum = gs.qd_float(0.0)
+        if qd.static(self.fem_solver.is_active):
+            value_sum += lu.func_sum_chunks(i_b, k, self.fem_partials_v)
+        if qd.static(self.rigid_solver.is_active):
+            value_sum += lu.func_sum_chunks(i_b, k, self.rigid_partials_dof)
+        return value_sum
+
+    @qd.func
+    def func_sum_constraints_contacts_batch(self, i_b: int, k: int):
+        """Return the sum of the partial sums over the constraints and the contact pairs of one batch entry.
+
+        The partial sums are those of slot k of batch entry i_b.
+        """
+        value_sum = gs.qd_float(0.0)
+        if qd.static(self.rigid_solver.is_active and self.rigid_solver.n_equalities > 0):
+            value_sum += lu.func_sum_chunks(i_b, k, self.equality_constraint_handler.constraints_partials)
+        for contact in qd.static(self.contact_handlers):
+            value_sum += lu.func_sum_chunks(i_b, k, contact.pairs_partials)
+        return value_sum
+
+    @qd.func
+    def func_fem_contacts_Jt_vec(self, i_b: int, i_v: int):
+        """Return the transposed Jacobian of the contacts times their impulses at a FEM vertex, zero if constrained."""
+        Jt_vec = qd.Vector.zero(gs.qd_float, 3)
+        is_free = True
+        if qd.static(self.fem_solver._enable_vertex_constraints):
+            is_free = not self.fem_solver.vertex_constraints.is_constrained[i_v, i_b]
+        if is_free:
+            for contact in qd.static(self.contact_handlers):
+                if qd.static(contact.N_FEM_SLOTS > 0):
+                    Jt_vec += contact.func_fem_Jt_vec(i_b, i_v)
+        return Jt_vec
+
+    @qd.func
+    def func_fem_contacts_Jt_A_J(self, i_b: int, i_v: int):
+        """Return the 3x3 diagonal block of the contact Hessian at a FEM vertex, zero if constrained."""
+        Jt_A_J = qd.Matrix.zero(gs.qd_float, 3, 3)
+        is_free = True
+        if qd.static(self.fem_solver._enable_vertex_constraints):
+            is_free = not self.fem_solver.vertex_constraints.is_constrained[i_v, i_b]
+        if is_free:
+            for contact in qd.static(self.contact_handlers):
+                if qd.static(contact.N_FEM_SLOTS > 0):
+                    Jt_A_J += contact.func_fem_Jt_A_J(i_b, i_v)
+        return Jt_A_J
+
+    @qd.func
+    def func_rigid_contacts_Jt_vec(self, i_b: int, i_d: int):
+        """Return the transposed Jacobian of the constraints and the contacts times their impulses at a rigid dof."""
+        Jt_vec = gs.qd_float(0.0)
+        if qd.static(self.rigid_solver.n_equalities > 0):
+            Jt_vec += self.equality_constraint_handler.func_rigid_Jt_vec(i_b, i_d)
+        for contact in qd.static(self.contact_handlers):
+            if qd.static(contact.HAS_RIGID_JACOBIAN):
+                Jt_vec += contact.func_rigid_Jt_vec(i_b, i_d)
+        return Jt_vec
+
+    # ------------------------------------------------------------------------------------
+    # ---------------------------------- Convergence -------------------------------------
+    # ------------------------------------------------------------------------------------
+
     @qd.kernel
     def check_sap_convergence(self, rigid_info: array_class.RigidInfo):
-        self.clear_sap_norms()
         if qd.static(self.fem_solver.is_active):
             self.add_fem_norms()
         if qd.static(self.rigid_solver.is_active):
@@ -858,53 +953,36 @@ class SAPCoupler(RBC):
         self.update_batch_active()
 
     @qd.func
-    def clear_sap_norms(self):
-        for i_b in range(self._B):
-            if not self.batch_active[i_b]:
-                continue
-            self.sap_state[i_b].gradient_norm = 0.0
-            self.sap_state[i_b].momentum_norm = 0.0
-            self.sap_state[i_b].impulse_norm = 0.0
-
-    @qd.func
     def add_fem_norms(self):
         for i_b, i_v in qd.ndrange(self._B, self.fem_solver.n_vertices):
-            if not self.batch_active[i_b]:
-                continue
-            self.sap_state[i_b].gradient_norm += (
-                self.fem_state_v.gradient[i_b, i_v].norm_sqr() / self.fem_solver.elements_v_info[i_v].mass
-            )
-            self.sap_state[i_b].momentum_norm += (
-                self.fem_state_v.v[i_b, i_v].norm_sqr() * self.fem_solver.elements_v_info[i_v].mass
-            )
-            self.sap_state[i_b].impulse_norm += (
-                self.fem_state_v.impulse[i_b, i_v].norm_sqr() / self.fem_solver.elements_v_info[i_v].mass
-            )
+            if self.batch_active[i_b]:
+                mass = self.fem_solver.elements_v_info[i_v].mass
+                self.fem_terms_v[i_b, i_v, 0] = self.fem_state_v.gradient[i_b, i_v].norm_sqr() / mass
+                self.fem_terms_v[i_b, i_v, 1] = self.fem_state_v.v[i_b, i_v].norm_sqr() * mass
+                self.fem_terms_v[i_b, i_v, 2] = self.fem_state_v.impulse[i_b, i_v].norm_sqr() / mass
+        lu.func_reduce_terms(self.fem_terms_v, self.fem_partials_v, self.batch_active)
 
     @qd.func
     def add_rigid_norms(self, rigid_info: array_class.RigidInfo):
         for i_b, i_d in qd.ndrange(self._B, self.rigid_solver.n_dofs):
-            if not self.batch_active[i_b]:
-                continue
-            self.sap_state[i_b].gradient_norm += (
-                self.rigid_state_dof.gradient[i_b, i_d] ** 2 / rigid_info.mass_mat[i_d, i_d, i_b]
-            )
-            self.sap_state[i_b].momentum_norm += (
-                self.rigid_state_dof.v[i_b, i_d] ** 2 * rigid_info.mass_mat[i_d, i_d, i_b]
-            )
-            self.sap_state[i_b].impulse_norm += (
-                self.rigid_state_dof.impulse[i_b, i_d] ** 2 / rigid_info.mass_mat[i_d, i_d, i_b]
-            )
+            if self.batch_active[i_b]:
+                mass = rigid_info.mass_mat[i_d, i_d, i_b]
+                self.rigid_terms_dof[i_b, i_d, 0] = self.rigid_state_dof.gradient[i_b, i_d] ** 2 / mass
+                self.rigid_terms_dof[i_b, i_d, 1] = self.rigid_state_dof.v[i_b, i_d] ** 2 * mass
+                self.rigid_terms_dof[i_b, i_d, 2] = self.rigid_state_dof.impulse[i_b, i_d] ** 2 / mass
+        lu.func_reduce_terms(self.rigid_terms_dof, self.rigid_partials_dof, self.batch_active)
 
     @qd.func
     def update_batch_active(self):
         for i_b in range(self._B):
-            if not self.batch_active[i_b]:
-                continue
-            norm_thr = self._sap_convergence_atol + self._sap_convergence_rtol * qd.max(
-                self.sap_state[i_b].momentum_norm, self.sap_state[i_b].impulse_norm
-            )
-            self.batch_active[i_b] = self.sap_state[i_b].gradient_norm >= norm_thr
+            if self.batch_active[i_b]:
+                self.sap_state[i_b].gradient_norm = self.func_sum_vertices_dofs_batch(i_b, 0)
+                self.sap_state[i_b].momentum_norm = self.func_sum_vertices_dofs_batch(i_b, 1)
+                self.sap_state[i_b].impulse_norm = self.func_sum_vertices_dofs_batch(i_b, 2)
+                norm_thr = self._sap_convergence_atol + self._sap_convergence_rtol * qd.max(
+                    self.sap_state[i_b].momentum_norm, self.sap_state[i_b].impulse_norm
+                )
+                self.batch_active[i_b] = self.sap_state[i_b].gradient_norm >= norm_thr
 
     @qd.kernel
     def compute_regularization(
@@ -977,69 +1055,44 @@ class SAPCoupler(RBC):
 
     @qd.kernel
     def compute_fem_unconstrained_gradient(self):
-        self.compute_fem_matrix_vector_product(self.fem_state_v.v_diff, self.fem_state_v.gradient, self.batch_active)
+        self.compute_fem_matrix_vector_product(
+            self.fem_state_v.v_diff, self.fem_state_v.gradient, self.batch_active, add_contacts=False, sum_dot=False
+        )
 
     @qd.kernel
     def compute_rigid_unconstrained_gradient(self, rigid_info: array_class.RigidInfo):
-        self.pcg_rigid_state_dof.Ap.fill(0.0)
-        for i_b, i_d0, i_d1 in qd.ndrange(self.rigid_solver._B, self.rigid_solver.n_dofs, self.rigid_solver.n_dofs):
-            if not self.batch_active[i_b]:
-                continue
-            self.rigid_state_dof.gradient[i_b, i_d1] += (
-                rigid_info.mass_mat[i_d1, i_d0, i_b] * self.rigid_state_dof.v_diff[i_b, i_d0]
-            )
+        self.compute_rigid_mass_mat_vec_product(
+            self.rigid_state_dof.v_diff,
+            self.rigid_state_dof.gradient,
+            self.batch_active,
+            rigid_info=rigid_info,
+            add_contacts=False,
+            sum_dot=False,
+        )
 
     @qd.kernel
     def compute_constraint_contact_gradient_hessian_diag_prec(self):
-        self.clear_impulses()
         if qd.static(self.rigid_solver.is_active and self.rigid_solver.n_equalities > 0):
             self.equality_constraint_handler.compute_gradient_hessian_diag()
         for contact in qd.static(self.contact_handlers):
             contact.compute_gradient_hessian_diag()
-        self.compute_preconditioner()
-
-    @qd.func
-    def clear_impulses(self):
         if qd.static(self.fem_solver.is_active):
-            self.clear_fem_impulses()
+            # The impulses, the gradient and the preconditioner of the vertices, gathering the contacts
+            for i_b, i_v in qd.ndrange(self._B, self.fem_solver.n_vertices):
+                if self.batch_active[i_b]:
+                    Jt_gamma = self.func_fem_contacts_Jt_vec(i_b, i_v)
+                    self.fem_state_v.impulse[i_b, i_v] = Jt_gamma
+                    self.fem_state_v.gradient[i_b, i_v] -= Jt_gamma
+                    diag3x3 = self.pcg_fem_state_v[i_b, i_v].diag3x3 + self.func_fem_contacts_Jt_A_J(i_b, i_v)
+                    self.pcg_fem_state_v[i_b, i_v].diag3x3 = diag3x3
+                    self.pcg_fem_state_v[i_b, i_v].prec = diag3x3.inverse()
         if qd.static(self.rigid_solver.is_active):
-            self.clear_rigid_impulses()
-
-    @qd.func
-    def clear_fem_impulses(self):
-        for i_b, i_v in qd.ndrange(self.fem_solver._B, self.fem_solver.n_vertices):
-            if not self.batch_active[i_b]:
-                continue
-            self.fem_state_v[i_b, i_v].impulse.fill(0.0)
-
-    @qd.func
-    def clear_rigid_impulses(self):
-        for i_b, i_d in qd.ndrange(self.rigid_solver._B, self.rigid_solver.n_dofs):
-            if not self.batch_active[i_b]:
-                continue
-            self.rigid_state_dof[i_b, i_d].impulse = 0.0
-
-    @qd.func
-    def compute_preconditioner(self):
-        if qd.static(self.fem_solver.is_active):
-            self.compute_fem_preconditioner()
-
-    @qd.func
-    def compute_fem_preconditioner(self):
-        for i_b, i_v in qd.ndrange(self.fem_solver._B, self.fem_solver.n_vertices):
-            if not self.batch_active[i_b]:
-                continue
-            self.pcg_fem_state_v[i_b, i_v].prec = self.pcg_fem_state_v[i_b, i_v].diag3x3.inverse()
-
-    @qd.func
-    def compute_fem_pcg_matrix_vector_product(self):
-        self.compute_fem_matrix_vector_product(self.pcg_fem_state_v.p, self.pcg_fem_state_v.Ap, self.batch_pcg_active)
-
-    @qd.func
-    def compute_rigid_pcg_matrix_vector_product(self, rigid_info: array_class.RigidInfo):
-        self.compute_rigid_mass_mat_vec_product(
-            self.pcg_rigid_state_dof.p, self.pcg_rigid_state_dof.Ap, self.batch_pcg_active, rigid_info=rigid_info
-        )
+            # The impulses and the gradient of the dofs, gathering the constraints and the contacts
+            for i_b, i_d in qd.ndrange(self._B, self.rigid_solver.n_dofs):
+                if self.batch_active[i_b]:
+                    Jt_gamma = self.func_rigid_contacts_Jt_vec(i_b, i_d)
+                    self.rigid_state_dof.impulse[i_b, i_d] = Jt_gamma
+                    self.rigid_state_dof.gradient[i_b, i_d] -= Jt_gamma
 
     @qd.func
     def compute_elastic_products(self, i_b, i_e, S, i_vs, src):
@@ -1056,86 +1109,118 @@ class SAPCoupler(RBC):
         return p9, H9_p9
 
     @qd.func
-    def compute_fem_matrix_vector_product(self, src, dst, active):
-        """
-        Compute the FEM matrix-vector product, including mass matrix and elasticity stiffness matrix.
+    def func_element_mapping_matrix(self, i_b: int, i_e: int):
+        """Return the map from the vertex values of an element to its deformation, zero on the constrained vertices."""
+        B = self.fem_solver.elements_i[i_e].B
+        S = qd.Matrix.zero(gs.qd_float, 4, 3)
+        S[:3, :] = B
+        S[3, :] = -B[0, :] - B[1, :] - B[2, :]
+        if qd.static(self.fem_solver._enable_vertex_constraints):
+            i_vs = self.fem_solver.elements_i[i_e].el2v
+            for i in qd.static(range(4)):
+                if self.fem_solver.vertex_constraints.is_constrained[i_vs[i], i_b]:
+                    S[i, :] = qd.Vector.zero(gs.qd_float, 3)
+        return S
+
+    @qd.func
+    def compute_fem_matrix_vector_product(self, src, dst, active, add_contacts: qd.template(), sum_dot: qd.template()):
+        """Compute the FEM matrix-vector product, including mass matrix and elasticity stiffness matrix.
+
+        With add_contacts, the product includes the contact Hessian, the contact handlers holding the contact part of
+        the product in their pairs (see compute_pcg_matrix_vector_product). With sum_dot, the partial sums of
+        src.dot(dst) over the vertices go to slot 0 of fem_partials_v.
         """
         dt2 = self.fem_solver._substep_dt**2
         damping_alpha_factor = self.fem_solver._damping_alpha * self.fem_solver._substep_dt + 1.0
         damping_beta_factor = self.fem_solver._damping_beta / self.fem_solver._substep_dt + 1.0
 
-        # Inerita
-        for i_b, i_v in qd.ndrange(self.fem_solver._B, self.fem_solver.n_vertices):
-            if not active[i_b]:
-                continue
-            dst[i_b, i_v] = (
-                self.fem_solver.elements_v_info[i_v].mass_over_dt2 * src[i_b, i_v] * dt2 * damping_alpha_factor
-            )
-
-        # Elasticity
+        # Elasticity, per corner of the elements
         for i_b, i_e in qd.ndrange(self.fem_solver._B, self.fem_solver.n_elements):
-            if not active[i_b]:
-                continue
-            V_dt2 = self.fem_solver.elements_i[i_e].V * dt2
-            B = self.fem_solver.elements_i[i_e].B
-            S = qd.Matrix.zero(gs.qd_float, 4, 3)
-            S[:3, :] = B
-            S[3, :] = -B[0, :] - B[1, :] - B[2, :]
-            i_vs = self.fem_solver.elements_i[i_e].el2v
-
-            if qd.static(self.fem_solver._enable_vertex_constraints):
+            if active[i_b]:
+                S = self.func_element_mapping_matrix(i_b, i_e)
+                i_vs = self.fem_solver.elements_i[i_e].el2v
+                _, new_p9 = self.compute_elastic_products(i_b, i_e, S, i_vs, src)
+                scale = self.fem_solver.elements_i[i_e].V * dt2 * damping_beta_factor
                 for i in qd.static(range(4)):
-                    if self.fem_solver.vertex_constraints.is_constrained[i_vs[i], i_b]:
-                        S[i, :] = qd.Vector.zero(gs.qd_float, 3)
+                    self.elements_corner[i_b, i_e, i] = (
+                        S[i, 0] * new_p9[0:3] + S[i, 1] * new_p9[3:6] + S[i, 2] * new_p9[6:9]
+                    ) * scale
 
-            _, new_p9 = self.compute_elastic_products(i_b, i_e, S, i_vs, src)
-            # atomic
-            scale = V_dt2 * damping_beta_factor
-            for i in qd.static(range(4)):
-                dst[i_b, i_vs[i]] += (S[i, 0] * new_p9[0:3] + S[i, 1] * new_p9[3:6] + S[i, 2] * new_p9[6:9]) * scale
+        # Inertia, and the elastic contributions of the corners touching the vertex in the order of vertices_corner
+        for i_b, i_v in qd.ndrange(self.fem_solver._B, self.fem_solver.n_vertices):
+            if active[i_b]:
+                dst_v = self.fem_solver.elements_v_info[i_v].mass_over_dt2 * src[i_b, i_v] * dt2 * damping_alpha_factor
+                for i_entry in range(
+                    self.fem_solver.vertices_corner_start[i_v], self.fem_solver.vertices_corner_start[i_v + 1]
+                ):
+                    i_corner = self.fem_solver.vertices_corner[i_entry]
+                    dst_v += self.elements_corner[i_b, i_corner // 4, i_corner % 4]
+                if qd.static(add_contacts):
+                    dst_v += self.func_fem_contacts_Jt_vec(i_b, i_v)
+                dst[i_b, i_v] = dst_v
+                if qd.static(sum_dot):
+                    self.fem_terms_v[i_b, i_v, 0] = src[i_b, i_v].dot(dst_v)
+        if qd.static(sum_dot):
+            lu.func_reduce_terms(self.fem_terms_v, self.fem_partials_v, active)
+
+    @qd.func
+    def compute_rigid_mass_mat_vec_product(
+        self,
+        vec,
+        out,
+        active,
+        rigid_info: array_class.RigidInfo,
+        add_contacts: qd.template(),
+        sum_dot: qd.template(),
+    ):
+        """Compute the rigid mass matrix-vector product.
+
+        With add_contacts, the product includes the Hessian of the constraints and the contacts (see
+        compute_rigid_matrix_vector_product). With sum_dot, the partial sums of vec.dot(out) over the dofs go to slot 0
+        of rigid_partials_dof.
+        """
+        for i_b, i_d1 in qd.ndrange(self._B, self.rigid_solver.n_dofs):
+            out_d1 = gs.qd_float(0.0)
+            if active[i_b]:
+                for i_d0 in range(self.rigid_solver.n_dofs):
+                    out_d1 += rigid_info.mass_mat[i_d1, i_d0, i_b] * vec[i_b, i_d0]
+                if qd.static(add_contacts):
+                    out_d1 += self.func_rigid_contacts_Jt_vec(i_b, i_d1)
+            out[i_b, i_d1] = out_d1
+            if qd.static(sum_dot):
+                self.rigid_terms_dof[i_b, i_d1, 0] = vec[i_b, i_d1] * out_d1
+        if qd.static(sum_dot):
+            lu.func_reduce_terms(self.rigid_terms_dof, self.rigid_partials_dof, active)
 
     @qd.kernel
     def init_pcg_solve(self, entities_info: array_class.EntitiesInfo, rigid_info: array_class.RigidInfo):
-        self.init_pcg_state()
+        for i_b in range(self._B):
+            self.batch_pcg_active[i_b] = self.batch_active[i_b]
         if qd.static(self.fem_solver.is_active):
             self.init_fem_pcg_solve()
         if qd.static(self.rigid_solver.is_active):
             self.init_rigid_pcg_solve(entities_info=entities_info, rigid_info=rigid_info)
-        self.init_pcg_active()
-
-    @qd.func
-    def init_pcg_state(self):
-        for i_b in qd.ndrange(self._B):
-            self.batch_pcg_active[i_b] = self.batch_active[i_b]
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_state[i_b].rTr = 0.0
-            self.pcg_state[i_b].rTz = 0.0
+        for i_b in range(self._B):
+            if self.batch_pcg_active[i_b]:
+                self.pcg_state[i_b].rTr = self.func_sum_vertices_dofs_batch(i_b, 0)
+                self.pcg_state[i_b].rTz = self.func_sum_vertices_dofs_batch(i_b, 1)
+                self.batch_pcg_active[i_b] = self.pcg_state[i_b].rTr > self._pcg_threshold
 
     @qd.func
     def init_fem_pcg_solve(self):
         for i_b, i_v in qd.ndrange(self._B, self.fem_solver.n_vertices):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_fem_state_v[i_b, i_v].x = 0.0
-            self.pcg_fem_state_v[i_b, i_v].r = -self.fem_state_v.gradient[i_b, i_v]
-            self.pcg_fem_state_v[i_b, i_v].z = self.pcg_fem_state_v[i_b, i_v].prec @ self.pcg_fem_state_v[i_b, i_v].r
-            self.pcg_fem_state_v[i_b, i_v].p = self.pcg_fem_state_v[i_b, i_v].z
-            self.pcg_state[i_b].rTr += self.pcg_fem_state_v[i_b, i_v].r.dot(self.pcg_fem_state_v[i_b, i_v].r)
-            self.pcg_state[i_b].rTz += self.pcg_fem_state_v[i_b, i_v].r.dot(self.pcg_fem_state_v[i_b, i_v].z)
+            if self.batch_pcg_active[i_b]:
+                self.pcg_fem_state_v[i_b, i_v].x = 0.0
+                r = -self.fem_state_v.gradient[i_b, i_v]
+                z = self.pcg_fem_state_v[i_b, i_v].prec @ r
+                self.pcg_fem_state_v[i_b, i_v].r = r
+                self.pcg_fem_state_v[i_b, i_v].z = z
+                self.pcg_fem_state_v[i_b, i_v].p = z
+                self.fem_terms_v[i_b, i_v, 0] = r.dot(r)
+                self.fem_terms_v[i_b, i_v, 1] = r.dot(z)
+        lu.func_reduce_terms(self.fem_terms_v, self.fem_partials_v, self.batch_pcg_active)
 
-    @qd.func
-    def compute_rigid_mass_mat_vec_product(self, vec, out, active, rigid_info: array_class.RigidInfo):
-        """
-        Compute the rigid mass matrix-vector product.
-        """
-        out.fill(0.0)
-        for i_b, i_d0, i_d1 in qd.ndrange(self._B, self.rigid_solver.n_dofs, self.rigid_solver.n_dofs):
-            if not active[i_b]:
-                continue
-            out[i_b, i_d1] += rigid_info.mass_mat[i_d1, i_d0, i_b] * vec[i_b, i_d0]
-
-    # FIXME: This following two rigid solves are duplicated with the one in rigid_solver.py:func_solve_mass_batched
+    # FIXME: The two following rigid solves duplicate func_solve_mass_batch in rigid/abd/forward_dynamics.py.
     # Consider refactoring.
     @qd.func
     def rigid_solve_pcg(self, vec, out, entities_info: array_class.EntitiesInfo, rigid_info: array_class.RigidInfo):
@@ -1210,28 +1295,22 @@ class SAPCoupler(RBC):
     @qd.func
     def init_rigid_pcg_solve(self, entities_info: array_class.EntitiesInfo, rigid_info: array_class.RigidInfo):
         for i_b, i_d in qd.ndrange(self._B, self.rigid_solver.n_dofs):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_rigid_state_dof[i_b, i_d].x = 0.0
-            self.pcg_rigid_state_dof[i_b, i_d].r = -self.rigid_state_dof.gradient[i_b, i_d]
-            self.pcg_state[i_b].rTr += self.pcg_rigid_state_dof[i_b, i_d].r ** 2
+            if self.batch_pcg_active[i_b]:
+                self.pcg_rigid_state_dof[i_b, i_d].x = 0.0
+                self.pcg_rigid_state_dof[i_b, i_d].r = -self.rigid_state_dof.gradient[i_b, i_d]
+                self.rigid_terms_dof[i_b, i_d, 0] = self.pcg_rigid_state_dof[i_b, i_d].r ** 2
 
         self.rigid_solve_pcg(
             self.pcg_rigid_state_dof.r, self.pcg_rigid_state_dof.z, entities_info=entities_info, rigid_info=rigid_info
         )
 
         for i_b, i_d in qd.ndrange(self._B, self.rigid_solver.n_dofs):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_rigid_state_dof[i_b, i_d].p = self.pcg_rigid_state_dof[i_b, i_d].z
-            self.pcg_state[i_b].rTz += self.pcg_rigid_state_dof[i_b, i_d].r * self.pcg_rigid_state_dof[i_b, i_d].z
-
-    @qd.func
-    def init_pcg_active(self):
-        for i_b in qd.ndrange(self._B):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.batch_pcg_active[i_b] = self.pcg_state[i_b].rTr > self._pcg_threshold
+            if self.batch_pcg_active[i_b]:
+                self.pcg_rigid_state_dof[i_b, i_d].p = self.pcg_rigid_state_dof[i_b, i_d].z
+                self.rigid_terms_dof[i_b, i_d, 1] = (
+                    self.pcg_rigid_state_dof[i_b, i_d].r * self.pcg_rigid_state_dof[i_b, i_d].z
+                )
+        lu.func_reduce_terms(self.rigid_terms_dof, self.rigid_partials_dof, self.batch_pcg_active)
 
     def one_pcg_iter(self):
         self._kernel_one_pcg_iter(
@@ -1241,8 +1320,6 @@ class SAPCoupler(RBC):
     @qd.kernel
     def _kernel_one_pcg_iter(self, entities_info: array_class.EntitiesInfo, rigid_info: array_class.RigidInfo):
         self.compute_pcg_matrix_vector_product(rigid_info=rigid_info)
-        self.clear_pcg_state()
-        self.compute_pcg_pTAp()
         self.compute_alpha()
         self.compute_pcg_state(entities_info=entities_info, rigid_info=rigid_info)
         self.check_pcg_convergence()
@@ -1251,62 +1328,41 @@ class SAPCoupler(RBC):
     @qd.func
     def compute_pcg_matrix_vector_product(self, rigid_info: array_class.RigidInfo):
         """
-        Compute the matrix-vector product Ap used in the Preconditioned Conjugate Gradient method.
+        Compute the matrix-vector product Ap used in the Preconditioned Conjugate Gradient method, and the partial sums
+        of pTAp (see compute_alpha).
         """
-        if qd.static(self.fem_solver.is_active):
-            self.compute_fem_pcg_matrix_vector_product()
-        if qd.static(self.rigid_solver.is_active):
-            self.compute_rigid_pcg_matrix_vector_product(rigid_info=rigid_info)
         # Constraint
         if qd.static(self.rigid_solver.is_active and self.rigid_solver.n_equalities > 0):
             self.equality_constraint_handler.compute_Ap()
         # Contact
         for contact in qd.static(self.contact_handlers):
             contact.compute_pcg_matrix_vector_product()
+        if qd.static(self.fem_solver.is_active):
+            self.compute_fem_matrix_vector_product(
+                self.pcg_fem_state_v.p, self.pcg_fem_state_v.Ap, self.batch_pcg_active, add_contacts=True, sum_dot=True
+            )
+        if qd.static(self.rigid_solver.is_active):
+            self.compute_rigid_mass_mat_vec_product(
+                self.pcg_rigid_state_dof.p,
+                self.pcg_rigid_state_dof.Ap,
+                self.batch_pcg_active,
+                rigid_info=rigid_info,
+                add_contacts=True,
+                sum_dot=True,
+            )
 
     @qd.func
-    def clear_pcg_state(self):
-        for i_b in qd.ndrange(self._B):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_state[i_b].pTAp = 0.0
-            self.pcg_state[i_b].rTr_new = 0.0
-            self.pcg_state[i_b].rTz_new = 0.0
-
-    @qd.func
-    def compute_pcg_pTAp(self):
-        """
-        Compute the product p^T @ A @ p used in the Preconditioned Conjugate Gradient method.
+    def compute_alpha(self):
+        """Compute the step of the Preconditioned Conjugate Gradient from the product p^T @ A @ p.
 
         Notes
         -----
         Reference: https://en.wikipedia.org/wiki/Conjugate_gradient_method#The_preconditioned_conjugate_gradient_method
         """
-        if qd.static(self.fem_solver.is_active):
-            self.compute_fem_pcg_pTAp()
-        if qd.static(self.rigid_solver.is_active):
-            self.compute_rigid_pcg_pTAp()
-
-    @qd.func
-    def compute_fem_pcg_pTAp(self):
-        for i_b, i_v in qd.ndrange(self._B, self.fem_solver.n_vertices):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_state[i_b].pTAp += self.pcg_fem_state_v[i_b, i_v].p.dot(self.pcg_fem_state_v[i_b, i_v].Ap)
-
-    @qd.func
-    def compute_rigid_pcg_pTAp(self):
-        for i_b, i_d in qd.ndrange(self._B, self.rigid_solver.n_dofs):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_state[i_b].pTAp += self.pcg_rigid_state_dof[i_b, i_d].p * self.pcg_rigid_state_dof[i_b, i_d].Ap
-
-    @qd.func
-    def compute_alpha(self):
-        for i_b in qd.ndrange(self._B):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_state[i_b].alpha = self.pcg_state[i_b].rTz / self.pcg_state[i_b].pTAp
+        for i_b in range(self._B):
+            if self.batch_pcg_active[i_b]:
+                self.pcg_state[i_b].pTAp = self.func_sum_vertices_dofs_batch(i_b, 0)
+                self.pcg_state[i_b].alpha = self.pcg_state[i_b].rTz / self.pcg_state[i_b].pTAp
 
     @qd.func
     def compute_pcg_state(self, entities_info: array_class.EntitiesInfo, rigid_info: array_class.RigidInfo):
@@ -1318,54 +1374,55 @@ class SAPCoupler(RBC):
     @qd.func
     def compute_fem_pcg_state(self):
         for i_b, i_v in qd.ndrange(self._B, self.fem_solver.n_vertices):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_fem_state_v[i_b, i_v].x = (
-                self.pcg_fem_state_v[i_b, i_v].x + self.pcg_state[i_b].alpha * self.pcg_fem_state_v[i_b, i_v].p
-            )
-            self.pcg_fem_state_v[i_b, i_v].r = (
-                self.pcg_fem_state_v[i_b, i_v].r - self.pcg_state[i_b].alpha * self.pcg_fem_state_v[i_b, i_v].Ap
-            )
-            self.pcg_fem_state_v[i_b, i_v].z = self.pcg_fem_state_v[i_b, i_v].prec @ self.pcg_fem_state_v[i_b, i_v].r
-            self.pcg_state[i_b].rTr_new += self.pcg_fem_state_v[i_b, i_v].r.norm_sqr()
-            self.pcg_state[i_b].rTz_new += self.pcg_fem_state_v[i_b, i_v].r.dot(self.pcg_fem_state_v[i_b, i_v].z)
+            if self.batch_pcg_active[i_b]:
+                alpha = self.pcg_state[i_b].alpha
+                self.pcg_fem_state_v[i_b, i_v].x = (
+                    self.pcg_fem_state_v[i_b, i_v].x + alpha * self.pcg_fem_state_v[i_b, i_v].p
+                )
+                r = self.pcg_fem_state_v[i_b, i_v].r - alpha * self.pcg_fem_state_v[i_b, i_v].Ap
+                z = self.pcg_fem_state_v[i_b, i_v].prec @ r
+                self.pcg_fem_state_v[i_b, i_v].r = r
+                self.pcg_fem_state_v[i_b, i_v].z = z
+                self.fem_terms_v[i_b, i_v, 1] = r.norm_sqr()
+                self.fem_terms_v[i_b, i_v, 2] = r.dot(z)
+        lu.func_reduce_terms(self.fem_terms_v, self.fem_partials_v, self.batch_pcg_active)
 
     @qd.func
     def compute_rigid_pcg_state(self, entities_info: array_class.EntitiesInfo, rigid_info: array_class.RigidInfo):
         for i_b, i_d in qd.ndrange(self._B, self.rigid_solver.n_dofs):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_rigid_state_dof[i_b, i_d].x = (
-                self.pcg_rigid_state_dof[i_b, i_d].x + self.pcg_state[i_b].alpha * self.pcg_rigid_state_dof[i_b, i_d].p
-            )
-            self.pcg_rigid_state_dof[i_b, i_d].r = (
-                self.pcg_rigid_state_dof[i_b, i_d].r - self.pcg_state[i_b].alpha * self.pcg_rigid_state_dof[i_b, i_d].Ap
-            )
-            self.pcg_state[i_b].rTr_new += self.pcg_rigid_state_dof[i_b, i_d].r * self.pcg_rigid_state_dof[i_b, i_d].r
+            if self.batch_pcg_active[i_b]:
+                alpha = self.pcg_state[i_b].alpha
+                self.pcg_rigid_state_dof[i_b, i_d].x = (
+                    self.pcg_rigid_state_dof[i_b, i_d].x + alpha * self.pcg_rigid_state_dof[i_b, i_d].p
+                )
+                self.pcg_rigid_state_dof[i_b, i_d].r = (
+                    self.pcg_rigid_state_dof[i_b, i_d].r - alpha * self.pcg_rigid_state_dof[i_b, i_d].Ap
+                )
+                self.rigid_terms_dof[i_b, i_d, 1] = self.pcg_rigid_state_dof[i_b, i_d].r ** 2
 
         self.rigid_solve_pcg(
             self.pcg_rigid_state_dof.r, self.pcg_rigid_state_dof.z, entities_info=entities_info, rigid_info=rigid_info
         )
 
         for i_b, i_d in qd.ndrange(self._B, self.rigid_solver.n_dofs):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_state[i_b].rTz_new += self.pcg_rigid_state_dof[i_b, i_d].r * self.pcg_rigid_state_dof[i_b, i_d].z
+            if self.batch_pcg_active[i_b]:
+                self.rigid_terms_dof[i_b, i_d, 2] = (
+                    self.pcg_rigid_state_dof[i_b, i_d].r * self.pcg_rigid_state_dof[i_b, i_d].z
+                )
+        lu.func_reduce_terms(self.rigid_terms_dof, self.rigid_partials_dof, self.batch_pcg_active)
 
     @qd.func
     def check_pcg_convergence(self):
-        # check convergence
-        for i_b in qd.ndrange(self._B):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.batch_pcg_active[i_b] = self.pcg_state[i_b].rTr_new > self._pcg_threshold
-        # update beta, rTr, rTz
-        for i_b in qd.ndrange(self._B):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_state[i_b].beta = self.pcg_state[i_b].rTz_new / self.pcg_state[i_b].rTz
-            self.pcg_state[i_b].rTr = self.pcg_state[i_b].rTr_new
-            self.pcg_state[i_b].rTz = self.pcg_state[i_b].rTz_new
+        # check convergence, then update beta, rTr, rTz
+        for i_b in range(self._B):
+            if self.batch_pcg_active[i_b]:
+                self.pcg_state[i_b].rTr_new = self.func_sum_vertices_dofs_batch(i_b, 1)
+                self.pcg_state[i_b].rTz_new = self.func_sum_vertices_dofs_batch(i_b, 2)
+                self.batch_pcg_active[i_b] = self.pcg_state[i_b].rTr_new > self._pcg_threshold
+                if self.batch_pcg_active[i_b]:
+                    self.pcg_state[i_b].beta = self.pcg_state[i_b].rTz_new / self.pcg_state[i_b].rTz
+                    self.pcg_state[i_b].rTr = self.pcg_state[i_b].rTr_new
+                    self.pcg_state[i_b].rTz = self.pcg_state[i_b].rTz_new
 
     @qd.func
     def compute_p(self):
@@ -1405,78 +1462,71 @@ class SAPCoupler(RBC):
         dofs_state: array_class.DofsState,
         rigid_info: array_class.RigidInfo,
     ):
-        energy.fill(0.0)
         if qd.static(self.fem_solver.is_active):
-            self.compute_fem_energy(i_step, energy)
+            self.compute_fem_energy(i_step)
         if qd.static(self.rigid_solver.is_active):
-            self.compute_rigid_energy(energy, dofs_state=dofs_state, rigid_info=rigid_info)
+            self.compute_rigid_energy(dofs_state=dofs_state, rigid_info=rigid_info)
         # Constraint
         if qd.static(self.rigid_solver.is_active and self.rigid_solver.n_equalities > 0):
-            self.equality_constraint_handler.compute_energy(energy)
+            self.equality_constraint_handler.compute_energy()
         # Contact
         for contact in qd.static(self.contact_handlers):
-            contact.compute_energy(energy)
+            contact.compute_energy()
+        for i_b in range(self._B):
+            if self.batch_linesearch_active[i_b]:
+                energy_sum = gs.qd_float(0.0)
+                if qd.static(self.fem_solver.is_active):
+                    energy_sum += lu.func_sum_chunks(i_b, 0, self.fem_partials_v)
+                    energy_sum += lu.func_sum_chunks(i_b, 0, self.fem_partials_el)
+                if qd.static(self.rigid_solver.is_active):
+                    energy_sum += 0.5 * lu.func_sum_chunks(i_b, 0, self.rigid_partials_dof)
+                energy[i_b] = energy_sum + self.func_sum_constraints_contacts_batch(i_b, 0)
 
     @qd.func
-    def compute_fem_energy(self, i_step: qd.i32, energy: qd.template()):
+    def compute_fem_energy(self, i_step: qd.i32):
         dt2 = self.fem_solver._substep_dt**2
         damping_alpha_factor = self.fem_solver._damping_alpha * self.fem_solver._substep_dt + 1.0
         damping_beta_factor = self.fem_solver._damping_beta / self.fem_solver._substep_dt + 1.0
 
         # Inertia
         for i_b, i_v in qd.ndrange(self._B, self.fem_solver.n_vertices):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            self.fem_state_v.v_diff[i_b, i_v] = (
-                self.fem_state_v.v[i_b, i_v] - self.fem_solver.elements_v[i_step + 1, i_v, i_b].vel
-            )
-            energy[i_b] += (
-                0.5
-                * self.fem_solver.elements_v_info[i_v].mass_over_dt2
-                * self.fem_state_v.v_diff[i_b, i_v].norm_sqr()
-                * dt2
-                * damping_alpha_factor
-            )
+            if self.batch_linesearch_active[i_b]:
+                v_diff = self.fem_state_v.v[i_b, i_v] - self.fem_solver.elements_v[i_step + 1, i_v, i_b].vel
+                self.fem_state_v.v_diff[i_b, i_v] = v_diff
+                self.fem_terms_v[i_b, i_v, 0] = (
+                    0.5
+                    * self.fem_solver.elements_v_info[i_v].mass_over_dt2
+                    * v_diff.norm_sqr()
+                    * dt2
+                    * damping_alpha_factor
+                )
+        lu.func_reduce_terms(self.fem_terms_v, self.fem_partials_v, self.batch_linesearch_active)
 
         # Elastic
         for i_b, i_e in qd.ndrange(self._B, self.fem_solver.n_elements):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-
-            V_dt2 = self.fem_solver.elements_i[i_e].V * dt2
-            B = self.fem_solver.elements_i[i_e].B
-            S = qd.Matrix.zero(gs.qd_float, 4, 3)
-            S[:3, :] = B
-            S[3, :] = -B[0, :] - B[1, :] - B[2, :]
-            i_vs = self.fem_solver.elements_i[i_e].el2v
-
-            if qd.static(self.fem_solver._enable_vertex_constraints):
-                for i in qd.static(range(4)):
-                    if self.fem_solver.vertex_constraints.is_constrained[i_vs[i], i_b]:
-                        S[i, :] = qd.Vector.zero(gs.qd_float, 3)
-
-            p9, H9_p9 = self.compute_elastic_products(i_b, i_e, S, i_vs, self.fem_state_v.v_diff)
-            energy[i_b] += 0.5 * p9.dot(H9_p9) * damping_beta_factor * V_dt2
+            if self.batch_linesearch_active[i_b]:
+                S = self.func_element_mapping_matrix(i_b, i_e)
+                i_vs = self.fem_solver.elements_i[i_e].el2v
+                p9, H9_p9 = self.compute_elastic_products(i_b, i_e, S, i_vs, self.fem_state_v.v_diff)
+                self.fem_terms_el[i_b, i_e, 0] = (
+                    0.5 * p9.dot(H9_p9) * damping_beta_factor * self.fem_solver.elements_i[i_e].V * dt2
+                )
+        lu.func_reduce_terms(self.fem_terms_el, self.fem_partials_el, self.batch_linesearch_active)
 
     @qd.func
-    def compute_rigid_energy(
-        self, energy: qd.template(), dofs_state: array_class.DofsState, rigid_info: array_class.RigidInfo
-    ):
-        # Kinetic energy
+    def compute_rigid_energy(self, dofs_state: array_class.DofsState, rigid_info: array_class.RigidInfo):
+        # Kinetic energy, twice its value going to the partial sums
         for i_b, i_d in qd.ndrange(self._B, self.rigid_solver.n_dofs):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            self.rigid_state_dof.v_diff[i_b, i_d] = self.rigid_state_dof.v[i_b, i_d] - dofs_state.vel[i_d, i_b]
+            if self.batch_linesearch_active[i_b]:
+                self.rigid_state_dof.v_diff[i_b, i_d] = self.rigid_state_dof.v[i_b, i_d] - dofs_state.vel[i_d, i_b]
         self.compute_rigid_mass_mat_vec_product(
             self.rigid_state_dof.v_diff,
             self.rigid_state_dof.mass_v_diff,
             self.batch_linesearch_active,
             rigid_info=rigid_info,
+            add_contacts=False,
+            sum_dot=True,
         )
-        for i_b, i_d in qd.ndrange(self._B, self.rigid_solver.n_dofs):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            energy[i_b] += 0.5 * self.rigid_state_dof.v_diff[i_b, i_d] * self.rigid_state_dof.mass_v_diff[i_b, i_d]
 
     @qd.kernel
     def init_exact_linesearch(
@@ -1487,8 +1537,10 @@ class SAPCoupler(RBC):
             i_step, self.linesearch_state.prev_energy, dofs_state=dofs_state, rigid_info=rigid_info
         )
         self.prepare_search_direction_data(rigid_info=rigid_info)
-        self.update_velocity_linesearch()
         self.compute_line_energy_gradient_hessian(i_step, dofs_state=dofs_state)
+        for i_b in range(self._B):
+            if self.batch_linesearch_active[i_b]:
+                self.func_sum_line_energy_gradient_hessian_batch(i_b)
         self.check_initial_exact_linesearch_convergence()
         self.init_newton_linesearch()
 
@@ -1521,172 +1573,130 @@ class SAPCoupler(RBC):
 
     @qd.func
     def compute_line_energy_gradient_hessian(self, i_step: qd.i32, dofs_state: array_class.DofsState):
-        self.init_linesearch_energy_gradient_hessian()
-        if qd.static(self.fem_solver.is_active):
-            self.compute_fem_energy_alpha(i_step, self.linesearch_state.energy)
-            self.compute_fem_gradient_alpha(i_step)
+        """Move the velocities along the search direction, and compute the partial sums of the line energy derivatives.
 
+        The partial sums are those of the energy and of its first and its second derivative along the search direction
+        (see func_sum_line_energy_gradient_hessian_batch).
+        """
+        if qd.static(self.fem_solver.is_active):
+            self.compute_fem_energy_gradient_alpha(i_step)
         if qd.static(self.rigid_solver.is_active):
-            self.compute_rigid_energy_alpha(self.linesearch_state.energy, dofs_state=dofs_state)
-            self.compute_rigid_gradient_alpha(dofs_state=dofs_state)
+            self.compute_rigid_energy_gradient_alpha(dofs_state=dofs_state)
         # Constraint
         if qd.static(self.rigid_solver.is_active and self.rigid_solver.n_equalities > 0):
-            self.equality_constraint_handler.compute_energy_gamma_G()
             self.equality_constraint_handler.update_gradient_hessian_alpha()
         # Contact
         for contact in qd.static(self.contact_handlers):
-            contact.compute_energy_gamma_G()
             contact.update_gradient_hessian_alpha()
 
     @qd.func
-    def init_linesearch_energy_gradient_hessian(self):
-        energy = qd.static(self.linesearch_state.energy)
-        alpha = qd.static(self.linesearch_state.step_size)
-        for i_b in qd.ndrange(self._B):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-
-            # energy
-            energy[i_b] = (
-                self.linesearch_state.prev_energy[i_b]
-                + 0.5 * alpha[i_b] ** 2 * self.linesearch_state[i_b].d2ellA_dalpha2
-            )
-
-            # gradient
-            self.linesearch_state[i_b].dell_dalpha = 0.0
-
-            # hessian
-            self.linesearch_state.d2ell_dalpha2[i_b] = self.linesearch_state.d2ellA_dalpha2[i_b]
+    def func_sum_line_energy_gradient_hessian_batch(self, i_b: int):
+        """Sum the energy along the search direction of a batch entry, and its first and its second derivative."""
+        alpha = self.linesearch_state.step_size[i_b]
+        d2ellA_dalpha2 = self.linesearch_state.d2ellA_dalpha2[i_b]
+        self.linesearch_state.energy[i_b] = (
+            self.linesearch_state.prev_energy[i_b]
+            + 0.5 * alpha**2 * d2ellA_dalpha2
+            + self.func_sum_vertices_dofs_batch(i_b, 0)
+        )
+        dellA_dalpha = self.func_sum_vertices_dofs_batch(i_b, 1)
+        dell_contacts_dalpha = self.func_sum_constraints_contacts_batch(i_b, 0)
+        self.linesearch_state.dell_dalpha[i_b] = dellA_dalpha + dell_contacts_dalpha
+        self.linesearch_state.d2ell_dalpha2[i_b] = d2ellA_dalpha2 + self.func_sum_constraints_contacts_batch(i_b, 1)
 
     @qd.func
-    def compute_fem_gradient_alpha(self, i_step: qd.i32):
-        dp = qd.static(self.linesearch_fem_state_v.dp)
-        v = qd.static(self.fem_state_v.v)
-        v_star = qd.static(self.fem_solver.elements_v.vel)
+    def compute_fem_energy_gradient_alpha(self, i_step: qd.i32):
         for i_b, i_v in qd.ndrange(self._B, self.fem_solver.n_vertices):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            self.linesearch_state.dell_dalpha[i_b] += dp[i_b, i_v].dot(v[i_b, i_v] - v_star[i_step + 1, i_v, i_b])
+            if self.batch_linesearch_active[i_b]:
+                alpha = self.linesearch_state.step_size[i_b]
+                v = self.linesearch_fem_state_v[i_b, i_v].x_prev + alpha * self.pcg_fem_state_v[i_b, i_v].x
+                self.fem_state_v.v[i_b, i_v] = v
+                dell = self.linesearch_fem_state_v.dp[i_b, i_v].dot(
+                    v - self.fem_solver.elements_v.vel[i_step + 1, i_v, i_b]
+                )
+                self.fem_terms_v[i_b, i_v, 0] = alpha * dell
+                self.fem_terms_v[i_b, i_v, 1] = dell
+        lu.func_reduce_terms(self.fem_terms_v, self.fem_partials_v, self.batch_linesearch_active)
 
     @qd.func
-    def compute_rigid_gradient_alpha(self, dofs_state: array_class.DofsState):
-        dp = qd.static(self.linesearch_rigid_state_dof.dp)
-        v = qd.static(self.rigid_state_dof.v)
-        v_star = qd.static(dofs_state.vel)
+    def compute_rigid_energy_gradient_alpha(self, dofs_state: array_class.DofsState):
         for i_b, i_d in qd.ndrange(self._B, self.rigid_solver.n_dofs):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            self.linesearch_state.dell_dalpha[i_b] += dp[i_b, i_d] * (v[i_b, i_d] - v_star[i_d, i_b])
-
-    @qd.func
-    def compute_fem_energy_alpha(self, i_step: qd.i32, energy: qd.template()):
-        alpha = qd.static(self.linesearch_state.step_size)
-        dp = qd.static(self.linesearch_fem_state_v.dp)
-        v = qd.static(self.fem_state_v.v)
-        v_star = qd.static(self.fem_solver.elements_v.vel)
-        for i_b, i_v in qd.ndrange(self._B, self.fem_solver.n_vertices):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            energy[i_b] += alpha[i_b] * dp[i_b, i_v].dot(v[i_b, i_v] - v_star[i_step + 1, i_v, i_b])
-
-    @qd.func
-    def compute_rigid_energy_alpha(self, energy: qd.template(), dofs_state: array_class.DofsState):
-        alpha = qd.static(self.linesearch_state.step_size)
-        dp = qd.static(self.linesearch_rigid_state_dof.dp)
-        v = qd.static(self.rigid_state_dof.v)
-        v_star = qd.static(dofs_state.vel)
-        for i_b, i_d in qd.ndrange(self._B, self.rigid_solver.n_dofs):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            energy[i_b] += alpha[i_b] * dp[i_b, i_d] * (v[i_b, i_d] - v_star[i_d, i_b])
+            if self.batch_linesearch_active[i_b]:
+                alpha = self.linesearch_state.step_size[i_b]
+                v = self.linesearch_rigid_state_dof[i_b, i_d].x_prev + alpha * self.pcg_rigid_state_dof[i_b, i_d].x
+                self.rigid_state_dof.v[i_b, i_d] = v
+                dell = self.linesearch_rigid_state_dof.dp[i_b, i_d] * (v - dofs_state.vel[i_d, i_b])
+                self.rigid_terms_dof[i_b, i_d, 0] = alpha * dell
+                self.rigid_terms_dof[i_b, i_d, 1] = dell
+        lu.func_reduce_terms(self.rigid_terms_dof, self.rigid_partials_dof, self.batch_linesearch_active)
 
     @qd.func
     def prepare_search_direction_data(self, rigid_info: array_class.RigidInfo):
         if qd.static(self.fem_solver.is_active):
-            self.prepare_fem_search_direction_data()
+            self.compute_fem_matrix_vector_product(
+                self.pcg_fem_state_v.x,
+                self.linesearch_fem_state_v.dp,
+                self.batch_linesearch_active,
+                add_contacts=False,
+                sum_dot=True,
+            )
         if qd.static(self.rigid_solver.is_active):
-            self.prepare_rigid_search_direction_data(rigid_info=rigid_info)
+            self.compute_rigid_mass_mat_vec_product(
+                self.pcg_rigid_state_dof.x,
+                self.linesearch_rigid_state_dof.dp,
+                self.batch_linesearch_active,
+                rigid_info=rigid_info,
+                add_contacts=False,
+                sum_dot=True,
+            )
         # Constraint
         if qd.static(self.rigid_solver.is_active and self.rigid_solver.n_equalities > 0):
             self.equality_constraint_handler.prepare_search_direction_data()
         # Contact
         for contact in qd.static(self.contact_handlers):
             contact.prepare_search_direction_data()
-        self.compute_d2ellA_dalpha2()
-
-    @qd.func
-    def compute_d2ellA_dalpha2(self):
+        # Second derivative of the dynamic energy along the search direction
         for i_b in qd.ndrange(self._B):
-            self.linesearch_state[i_b].d2ellA_dalpha2 = 0.0
-        if qd.static(self.fem_solver.is_active):
-            self.compute_fem_d2ellA_dalpha2()
-        if qd.static(self.rigid_solver.is_active):
-            self.compute_rigid_d2ellA_dalpha2()
-
-    @qd.func
-    def compute_fem_d2ellA_dalpha2(self):
-        for i_b, i_v in qd.ndrange(self._B, self.fem_solver.n_vertices):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            self.linesearch_state[i_b].d2ellA_dalpha2 += self.pcg_fem_state_v[i_b, i_v].x.dot(
-                self.linesearch_fem_state_v[i_b, i_v].dp
-            )
-
-    @qd.func
-    def compute_rigid_d2ellA_dalpha2(self):
-        for i_b, i_d in qd.ndrange(self._B, self.rigid_solver.n_dofs):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            self.linesearch_state[i_b].d2ellA_dalpha2 += (
-                self.pcg_rigid_state_dof[i_b, i_d].x * self.linesearch_rigid_state_dof[i_b, i_d].dp
-            )
-
-    @qd.func
-    def prepare_fem_search_direction_data(self):
-        self.compute_fem_matrix_vector_product(
-            self.pcg_fem_state_v.x, self.linesearch_fem_state_v.dp, self.batch_linesearch_active
-        )
-
-    @qd.func
-    def prepare_rigid_search_direction_data(self, rigid_info: array_class.RigidInfo):
-        self.compute_rigid_mass_mat_vec_product(
-            self.pcg_rigid_state_dof.x,
-            self.linesearch_rigid_state_dof.dp,
-            self.batch_linesearch_active,
-            rigid_info=rigid_info,
-        )
+            d2ellA_dalpha2 = gs.qd_float(0.0)
+            if self.batch_linesearch_active[i_b]:
+                d2ellA_dalpha2 = self.func_sum_vertices_dofs_batch(i_b, 0)
+            self.linesearch_state[i_b].d2ellA_dalpha2 = d2ellA_dalpha2
 
     @qd.func
     def _func_init_linesearch(self, step_size: float):
         for i_b in qd.ndrange(self._B):
             self.batch_linesearch_active[i_b] = self.batch_active[i_b]
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            self.linesearch_state[i_b].step_size = step_size
-            self.linesearch_state[i_b].m = 0.0
+            if self.batch_linesearch_active[i_b]:
+                self.linesearch_state[i_b].step_size = step_size
 
         if qd.static(self.fem_solver.is_active):
             self._func_init_fem_linesearch()
         if qd.static(self.rigid_solver.is_active):
             self._func_init_rigid_linesearch()
 
+        for i_b in qd.ndrange(self._B):
+            if self.batch_linesearch_active[i_b]:
+                self.linesearch_state[i_b].m = self.func_sum_vertices_dofs_batch(i_b, 0)
+
     @qd.func
     def _func_init_fem_linesearch(self):
         for i_b, i_v in qd.ndrange(self._B, self.fem_solver.n_vertices):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            self.linesearch_state[i_b].m += self.pcg_fem_state_v[i_b, i_v].x.dot(self.fem_state_v.gradient[i_b, i_v])
-            self.linesearch_fem_state_v[i_b, i_v].x_prev = self.fem_state_v.v[i_b, i_v]
+            if self.batch_linesearch_active[i_b]:
+                self.fem_terms_v[i_b, i_v, 0] = self.pcg_fem_state_v[i_b, i_v].x.dot(
+                    self.fem_state_v.gradient[i_b, i_v]
+                )
+                self.linesearch_fem_state_v[i_b, i_v].x_prev = self.fem_state_v.v[i_b, i_v]
+        lu.func_reduce_terms(self.fem_terms_v, self.fem_partials_v, self.batch_linesearch_active)
 
     @qd.func
     def _func_init_rigid_linesearch(self):
         for i_b, i_d in qd.ndrange(self._B, self.rigid_solver.n_dofs):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            self.linesearch_state[i_b].m += (
-                self.pcg_rigid_state_dof[i_b, i_d].x * self.rigid_state_dof.gradient[i_b, i_d]
-            )
-            self.linesearch_rigid_state_dof[i_b, i_d].x_prev = self.rigid_state_dof.v[i_b, i_d]
+            if self.batch_linesearch_active[i_b]:
+                self.rigid_terms_dof[i_b, i_d, 0] = (
+                    self.pcg_rigid_state_dof[i_b, i_d].x * self.rigid_state_dof.gradient[i_b, i_d]
+                )
+                self.linesearch_rigid_state_dof[i_b, i_d].x_prev = self.rigid_state_dof.v[i_b, i_d]
+        lu.func_reduce_terms(self.rigid_terms_dof, self.rigid_partials_dof, self.batch_linesearch_active)
 
     @qd.func
     def check_initial_exact_linesearch_convergence(self):
@@ -1739,38 +1749,6 @@ class SAPCoupler(RBC):
                     self.linesearch_rigid_state_dof[i_b, i_d].x_prev + self.pcg_rigid_state_dof[i_b, i_d].x
                 )
 
-    def one_linesearch_iter(self, i_step: qd.i32):
-        self.update_velocity_linesearch()
-        self.compute_total_energy(i_step, self.linesearch_state.energy)
-        self.check_linesearch_convergence()
-
-    @qd.func
-    def update_velocity_linesearch(self):
-        if qd.static(self.fem_solver.is_active):
-            self.update_fem_velocity_linesearch()
-        if qd.static(self.rigid_solver.is_active):
-            self.update_rigid_velocity_linesearch()
-
-    @qd.func
-    def update_fem_velocity_linesearch(self):
-        for i_b, i_v in qd.ndrange(self._B, self.fem_solver.n_vertices):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            self.fem_state_v.v[i_b, i_v] = (
-                self.linesearch_fem_state_v[i_b, i_v].x_prev
-                + self.linesearch_state[i_b].step_size * self.pcg_fem_state_v[i_b, i_v].x
-            )
-
-    @qd.func
-    def update_rigid_velocity_linesearch(self):
-        for i_b, i_d in qd.ndrange(self._B, self.rigid_solver.n_dofs):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            self.rigid_state_dof.v[i_b, i_d] = (
-                self.linesearch_rigid_state_dof[i_b, i_d].x_prev
-                + self.linesearch_state[i_b].step_size * self.pcg_rigid_state_dof[i_b, i_d].x
-            )
-
     def exact_linesearch(self, i_step: qd.i32):
         """
         Note
@@ -1786,47 +1764,57 @@ class SAPCoupler(RBC):
 
     @qd.kernel
     def one_exact_linesearch_iter(self, i_step: qd.i32, dofs_state: array_class.DofsState):
-        self.update_velocity_linesearch()
         self.compute_line_energy_gradient_hessian(i_step, dofs_state=dofs_state)
-        self.compute_f_df_bracket()
-        self.find_next_step_size()
+        for i_b in range(self._B):
+            if self.batch_linesearch_active[i_b]:
+                self.func_sum_line_energy_gradient_hessian_batch(i_b)
+                self.func_compute_f_df_bracket_batch(i_b)
+            if self.batch_linesearch_active[i_b]:
+                self.func_find_next_step_size_batch(i_b)
 
     @qd.func
-    def compute_f_df_bracket(self):
+    def func_compute_f_df_bracket_batch(self, i_b: int):
         """
         Compute the function (derivative of total energy) value and its derivative to alpha.
         Update the bracket for the next step size.
 
         The bracket is defined by [alpha_min, alpha_max] which is the range that contains the root of df/dalpha = 0.
         """
-        for i_b in qd.ndrange(self._B):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            self.linesearch_state[i_b].f = (
-                self.linesearch_state[i_b].dell_dalpha / self.linesearch_state[i_b].dell_scale
-            )
-            self.linesearch_state[i_b].df = (
-                self.linesearch_state[i_b].d2ell_dalpha2 / self.linesearch_state[i_b].dell_scale
-            )
-            if qd.math.sign(self.linesearch_state[i_b].f) != qd.math.sign(self.linesearch_state[i_b].f_upper):
-                self.linesearch_state[i_b].alpha_min = self.linesearch_state[i_b].step_size
-                self.linesearch_state[i_b].f_lower = self.linesearch_state[i_b].f
-            else:
-                self.linesearch_state[i_b].alpha_max = self.linesearch_state[i_b].step_size
-                self.linesearch_state[i_b].f_upper = self.linesearch_state[i_b].f
-            if qd.abs(self.linesearch_state[i_b].f) < self._linesearch_ftol:
-                self.batch_linesearch_active[i_b] = False
+        self.linesearch_state[i_b].f = self.linesearch_state[i_b].dell_dalpha / self.linesearch_state[i_b].dell_scale
+        self.linesearch_state[i_b].df = self.linesearch_state[i_b].d2ell_dalpha2 / self.linesearch_state[i_b].dell_scale
+        if qd.math.sign(self.linesearch_state[i_b].f) != qd.math.sign(self.linesearch_state[i_b].f_upper):
+            self.linesearch_state[i_b].alpha_min = self.linesearch_state[i_b].step_size
+            self.linesearch_state[i_b].f_lower = self.linesearch_state[i_b].f
+        else:
+            self.linesearch_state[i_b].alpha_max = self.linesearch_state[i_b].step_size
+            self.linesearch_state[i_b].f_upper = self.linesearch_state[i_b].f
+        if qd.abs(self.linesearch_state[i_b].f) < self._linesearch_ftol:
+            self.batch_linesearch_active[i_b] = False
 
     @qd.func
-    def find_next_step_size(self):
-        for i_b in qd.ndrange(self._B):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            newton_is_slow = 2.0 * qd.abs(self.linesearch_state[i_b].f) > qd.abs(
-                self.linesearch_state[i_b].minus_dalpha_prev * self.linesearch_state[i_b].df
+    def func_find_next_step_size_batch(self, i_b: int):
+        newton_is_slow = 2.0 * qd.abs(self.linesearch_state[i_b].f) > qd.abs(
+            self.linesearch_state[i_b].minus_dalpha_prev * self.linesearch_state[i_b].df
+        )
+        self.linesearch_state[i_b].minus_dalpha_prev = self.linesearch_state[i_b].minus_dalpha
+        if newton_is_slow:
+            # bisect
+            self.linesearch_state[i_b].minus_dalpha = 0.5 * (
+                self.linesearch_state[i_b].alpha_min - self.linesearch_state[i_b].alpha_max
             )
-            self.linesearch_state[i_b].minus_dalpha_prev = self.linesearch_state[i_b].minus_dalpha
-            if newton_is_slow:
+            self.linesearch_state[i_b].step_size = (
+                self.linesearch_state[i_b].alpha_min - self.linesearch_state[i_b].minus_dalpha
+            )
+        else:
+            # newton
+            self.linesearch_state[i_b].minus_dalpha = self.linesearch_state[i_b].f / self.linesearch_state[i_b].df
+            self.linesearch_state[i_b].step_size = (
+                self.linesearch_state[i_b].step_size - self.linesearch_state[i_b].minus_dalpha
+            )
+            if (
+                self.linesearch_state[i_b].step_size <= self.linesearch_state[i_b].alpha_min
+                or self.linesearch_state[i_b].step_size >= self.linesearch_state[i_b].alpha_max
+            ):
                 # bisect
                 self.linesearch_state[i_b].minus_dalpha = 0.5 * (
                     self.linesearch_state[i_b].alpha_min - self.linesearch_state[i_b].alpha_max
@@ -1834,25 +1822,8 @@ class SAPCoupler(RBC):
                 self.linesearch_state[i_b].step_size = (
                     self.linesearch_state[i_b].alpha_min - self.linesearch_state[i_b].minus_dalpha
                 )
-            else:
-                # newton
-                self.linesearch_state[i_b].minus_dalpha = self.linesearch_state[i_b].f / self.linesearch_state[i_b].df
-                self.linesearch_state[i_b].step_size = (
-                    self.linesearch_state[i_b].step_size - self.linesearch_state[i_b].minus_dalpha
-                )
-                if (
-                    self.linesearch_state[i_b].step_size <= self.linesearch_state[i_b].alpha_min
-                    or self.linesearch_state[i_b].step_size >= self.linesearch_state[i_b].alpha_max
-                ):
-                    # bisect
-                    self.linesearch_state[i_b].minus_dalpha = 0.5 * (
-                        self.linesearch_state[i_b].alpha_min - self.linesearch_state[i_b].alpha_max
-                    )
-                    self.linesearch_state[i_b].step_size = (
-                        self.linesearch_state[i_b].alpha_min - self.linesearch_state[i_b].minus_dalpha
-                    )
-            if qd.abs(self.linesearch_state[i_b].minus_dalpha) < self.linesearch_state[i_b].alpha_tol:
-                self.batch_linesearch_active[i_b] = False
+        if qd.abs(self.linesearch_state[i_b].minus_dalpha) < self.linesearch_state[i_b].alpha_tol:
+            self.batch_linesearch_active[i_b] = False
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- Properties -------------------------------------
@@ -1902,15 +1873,21 @@ class BaseConstraintHandler(RBC):
         sap_info[i_c].G = sap_info[i_c].R_inv
 
     @qd.func
-    def compute_energy(self, energy: qd.template()):
-        constraints = qd.static(self.constraints)
-        sap_info = qd.static(constraints.sap_info)
-        for i_c in range(self.n_constraints[None]):
-            i_b = constraints[i_c].batch_idx
+    def compute_energy(self):
+        """Compute the energy of the constraints, and its partial sums in slot 0 of constraints_partials."""
+        sap_info = qd.static(self.constraints.sap_info)
+        n_chunks = qd.static(self.constraints_partials.shape[1])
+        for i_b, i_chunk in qd.ndrange(self._B, n_chunks):
             if self.coupler.batch_linesearch_active[i_b]:
-                vc = self.compute_vc(i_c)
-                self.compute_constraint_energy(sap_info, i_c, vc)
-                energy[i_b] += sap_info[i_c].energy
+                energy = gs.qd_float(0.0)
+                i_c_start = self.batch_constraints_start[i_b]
+                n_constraints = self.batch_constraints_start[i_b + 1] - i_c_start
+                i_c_start, i_c_end = lu.func_chunk_range(i_c_start, i_chunk, n_constraints, n_chunks)
+                for i_c in range(i_c_start, i_c_end):
+                    vc = self.compute_vc(i_c)
+                    self.compute_constraint_energy(sap_info, i_c, vc)
+                    energy += sap_info[i_c].energy
+                self.constraints_partials[i_b, i_chunk, 0] = energy
 
     @qd.func
     def compute_constraint_energy(self, sap_info, i_c, vc):
@@ -1937,9 +1914,16 @@ class RigidConstraintHandler(BaseConstraintHandler):
             sap_info=self.sap_constraint_info_type,  # SAP info for the constraint
         )
         self.constraints = self.constraint_type.field(shape=(self.max_constraints,))
+        # The constraints are ordered by batch, those of batch entry i_b being in
+        # [batch_constraints_start[i_b], batch_constraints_start[i_b + 1]).
+        self.batch_constraints_start = qd.field(gs.qd_int, shape=(self._B + 1,))
         self.Jt = qd.field(gs.qd_float, shape=(self.max_constraints, self.rigid_solver.n_dofs))
-        self.M_inv_Jt = qd.field(gs.qd_float, shape=(self.max_constraints, self.rigid_solver.n_dofs))
         self.W = qd.field(gs.qd_float, shape=(self.max_constraints,))
+        # Impulse of each constraint that the dofs sum in the order of the constraints, and the partial sums over the
+        # chunks of the constraints of each batch entry, two sums at most at once (see lu.func_chunk_range)
+        self.constraints_vec = qd.field(gs.qd_float, shape=(self.max_constraints,))
+        n_chunks = max(min(simulator.rigid_solver.n_equalities, lu.SUM_MAX_CHUNKS), 1)
+        self.constraints_partials = qd.field(gs.qd_float, shape=(self._B, n_chunks, 2))
 
     @qd.kernel
     def build_constraints(
@@ -1953,30 +1937,36 @@ class RigidConstraintHandler(BaseConstraintHandler):
         # TODO: Maybe support different constraints for each batch in the future.
         # For now all batches have the same constraints.
         dt2 = self.sim._substep_dt**2
-        for i_b, i_e in qd.ndrange(self._B, self.rigid_solver.n_equalities):
-            if equalities_info.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.JOINT:
-                i_c = qd.atomic_add(self.n_constraints[None], 1)
-                self.constraints[i_c].batch_idx = i_b
-                I_joint1 = (
-                    [equalities_info.eq_obj1id[i_e, i_b], i_b]
-                    if qd.static(rigid_config.batch_joints_info)
-                    else equalities_info.eq_obj1id[i_e, i_b]
-                )
-                I_joint2 = (
-                    [equalities_info.eq_obj2id[i_e, i_b], i_b]
-                    if qd.static(rigid_config.batch_joints_info)
-                    else equalities_info.eq_obj2id[i_e, i_b]
-                )
-                i_dof1 = joints_info.dof_start[I_joint1]
-                i_dof2 = joints_info.dof_start[I_joint2]
-                self.constraints[i_c].i_dof1 = i_dof1
-                self.constraints[i_c].i_dof2 = i_dof2
-                self.constraints[i_c].sap_info.k = self.stiffness
-                self.constraints[i_c].sap_info.R_inv = dt2 * self.stiffness
-                self.constraints[i_c].sap_info.R = 1.0 / self.constraints[i_c].sap_info.R_inv
-                self.constraints[i_c].sap_info.v_hat = 0.0
-                self.Jt[i_c, i_dof1] = 1.0
-                self.Jt[i_c, i_dof2] = -1.0
+        # Serial, so that the constraints are ordered by batch then by equality
+        qd.loop_config(serialize=True)
+        for i_b in range(self._B):
+            self.batch_constraints_start[i_b] = self.n_constraints[None]
+            for i_e in range(self.rigid_solver.n_equalities):
+                if equalities_info.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.JOINT:
+                    i_c = self.n_constraints[None]
+                    self.n_constraints[None] = i_c + 1
+                    self.constraints[i_c].batch_idx = i_b
+                    I_joint1 = (
+                        [equalities_info.eq_obj1id[i_e, i_b], i_b]
+                        if qd.static(rigid_config.batch_joints_info)
+                        else equalities_info.eq_obj1id[i_e, i_b]
+                    )
+                    I_joint2 = (
+                        [equalities_info.eq_obj2id[i_e, i_b], i_b]
+                        if qd.static(rigid_config.batch_joints_info)
+                        else equalities_info.eq_obj2id[i_e, i_b]
+                    )
+                    i_dof1 = joints_info.dof_start[I_joint1]
+                    i_dof2 = joints_info.dof_start[I_joint2]
+                    self.constraints[i_c].i_dof1 = i_dof1
+                    self.constraints[i_c].i_dof2 = i_dof2
+                    self.constraints[i_c].sap_info.k = self.stiffness
+                    self.constraints[i_c].sap_info.R_inv = dt2 * self.stiffness
+                    self.constraints[i_c].sap_info.R = 1.0 / self.constraints[i_c].sap_info.R_inv
+                    self.constraints[i_c].sap_info.v_hat = 0.0
+                    self.Jt[i_c, i_dof1] = 1.0
+                    self.Jt[i_c, i_dof2] = -1.0
+        self.batch_constraints_start[self._B] = self.n_constraints[None]
 
     @qd.func
     def compute_regularization(self, dofs_state: array_class.DofsState):
@@ -1991,21 +1981,6 @@ class RigidConstraintHandler(BaseConstraintHandler):
             self.compute_constraint_regularization(sap_info, i_c, W, self.sim._substep_dt)
 
     @qd.func
-    def compute_delassus_world_frame(self, entities_info: array_class.EntitiesInfo, rigid_info: array_class.RigidInfo):
-        self.coupler.rigid_solve_jacobian(
-            self.Jt,
-            self.M_inv_Jt,
-            self.n_constraints[None],
-            self.constraints.batch_idx,
-            1,
-            entities_info=entities_info,
-            rigid_info=rigid_info,
-        )
-        self.W.fill(0.0)
-        for i_c, i_d in qd.ndrange(self.n_constraints[None], self.rigid_solver.n_dofs):
-            self.W[i_c] += self.M_inv_Jt[i_c, i_d] * self.Jt[i_c, i_d]
-
-    @qd.func
     def compute_delassus(self, i_c):
         return self.W[i_c]
 
@@ -2017,12 +1992,15 @@ class RigidConstraintHandler(BaseConstraintHandler):
         return x[i_b, i_dof1] - x[i_b, i_dof2]
 
     @qd.func
-    def add_Jt_x(self, y, i_c, x):
-        i_b = self.constraints[i_c].batch_idx
-        i_dof1 = self.constraints[i_c].i_dof1
-        i_dof2 = self.constraints[i_c].i_dof2
-        y[i_b, i_dof1] += x
-        y[i_b, i_dof2] -= x
+    def func_rigid_Jt_vec(self, i_b: int, i_d: int):
+        """Return the transposed Jacobian times the impulses in constraints_vec at a rigid dof.
+
+        The dof sums the constraints of its batch entry in their order, few enough to go serially.
+        """
+        Jt_vec = gs.qd_float(0.0)
+        for i_c in range(self.batch_constraints_start[i_b], self.batch_constraints_start[i_b + 1]):
+            Jt_vec += self.Jt[i_c, i_d] * self.constraints_vec[i_c]
+        return Jt_vec
 
     @qd.func
     def compute_vc(self, i_c):
@@ -2035,8 +2013,7 @@ class RigidConstraintHandler(BaseConstraintHandler):
         for i_c in range(self.n_constraints[None]):
             vc = self.compute_vc(i_c)
             self.compute_constraint_gamma_G(sap_info, i_c, vc)
-            self.add_Jt_x(self.coupler.rigid_state_dof.gradient, i_c, -sap_info[i_c].gamma)
-            self.add_Jt_x(self.coupler.rigid_state_dof.impulse, i_c, sap_info[i_c].gamma)
+            self.constraints_vec[i_c] = sap_info[i_c].gamma
 
     @qd.func
     def compute_Ap(self):
@@ -2045,8 +2022,7 @@ class RigidConstraintHandler(BaseConstraintHandler):
         for i_c in range(self.n_constraints[None]):
             # Jt @ G @ J @ p
             x = self.compute_Jx(i_c, self.coupler.pcg_rigid_state_dof.p)
-            x = sap_info[i_c].G * x
-            self.add_Jt_x(self.coupler.pcg_rigid_state_dof.Ap, i_c, x)
+            self.constraints_vec[i_c] = sap_info[i_c].G * x
 
     @qd.func
     def prepare_search_direction_data(self):
@@ -2058,28 +2034,29 @@ class RigidConstraintHandler(BaseConstraintHandler):
                 sap_info[i_c].dvc = self.compute_Jx(i_c, self.coupler.pcg_rigid_state_dof.x)
 
     @qd.func
-    def compute_energy_gamma_G(self):
-        constraints = qd.static(self.constraints)
-        sap_info = qd.static(constraints.sap_info)
-        for i_c in range(self.n_constraints[None]):
-            vc = self.compute_vc(i_c)
-            self.compute_constraint_energy_gamma_G(sap_info, i_c, vc)
-
-    @qd.func
-    def compute_constraint_energy_gamma_G(self, sap_info, i_c, vc):
-        self.compute_constraint_gamma_G(sap_info, i_c, vc)
-        sap_info[i_c].energy = 0.5 * sap_info[i_c].gamma ** 2 * sap_info[i_c].R
-
-    @qd.func
     def update_gradient_hessian_alpha(self):
-        dvc = qd.static(self.constraints.sap_info.dvc)
-        gamma = qd.static(self.constraints.sap_info.gamma)
-        G = qd.static(self.constraints.sap_info.G)
-        for i_c in qd.ndrange(self.n_constraints[None]):
-            i_b = self.constraints[i_c].batch_idx
+        """Compute the impulse and the Hessian of the constraints, and the partial sums of their line derivatives.
+
+        Slots 0 and 1 of constraints_partials hold the partial sums of the first and the second derivative of the
+        energy along the search direction.
+        """
+        sap_info = qd.static(self.constraints.sap_info)
+        n_chunks = qd.static(self.constraints_partials.shape[1])
+        for i_b, i_chunk in qd.ndrange(self._B, n_chunks):
             if self.coupler.batch_linesearch_active[i_b]:
-                self.coupler.linesearch_state.dell_dalpha[i_b] -= dvc[i_c] * gamma[i_c]
-                self.coupler.linesearch_state.d2ell_dalpha2[i_b] += dvc[i_c] ** 2 * G[i_c]
+                dell_dalpha = gs.qd_float(0.0)
+                d2ell_dalpha2 = gs.qd_float(0.0)
+                i_c_start = self.batch_constraints_start[i_b]
+                n_constraints = self.batch_constraints_start[i_b + 1] - i_c_start
+                i_c_start, i_c_end = lu.func_chunk_range(i_c_start, i_chunk, n_constraints, n_chunks)
+                for i_c in range(i_c_start, i_c_end):
+                    vc = self.compute_vc(i_c)
+                    self.compute_constraint_gamma_G(sap_info, i_c, vc)
+                    dvc = sap_info[i_c].dvc
+                    dell_dalpha -= dvc * sap_info[i_c].gamma
+                    d2ell_dalpha2 += dvc**2 * sap_info[i_c].G
+                self.constraints_partials[i_b, i_chunk, 0] = dell_dalpha
+                self.constraints_partials[i_b, i_chunk, 1] = d2ell_dalpha2
 
 
 class ContactMode(IntEnum):
@@ -2095,7 +2072,19 @@ class BaseContactHandler(RBC):
 
     This class provides a framework for managing contact pairs, computing gradients,
     and handling contact-related computations.
+
+    The pairs are appended concurrently during the detection, in an order that changes from run to run. Each pair
+    carries a key identifying it uniquely within its batch entry, and sort_pairs orders the pairs by batch then by key
+    in the values of pairs_sort_state. Every sum over the pairs, whether into a scalar of a batch entry or into a vertex
+    or a dof, runs in that order, so that the result is bitwise reproducible.
     """
+
+    # Vertices of FEM elements a pair applies its impulse to, each with a weight (see func_fem_slot)
+    N_FEM_SLOTS = 0
+    # Whether the pairs carry a contact frame (tangent0, tangent1, normal), the floor contacts using the world frame
+    HAS_CONTACT_FRAME = False
+    # Whether the pairs apply their impulse to rigid dofs through a rigid Jacobian (see func_rigid_Jt_vec)
+    HAS_RIGID_JACOBIAN = False
 
     def __init__(self, simulator: "Simulator") -> None:
         self.sim = simulator
@@ -2118,6 +2107,162 @@ class BaseContactHandler(RBC):
             dvc=gs.qd_vec3,  # velocity change at contact point, for exact line search
         )
 
+    def init_pairs_order(self, n_keys: int):
+        """Allocate the order of the contact pairs, and the buffers of the sums over the pairs.
+
+        The keys of the pairs of a batch entry are below n_keys.
+        """
+        B = self.sim._B
+        self.pairs_key = qd.field(qd.u64, shape=(self.max_contact_pairs,))
+        self.batch_n_pairs = qd.field(gs.qd_int, shape=(B,))
+        # The sorted pairs of batch entry i_b are the values of the sort from segments_start[i_b] to
+        # segments_start[i_b + 1], the batch entry leading the bits of their keys (see genesis.utils.sort)
+        self.pairs_key_bits = max(1, (n_keys - 1).bit_length())
+        self.pairs_sort_state, self.pairs_sort_config = get_segment_sort_data(
+            B,
+            self.max_contact_pairs,
+            self.max_contact_pairs,
+            (B - 1).bit_length() + self.pairs_key_bits,
+            has_values=True,
+        )
+        # Impulse of each pair in the world frame, and the partial sums over the chunks of the sorted pairs of each
+        # batch entry, two sums at most at once (see lu.func_chunk_range)
+        self.pairs_vec = qd.field(gs.qd_vec3, shape=(self.max_contact_pairs,))
+        n_chunks = max(min(self.max_contact_pairs, lu.SUM_MAX_CHUNKS), 1)
+        self.pairs_partials = qd.field(gs.qd_float, shape=(B, n_chunks, 2))
+        if self.HAS_RIGID_JACOBIAN:
+            # Partial sums of the transposed rigid Jacobian times pairs_vec over the chunks of the sorted pairs, per dof
+            self.dofs_partials = qd.field(gs.qd_float, shape=(B, n_chunks, self.rigid_solver.n_dofs))
+        if self.N_FEM_SLOTS > 0:
+            n_vertices = self.fem_solver.n_vertices
+            # Hessian of each pair in the world frame
+            self.pairs_mat = qd.field(gs.qd_mat3, shape=(self.max_contact_pairs,))
+            # The slots applying to vertex i_v of batch entry i_b, as i_s * N_FEM_SLOTS + i_slot for the slot i_slot of
+            # the pair at position i_s of the sorted order, in increasing order, are
+            # vertices_entry[vertices_entry_start[i_b, i_v]:vertices_entry_start[i_b, i_v + 1]].
+            self.vertices_n_entries = qd.field(gs.qd_int, shape=(B, n_vertices))
+            self.vertices_entry_start = qd.field(gs.qd_int, shape=(B, n_vertices + 1))
+            self.vertices_entry = qd.field(gs.qd_int, shape=(self.N_FEM_SLOTS * self.max_contact_pairs,))
+
+    @qd.func
+    def sort_pairs(self):
+        """Order the contact pairs by batch then by key, and index the slots applying to each FEM vertex in that order.
+
+        The pairs are grouped by batch entry by counting, then the segment sort orders the pairs of each batch entry by
+        key (see genesis.utils.sort). The keys being unique within a batch entry, the order does not depend on the order
+        in which the detection appended the pairs.
+        """
+        B = qd.static(self.sim._B)
+        n_pairs = qd.min(self.n_contact_pairs[None], self.max_contact_pairs)
+        for i_b in range(B):
+            self.batch_n_pairs[i_b] = 0
+        for i_p in range(n_pairs):
+            i_b = self.contact_pairs[i_p].batch_idx
+            qd.atomic_add(self.batch_n_pairs[i_b], 1)
+        qd.loop_config(serialize=True)
+        for i_b in range(B):
+            if i_b == 0:
+                self.pairs_sort_state.segments_start[0] = 0
+                self.pairs_sort_state.n_keys[()] = n_pairs
+            self.pairs_sort_state.segments_start[i_b + 1] = (
+                self.pairs_sort_state.segments_start[i_b] + self.batch_n_pairs[i_b]
+            )
+        for i_p in range(n_pairs):
+            i_b = self.contact_pairs[i_p].batch_idx
+            i_s = self.pairs_sort_state.segments_start[i_b] + qd.atomic_sub(self.batch_n_pairs[i_b], 1) - 1
+            self.pairs_sort_state.keys[i_s] = (qd.u64(i_b) << qd.static(self.pairs_key_bits)) | self.pairs_key[i_p]
+            self.pairs_sort_state.values[i_s] = i_p
+        func_sort_segments(self.pairs_sort_state, self.pairs_sort_config)
+
+        if qd.static(self.N_FEM_SLOTS > 0):
+            n_slots = qd.static(self.N_FEM_SLOTS)
+            for i_b, i_v in qd.ndrange(B, self.fem_solver.n_vertices):
+                self.vertices_n_entries[i_b, i_v] = 0
+            for i_s, i_slot in qd.ndrange(n_pairs, n_slots):
+                i_p = self.pairs_sort_state.values[i_s]
+                i_b = self.contact_pairs[i_p].batch_idx
+                i_v, _ = self.func_fem_slot(i_p, i_slot)
+                qd.atomic_add(self.vertices_n_entries[i_b, i_v], 1)
+            for i_b in range(B):
+                i_entry = n_slots * self.pairs_sort_state.segments_start[i_b]
+                for i_v in range(self.fem_solver.n_vertices):
+                    self.vertices_entry_start[i_b, i_v] = i_entry
+                    i_entry += self.vertices_n_entries[i_b, i_v]
+                self.vertices_entry_start[i_b, self.fem_solver.n_vertices] = i_entry
+            for i_s, i_slot in qd.ndrange(n_pairs, n_slots):
+                i_p = self.pairs_sort_state.values[i_s]
+                i_b = self.contact_pairs[i_p].batch_idx
+                i_v, _ = self.func_fem_slot(i_p, i_slot)
+                i_entry = self.vertices_entry_start[i_b, i_v] + qd.atomic_sub(self.vertices_n_entries[i_b, i_v], 1) - 1
+                self.vertices_entry[i_entry] = i_s * n_slots + i_slot
+            # Insertion sort of the slots of each vertex, a handful at most
+            for i_b, i_v in qd.ndrange(B, self.fem_solver.n_vertices):
+                i_start = self.vertices_entry_start[i_b, i_v]
+                for i_entry in range(i_start + 1, self.vertices_entry_start[i_b, i_v + 1]):
+                    entry = self.vertices_entry[i_entry]
+                    is_shifting = True
+                    for j_ in range(i_entry - i_start):
+                        j_entry = i_entry - j_
+                        if is_shifting:
+                            entry_prev = self.vertices_entry[j_entry - 1]
+                            if entry_prev > entry:
+                                self.vertices_entry[j_entry] = entry_prev
+                            else:
+                                self.vertices_entry[j_entry] = entry
+                                is_shifting = False
+                    if is_shifting:
+                        self.vertices_entry[i_start] = entry
+
+    @qd.func
+    def func_world_vec(self, i_p: int, x: qd.types.vector(3)):
+        """Return a vector given in the contact frame of a pair in the world frame."""
+        x_world = x
+        if qd.static(self.HAS_CONTACT_FRAME):
+            pairs = qd.static(self.contact_pairs)
+            world = qd.Matrix.cols([pairs[i_p].tangent0, pairs[i_p].tangent1, pairs[i_p].normal])
+            x_world = world @ x
+        return x_world
+
+    @qd.func
+    def func_world_mat(self, i_p: int, A: qd.types.matrix(3, 3)):
+        """Return a matrix given in the contact frame of a pair in the world frame."""
+        A_world = A
+        if qd.static(self.HAS_CONTACT_FRAME):
+            pairs = qd.static(self.contact_pairs)
+            world = qd.Matrix.cols([pairs[i_p].tangent0, pairs[i_p].tangent1, pairs[i_p].normal])
+            A_world = world @ A @ world.transpose()
+        return A_world
+
+    @qd.func
+    def func_fem_Jt_vec(self, i_b: int, i_v: int):
+        """Return the transposed FEM Jacobian times the impulses in pairs_vec at a FEM vertex.
+
+        The vertex sums its slots in the sorted order (see vertices_entry).
+        """
+        n_slots = qd.static(self.N_FEM_SLOTS)
+        Jt_vec = qd.Vector.zero(gs.qd_float, 3)
+        for i_entry in range(self.vertices_entry_start[i_b, i_v], self.vertices_entry_start[i_b, i_v + 1]):
+            entry = self.vertices_entry[i_entry]
+            i_p = self.pairs_sort_state.values[entry // n_slots]
+            _, weight = self.func_fem_slot(i_p, entry % n_slots)
+            Jt_vec += weight * self.pairs_vec[i_p]
+        return Jt_vec
+
+    @qd.func
+    def func_fem_Jt_A_J(self, i_b: int, i_v: int):
+        """Return the 3x3 diagonal block at a FEM vertex of the FEM Jacobian product with the Hessians in pairs_mat.
+
+        The vertex sums its slots in the sorted order (see vertices_entry).
+        """
+        n_slots = qd.static(self.N_FEM_SLOTS)
+        Jt_A_J = qd.Matrix.zero(gs.qd_float, 3, 3)
+        for i_entry in range(self.vertices_entry_start[i_b, i_v], self.vertices_entry_start[i_b, i_v + 1]):
+            entry = self.vertices_entry[i_entry]
+            i_p = self.pairs_sort_state.values[entry // n_slots]
+            _, weight = self.func_fem_slot(i_p, entry % n_slots)
+            Jt_A_J += weight**2 * self.pairs_mat[i_p]
+        return Jt_A_J
+
     @qd.func
     def compute_jacobian(
         self, links_info: array_class.LinksInfo, dofs_state: array_class.DofsState, links_state: array_class.LinksState
@@ -2126,14 +2271,29 @@ class BaseContactHandler(RBC):
 
     @qd.func
     def update_gradient_hessian_alpha(self):
-        dvc = qd.static(self.contact_pairs.sap_info.dvc)
-        gamma = qd.static(self.contact_pairs.sap_info.gamma)
-        G = qd.static(self.contact_pairs.sap_info.G)
-        for i_p in qd.ndrange(self.n_contact_pairs[None]):
-            i_b = self.contact_pairs[i_p].batch_idx
+        """Compute the impulse and the Hessian of the pairs, and the partial sums of their line energy derivatives.
+
+        Slots 0 and 1 of pairs_partials hold the partial sums of the first and the second derivative of the energy
+        along the search direction.
+        """
+        sap_info = qd.static(self.contact_pairs.sap_info)
+        n_chunks = qd.static(self.pairs_partials.shape[1])
+        for i_b, i_chunk in qd.ndrange(self.sim._B, n_chunks):
             if self.coupler.batch_linesearch_active[i_b]:
-                self.coupler.linesearch_state.dell_dalpha[i_b] -= dvc[i_p].dot(gamma[i_p])
-                self.coupler.linesearch_state.d2ell_dalpha2[i_b] += dvc[i_p].dot(G[i_p] @ dvc[i_p])
+                dell_dalpha = gs.qd_float(0.0)
+                d2ell_dalpha2 = gs.qd_float(0.0)
+                i_s_start = self.pairs_sort_state.segments_start[i_b]
+                n_batch_pairs = self.pairs_sort_state.segments_start[i_b + 1] - i_s_start
+                i_s_start, i_s_end = lu.func_chunk_range(i_s_start, i_chunk, n_batch_pairs, n_chunks)
+                for i_s in range(i_s_start, i_s_end):
+                    i_p = self.pairs_sort_state.values[i_s]
+                    vc = self.compute_contact_velocity(i_p)
+                    self.compute_contact_gamma_G(sap_info, i_p, vc)
+                    dvc = sap_info[i_p].dvc
+                    dell_dalpha -= dvc.dot(sap_info[i_p].gamma)
+                    d2ell_dalpha2 += dvc.dot(sap_info[i_p].G @ dvc)
+                self.pairs_partials[i_b, i_chunk, 0] = dell_dalpha
+                self.pairs_partials[i_b, i_chunk, 1] = d2ell_dalpha2
 
     @qd.func
     def compute_delassus_world_frame(self, entities_info: array_class.EntitiesInfo, rigid_info: array_class.RigidInfo):
@@ -2148,20 +2308,22 @@ class BaseContactHandler(RBC):
             self.compute_contact_regularization(self.contact_pairs.sap_info, i_p, w_rms, self.sim._substep_dt)
 
     @qd.func
-    def compute_energy_gamma_G(self):
-        for i_p in range(self.n_contact_pairs[None]):
-            vc = self.compute_contact_velocity(i_p)
-            self.compute_contact_energy_gamma_G(self.contact_pairs.sap_info, i_p, vc)
-
-    @qd.func
-    def compute_energy(self, energy: qd.template()):
+    def compute_energy(self):
+        """Compute the energy of the pairs, and its partial sums in slot 0 of pairs_partials."""
         sap_info = qd.static(self.contact_pairs.sap_info)
-        for i_p in range(self.n_contact_pairs[None]):
-            i_b = self.contact_pairs[i_p].batch_idx
+        n_chunks = qd.static(self.pairs_partials.shape[1])
+        for i_b, i_chunk in qd.ndrange(self.sim._B, n_chunks):
             if self.coupler.batch_linesearch_active[i_b]:
-                vc = self.compute_contact_velocity(i_p)
-                self.compute_contact_energy(sap_info, i_p, vc)
-                energy[i_b] += sap_info[i_p].energy
+                energy = gs.qd_float(0.0)
+                i_s_start = self.pairs_sort_state.segments_start[i_b]
+                n_batch_pairs = self.pairs_sort_state.segments_start[i_b + 1] - i_s_start
+                i_s_start, i_s_end = lu.func_chunk_range(i_s_start, i_chunk, n_batch_pairs, n_chunks)
+                for i_s in range(i_s_start, i_s_end):
+                    i_p = self.pairs_sort_state.values[i_s]
+                    vc = self.compute_contact_velocity(i_p)
+                    self.compute_contact_energy(sap_info, i_p, vc)
+                    energy += sap_info[i_p].energy
+                self.pairs_partials[i_b, i_chunk, 0] = energy
 
     @qd.func
     def compute_contact_gamma_G(self, sap_info, i_p, vc):
@@ -2198,15 +2360,6 @@ class BaseContactHandler(RBC):
             sap_info[i_p].G[2, 2] = dgn_dyn * sap_info[i_p].Rn_inv
         else:  # No contact
             pass
-
-    @qd.func
-    def compute_contact_energy_gamma_G(self, sap_info, i_p, vc):
-        self.compute_contact_gamma_G(sap_info, i_p, vc)
-        R_gamma = sap_info[i_p].gamma
-        R_gamma[0] *= sap_info[i_p].Rt
-        R_gamma[1] *= sap_info[i_p].Rt
-        R_gamma[2] *= sap_info[i_p].Rn
-        sap_info[i_p].energy = 0.5 * sap_info[i_p].gamma.dot(R_gamma)
 
     @qd.func
     def compute_contact_energy(self, sap_info, i_p, vc):
@@ -2265,6 +2418,10 @@ class BaseContactHandler(RBC):
 
 @qd.data_oriented
 class RigidContactHandler(BaseContactHandler):
+    HAS_RIGID_JACOBIAN = True
+    # Sign of the rigid side of a pair in its Jacobian
+    RIGID_SIGN = 1.0
+
     def __init__(self, simulator: "Simulator") -> None:
         super().__init__(simulator)
         self.rigid_solver = self.sim.rigid_solver
@@ -2303,8 +2460,8 @@ class RigidContactHandler(BaseContactHandler):
         for i_p in range(self.n_contact_pairs[None]):
             vc = self.compute_contact_velocity(i_p)
             self.compute_contact_gamma_G(sap_info, i_p, vc)
-            self.add_Jt_x(self.coupler.rigid_state_dof.gradient, i_p, -sap_info[i_p].gamma)
-            self.add_Jt_x(self.coupler.rigid_state_dof.impulse, i_p, sap_info[i_p].gamma)
+            self.pairs_vec[i_p] = self.func_world_vec(i_p, sap_info[i_p].gamma)
+        self.sum_rigid_Jt_vec()
 
     @qd.func
     def compute_pcg_matrix_vector_product(self):
@@ -2312,8 +2469,8 @@ class RigidContactHandler(BaseContactHandler):
         for i_p in range(self.n_contact_pairs[None]):
             # Jt @ G @ J @ p
             Jp = self.compute_Jx(i_p, self.coupler.pcg_rigid_state_dof.p)
-            GJp = sap_info[i_p].G @ Jp
-            self.add_Jt_x(self.coupler.pcg_rigid_state_dof.Ap, i_p, GJp)
+            self.pairs_vec[i_p] = self.func_world_vec(i_p, sap_info[i_p].G @ Jp)
+        self.sum_rigid_Jt_vec()
 
     @qd.func
     def compute_contact_velocity(self, i_p):
@@ -2332,6 +2489,13 @@ class RigidContactHandler(BaseContactHandler):
 
     @qd.func
     def compute_delassus_world_frame(self, entities_info: array_class.EntitiesInfo, rigid_info: array_class.RigidInfo):
+        self.compute_rigid_delassus_world_frame(entities_info=entities_info, rigid_info=rigid_info)
+
+    @qd.func
+    def compute_rigid_delassus_world_frame(
+        self, entities_info: array_class.EntitiesInfo, rigid_info: array_class.RigidInfo
+    ):
+        """Compute the rigid part of the Delassus operator of each pair, J M^-1 J^T, summed over the dofs in order."""
         self.coupler.rigid_solve_jacobian(
             self.Jt,
             self.M_inv_Jt,
@@ -2341,9 +2505,11 @@ class RigidContactHandler(BaseContactHandler):
             entities_info=entities_info,
             rigid_info=rigid_info,
         )
-        self.W.fill(0.0)
-        for i_p, i_d, i, j in qd.ndrange(self.n_contact_pairs[None], self.rigid_solver.n_dofs, 3, 3):
-            self.W[i_p][i, j] += self.M_inv_Jt[i_p, i_d][i] * self.Jt[i_p, i_d][j]
+        for i_p in range(self.n_contact_pairs[None]):
+            W = qd.Matrix.zero(gs.qd_float, 3, 3)
+            for i_d in range(self.rigid_solver.n_dofs):
+                W += self.M_inv_Jt[i_p, i_d].outer_product(self.Jt[i_p, i_d])
+            self.W[i_p] = W
 
     @qd.func
     def compute_delassus(self, i_p):
@@ -2359,15 +2525,32 @@ class RigidContactHandler(BaseContactHandler):
         return Jx
 
     @qd.func
-    def add_Jt_x(self, y, i_p, x):
-        pairs = qd.static(self.contact_pairs)
-        i_b = pairs[i_p].batch_idx
-        for i in range(self.rigid_solver.n_dofs):
-            y[i_b, i] += self.Jt[i_p, i].dot(x)
+    def sum_rigid_Jt_vec(self):
+        """Compute the partial sums of the transposed rigid Jacobian times pairs_vec over chunks of the sorted pairs.
+
+        One thread per chunk and dof sums the pairs of the chunk in order into dofs_partials (see func_rigid_Jt_vec).
+        """
+        n_chunks = qd.static(self.dofs_partials.shape[1])
+        for i_b, i_chunk, i_d in qd.ndrange(self.sim._B, n_chunks, self.rigid_solver.n_dofs):
+            Jt_vec = gs.qd_float(0.0)
+            i_s_start = self.pairs_sort_state.segments_start[i_b]
+            n_batch_pairs = self.pairs_sort_state.segments_start[i_b + 1] - i_s_start
+            i_s_start, i_s_end = lu.func_chunk_range(i_s_start, i_chunk, n_batch_pairs, n_chunks)
+            for i_s in range(i_s_start, i_s_end):
+                i_p = self.pairs_sort_state.values[i_s]
+                Jt_vec += self.Jt[i_p, i_d].dot(self.pairs_vec[i_p])
+            self.dofs_partials[i_b, i_chunk, i_d] = Jt_vec
+
+    @qd.func
+    def func_rigid_Jt_vec(self, i_b: int, i_d: int):
+        """Return the transposed rigid Jacobian times the impulses in pairs_vec at a dof (see sum_rigid_Jt_vec)."""
+        return self.RIGID_SIGN * lu.func_sum_chunks(i_b, i_d, self.dofs_partials)
 
 
 @qd.data_oriented
 class RigidRigidContactHandler(RigidContactHandler):
+    HAS_CONTACT_FRAME = True
+
     def __init__(self, simulator: "Simulator") -> None:
         super().__init__(simulator)
 
@@ -2428,15 +2611,6 @@ class RigidRigidContactHandler(RigidContactHandler):
         Jx = qd.Vector([Jx.dot(pairs[i_p].tangent0), Jx.dot(pairs[i_p].tangent1), Jx.dot(pairs[i_p].normal)])
         return Jx
 
-    @qd.func
-    def add_Jt_x(self, y, i_p, x):
-        pairs = qd.static(self.contact_pairs)
-        i_b = pairs[i_p].batch_idx
-        world = qd.Matrix.cols([pairs[i_p].tangent0, pairs[i_p].tangent1, pairs[i_p].normal])
-        x_ = world @ x
-        for i in range(self.rigid_solver.n_dofs):
-            y[i_b, i] += self.Jt[i_p, i].dot(x_)
-
 
 @qd.data_oriented
 class FEMContactHandler(BaseContactHandler):
@@ -2450,9 +2624,8 @@ class FEMContactHandler(BaseContactHandler):
         for i_p in range(self.n_contact_pairs[None]):
             vc = self.compute_Jx(i_p, self.coupler.fem_state_v.v)
             self.compute_contact_gamma_G(sap_info, i_p, vc)
-            self.add_Jt_x(self.coupler.fem_state_v.gradient, i_p, -sap_info[i_p].gamma)
-            self.add_Jt_x(self.coupler.fem_state_v.impulse, i_p, sap_info[i_p].gamma)
-            self.add_Jt_A_J_diag3x3(self.coupler.pcg_fem_state_v.diag3x3, i_p, sap_info[i_p].G)
+            self.pairs_vec[i_p] = self.func_world_vec(i_p, sap_info[i_p].gamma)
+            self.pairs_mat[i_p] = self.func_world_mat(i_p, sap_info[i_p].G)
 
     @qd.func
     def prepare_search_direction_data(self):
@@ -2468,8 +2641,7 @@ class FEMContactHandler(BaseContactHandler):
         for i_p in range(self.n_contact_pairs[None]):
             # Jt @ G @ J @ p
             x = self.compute_Jx(i_p, self.coupler.pcg_fem_state_v.p)
-            x = sap_info[i_p].G @ x
-            self.add_Jt_x(self.coupler.pcg_fem_state_v.Ap, i_p, x)
+            self.pairs_vec[i_p] = self.func_world_vec(i_p, sap_info[i_p].G @ x)
 
     @qd.func
     def compute_contact_velocity(self, i_p):
@@ -2481,6 +2653,9 @@ class FEMContactHandler(BaseContactHandler):
 
 @qd.data_oriented
 class RigidFEMContactHandler(RigidContactHandler):
+    # The rigid side of a pair moves against its FEM side (see compute_Jx)
+    RIGID_SIGN = -1.0
+
     def __init__(self, simulator: "Simulator") -> None:
         super().__init__(simulator)
         self.fem_solver = simulator.fem_solver
@@ -2491,13 +2666,9 @@ class RigidFEMContactHandler(RigidContactHandler):
         for i_p in range(self.n_contact_pairs[None]):
             vc = self.compute_Jx(i_p, self.coupler.fem_state_v.v, self.coupler.rigid_state_dof.v)
             self.compute_contact_gamma_G(sap_info, i_p, vc)
-            self.add_Jt_x(
-                self.coupler.fem_state_v.gradient, self.coupler.rigid_state_dof.gradient, i_p, -sap_info[i_p].gamma
-            )
-            self.add_Jt_x(
-                self.coupler.fem_state_v.impulse, self.coupler.rigid_state_dof.impulse, i_p, sap_info[i_p].gamma
-            )
-            self.add_Jt_A_J_diag3x3(self.coupler.pcg_fem_state_v.diag3x3, i_p, sap_info[i_p].G)
+            self.pairs_vec[i_p] = self.func_world_vec(i_p, sap_info[i_p].gamma)
+            self.pairs_mat[i_p] = self.func_world_mat(i_p, sap_info[i_p].G)
+        self.sum_rigid_Jt_vec()
 
     @qd.func
     def prepare_search_direction_data(self):
@@ -2515,8 +2686,8 @@ class RigidFEMContactHandler(RigidContactHandler):
         for i_p in range(self.n_contact_pairs[None]):
             # Jt @ G @ J @ p
             x = self.compute_Jx(i_p, self.coupler.pcg_fem_state_v.p, self.coupler.pcg_rigid_state_dof.p)
-            x = sap_info[i_p].G @ x
-            self.add_Jt_x(self.coupler.pcg_fem_state_v.Ap, self.coupler.pcg_rigid_state_dof.Ap, i_p, x)
+            self.pairs_vec[i_p] = self.func_world_vec(i_p, sap_info[i_p].G @ x)
+        self.sum_rigid_Jt_vec()
 
     @qd.func
     def compute_contact_velocity(self, i_p):
@@ -2549,6 +2720,8 @@ class FEMFloorTetContactHandler(FEMContactHandler):
     contact-related computations.
     """
 
+    N_FEM_SLOTS = 4
+
     def __init__(self, simulator: "Simulator", eps: float = 1e-10) -> None:
         super().__init__(simulator)
         self.name = "FEMFloorTetContactHandler"
@@ -2574,6 +2747,7 @@ class FEMFloorTetContactHandler(FEMContactHandler):
         )
         self.max_contact_pairs = self.fem_solver.n_surface_elements * self.fem_solver._B
         self.contact_pairs = self.contact_pair_type.field(shape=(self.max_contact_pairs,))
+        self.init_pairs_order(n_keys=self.fem_solver.n_elements)
 
     @qd.func
     def detection(
@@ -2665,6 +2839,7 @@ class FEMFloorTetContactHandler(FEMContactHandler):
                 continue
             i_p = qd.atomic_add(self.n_contact_pairs[None], 1)
             if i_p < self.max_contact_pairs:
+                self.pairs_key[i_p] = qd.u64(i_e)
                 self.contact_pairs[i_p].batch_idx = i_b
                 self.contact_pairs[i_p].geom_idx = i_e
                 self.contact_pairs[i_p].barycentric = barycentric
@@ -2690,28 +2865,10 @@ class FEMFloorTetContactHandler(FEMContactHandler):
         return Jx
 
     @qd.func
-    def add_Jt_x(self, y, i_p, x):
-        i_b = self.contact_pairs[i_p].batch_idx
+    def func_fem_slot(self, i_p: int, i_slot: int):
+        """Return the vertex of a slot of a pair and its weight in the Jacobian, a slot per vertex of the element."""
         i_g = self.contact_pairs[i_p].geom_idx
-        for i in qd.static(range(4)):
-            i_v = self.fem_solver.elements_i[i_g].el2v[i]
-            if qd.static(self.fem_solver._enable_vertex_constraints):
-                if not self.fem_solver.vertex_constraints.is_constrained[i_v, i_b]:
-                    y[i_b, i_v] += self.contact_pairs[i_p].barycentric[i] * x
-            else:
-                y[i_b, i_v] += self.contact_pairs[i_p].barycentric[i] * x
-
-    @qd.func
-    def add_Jt_A_J_diag3x3(self, y, i_p, A):
-        i_b = self.contact_pairs[i_p].batch_idx
-        i_g = self.contact_pairs[i_p].geom_idx
-        for i in qd.static(range(4)):
-            i_v = self.fem_solver.elements_i[i_g].el2v[i]
-            if qd.static(self.fem_solver._enable_vertex_constraints):
-                if not self.fem_solver.vertex_constraints.is_constrained[i_v, i_b]:
-                    y[i_b, i_v] += self.contact_pairs[i_p].barycentric[i] ** 2 * A
-            else:
-                y[i_b, i_v] += self.contact_pairs[i_p].barycentric[i] ** 2 * A
+        return self.fem_solver.elements_i[i_g].el2v[i_slot], self.contact_pairs[i_p].barycentric[i_slot]
 
     @qd.func
     def compute_delassus(self, i_p):
@@ -2735,6 +2892,9 @@ class FEMSelfTetContactHandler(FEMContactHandler):
     This class extends the FEMContact class and provides methods for detecting self-contact
     between tetrahedral elements, computing contact pairs, and managing contact-related computations.
     """
+
+    N_FEM_SLOTS = 8
+    HAS_CONTACT_FRAME = True
 
     def __init__(self, simulator: "Simulator", eps: float = 1e-10) -> None:
         super().__init__(simulator)
@@ -2767,6 +2927,7 @@ class FEMSelfTetContactHandler(FEMContactHandler):
         )
         self.max_contact_pairs = self.fem_solver.n_surface_elements * self.fem_solver._B
         self.contact_pairs = self.contact_pair_type.field(shape=(self.max_contact_pairs,))
+        self.init_pairs_order(n_keys=self.fem_solver.n_elements**2)
 
     @qd.func
     def compute_candidates(self, f: qd.i32, query_results: array_class.BVHQueryResults):
@@ -2954,6 +3115,7 @@ class FEMSelfTetContactHandler(FEMContactHandler):
 
             i_p = qd.atomic_add(self.n_contact_pairs[None], 1)
             if i_p < self.max_contact_pairs:
+                self.pairs_key[i_p] = qd.u64(i_e0) * qd.u64(self.fem_solver.n_elements) + qd.u64(i_e1)
                 self.contact_pairs[i_p].batch_idx = i_b
                 self.contact_pairs[i_p].normal = self.contact_candidates[i_c].normal
                 self.contact_pairs[i_p].tangent0 = tangent0
@@ -3020,52 +3182,21 @@ class FEMSelfTetContactHandler(FEMContactHandler):
         )
 
     @qd.func
-    def add_Jt_x(self, y, i_p, x):
-        i_b = self.contact_pairs[i_p].batch_idx
-        i_g0 = self.contact_pairs[i_p].geom_idx0
-        i_g1 = self.contact_pairs[i_p].geom_idx1
-        world = qd.Matrix.cols(
-            [self.contact_pairs[i_p].tangent0, self.contact_pairs[i_p].tangent1, self.contact_pairs[i_p].normal]
-        )
-        x_ = world @ x
-        for i in qd.static(range(4)):
-            i_v = self.fem_solver.elements_i[i_g0].el2v[i]
-            if qd.static(self.fem_solver._enable_vertex_constraints):
-                if not self.fem_solver.vertex_constraints.is_constrained[i_v, i_b]:
-                    y[i_b, i_v] += self.contact_pairs[i_p].barycentric0[i] * x_
-            else:
-                y[i_b, i_v] += self.contact_pairs[i_p].barycentric0[i] * x_
-        for i in qd.static(range(4)):
-            i_v = self.fem_solver.elements_i[i_g1].el2v[i]
-            if qd.static(self.fem_solver._enable_vertex_constraints):
-                if not self.fem_solver.vertex_constraints.is_constrained[i_v, i_b]:
-                    y[i_b, i_v] -= self.contact_pairs[i_p].barycentric1[i] * x_
-            else:
-                y[i_b, i_v] -= self.contact_pairs[i_p].barycentric1[i] * x_
+    def func_fem_slot(self, i_p: int, i_slot: int):
+        """Return the vertex of a slot of a pair and its weight in the Jacobian, a slot per vertex of either element.
 
-    @qd.func
-    def add_Jt_A_J_diag3x3(self, y, i_p, A):
-        i_b = self.contact_pairs[i_p].batch_idx
-        i_g0 = self.contact_pairs[i_p].geom_idx0
-        i_g1 = self.contact_pairs[i_p].geom_idx1
-        world = qd.Matrix.cols(
-            [self.contact_pairs[i_p].tangent0, self.contact_pairs[i_p].tangent1, self.contact_pairs[i_p].normal]
-        )
-        B_ = world @ A @ world.transpose()
-        for i in qd.static(range(4)):
-            i_v = self.fem_solver.elements_i[i_g0].el2v[i]
-            if qd.static(self.fem_solver._enable_vertex_constraints):
-                if not self.fem_solver.vertex_constraints.is_constrained[i_v, i_b]:
-                    y[i_b, i_v] += self.contact_pairs[i_p].barycentric0[i] ** 2 * B_
-            else:
-                y[i_b, i_v] += self.contact_pairs[i_p].barycentric0[i] ** 2 * B_
-        for i in qd.static(range(4)):
-            i_v = self.fem_solver.elements_i[i_g1].el2v[i]
-            if qd.static(self.fem_solver._enable_vertex_constraints):
-                if not self.fem_solver.vertex_constraints.is_constrained[i_v, i_b]:
-                    y[i_b, i_v] += self.contact_pairs[i_p].barycentric1[i] ** 2 * B_
-            else:
-                y[i_b, i_v] += self.contact_pairs[i_p].barycentric1[i] ** 2 * B_
+        The slots 0 to 3 are the vertices of element 0, the slots 4 to 7 those of element 1, which moves against it.
+        """
+        i_g = self.contact_pairs[i_p].geom_idx0
+        i_corner = i_slot
+        weight = 0.0
+        if i_slot < 4:
+            weight = self.contact_pairs[i_p].barycentric0[i_corner]
+        else:
+            i_g = self.contact_pairs[i_p].geom_idx1
+            i_corner = i_slot - 4
+            weight = -self.contact_pairs[i_p].barycentric1[i_corner]
+        return self.fem_solver.elements_i[i_g].el2v[i_corner], weight
 
     @qd.func
     def compute_delassus(self, i_p):
@@ -3099,6 +3230,8 @@ class FEMFloorVertContactHandler(FEMContactHandler):
     contact-related computations.
     """
 
+    N_FEM_SLOTS = 1
+
     def __init__(self, simulator: "Simulator") -> None:
         super().__init__(simulator)
         self.name = "FEMFloorVertContactHandler"
@@ -3112,6 +3245,7 @@ class FEMFloorVertContactHandler(FEMContactHandler):
         )
         self.max_contact_pairs = self.fem_solver.n_surface_elements * self.fem_solver._B
         self.contact_pairs = self.contact_pair_type.field(shape=(self.max_contact_pairs,))
+        self.init_pairs_order(n_keys=self.fem_solver.n_vertices)
 
     @qd.func
     def detection(
@@ -3137,6 +3271,7 @@ class FEMFloorVertContactHandler(FEMContactHandler):
                 continue
             i_p = qd.atomic_add(self.n_contact_pairs[None], 1)
             if i_p < self.max_contact_pairs:
+                self.pairs_key[i_p] = qd.u64(i_v)
                 self.contact_pairs[i_p].batch_idx = i_b
                 self.contact_pairs[i_p].geom_idx = i_v
                 sap_info[i_p].k = self.coupler._point_contact_stiffness * self.fem_solver.surface_vert_mass[i_v]
@@ -3157,24 +3292,9 @@ class FEMFloorVertContactHandler(FEMContactHandler):
         return Jx
 
     @qd.func
-    def add_Jt_x(self, y, i_p, x):
-        i_b = self.contact_pairs[i_p].batch_idx
-        i_g = self.contact_pairs[i_p].geom_idx
-        if qd.static(self.fem_solver._enable_vertex_constraints):
-            if not self.fem_solver.vertex_constraints.is_constrained[i_g, i_b]:
-                y[i_b, i_g] += x
-        else:
-            y[i_b, i_g] += x
-
-    @qd.func
-    def add_Jt_A_J_diag3x3(self, y, i_p, A):
-        i_b = self.contact_pairs[i_p].batch_idx
-        i_g = self.contact_pairs[i_p].geom_idx
-        if qd.static(self.fem_solver._enable_vertex_constraints):
-            if not self.fem_solver.vertex_constraints.is_constrained[i_g, i_b]:
-                y[i_b, i_g] += A
-        else:
-            y[i_b, i_g] += A
+    def func_fem_slot(self, i_p: int, i_slot: int):
+        """Return the vertex of the single slot of a pair and its unit weight in the Jacobian."""
+        return self.contact_pairs[i_p].geom_idx, 1.0
 
     @qd.func
     def compute_delassus(self, i_p):
@@ -3205,6 +3325,7 @@ class RigidFloorVertContactHandler(RigidContactHandler):
         self.Jt = qd.field(gs.qd_vec3, shape=(self.max_contact_pairs, self.rigid_solver.n_dofs))
         self.M_inv_Jt = qd.field(gs.qd_vec3, shape=(self.max_contact_pairs, self.rigid_solver.n_dofs))
         self.W = qd.field(gs.qd_mat3, shape=(self.max_contact_pairs,))
+        self.init_pairs_order(n_keys=self.rigid_solver.n_verts)
 
     @qd.func
     def detection(
@@ -3235,6 +3356,7 @@ class RigidFloorVertContactHandler(RigidContactHandler):
             i_l = geoms_info.link_idx[i_g]
             i_p = qd.atomic_add(self.n_contact_pairs[None], 1)
             if i_p < self.max_contact_pairs:
+                self.pairs_key[i_p] = qd.u64(i_v)
                 self.contact_pairs[i_p].batch_idx = i_b
                 self.contact_pairs[i_p].link_idx = i_l
                 self.contact_pairs[i_p].contact_pos = pos_v
@@ -3275,6 +3397,7 @@ class RigidFloorTetContactHandler(RigidContactHandler):
         self.Jt = qd.field(gs.qd_vec3, shape=(self.max_contact_pairs, self.rigid_solver.n_dofs))
         self.M_inv_Jt = qd.field(gs.qd_vec3, shape=(self.max_contact_pairs, self.rigid_solver.n_dofs))
         self.W = qd.field(gs.qd_mat3, shape=(self.max_contact_pairs,))
+        self.init_pairs_order(n_keys=self.coupler.n_rigid_volume_elems)
 
     @qd.func
     def detection(
@@ -3382,6 +3505,7 @@ class RigidFloorTetContactHandler(RigidContactHandler):
             i_g = self.coupler.rigid_volume_elems_geom_idx[i_e]
             i_l = geoms_info.link_idx[i_g]
             if i_p < self.max_contact_pairs:
+                self.pairs_key[i_p] = qd.u64(i_e)
                 pairs[i_p].batch_idx = i_b
                 pairs[i_p].link_idx = i_l
                 pairs[i_p].contact_pos = centroid
@@ -3402,6 +3526,9 @@ class RigidFemTriTetContactHandler(RigidFEMContactHandler):
     This class extends the FEMContact class and provides methods for detecting self-contact
     between tetrahedral elements, computing contact pairs, and managing contact-related computations.
     """
+
+    N_FEM_SLOTS = 4
+    HAS_CONTACT_FRAME = True
 
     def __init__(self, simulator: "Simulator", eps: float = 1e-10) -> None:
         super().__init__(simulator)
@@ -3436,6 +3563,7 @@ class RigidFemTriTetContactHandler(RigidFEMContactHandler):
         self.Jt = qd.field(gs.qd_vec3, shape=(self.max_contact_pairs, self.rigid_solver.n_dofs))
         self.M_inv_Jt = qd.field(gs.qd_vec3, shape=(self.max_contact_pairs, self.rigid_solver.n_dofs))
         self.W = qd.field(gs.qd_mat3, shape=(self.max_contact_pairs,))
+        self.init_pairs_order(n_keys=self.rigid_solver.n_faces * self.fem_solver.n_elements)
 
     @qd.func
     def compute_candidates(
@@ -3603,6 +3731,8 @@ class RigidFemTriTetContactHandler(RigidFEMContactHandler):
             i_l = geoms_info.link_idx[i_g]
             i_p = qd.atomic_add(self.n_contact_pairs[None], 1)
             if i_p < self.max_contact_pairs:
+                i_f = self.contact_candidates[i_c].geom_idx1
+                self.pairs_key[i_p] = qd.u64(i_f) * qd.u64(self.fem_solver.n_elements) + qd.u64(i_e)
                 self.contact_pairs[i_p].batch_idx = i_b
                 self.contact_pairs[i_p].normal = self.contact_candidates[i_c].normal
                 self.contact_pairs[i_p].tangent0 = tangent0
@@ -3646,19 +3776,7 @@ class RigidFemTriTetContactHandler(RigidFEMContactHandler):
     @qd.func
     def compute_delassus_world_frame(self, entities_info: array_class.EntitiesInfo, rigid_info: array_class.RigidInfo):
         dt2_inv = 1.0 / self.sim._substep_dt**2
-        # rigid
-        self.coupler.rigid_solve_jacobian(
-            self.Jt,
-            self.M_inv_Jt,
-            self.n_contact_pairs[None],
-            self.contact_pairs.batch_idx,
-            3,
-            entities_info=entities_info,
-            rigid_info=rigid_info,
-        )
-        self.W.fill(0.0)
-        for i_p, i_d, i, j in qd.ndrange(self.n_contact_pairs[None], self.rigid_solver.n_dofs, 3, 3):
-            self.W[i_p][i, j] += self.M_inv_Jt[i_p, i_d][i] * self.Jt[i_p, i_d][j]
+        self.compute_rigid_delassus_world_frame(entities_info=entities_info, rigid_info=rigid_info)
 
         # fem
         barycentric0 = qd.static(self.contact_pairs.barycentric0)
@@ -3702,35 +3820,10 @@ class RigidFemTriTetContactHandler(RigidFEMContactHandler):
         )
 
     @qd.func
-    def add_Jt_x(self, y0, y1, i_p, x):
-        i_b = self.contact_pairs[i_p].batch_idx
+    def func_fem_slot(self, i_p: int, i_slot: int):
+        """Return the vertex of a slot of a pair and its weight in the Jacobian, a slot per vertex of its element."""
         i_g0 = self.contact_pairs[i_p].geom_idx0
-        world = qd.Matrix.cols(
-            [self.contact_pairs[i_p].tangent0, self.contact_pairs[i_p].tangent1, self.contact_pairs[i_p].normal]
-        )
-        x_ = world @ x
-
-        # fem
-        for i in qd.static(range(4)):
-            i_v = self.fem_solver.elements_i[i_g0].el2v[i]
-            y0[i_b, i_v] += self.contact_pairs[i_p].barycentric0[i] * x_
-
-        # rigid
-        for i in range(self.rigid_solver.n_dofs):
-            y1[i_b, i] -= self.Jt[i_p, i].dot(x_)
-
-    @qd.func
-    def add_Jt_A_J_diag3x3(self, y, i_p, A):
-        i_b = self.contact_pairs[i_p].batch_idx
-        i_g0 = self.contact_pairs[i_p].geom_idx0
-        world = qd.Matrix.cols(
-            [self.contact_pairs[i_p].tangent0, self.contact_pairs[i_p].tangent1, self.contact_pairs[i_p].normal]
-        )
-        B_ = world @ A @ world.transpose()
-        for i in qd.static(range(4)):
-            i_v = self.fem_solver.elements_i[i_g0].el2v[i]
-            if i_v < self.fem_solver.n_vertices:
-                y[i_b, i_v] += self.contact_pairs[i_p].barycentric0[i] ** 2 * B_
+        return self.fem_solver.elements_i[i_g0].el2v[i_slot], self.contact_pairs[i_p].barycentric0[i_slot]
 
 
 @qd.data_oriented
@@ -3775,6 +3868,7 @@ class RigidRigidTetContactHandler(RigidRigidContactHandler):
         self.Jt = qd.field(gs.qd_vec3, shape=(self.max_contact_pairs, self.rigid_solver.n_dofs))
         self.M_inv_Jt = qd.field(gs.qd_vec3, shape=(self.max_contact_pairs, self.rigid_solver.n_dofs))
         self.W = qd.field(gs.qd_mat3, shape=(self.max_contact_pairs,))
+        self.init_pairs_order(n_keys=self.coupler.n_rigid_volume_elems**2)
 
     @qd.func
     def compute_candidates(self, f: qd.i32, query_results: array_class.BVHQueryResults):
@@ -3966,6 +4060,7 @@ class RigidRigidTetContactHandler(RigidRigidContactHandler):
                 continue
             i_p = qd.atomic_add(self.n_contact_pairs[None], 1)
             if i_p < self.max_contact_pairs:
+                self.pairs_key[i_p] = qd.u64(i_e0) * qd.u64(self.coupler.n_rigid_volume_elems) + qd.u64(i_e1)
                 pairs[i_p].batch_idx = i_b
                 pairs[i_p].normal = candidates[i_c].normal
                 pairs[i_p].tangent0 = tangent0

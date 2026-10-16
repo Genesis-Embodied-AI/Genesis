@@ -3268,21 +3268,84 @@ def get_raycast_result(n_envs: int):
 GeomsInitAABB = qd.Tensor
 
 
-# =========================================== BVH ===========================================
+# ======================================= SEGMENT SORT =======================================
 
 
-class BVH_SORT_KIND(IntEnum):
-    """The sort ordering the leaf keys of a BVH set.
+class SEGMENT_SORT_KIND(IntEnum):
+    """The sort ordering the keys of a segment sort.
 
-    See genesis.engine.bvh.
+    See genesis.utils.sort.
     """
 
-    # The device-wide radix sort of quadrants over every key of the set (GPU, large trees)
+    # The device-wide radix sort of quadrants over every key of the set (GPU, large segments)
     DEVICE_RADIX = 0
-    # The rank of each leaf among the keys of its tree (small trees)
+    # The rank of each key among the keys of its segment (small segments)
     RANK = 1
-    # A radix sort per tree, its chunks in parallel (CPU, large trees)
-    PER_TREE_RADIX = 2
+    # A radix sort per segment, its chunks in parallel (CPU, large segments)
+    SEGMENT_RADIX = 2
+
+
+@qd.data_oriented
+class SegmentSortShape(metaclass=AutoInitMeta):
+    """The compile-time shape of a sort of 64-bit keys per segment.
+
+    See genesis.utils.sort.
+    """
+
+    # The bits a sort must order, a multiple of 16 up to 64
+    end_bit: int
+    # Scan depth of the device-wide radix sort (see quadrants.algorithms.sort), 1 to 8
+    log256_max_n: int
+    # SEGMENT_SORT_KIND
+    sort_kind: int
+    # Whether each key carries a value the sort moves along
+    has_values: bool
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class SegmentSortBuffer:
+    """The keys of a sort per segment, their values, the segment bounds and the scratch of the sort.
+
+    See genesis.utils.sort. The first n_keys keys are sorted, segment i_s holding the keys from segments_start[i_s] to
+    segments_start[i_s + 1].
+    """
+
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
+    keys: qd.Tensor
+    values: qd.Tensor
+    keys_scratch: qd.Tensor
+    values_scratch: qd.Tensor
+    segments_start: qd.Tensor
+    sort_scratch: qd.Tensor
+    sort_hist: qd.Tensor
+    n_keys: qd.Tensor
+
+
+def get_segment_sort_buffer(
+    n_segments: int,
+    n_keys: int,
+    n_sort_scratch: int,
+    n_sort_chunks: int,
+    sort_config: SegmentSortShape,
+    is_active: bool,
+) -> SegmentSortBuffer:
+    is_device_radix = is_active and sort_config.sort_kind == SEGMENT_SORT_KIND.DEVICE_RADIX
+    is_segment_radix = is_active and sort_config.sort_kind == SEGMENT_SORT_KIND.SEGMENT_RADIX
+    has_values = is_active and sort_config.has_values
+    return SegmentSortBuffer(
+        keys=V(dtype=qd.u64, shape=maybe_shape((n_keys,), is_active)),
+        values=V(dtype=gs.qd_int, shape=maybe_shape((n_keys,), has_values)),
+        keys_scratch=V(dtype=qd.u64, shape=maybe_shape((n_keys,), is_active)),
+        values_scratch=V(dtype=gs.qd_int, shape=maybe_shape((n_keys,), has_values)),
+        segments_start=V(dtype=gs.qd_int, shape=maybe_shape((n_segments + 1,), is_active)),
+        sort_scratch=V(dtype=qd.u32, shape=maybe_shape((n_sort_scratch,), is_device_radix)),
+        sort_hist=V(dtype=gs.qd_int, shape=maybe_shape((n_segments, n_sort_chunks, 256), is_segment_radix)),
+        n_keys=V_SCALAR_FROM(gs.qd_int, n_keys),
+    )
+
+
+# =========================================== BVH ===========================================
 
 
 class BVH_FIT_KIND(IntEnum):
@@ -3309,12 +3372,8 @@ class BVHStaticConfig(metaclass=AutoInitMeta):
 
     # The bits of a morton code, three interleaved coordinates of the same width
     morton_bits: int
-    # The bits a sort must order, a multiple of 16 up to 64
-    end_bit: int
-    # Scan depth of the device-wide radix sort (see quadrants.algorithms.sort), 1 to 8
-    log256_max_n: int
-    # BVH_SORT_KIND
-    sort_kind: int
+    # The sort of the leaf keys, one segment per tree
+    sort_config: SegmentSortShape
     # BVH_FIT_KIND
     fit_kind: int
 
@@ -3355,19 +3414,15 @@ class BVHState:
     """The linear bounding volume hierarchies (LBVH) of a set of trees.
 
     A build (see genesis.engine.bvh) takes the boxes of the leaves (see BVHLeaves) and produces the tree a traversal
-    reads (see BVHTreeState), plus the sorted leaf keys, the parent of each node and the scratch of the sort, the extent
-    and the fit.
+    reads (see BVHTreeState), plus the sort of the leaf keys (one segment per tree), the parent of each node and the
+    scratch of the extent and the fit.
     """
 
     kind: ClassVar[DataKind] = DataKind.SCRATCH
 
     leaves: BVHLeaves
     tree: BVHTreeState
-    leaves_keys: qd.Tensor
-    keys_scratch: qd.Tensor
-    sort_scratch: qd.Tensor
-    sort_hist: qd.Tensor
-    n_keys: qd.Tensor
+    sort: SegmentSortBuffer
     nodes_parent: qd.Tensor
     nodes_fitted: qd.Tensor
     fit_frontier: qd.Tensor
@@ -3380,15 +3435,12 @@ class BVHState:
 def get_bvh_state(
     n_trees: int,
     n_leaves: int,
-    n_sort_scratch: int,
-    n_sort_chunks: int,
     n_extent_lanes: int,
+    sort_state: SegmentSortBuffer,
     bvh_config: BVHStaticConfig,
     is_active: bool,
 ) -> BVHState:
     n_nodes = 2 * n_leaves - 1
-    is_device_radix = is_active and bvh_config.sort_kind == BVH_SORT_KIND.DEVICE_RADIX
-    is_per_tree_radix = is_active and bvh_config.sort_kind == BVH_SORT_KIND.PER_TREE_RADIX
     is_block_sweep = is_active and bvh_config.fit_kind == BVH_FIT_KIND.BLOCK_SWEEP
     return BVHState(
         tree=BVHTreeState(
@@ -3402,11 +3454,7 @@ def get_bvh_state(
             aabbs_min=V(dtype=gs.qd_vec3, shape=maybe_shape((n_trees, n_leaves), is_active)),
             aabbs_max=V(dtype=gs.qd_vec3, shape=maybe_shape((n_trees, n_leaves), is_active)),
         ),
-        leaves_keys=V(dtype=qd.u64, shape=maybe_shape((n_trees * n_leaves,), is_active)),
-        keys_scratch=V(dtype=qd.u64, shape=maybe_shape((n_trees * n_leaves,), is_active)),
-        sort_scratch=V(dtype=qd.u32, shape=maybe_shape((n_sort_scratch,), is_device_radix)),
-        sort_hist=V(dtype=gs.qd_int, shape=maybe_shape((n_trees, n_sort_chunks, 256), is_per_tree_radix)),
-        n_keys=V_SCALAR_FROM(gs.qd_int, n_trees * n_leaves),
+        sort=sort_state,
         nodes_parent=V(dtype=gs.qd_int, shape=maybe_shape((n_trees, n_nodes), is_active)),
         nodes_fitted=V(dtype=gs.qd_int, shape=maybe_shape((n_trees, max(n_leaves - 1, 1)), is_active)),
         fit_frontier=V(dtype=gs.qd_int, shape=maybe_shape((n_trees, 2, max(n_leaves - 1, 1)), is_block_sweep)),

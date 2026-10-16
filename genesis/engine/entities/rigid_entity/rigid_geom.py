@@ -228,11 +228,17 @@ class RigidGeom(RBC):
         self._is_preprocessed = True
 
     def _compute_sd(self, query_points):
-        signed_distance, *_ = igl.signed_distance(query_points, self._sdf_verts, self._sdf_faces)
+        # See compute_sdf_data in mesh.py for the sign computation.
+        signed_distance, *_ = igl.signed_distance(
+            query_points, self._sdf_verts, self._sdf_faces, sign_type=igl.SIGNED_DISTANCE_TYPE_FAST_WINDING_NUMBER
+        )
         return signed_distance.astype(gs.np_float, copy=False)
 
     def _compute_closest_verts(self, query_points):
-        _, closest_faces, *_ = igl.signed_distance(query_points, self._init_verts, self._init_faces)
+        # See FEMEntity.compute_pressure_field for the unsigned query.
+        _, closest_faces, *_ = igl.signed_distance(
+            query_points, self._init_verts, self._init_faces, sign_type=igl.SIGNED_DISTANCE_TYPE_UNSIGNED
+        )
         verts_ids = self._init_faces[closest_faces]
         verts_ids = verts_ids[
             np.arange(len(query_points), dtype=gs.np_int),
