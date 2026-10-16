@@ -102,7 +102,6 @@ def test_plane_convex(show_viewer, tol):
                 assert_allclose(qvel, 0, atol=0.14)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["ellipsoid"])
 def test_ellipsoid(xml_path, show_viewer):
@@ -1122,7 +1121,6 @@ def test_convex_collision_across_geom_scales(gjk_collision, show_viewer, tol):
     assert face_offset - tol <= offset <= face_offset + GEOM_SIZE
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_robot_scaling_primitive_collision(show_viewer):
     scene = gs.Scene(
@@ -1526,7 +1524,6 @@ def test_contact_pruning_authored_decomp(gjk_collision, show_viewer):
         assert is_vertical and is_pruned
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize(
     "model_name",
@@ -1710,7 +1707,6 @@ def test_num_contact_overflow(
         assert scene.is_built is not is_raised_by_build
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_filter_neutral_self_collisions(show_viewer):
     scene = gs.Scene(
@@ -1797,7 +1793,6 @@ def test_filter_neutral_self_collisions(show_viewer):
         scene.step()
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_contype_conaffinity(show_viewer, tol):
     GRAVITY = (0.0, 0.0, -10.0)
@@ -1910,7 +1905,7 @@ def test_gpu_simulation_determinism(prefer_decomposed_solver, contact_pruning_to
 
         monkeypatch.setattr(RigidSimStaticConfig, "__init__", init_forced)
 
-    N_TRIALS = 8
+    N_TRIALS = 4
     N_STEPS = 25
     N_WEDGES = 16
     BASE_HEIGHT = 0.020

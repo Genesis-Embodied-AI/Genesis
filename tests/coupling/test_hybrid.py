@@ -187,7 +187,6 @@ def test_mesh_mpm_build(show_viewer):
     scene.build()
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.debug(False)  # Disable debug for speedup
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.gpu])
@@ -441,7 +440,6 @@ def test_sap_rigid_rigid_hydroelastic_contact(show_viewer):
     assert robot_2_max_corner[2] > robot_1_max_corner[2] + 0.05
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("precision", ["64"])
 def test_sap_fem_vs_robot(show_viewer):

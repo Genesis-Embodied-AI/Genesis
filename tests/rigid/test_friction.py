@@ -58,7 +58,6 @@ def test_set_dofs_frictionloss_physics(gs_sim, tol):
     np.testing.assert_array_less(tol, slide_friction_effect)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_frictionloss_advanced(show_viewer, tol):
     scene = gs.Scene(
@@ -100,7 +99,6 @@ def test_frictionloss_advanced(show_viewer, tol):
     assert_allclose(box.get_dofs_velocity(), 0.0, tol=50 * tol)
 
 
-@pytest.mark.slow("gpu")  # gpu ~250s
 @pytest.mark.debug(False)  # Disable debug for speedup
 @pytest.mark.parametrize(
     "backend, mode, friction, n_boxes, solver, scale, mesh_boxes",

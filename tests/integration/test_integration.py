@@ -216,7 +216,6 @@ def test_hanging_rigid_cable(show_viewer, tol):
     assert_allclose(links_quat_err, 0.0, tol=1e-3)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.parametrize("primitive_type", ["box", "sphere"])
 @pytest.mark.parametrize("precision", ["64"])
 def test_franka_panda_grasp_fem_entity(primitive_type, show_viewer):

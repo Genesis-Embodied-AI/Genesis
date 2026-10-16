@@ -83,7 +83,6 @@ def test_equality_joint_scaling(show_viewer, scaled_mjcf_joint_equalities, n_env
     assert_allclose(qpos[..., i_unrelated_q] / SCALE, UNRELATED_POSITION, tol=tol)
 
 
-@pytest.mark.slow  # ~250s
 @pytest.mark.required
 def test_dynamic_weld(show_viewer, tol):
     CUBE_POS = (0.65, 0.0, 0.02)
@@ -187,7 +186,6 @@ def test_dynamic_weld(show_viewer, tol):
     assert_allclose(hanging_box.get_pos(), HANGING_BOX_POS, tol=1e-3)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_dynamic_weld_scene_reset():
     scene = gs.Scene(
@@ -275,7 +273,6 @@ def test_urdf_mimic(show_viewer, tol, scaled_urdf_mimic):
     assert_allclose(hand_qpos[..., -1], hand_qpos[..., -2], tol=tol)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_get_constraints_api(show_viewer, tol):
     scene = gs.Scene(
@@ -312,7 +309,6 @@ def test_get_constraints_api(show_viewer, tol):
         assert_allclose((link_a_[1], link_b_[1]), ((link_a,), (link_b,)), tol=0)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs, batched", [(0, False), (3, True)])
 def test_set_sol_params(n_envs, batched, tol):

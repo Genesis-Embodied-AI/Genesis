@@ -113,7 +113,6 @@ def polar(A, pure_rotation: bool, side, tol):
     return gu.polar(A, pure_rotation=pure_rotation, side=side)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
 def test_geom_quadrants_vs_tensor_consistency(batch_shape):
