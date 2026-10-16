@@ -1,5 +1,4 @@
 import math
-import os
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -17,7 +16,7 @@ from genesis.constants import IntEnum
 from genesis.engine.bvh import build_bvh, func_bvh_query_leaves, func_no_filter, get_bvh_data
 from genesis.options.solvers import SAPCouplerOptions
 from genesis.repr_base import RBC
-from genesis.utils.misc import get_gpu_core_count
+from genesis.utils.sort import func_sort_segments, get_segment_sort_data
 
 if TYPE_CHECKING:
     from genesis.engine.simulator import Simulator
@@ -55,11 +54,6 @@ COS_ANGLE_THRESHOLD = math.cos(math.pi * 5.0 / 8.0)
 
 # An estimate of the maximum number of contact pairs per AABB query.
 MAX_N_QUERY_RESULT_PER_AABB = 32
-
-# Most chunks of the pairs of one batch entry the radix sort of the contact pairs counts and scatters in parallel (see
-# BaseContactHandler.sort_pairs). Every chunk costs a histogram of 256 bins per pass, which one thread per digit then
-# scans serially.
-SORT_MAX_CHUNKS = 16
 
 
 @qd.func
@@ -2081,8 +2075,8 @@ class BaseContactHandler(RBC):
 
     The pairs are appended concurrently during the detection, in an order that changes from run to run. Each pair
     carries a key identifying it uniquely within its batch entry, and sort_pairs orders the pairs by batch then by key
-    in pairs_order. Every sum over the pairs, whether into a scalar of a batch entry or into a vertex or a dof, runs in
-    that order, so that the result is bitwise reproducible.
+    in the values of pairs_sort_state. Every sum over the pairs, whether into a scalar of a batch entry or into a vertex
+    or a dof, runs in that order, so that the result is bitwise reproducible.
     """
 
     # Vertices of FEM elements a pair applies its impulse to, each with a weight (see func_fem_slot)
@@ -2120,20 +2114,17 @@ class BaseContactHandler(RBC):
         """
         B = self.sim._B
         self.pairs_key = qd.field(qd.u64, shape=(self.max_contact_pairs,))
-        # The sorted pairs of batch entry i_b are pairs_order[batch_pairs_start[i_b]:batch_pairs_start[i_b + 1]]
         self.batch_n_pairs = qd.field(gs.qd_int, shape=(B,))
-        self.batch_pairs_start = qd.field(gs.qd_int, shape=(B + 1,))
-        self.pairs_order = qd.field(gs.qd_int, shape=(self.max_contact_pairs,))
-        # The radix sort orders the bits of the keys by passes of 8 bits, an even multiple of 8 bits so that the passes
-        # ping-pong between the order and its scratch and end in the order. The pairs of a batch entry split over chunks
-        # that count their digits and scatter their pairs in parallel, few per batch entry when the batch entries
-        # already fill the device.
-        self.pairs_key_end_bit = min(64, 16 * math.ceil(max(1, (n_keys - 1).bit_length()) / 16))
-        n_threads = os.cpu_count() if gs.backend == gs.cpu else get_gpu_core_count()
-        n_sort_chunks = max(1, min(SORT_MAX_CHUNKS, n_threads // B))
-        self.pairs_order_scratch = qd.field(gs.qd_int, shape=(self.max_contact_pairs,))
-        self.sort_hist = qd.field(gs.qd_int, shape=(B, n_sort_chunks, 256))
-        self.sort_digit_start = qd.field(gs.qd_int, shape=(B, 256))
+        # The sorted pairs of batch entry i_b are the values of the sort from segments_start[i_b] to
+        # segments_start[i_b + 1], the batch entry leading the bits of their keys (see genesis.utils.sort)
+        self.pairs_key_bits = max(1, (n_keys - 1).bit_length())
+        self.pairs_sort_state, self.pairs_sort_config = get_segment_sort_data(
+            B,
+            self.max_contact_pairs,
+            self.max_contact_pairs,
+            (B - 1).bit_length() + self.pairs_key_bits,
+            has_values=True,
+        )
         # Impulse of each pair in the world frame, and the partial sums over the chunks of the sorted pairs of each
         # batch entry, two sums at most at once (see lu.func_chunk_range)
         self.pairs_vec = qd.field(gs.qd_vec3, shape=(self.max_contact_pairs,))
@@ -2157,9 +2148,9 @@ class BaseContactHandler(RBC):
     def sort_pairs(self):
         """Order the contact pairs by batch then by key, and index the slots applying to each FEM vertex in that order.
 
-        The pairs are grouped by batch entry by counting, then a least-significant-digit radix sort orders the pairs of
-        each batch entry by key. The keys being unique within a batch entry, the order does not depend on the order in
-        which the detection appended the pairs.
+        The pairs are grouped by batch entry by counting, then the segment sort orders the pairs of each batch entry by
+        key (see genesis.utils.sort). The keys being unique within a batch entry, the order does not depend on the order
+        in which the detection appended the pairs.
         """
         B = qd.static(self.sim._B)
         n_pairs = qd.min(self.n_contact_pairs[None], self.max_contact_pairs)
@@ -2168,87 +2159,38 @@ class BaseContactHandler(RBC):
         for i_p in range(n_pairs):
             i_b = self.contact_pairs[i_p].batch_idx
             qd.atomic_add(self.batch_n_pairs[i_b], 1)
-        self.batch_pairs_start[0] = 0
         qd.loop_config(serialize=True)
         for i_b in range(B):
-            self.batch_pairs_start[i_b + 1] = self.batch_pairs_start[i_b] + self.batch_n_pairs[i_b]
+            if i_b == 0:
+                self.pairs_sort_state.segments_start[0] = 0
+                self.pairs_sort_state.n_keys[()] = n_pairs
+            self.pairs_sort_state.segments_start[i_b + 1] = (
+                self.pairs_sort_state.segments_start[i_b] + self.batch_n_pairs[i_b]
+            )
         for i_p in range(n_pairs):
             i_b = self.contact_pairs[i_p].batch_idx
-            i_s = self.batch_pairs_start[i_b] + qd.atomic_sub(self.batch_n_pairs[i_b], 1) - 1
-            self.pairs_order[i_s] = i_p
-
-        # The passes unroll statically: a loop of the kernel is parallel at its top level alone, so a runtime loop over
-        # the passes would serialize the chunks.
-        n_sort_chunks = qd.static(self.sort_hist.shape[1])
-        for i_pass in qd.static(range(self.pairs_key_end_bit // 8)):
-            shift = qd.static(8 * i_pass)
-            # Digits counted per chunk
-            for i_b, i_c in qd.ndrange(B, n_sort_chunks):
-                for i_d in range(256):
-                    self.sort_hist[i_b, i_c, i_d] = 0
-                i_s_start = self.batch_pairs_start[i_b]
-                n_batch_pairs = self.batch_pairs_start[i_b + 1] - i_s_start
-                i_s_start, i_s_end = lu.func_chunk_range(i_s_start, i_c, n_batch_pairs, n_sort_chunks)
-                for i_s in range(i_s_start, i_s_end):
-                    i_p = -1
-                    if qd.static(i_pass % 2 == 0):
-                        i_p = self.pairs_order[i_s]
-                    else:
-                        i_p = self.pairs_order_scratch[i_s]
-                    digit = qd.i32((self.pairs_key[i_p] >> shift) & qd.u64(0xFF))
-                    self.sort_hist[i_b, i_c, digit] += 1
-            # Offset of each chunk within each digit, and the count of each digit
-            for i_b, i_d in qd.ndrange(B, 256):
-                n_digit = 0
-                for i_c in range(n_sort_chunks):
-                    count = self.sort_hist[i_b, i_c, i_d]
-                    self.sort_hist[i_b, i_c, i_d] = n_digit
-                    n_digit += count
-                self.sort_digit_start[i_b, i_d] = n_digit
-            # Start of each digit within the pairs of the batch entry
-            for i_b in range(B):
-                i_s = self.batch_pairs_start[i_b]
-                for i_d in range(256):
-                    count = self.sort_digit_start[i_b, i_d]
-                    self.sort_digit_start[i_b, i_d] = i_s
-                    i_s += count
-            # Pairs scattered in order within each chunk, so that the pass is stable
-            for i_b, i_c in qd.ndrange(B, n_sort_chunks):
-                i_s_start = self.batch_pairs_start[i_b]
-                n_batch_pairs = self.batch_pairs_start[i_b + 1] - i_s_start
-                i_s_start, i_s_end = lu.func_chunk_range(i_s_start, i_c, n_batch_pairs, n_sort_chunks)
-                for i_s in range(i_s_start, i_s_end):
-                    i_p = -1
-                    if qd.static(i_pass % 2 == 0):
-                        i_p = self.pairs_order[i_s]
-                    else:
-                        i_p = self.pairs_order_scratch[i_s]
-                    digit = qd.i32((self.pairs_key[i_p] >> shift) & qd.u64(0xFF))
-                    i_rank = self.sort_hist[i_b, i_c, digit]
-                    self.sort_hist[i_b, i_c, digit] = i_rank + 1
-                    i_dst = self.sort_digit_start[i_b, digit] + i_rank
-                    if qd.static(i_pass % 2 == 0):
-                        self.pairs_order_scratch[i_dst] = i_p
-                    else:
-                        self.pairs_order[i_dst] = i_p
+            i_s = self.pairs_sort_state.segments_start[i_b] + qd.atomic_sub(self.batch_n_pairs[i_b], 1) - 1
+            self.pairs_sort_state.keys[i_s] = (qd.u64(i_b) << qd.static(self.pairs_key_bits)) | self.pairs_key[i_p]
+            self.pairs_sort_state.values[i_s] = i_p
+        func_sort_segments(self.pairs_sort_state, self.pairs_sort_config)
 
         if qd.static(self.N_FEM_SLOTS > 0):
             n_slots = qd.static(self.N_FEM_SLOTS)
             for i_b, i_v in qd.ndrange(B, self.fem_solver.n_vertices):
                 self.vertices_n_entries[i_b, i_v] = 0
             for i_s, i_slot in qd.ndrange(n_pairs, n_slots):
-                i_p = self.pairs_order[i_s]
+                i_p = self.pairs_sort_state.values[i_s]
                 i_b = self.contact_pairs[i_p].batch_idx
                 i_v, _ = self.func_fem_slot(i_p, i_slot)
                 qd.atomic_add(self.vertices_n_entries[i_b, i_v], 1)
             for i_b in range(B):
-                i_entry = n_slots * self.batch_pairs_start[i_b]
+                i_entry = n_slots * self.pairs_sort_state.segments_start[i_b]
                 for i_v in range(self.fem_solver.n_vertices):
                     self.vertices_entry_start[i_b, i_v] = i_entry
                     i_entry += self.vertices_n_entries[i_b, i_v]
                 self.vertices_entry_start[i_b, self.fem_solver.n_vertices] = i_entry
             for i_s, i_slot in qd.ndrange(n_pairs, n_slots):
-                i_p = self.pairs_order[i_s]
+                i_p = self.pairs_sort_state.values[i_s]
                 i_b = self.contact_pairs[i_p].batch_idx
                 i_v, _ = self.func_fem_slot(i_p, i_slot)
                 i_entry = self.vertices_entry_start[i_b, i_v] + qd.atomic_sub(self.vertices_n_entries[i_b, i_v], 1) - 1
@@ -2301,7 +2243,7 @@ class BaseContactHandler(RBC):
         Jt_vec = qd.Vector.zero(gs.qd_float, 3)
         for i_entry in range(self.vertices_entry_start[i_b, i_v], self.vertices_entry_start[i_b, i_v + 1]):
             entry = self.vertices_entry[i_entry]
-            i_p = self.pairs_order[entry // n_slots]
+            i_p = self.pairs_sort_state.values[entry // n_slots]
             _, weight = self.func_fem_slot(i_p, entry % n_slots)
             Jt_vec += weight * self.pairs_vec[i_p]
         return Jt_vec
@@ -2316,7 +2258,7 @@ class BaseContactHandler(RBC):
         Jt_A_J = qd.Matrix.zero(gs.qd_float, 3, 3)
         for i_entry in range(self.vertices_entry_start[i_b, i_v], self.vertices_entry_start[i_b, i_v + 1]):
             entry = self.vertices_entry[i_entry]
-            i_p = self.pairs_order[entry // n_slots]
+            i_p = self.pairs_sort_state.values[entry // n_slots]
             _, weight = self.func_fem_slot(i_p, entry % n_slots)
             Jt_A_J += weight**2 * self.pairs_mat[i_p]
         return Jt_A_J
@@ -2340,11 +2282,11 @@ class BaseContactHandler(RBC):
             if self.coupler.batch_linesearch_active[i_b]:
                 dell_dalpha = gs.qd_float(0.0)
                 d2ell_dalpha2 = gs.qd_float(0.0)
-                i_s_start = self.batch_pairs_start[i_b]
-                n_batch_pairs = self.batch_pairs_start[i_b + 1] - i_s_start
+                i_s_start = self.pairs_sort_state.segments_start[i_b]
+                n_batch_pairs = self.pairs_sort_state.segments_start[i_b + 1] - i_s_start
                 i_s_start, i_s_end = lu.func_chunk_range(i_s_start, i_chunk, n_batch_pairs, n_chunks)
                 for i_s in range(i_s_start, i_s_end):
-                    i_p = self.pairs_order[i_s]
+                    i_p = self.pairs_sort_state.values[i_s]
                     vc = self.compute_contact_velocity(i_p)
                     self.compute_contact_gamma_G(sap_info, i_p, vc)
                     dvc = sap_info[i_p].dvc
@@ -2373,11 +2315,11 @@ class BaseContactHandler(RBC):
         for i_b, i_chunk in qd.ndrange(self.sim._B, n_chunks):
             if self.coupler.batch_linesearch_active[i_b]:
                 energy = gs.qd_float(0.0)
-                i_s_start = self.batch_pairs_start[i_b]
-                n_batch_pairs = self.batch_pairs_start[i_b + 1] - i_s_start
+                i_s_start = self.pairs_sort_state.segments_start[i_b]
+                n_batch_pairs = self.pairs_sort_state.segments_start[i_b + 1] - i_s_start
                 i_s_start, i_s_end = lu.func_chunk_range(i_s_start, i_chunk, n_batch_pairs, n_chunks)
                 for i_s in range(i_s_start, i_s_end):
-                    i_p = self.pairs_order[i_s]
+                    i_p = self.pairs_sort_state.values[i_s]
                     vc = self.compute_contact_velocity(i_p)
                     self.compute_contact_energy(sap_info, i_p, vc)
                     energy += sap_info[i_p].energy
@@ -2591,11 +2533,11 @@ class RigidContactHandler(BaseContactHandler):
         n_chunks = qd.static(self.dofs_partials.shape[1])
         for i_b, i_chunk, i_d in qd.ndrange(self.sim._B, n_chunks, self.rigid_solver.n_dofs):
             Jt_vec = gs.qd_float(0.0)
-            i_s_start = self.batch_pairs_start[i_b]
-            n_batch_pairs = self.batch_pairs_start[i_b + 1] - i_s_start
+            i_s_start = self.pairs_sort_state.segments_start[i_b]
+            n_batch_pairs = self.pairs_sort_state.segments_start[i_b + 1] - i_s_start
             i_s_start, i_s_end = lu.func_chunk_range(i_s_start, i_chunk, n_batch_pairs, n_chunks)
             for i_s in range(i_s_start, i_s_end):
-                i_p = self.pairs_order[i_s]
+                i_p = self.pairs_sort_state.values[i_s]
                 Jt_vec += self.Jt[i_p, i_d].dot(self.pairs_vec[i_p])
             self.dofs_partials[i_b, i_chunk, i_d] = Jt_vec
 

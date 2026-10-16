@@ -8,32 +8,18 @@ A leaf carries two indices: i_a names it by its box, in the order the caller wro
 sorted order the tree is laid out in, the one leaves_idx maps back to i_a.
 """
 
-import math
-import os
 from typing import NamedTuple
 
 import quadrants as qd
-from quadrants.algorithms import sort as radix_sort
-from quadrants.algorithms import sort_scratch_slots
 
 import genesis as gs
 import genesis.utils.array_class as array_class
-from genesis.utils.misc import get_gpu_core_count
+from genesis.utils.sort import func_sort_segments, get_segment_sort_data
 
 # Bits of a morton code: three interleaved 10-bit coordinates.
 MORTON_BITS = 30
-# The rank sort, quadratic per tree, beats the radix sort up to a leaf count. On the CPU the trees sort serially, so
-# the bound holds at every tree count. On the GPU the passes of every tree run together and the crossover sits near
-# one leaf per core for one tree, shrinking with the cube root of the tree count: n_trees * n_leaves**3 stays under
-# the cube of this fraction of the core count, set under the crossover of every device measured.
-RANK_SORT_MAX_LEAVES_CPU = 256
-RANK_SORT_LEAVES_PER_CORE = 0.75
 # Lanes reducing the extent of one tree, each over a strided slice of its leaves, folded by one thread per tree.
 EXTENT_LANES = 64
-# Most chunks of the leaves of one tree the host radix sort counts and scatters in parallel (see func_build_bvh). The
-# chunks bring parallelism to a set of few trees; a set of many trees is parallel over its trees already, and every
-# chunk costs a histogram of 256 bins per pass.
-SORT_MAX_CHUNKS = 64
 
 
 class BVHData(NamedTuple):
@@ -52,35 +38,14 @@ def get_bvh_data(n_trees: int, n_leaves: int, is_active: bool = True) -> BVHData
     if is_active and n_leaves < 1:
         gs.raise_exception(f"A BVH set needs at least one leaf per tree, got {n_leaves}.")
 
-    # The config: the bits of the leaf keys a sort orders, and the sort the backend and the tree size take
-    n_keys = n_trees * n_leaves
+    # The key of a leaf packs the tree, the morton code and the leaf in 64 bits, the tree leading so that each tree is
+    # one segment of the sort
     leaf_bits = max(1, (n_leaves - 1).bit_length())
     tree_bits = (n_trees - 1).bit_length()
     key_bits = tree_bits + MORTON_BITS + leaf_bits
-    # The key of a leaf packs the tree, the morton code and the leaf in 64 bits
-    if key_bits > 64:
-        gs.raise_exception(f"A BVH set of {n_trees} trees over {n_leaves} leaves needs {key_bits} key bits, above 64.")
-    # The radix sort orders a positive even multiple of 8 bits
-    end_bit = min(64, 16 * math.ceil(key_bits / 16))
-    log256_max_n = 1
-    while 256**log256_max_n < n_keys:
-        log256_max_n += 1
-    if gs.backend == gs.cpu:
-        is_rank_sort = n_leaves <= RANK_SORT_MAX_LEAVES_CPU
-    else:
-        max_leaves = RANK_SORT_LEAVES_PER_CORE * get_gpu_core_count()
-        is_rank_sort = n_trees * n_leaves**3 <= max_leaves**3
-    # Outside performance mode the radix sort serves every set, with the widest keys and a scan depth reaching any key
-    # count a device holds. The choice of the rank sort stays per set, its single pass being much faster on small trees.
-    if gs.use_ndarray:
-        end_bit = 64
-        log256_max_n = max(log256_max_n, 4)
-    if is_rank_sort:
-        sort_kind = array_class.BVH_SORT_KIND.RANK
-    elif gs.backend == gs.cpu:
-        sort_kind = array_class.BVH_SORT_KIND.PER_TREE_RADIX
-    else:
-        sort_kind = array_class.BVH_SORT_KIND.DEVICE_RADIX
+    sort_state, sort_config = get_segment_sort_data(
+        n_trees, n_trees * n_leaves, n_leaves, key_bits, has_values=False, is_active=is_active
+    )
     # FIXME: quadrants#925 - Metal lowers a fence to a control barrier, so the leaf walk, whose fences sit in divergent
     # flow, reads stale boxes there. One block per tree sweeps the nodes level by level instead, every barrier uniform.
     if gs.backend == gs.cpu:
@@ -89,18 +54,8 @@ def get_bvh_data(n_trees: int, n_leaves: int, is_active: bool = True) -> BVHData
         fit_kind = array_class.BVH_FIT_KIND.BLOCK_SWEEP
     else:
         fit_kind = array_class.BVH_FIT_KIND.FENCED_LEAF_WALK
-    bvh_config = array_class.BVHStaticConfig(
-        morton_bits=MORTON_BITS, end_bit=end_bit, log256_max_n=log256_max_n, sort_kind=sort_kind, fit_kind=fit_kind
-    )
-
-    # The state: the scratch of the device-wide radix sort is sized by quadrants, the lanes of the extent are fixed
-    n_sort_scratch = (
-        sort_scratch_slots(n_keys, log256_max_n) if sort_kind == array_class.BVH_SORT_KIND.DEVICE_RADIX else 0
-    )
-    n_sort_chunks = max(1, min(SORT_MAX_CHUNKS, (os.cpu_count() or 1) // n_trees))
-    bvh_state = array_class.get_bvh_state(
-        n_trees, n_leaves, n_sort_scratch, n_sort_chunks, EXTENT_LANES, bvh_config, is_active
-    )
+    bvh_config = array_class.BVHStaticConfig(morton_bits=MORTON_BITS, sort_config=sort_config, fit_kind=fit_kind)
+    bvh_state = array_class.get_bvh_state(n_trees, n_leaves, EXTENT_LANES, sort_state, bvh_config, is_active)
 
     return BVHData(bvh_state, bvh_config)
 
@@ -121,8 +76,8 @@ def _func_delta(i_t: int, i_leaf: int, j_leaf: int, bvh_state: array_class.BVHSt
     n_leaves = bvh_state.leaves.aabbs_min.shape[1]
     delta = -1
     if j_leaf >= 0 and j_leaf < n_leaves:
-        key_i = bvh_state.leaves_keys[i_t * n_leaves + i_leaf]
-        key_j = bvh_state.leaves_keys[i_t * n_leaves + j_leaf]
+        key_i = bvh_state.sort.keys[i_t * n_leaves + i_leaf]
+        key_j = bvh_state.sort.keys[i_t * n_leaves + j_leaf]
         # The keys of one tree differ at least in their leaf bits, so the prefix is shorter than the key
         delta = qd.math.clz(key_i ^ key_j)
     return delta
@@ -270,6 +225,10 @@ def func_build_bvh(bvh_state: array_class.BVHState, bvh_config: qd.template(), e
             tree_max = qd.max(tree_max, bvh_state.lanes_max[i_t, i_lane])
         bvh_state.trees_min[i_t] = tree_min
         bvh_state.trees_max[i_t] = tree_max
+        # Each tree is one segment of the sort of the keys
+        bvh_state.sort.segments_start[i_t] = i_t * n_leaves
+        if i_t == n_trees - 1:
+            bvh_state.sort.segments_start[n_trees] = n_trees * n_leaves
 
     # Key of each leaf: the tree, then the morton code of the leaf center in the extent of its tree scaled to the unit
     # cube (a flat extent maps to 0), then the leaf index
@@ -288,82 +247,18 @@ def func_build_bvh(bvh_state: array_class.BVHState, bvh_config: qd.template(), e
         # The bits a leaf index takes, at least one
         leaf_bits = qd.max(1, 32 - qd.math.clz(qd.u32(n_leaves - 1)))
         key = (qd.u64(code) << leaf_bits) | qd.u64(i_a)
-        bvh_state.leaves_keys[i_t * n_leaves + i_a] = (
+        bvh_state.sort.keys[i_t * n_leaves + i_a] = (
             qd.u64(i_t) << (qd.static(bvh_config.morton_bits) + leaf_bits)
         ) | key
 
     # Sort of the keys, every key unique through its leaf bits so the order is total
-    if qd.static(bvh_config.sort_kind == array_class.BVH_SORT_KIND.DEVICE_RADIX):
-        radix_sort(
-            bvh_state.leaves_keys,
-            bvh_state.keys_scratch,
-            bvh_state.leaves_keys,
-            bvh_state.keys_scratch,
-            bvh_state.sort_scratch,
-            bvh_state.n_keys,
-            key_dtype=qd.u64,
-            has_values=False,
-            end_bit=qd.static(bvh_config.end_bit),
-            log256_max_n=qd.static(bvh_config.log256_max_n),
-        )
-    elif qd.static(bvh_config.sort_kind == array_class.BVH_SORT_KIND.RANK):
-        # Each leaf ranks itself among the keys of its tree
-        for i_t, i_a in qd.ndrange(n_trees, n_leaves):
-            key = bvh_state.leaves_keys[i_t * n_leaves + i_a]
-            rank = 0
-            for i_o in range(n_leaves):
-                if bvh_state.leaves_keys[i_t * n_leaves + i_o] < key:
-                    rank += 1
-            bvh_state.keys_scratch[i_t * n_leaves + rank] = key
-        for i_k in range(n_trees * n_leaves):
-            bvh_state.leaves_keys[i_k] = bvh_state.keys_scratch[i_k]
-    else:
-        # A least-significant-digit radix sort of eight bits per pass on the host backend, the leaves of each tree
-        # split over chunks: the chunks count their digits and scatter their keys in parallel, one thread per tree
-        # turning the counts into offsets in between. The passes ping-pong between the keys and the scratch and end
-        # in the keys. The passes unroll statically: a loop of the kernel is parallel at its top level alone, so a
-        # runtime loop over the passes would serialize the chunks.
-        n_sort_chunks = bvh_state.sort_hist.shape[1]
-        for i_pass in qd.static(range(qd.static(bvh_config.end_bit) // 8)):
-            shift = 8 * i_pass
-            for i_t, i_c in qd.ndrange(n_trees, n_sort_chunks):
-                for i_d in range(256):
-                    bvh_state.sort_hist[i_t, i_c, i_d] = 0
-                for i_a in range(i_c * n_leaves // n_sort_chunks, (i_c + 1) * n_leaves // n_sort_chunks):
-                    key = qd.u64(0)
-                    if qd.static(i_pass % 2 == 0):
-                        key = bvh_state.leaves_keys[i_t * n_leaves + i_a]
-                    else:
-                        key = bvh_state.keys_scratch[i_t * n_leaves + i_a]
-                    digit = qd.i32((key >> shift) & qd.u64(0xFF))
-                    bvh_state.sort_hist[i_t, i_c, digit] += 1
-            for i_t in range(n_trees):
-                total = 0
-                for i_d in range(256):
-                    for i_c in range(n_sort_chunks):
-                        count = bvh_state.sort_hist[i_t, i_c, i_d]
-                        bvh_state.sort_hist[i_t, i_c, i_d] = total
-                        total += count
-            for i_t, i_c in qd.ndrange(n_trees, n_sort_chunks):
-                for i_a in range(i_c * n_leaves // n_sort_chunks, (i_c + 1) * n_leaves // n_sort_chunks):
-                    key = qd.u64(0)
-                    if qd.static(i_pass % 2 == 0):
-                        key = bvh_state.leaves_keys[i_t * n_leaves + i_a]
-                    else:
-                        key = bvh_state.keys_scratch[i_t * n_leaves + i_a]
-                    digit = qd.i32((key >> shift) & qd.u64(0xFF))
-                    slot = bvh_state.sort_hist[i_t, i_c, digit]
-                    bvh_state.sort_hist[i_t, i_c, digit] = slot + 1
-                    if qd.static(i_pass % 2 == 0):
-                        bvh_state.keys_scratch[i_t * n_leaves + slot] = key
-                    else:
-                        bvh_state.leaves_keys[i_t * n_leaves + slot] = key
+    func_sort_segments(bvh_state.sort, bvh_config.sort_config)
 
     # Leaf of each sorted slot, the links of the leaf nodes and the root, and the arrival counters of the fit
     for i_t, i_leaf in qd.ndrange(n_trees, n_leaves):
         leaf_bits = qd.max(1, 32 - qd.math.clz(qd.u32(n_leaves - 1)))
         leaf_mask = (qd.u64(1) << leaf_bits) - qd.u64(1)
-        bvh_state.tree.leaves_idx[i_t, i_leaf] = qd.i32(bvh_state.leaves_keys[i_t * n_leaves + i_leaf] & leaf_mask)
+        bvh_state.tree.leaves_idx[i_t, i_leaf] = qd.i32(bvh_state.sort.keys[i_t * n_leaves + i_leaf] & leaf_mask)
         bvh_state.tree.nodes_left[i_t, n_leaves - 1 + i_leaf] = -1
         bvh_state.tree.nodes_right[i_t, n_leaves - 1 + i_leaf] = -1
     for i_t, i_n in qd.ndrange(n_trees, bvh_state.nodes_fitted.shape[1]):
