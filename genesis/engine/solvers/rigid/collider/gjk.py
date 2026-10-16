@@ -613,6 +613,8 @@ def func_gjk(
             if _lambda[j] > 0:
                 gjk_state.simplex_vertex.obj1[i_b, n] = gjk_state.simplex_vertex.obj1[i_b, j]
                 gjk_state.simplex_vertex.obj2[i_b, n] = gjk_state.simplex_vertex.obj2[i_b, j]
+                gjk_state.simplex_vertex.local_obj1[i_b, n] = gjk_state.simplex_vertex.local_obj1[i_b, j]
+                gjk_state.simplex_vertex.local_obj2[i_b, n] = gjk_state.simplex_vertex.local_obj2[i_b, j]
                 gjk_state.simplex_vertex.id1[i_b, n] = gjk_state.simplex_vertex.id1[i_b, j]
                 gjk_state.simplex_vertex.id2[i_b, n] = gjk_state.simplex_vertex.id2[i_b, j]
                 gjk_state.simplex_vertex.mink[i_b, n] = gjk_state.simplex_vertex.mink[i_b, j]
@@ -690,6 +692,8 @@ def func_gjk_intersect(
     for i in qd.static(range(4)):
         gjk_state.simplex_vertex_intersect.obj1[i_b, i] = gjk_state.simplex_vertex.obj1[i_b, i]
         gjk_state.simplex_vertex_intersect.obj2[i_b, i] = gjk_state.simplex_vertex.obj2[i_b, i]
+        gjk_state.simplex_vertex_intersect.local_obj1[i_b, i] = gjk_state.simplex_vertex.local_obj1[i_b, i]
+        gjk_state.simplex_vertex_intersect.local_obj2[i_b, i] = gjk_state.simplex_vertex.local_obj2[i_b, i]
         gjk_state.simplex_vertex_intersect.id1[i_b, i] = gjk_state.simplex_vertex.id1[i_b, i]
         gjk_state.simplex_vertex_intersect.id2[i_b, i] = gjk_state.simplex_vertex.id2[i_b, i]
         gjk_state.simplex_vertex_intersect.mink[i_b, i] = gjk_state.simplex_vertex.mink[i_b, i]
@@ -743,6 +747,8 @@ def func_gjk_intersect(
             for j in qd.static(range(4)):
                 gjk_state.simplex_vertex.obj1[i_b, j] = gjk_state.simplex_vertex_intersect.obj1[i_b, si[j]]
                 gjk_state.simplex_vertex.obj2[i_b, j] = gjk_state.simplex_vertex_intersect.obj2[i_b, si[j]]
+                gjk_state.simplex_vertex.local_obj1[i_b, j] = gjk_state.simplex_vertex_intersect.local_obj1[i_b, si[j]]
+                gjk_state.simplex_vertex.local_obj2[i_b, j] = gjk_state.simplex_vertex_intersect.local_obj2[i_b, si[j]]
                 gjk_state.simplex_vertex.id1[i_b, j] = gjk_state.simplex_vertex_intersect.id1[i_b, si[j]]
                 gjk_state.simplex_vertex.id2[i_b, j] = gjk_state.simplex_vertex_intersect.id2[i_b, si[j]]
                 gjk_state.simplex_vertex.mink[i_b, j] = gjk_state.simplex_vertex_intersect.mink[i_b, si[j]]

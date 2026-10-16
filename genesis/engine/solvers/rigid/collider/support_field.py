@@ -239,9 +239,10 @@ class SupportField:
             slots_vid = np.repeat(verts_idx[is_first, None], repeats=2, axis=-1)
             is_slot = candidates_rank < 2
             slots_vid[cells_idx[is_slot], candidates_rank[is_slot]] = verts_idx[is_slot]
-            cells_vid.append(slots_vid.reshape(-1))
+            # Support vertex indices use the global numbering shared by simplex construction
+            cells_vid.append(slots_vid.reshape(-1) + geom.vert_start)
             cells_v.append(verts[slots_vid.reshape(-1)])
-            extras_vid.append(verts_idx[~is_slot])
+            extras_vid.append(verts_idx[~is_slot] + geom.vert_start)
             extras_v.append(verts[verts_idx[~is_slot]])
             cells_count.append(np.bincount(cells_idx[~is_slot], minlength=n_geom_cells))
             n_support_cells += n_geom_cells

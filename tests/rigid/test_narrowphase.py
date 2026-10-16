@@ -37,7 +37,6 @@ from typing import TYPE_CHECKING, Callable, cast
 
 import numpy as np
 import pytest
-
 import trimesh
 from scipy.spatial import ConvexHull
 
@@ -46,7 +45,7 @@ import quadrants as qd
 import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
-from genesis.engine.solvers.rigid.collider import support_field
+from genesis.engine.solvers.rigid.collider import gjk_support, support_field
 from genesis.utils.misc import qd_to_numpy, tensor_to_array
 
 from ..conftest import TOL_SINGLE
@@ -1344,6 +1343,9 @@ def test_mesh_support_exactness(show_viewer, tol):
         meshes.append(trimesh.Trimesh(scale * verts * np.random.uniform(0.5, 1.5, 3)).convex_hull)
 
     scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_mujoco_compatibility=True,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(4.0, -15.0, 8.0),
             camera_lookat=(4.0, 0.0, 0.0),
@@ -1368,14 +1370,51 @@ def test_mesh_support_exactness(show_viewer, tol):
         directions: qd.types.ndarray(),
         supports: qd.types.ndarray(),
         supports_count: qd.types.ndarray(),
+        supports_idx: qd.types.ndarray(),
         collider_info: array_class.ColliderInfo,
     ):
         for i_d in range(directions.shape[0]):
             direction = qd.Vector([directions[i_d, 0], directions[i_d, 1], directions[i_d, 2]], dt=gs.qd_float)
-            support, _ = support_field._func_support_mesh(i_g, direction, collider_info)
+            support, i_v = support_field._func_support_mesh(i_g, direction, collider_info)
+            supports_idx[i_d] = i_v
             for k in qd.static(range(3)):
                 supports[i_d, k] = support[k]
             supports_count[i_d] = support_field._func_count_supports_mesh(i_g, direction, collider_info)
+
+    @qd.kernel
+    def query_local_supports(
+        i_g: int,
+        directions: qd.types.ndarray(),
+        supports_world: qd.types.ndarray(),
+        supports_local: qd.types.ndarray(),
+        collider_state: array_class.ColliderState,
+        gjk_state: array_class.GJKState,
+        dyn_info: array_class.DynInfo,
+        collider_info: array_class.ColliderInfo,
+        rigid_config: qd.template(),
+        collider_config: qd.template(),
+    ):
+        for i in range(1):
+            for i_d in range(directions.shape[0]):
+                direction = gs.qd_vec3(directions[i_d, 0], directions[i_d, 1], directions[i_d, 2])
+                point, point_local, i_v = gjk_support.support_driver(
+                    i_g,
+                    i,
+                    i,
+                    direction,
+                    gs.qd_vec3(1.0, 2.0, 3.0),
+                    gs.qd_vec4(0.5, 0.5, 0.5, 0.5),
+                    collider_state,
+                    gjk_state,
+                    dyn_info,
+                    collider_info,
+                    rigid_config,
+                    collider_config,
+                    shrink_sphere=False,
+                )
+                for k in qd.static(range(3)):
+                    supports_world[i_d, k] = point[k]
+                    supports_local[i_d, k] = point_local[k]
 
     # Directions on the boundaries of the cells of both charts, the second chart seeing a direction (x, y, z) of the
     # mesh frame as (x, -z, y)
@@ -1411,7 +1450,27 @@ def test_mesh_support_exactness(show_viewer, tol):
         directions = (directions / np.linalg.norm(directions, axis=-1, keepdims=True)).astype(gs.np_float)
         supports = np.zeros_like(directions)
         supports_count = np.zeros(len(directions), dtype=gs.np_int)
-        query_supports(geom.idx, directions, supports, supports_count, scene.rigid_solver.collider.collider_info)
+        supports_idx = np.empty(len(directions), dtype=gs.np_int)
+        query_supports(
+            geom.idx, directions, supports, supports_count, supports_idx, scene.rigid_solver.collider.collider_info
+        )
+        directions_local = directions[:8].copy()
+        supports_world = np.empty_like(directions_local)
+        supports_local = np.empty_like(directions_local)
+        query_local_supports(
+            geom.idx,
+            directions_local,
+            supports_world,
+            supports_local,
+            scene.rigid_solver.collider.collider_state,
+            scene.rigid_solver.collider.gjk.gjk_state,
+            scene.rigid_solver.dyn_info,
+            scene.rigid_solver.collider.collider_info,
+            scene.rigid_solver.rigid_config,
+            scene.rigid_solver.collider.collider_config,
+        )
+        assert_allclose(supports_world, supports_local[:, (2, 0, 1)] + (1.0, 2.0, 3.0), tol=tol)
+        assert_allclose(supports, verts[supports_idx - geom.vert_start], tol=tol)
         assert_allclose((supports * directions).sum(axis=-1), (directions @ verts.T).max(axis=-1), tol=tol)
 
     # A direction in a coordinate plane ties exactly two corners of the box, along an arc between two face normals that
@@ -1423,7 +1482,13 @@ def test_mesh_support_exactness(show_viewer, tol):
     directions = (directions / np.linalg.norm(directions, axis=-1, keepdims=True)).astype(gs.np_float)
     supports = np.zeros_like(directions)
     supports_count = np.zeros(len(directions), dtype=gs.np_int)
+    supports_idx = np.empty(len(directions), dtype=gs.np_int)
     query_supports(
-        entities[0].geoms[0].idx, directions, supports, supports_count, scene.rigid_solver.collider.collider_info
+        entities[0].geoms[0].idx,
+        directions,
+        supports,
+        supports_count,
+        supports_idx,
+        scene.rigid_solver.collider.collider_info,
     )
     assert_equal(supports_count, np.repeat((2, 4), (N_RANDOM_DIRECTIONS, 6)))
