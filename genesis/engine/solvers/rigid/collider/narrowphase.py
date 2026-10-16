@@ -1371,8 +1371,9 @@ def func_contact_mpr_terrain(
                 if i_detection > 0 and not face_face_0:
                     break
                 if i_detection > 0:
-                    axis = (2 * (i_detection % 2) - 1) * axis_0 + (1 - 2 * ((i_detection // 2) % 2)) * axis_1
-                    qrot = gu.qd_rotvec_to_quat(collider_info.mc_perturbation[None] * axis, EPS)
+                    axis = axis_0 if i_detection < 3 else axis_1
+                    angle_sign = 2 * (i_detection % 2) - 1
+                    qrot = gu.qd_rotvec_to_quat(angle_sign * collider_info.mc_perturbation[None] * axis, EPS)
                     ga_pos_curr, ga_quat_curr = func_rotate_frame(ga_pos, ga_quat, contact_pos_0, qrot)
                     ga_pos_tf, ga_quat_tf = gu.qd_transform_pos_quat_by_trans_quat(
                         ga_pos_curr - gb_pos, ga_quat_curr, qd.Vector.zero(gs.qd_float, 3), gu.qd_inv_quat(gb_quat)
@@ -1771,7 +1772,9 @@ def func_recompute_perturbed_contact(
                                     contact_pos = witness + (0.5 if qd.static(i_g == 0) else -0.5) * bound * normal_0
                                     has_depth_estimate = True
 
-    if not has_depth_estimate:
+    # Available support triangles define the unperturbed normal below. Un-rotating the detection normal instead mixes
+    # lateral witness separation into depth when the detection combines different support features.
+    if not has_depth_estimate and not has_supports:
         # The un-rotated perturbed normal is the normal of the tangent plane of the other geom at its witness, against
         # which the anchor witness measures its depth. A plane tilted beyond the relative rotation of both geoms belongs
         # to another face, along which this depth is ill-conditioned, so that the separation of both witnesses stays.
@@ -1786,10 +1789,8 @@ def func_recompute_perturbed_contact(
                 contact_pos = witness_b - 0.5 * depth * normal_0
             has_depth_estimate = True
 
-    # Without any of the estimates above, the separation of both witnesses along the normal of contact 0 carries none
-    # of the depth: the detection resolved another face of the Minkowski difference, another patch. The contact keeps
-    # the normal of that face and the depth along it on the unperturbed geoms. The support points span the face, whose
-    # normal is exact up to rounding, and the normal of the detection stands in for a face too thin to be oriented.
+    # When the projected support triangles miss the witnesses, their Minkowski normal measures the separation on the
+    # unperturbed geoms. The detection normal stands in for a support triangle too thin to be oriented.
     contact_normal = normal_0
     if not has_depth_estimate:
         contact_normal = normal
@@ -1962,7 +1963,7 @@ def func_contact_overlap_axes(
     targets the four that carry the most area together with the corner of contact 0, which needs no detection, so that
     the contacts of the pair are as many corners of the patch.
 
-    Returns the scaled rotation axes and the merge distance. Targets within that distance of contact 0 or an earlier
+    Returns the unit rotation axes and the merge distance. Targets within that distance of contact 0 or an earlier
     target receive a zero axis. Degenerate overlaps retain the default axes and the geom-scale merge distance.
     """
     EPS = rigid_info.EPS[None]
@@ -2023,6 +2024,13 @@ def func_contact_overlap_axes(
                             if distance_min < 0.0 or distance < distance_min:
                                 distance_min = distance
                                 i_e_refine = j_e
+                    # Both directed seed edges span the same segment. Contact 0 selects the side to refine first
+                    if polygons_size[i_g_refine] == 2 and edges_settled[i_g_refine] == 0:
+                        i_k0 = 8 * i_g_refine
+                        edge_x = polygons[i_k0 + 1, 0] - polygons[i_k0, 0]
+                        edge_y = polygons[i_k0 + 1, 1] - polygons[i_k0, 1]
+                        side = edge_y * polygons[i_k0, 0] - edge_x * polygons[i_k0, 1]
+                        i_e_refine = 0 if side <= 0.0 else 1
                     i_g, i_e = i_g_refine, i_e_refine
                     n_points = polygons_size[i_g]
                     i_k0 = 8 * i_g + i_e
@@ -2035,7 +2043,7 @@ def func_contact_overlap_axes(
             if is_query:
                 is_b = i_g == 1
                 # The relative perturbation sets the sampling angle so curved surfaces are sampled near the contact.
-                direction = 2.0 * qd.sqrt(2.0) * collider_info.mc_perturbation[None] * (
+                direction = 2.0 * collider_info.mc_perturbation[None] * (
                     direction_x * axis_0 + direction_y * axis_1
                 ) + (normal if is_b else -normal)
                 support_offset = (
@@ -2413,13 +2421,10 @@ def func_contact_overlap_axes(
     if not is_overlap_degenerate:
         overlap_merge_tolerance = qd.min(overlap_merge_tolerance, 0.005 * qd.abs(overlap_area) / overlap_perimeter)
     target_tolerance = qd.max(EPS * geom_pair_scale, overlap_merge_tolerance)
-    # Retain each default axis magnitude so every detection tilts by the same angle, however sharp its target corner
+    # Unit axes keep the perturbation angle independent of the selected target corner
     for i_t in qd.static(range(4)):
-        # The default axis combines both plane axes, since an axis aligned with a principal axis of inertia of the
-        # geometry is more sensitive to ill-conditioning
         axis = qd.Vector([axes[i_t, 0], axes[i_t, 1], axes[i_t, 2]])
         if not is_overlap_degenerate:
-            axis_norm = axis.norm()
             axis = qd.Vector.zero(gs.qd_float, 3)
             i_k = targets[i_t]
             if i_t < n_overlap:
@@ -2441,7 +2446,7 @@ def func_contact_overlap_axes(
                     # whole tilt, while flat faces deepen along the middle of the cone.
                     side_prev = (normal_next - normal_next.dot(normal_prev) * normal_prev).normalized(EPS)
                     side_next = (normal_prev - normal_prev.dot(normal_next) * normal_next).normalized(EPS)
-                    gain = 2.0 * collider_info.mc_perturbation[None] * axis_norm
+                    gain = 2.0 * collider_info.mc_perturbation[None]
                     margin_prev, margin_next = side_prev.dot(slope), side_next.dot(slope)
                     deepening_direction = side_prev
                     if margin_next + gain <= margin_prev + gain * side_prev.dot(side_next):
@@ -2458,7 +2463,9 @@ def func_contact_overlap_axes(
                         deepening_direction = ratio * direction_along + qd.sqrt(qd.max(1.0 - ratio**2, 0.0)) * (
                             direction_across
                         )
-                    axis = normal.cross(axis_norm * (deepening_direction[0] * axis_0 + deepening_direction[1] * axis_1))
+                    axis = gu.qd_normalize(
+                        normal.cross(deepening_direction[0] * axis_0 + deepening_direction[1] * axis_1), EPS
+                    )
         for i_3 in qd.static(range(3)):
             axes[i_t, i_3] = axis[i_3]
     return axes, overlap_merge_tolerance
@@ -2883,9 +2890,7 @@ def func_convex_convex_contact(
                             i_ga, i_gb, i_b, normal, geoms_init_AABB, dyn_state, dyn_info, rigid_info, rigid_config
                         )
                         if qd.static(not rigid_config.enable_mujoco_compatibility):
-                            overlap_axes = qd.Matrix.rows(
-                                [axis_0 + axis_1, -axis_0 - axis_1, axis_0 - axis_1, -axis_0 + axis_1]
-                            )
+                            overlap_axes = qd.Matrix.rows([axis_0, -axis_0, axis_1, -axis_1])
                             if dyn_info.geoms.type[i_ga] != gs.GEOM_TYPE.PLANE:
                                 overlap_axes, overlap_merge_tolerance = func_contact_overlap_axes(
                                     i_ga,
@@ -3810,9 +3815,7 @@ def func_narrowphase_multicontact(
                             axis_0, axis_1 = func_contact_orthogonals(
                                 i_ga, i_gb, i_b, normal, geoms_init_AABB, dyn_state, dyn_info, rigid_info, rigid_config
                             )
-                            overlap_axes = qd.Matrix.rows(
-                                [axis_0 + axis_1, -axis_0 - axis_1, axis_0 - axis_1, -axis_0 + axis_1]
-                            )
+                            overlap_axes = qd.Matrix.rows([axis_0, -axis_0, axis_1, -axis_1])
                             if dyn_info.geoms.type[i_ga] != gs.GEOM_TYPE.PLANE:
                                 overlap_axes, overlap_merge_tolerance = func_contact_overlap_axes(
                                     i_ga,
