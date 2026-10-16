@@ -85,7 +85,7 @@ def func_add_polytope_vertex_contacts_sdf(
     collider_info: array_class.ColliderInfo,
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
-    seeded: qd.template(),
+    seeded: bool,
     errno: qd.Tensor,
 ):
     # Emit up to n_max contacts at the deepest spatially-diverse vertices of A penetrating (or near-touching) B's
@@ -136,7 +136,7 @@ def func_add_polytope_vertex_contacts_sdf(
     # count and buffer top are snapshotted for seeding, since the emission below grows both.
     n_added = 0
     i_contact_top = collider_state.n_contacts[i_b]
-    if qd.static(seeded):
+    if seeded:
         while (
             n_added < i_contact_top and collider_state.contact_data.pair_idx[i_contact_top - 1 - n_added, i_b] == i_pair
         ):
@@ -170,7 +170,7 @@ def func_add_polytope_vertex_contacts_sdf(
         for k in range(n_max):
             top_pen[k] = -gs.qd_float(1e30)
             top_iv[k] = -1
-        if qd.static(not seeded):
+        if not seeded:
             # Pull B's world AABB back into A's local frame (its exact enclosing box, padded to absorb the
             # rounding of the two transform paths) and walk only the spatial cells of A overlapping it: a vert
             # outside B's AABB contributes nothing, so far cells are skipped wholesale, without per-vertex work.
@@ -4643,41 +4643,26 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                             errno,
                         )
                     else:
-                        func_add_polytope_vertex_contacts_sdf(
-                            i_ga,
-                            i_gb,
-                            i_b,
-                            i_pair,
-                            ga_pos,
-                            ga_quat,
-                            gb_pos,
-                            gb_quat,
-                            tolerance,
-                            geoms_init_AABB,
-                            dyn_state,
-                            collider_state,
-                            dyn_info,
-                            rigid_info,
-                            collider_info,
-                            rigid_config,
-                            collider_static_config,
-                            seeded=False,
-                            errno=errno,
-                        )
                         # Swapped-role verification: A's vertex scan cannot see a feature of B crossing one of A's
                         # faces BETWEEN A's verts, so B's verts are checked against A's SDF as well - as a seeded
                         # local search rather than a full scan. Skipped only for PLANE (its handful of far-flung
                         # verts carry no contact information).
-                        if dyn_info.geoms.type[i_gb] != gs.GEOM_TYPE.PLANE:
+                        n_scans = 1 if dyn_info.geoms.type[i_gb] == gs.GEOM_TYPE.PLANE else 2
+                        for i_scan in range(n_scans):
+                            i_g1, i_g2 = i_ga, i_gb
+                            g1_pos, g1_quat, g2_pos, g2_quat = ga_pos, ga_quat, gb_pos, gb_quat
+                            if i_scan > 0:
+                                i_g1, i_g2 = i_gb, i_ga
+                                g1_pos, g1_quat, g2_pos, g2_quat = gb_pos, gb_quat, ga_pos, ga_quat
                             func_add_polytope_vertex_contacts_sdf(
-                                i_gb,
-                                i_ga,
+                                i_g1,
+                                i_g2,
                                 i_b,
                                 i_pair,
-                                gb_pos,
-                                gb_quat,
-                                ga_pos,
-                                ga_quat,
+                                g1_pos,
+                                g1_quat,
+                                g2_pos,
+                                g2_quat,
                                 tolerance,
                                 geoms_init_AABB,
                                 dyn_state,
@@ -4687,6 +4672,6 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                 collider_info,
                                 rigid_config,
                                 collider_static_config,
-                                seeded=True,
+                                seeded=i_scan > 0,
                                 errno=errno,
                             )
