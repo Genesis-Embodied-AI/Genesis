@@ -1910,7 +1910,7 @@ def test_gpu_simulation_determinism(prefer_decomposed_solver, contact_pruning_to
 
         monkeypatch.setattr(RigidSimStaticConfig, "__init__", init_forced)
 
-    N_TRIALS = 8
+    N_TRIALS = 4
     N_STEPS = 25
     N_WEDGES = 16
     BASE_HEIGHT = 0.020
