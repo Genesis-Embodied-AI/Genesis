@@ -3,12 +3,15 @@
 from typing import TYPE_CHECKING
 
 import numpy as np
-import igl
-import quadrants as qd
 import torch
+
+import igl
+
+import quadrants as qd
 
 import genesis as gs
 import genesis.utils.array_class as array_class
+import genesis.utils.linalg as lu
 from genesis.engine.boundaries import FloorBoundary
 from genesis.engine.entities.fem_entity import FEMEntity
 from genesis.engine.materials import FEM
@@ -209,6 +212,57 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
             layout=qd.Layout.SOA,
         )
 
+        # The contribution of an element to each of its 4 vertices, which a vertex sums over the corners touching it in
+        # the order of vertices_corner, so that the result does not depend on the scheduling of the threads. The
+        # explicit solver keeps the contributions of every substep when differentiable, each substep writing its own
+        # (see compute_vel), so that the backward pass reads the adjoints of the substep it reverses.
+        if self._use_implicit_solver:
+            element_corner = qd.types.struct(force=gs.qd_vec3, diag3x3=gs.qd_mat3, Ap=gs.qd_vec3)
+            self.elements_corner = element_corner.field(
+                shape=(self._B, max(self.n_elements, 1), 4),
+                needs_grad=False,
+                layout=qd.Layout.SOA,
+            )
+        else:
+            element_corner = qd.types.struct(force=gs.qd_vec3, dv=gs.qd_vec3)
+            n_frames = self.sim.substeps_local if self.sim.requires_grad else 1
+            self.elements_corner = element_corner.field(
+                shape=(n_frames, self._B, max(self.n_elements, 1), 4),
+                needs_grad=self.sim.requires_grad,
+                layout=qd.Layout.SOA,
+            )
+
+        # The corners of the elements touching vertex i_v, as i_e * 4 + i_corner in increasing order, are
+        # vertices_corner[vertices_corner_start[i_v]:vertices_corner_start[i_v + 1]].
+        self.vertices_corner_start = qd.field(dtype=gs.qd_int, shape=(self.n_vertices + 1,), needs_grad=False)
+        n_corners = 4 * sum(
+            entity.n_elements for entity in self._entities if not isinstance(entity.material, FEM.Cloth)
+        )
+        self.vertices_corner = qd.field(dtype=gs.qd_int, shape=(max(n_corners, 1),), needs_grad=False)
+
+        # Terms of the sums over the vertices and over the elements of each batch entry, two sums at most at once, and
+        # their partial sums (see lu.get_sum_fields)
+        self.batch_terms_v, self.batch_partials_v = lu.get_sum_fields(self._B, self.n_vertices, n_sums=2)
+        self.batch_terms_el, self.batch_partials_el = lu.get_sum_fields(self._B, self.n_elements, n_sums=1)
+
+    def init_vertices_corner(self):
+        """Fill the corners of the elements touching each vertex, in increasing order of element and corner.
+
+        The elements of cloth entities are surface triangles, which touch no vertex through a corner.
+        """
+        el2v = np.full((self.n_elements, 4), -1, dtype=gs.np_int)
+        for entity in self._entities:
+            if not isinstance(entity.material, FEM.Cloth):
+                el2v[entity.el_start : entity.el_start + entity.n_elements] = entity.elems + entity.v_start
+        corners = np.flatnonzero(el2v.reshape(-1) >= 0)
+        vertices = el2v.reshape(-1)[corners]
+        vertices_corner = corners[np.argsort(vertices, kind="stable")].astype(gs.np_int, copy=False)
+        vertices_corner_start = np.zeros(self.n_vertices + 1, dtype=gs.np_int)
+        vertices_corner_start[1:] = np.cumsum(np.bincount(vertices, minlength=self.n_vertices))
+        self.vertices_corner_start.from_numpy(vertices_corner_start)
+        if len(vertices_corner):
+            self.vertices_corner.from_numpy(vertices_corner)
+
     def init_surface_fields(self):
         n_surfaces_max = self.n_surfaces
 
@@ -364,6 +418,9 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
             for entity in self._entities:
                 entity._add_to_solver()
 
+            self.init_vertices_corner()
+            self._kernel_compute_vertices_mass()
+
         for mat in self._mats:
             mat.build(self)
 
@@ -461,22 +518,37 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
                         m_dir=self.elements_i[i_e].muscle_direction,
                     )
 
-            verts = self.elements_i[i_e].el2v
+            # The vertices sum the contributions of their corners in apply_uniform_force
+            i_f = 0
+            if qd.static(self.sim.requires_grad):
+                i_f = f
             mass_scaled = self.elements_i[i_e].mass_scaled
             H_scaled = -V_scaled * stress @ B.transpose()
+            force_sum = qd.Vector.zero(gs.qd_float, 3)
             for k in qd.static(range(3)):
                 force_scaled = qd.Vector([H_scaled[j, k] for j in range(3)])
-
-                # store so forces can be read out
-                self.elements_v_energy[i_b, verts[k]].force = force_scaled
-
-                dv = self.substep_dt * force_scaled / mass_scaled
-                self.elements_v[f + 1, verts[k], i_b].vel += dv
-                self.elements_v[f + 1, verts[3], i_b].vel -= dv
+                self.elements_corner[i_f, i_b, i_e, k].force = force_scaled
+                self.elements_corner[i_f, i_b, i_e, k].dv = self.substep_dt * force_scaled / mass_scaled
+                force_sum += force_scaled
+            self.elements_corner[i_f, i_b, i_e, 3].force = -force_sum
+            self.elements_corner[i_f, i_b, i_e, 3].dv = -self.substep_dt * force_sum / mass_scaled
 
     @qd.kernel
     def apply_uniform_force(self, f: qd.i32):
         for i_v, i_b in qd.ndrange(self.n_vertices, self._B):
+            i_f = 0
+            if qd.static(self.sim.requires_grad):
+                i_f = f
+            # The internal force and velocity change of the vertex, summed over its corners (see compute_vel). The
+            # internal force is stored so that it can be read out.
+            force = qd.Vector.zero(gs.qd_float, 3)
+            dv = qd.Vector.zero(gs.qd_float, 3)
+            for i_entry in range(self.vertices_corner_start[i_v], self.vertices_corner_start[i_v + 1]):
+                i_corner = self.vertices_corner[i_entry]
+                force += self.elements_corner[i_f, i_b, i_corner // 4, i_corner % 4].force
+                dv += self.elements_corner[i_f, i_b, i_corner // 4, i_corner % 4].dv
+            self.elements_v_energy[i_b, i_v].force = force
+            self.elements_v[f + 1, i_v, i_b].vel += dv
             # NOTE: damping should only be applied to velocity from internal force and thus come first here
             #       given the immediate previous function call is compute_internal_vel --> however, shouldn't
             #       be done at dv only and need to wait for all elements updated (cannot be in the compute_internal_vel kernel)
@@ -650,21 +722,7 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
         damping_alpha_factor = damping_alpha_dt + 1.0
         damping_beta_over_dt = self._damping_beta / self._substep_dt
         damping_beta_factor = damping_beta_over_dt + 1.0
-        # inertia
-        for i_b, i_v in qd.ndrange(self._B, self.n_vertices):
-            if not self.batch_active[i_b]:
-                continue
-            self.elements_v_energy[i_b, i_v].force = -self.elements_v_info[i_v].mass_over_dt2 * (
-                (self.elements_v[f + 1, i_v, i_b].pos - self.elements_v_energy[i_b, i_v].inertia)
-                + (self.elements_v[f + 1, i_v, i_b].pos - self.elements_v[f, i_v, i_b].pos) * damping_alpha_dt
-            )
-            self.pcg_state_v[i_b, i_v].diag3x3 = qd.Matrix.zero(gs.qd_float, 3, 3)
-            for i in qd.static(range(3)):
-                self.pcg_state_v[i_b, i_v].diag3x3[i, i] = (
-                    self.elements_v_info[i_v].mass_over_dt2 * damping_alpha_factor
-                )
-
-        # elastic
+        # elastic force and diagonal 3-by-3 block of the hessian, per corner of the elements
         for i_b, i_e in qd.ndrange(self._B, self.n_elements):
             if not self.batch_active[i_b]:
                 continue
@@ -675,10 +733,7 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
             S = self._func_compute_element_mapping_matrix(i_vs, B, i_b)
             force = -V * gradient @ S.transpose()
 
-            # atomic
-            for i in qd.static(range(4)):
-                self.elements_v_energy[i_b, i_vs[i]].force += force[:, i]
-
+            S_H_St_x_diff = qd.Vector.zero(gs.qd_float, 12)
             if self._damping_beta > gs.EPS:
                 x_diff = qd.Vector.zero(gs.qd_float, 12)
                 for i in qd.static(range(4)):
@@ -694,36 +749,35 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
                     H_St_x_diff[i * 3 : i * 3 + 3] += (
                         self.elements_el_hessian[i_b, i, j, i_e] @ St_x_diff[j * 3 : j * 3 + 3]
                     )
-                S_H_St_x_diff = qd.Vector.zero(gs.qd_float, 12)
                 for i, j in qd.static(qd.ndrange(4, 3)):
                     S_H_St_x_diff[i * 3 : i * 3 + 3] += S[i, j] * H_St_x_diff[j * 3 : j * 3 + 3]
-                for i in qd.static(range(4)):
-                    self.elements_v_energy[i_b, i_vs[i]].force += (
-                        -damping_beta_over_dt * V * S_H_St_x_diff[i * 3 : i * 3 + 3]
-                    )
 
-            # diagonal 3-by-3 block of hessian
-            for k, i, j in qd.ndrange(4, 3, 3):
-                self.pcg_state_v[i_b, i_vs[k]].diag3x3 += (
-                    V * damping_beta_factor * S[k, i] * S[k, j] * self.elements_el_hessian[i_b, i, j, i_e]
+            for k in qd.static(range(4)):
+                self.elements_corner[i_b, i_e, k].force = (
+                    force[:, k] - damping_beta_over_dt * V * S_H_St_x_diff[k * 3 : k * 3 + 3]
                 )
+                diag3x3 = qd.Matrix.zero(gs.qd_float, 3, 3)
+                for i, j in qd.static(qd.ndrange(3, 3)):
+                    diag3x3 += S[k, i] * S[k, j] * self.elements_el_hessian[i_b, i, j, i_e]
+                self.elements_corner[i_b, i_e, k].diag3x3 = V * damping_beta_factor * diag3x3
 
-        # inverse
+        # inertia, then the corners touching the vertex, and the inverse of the diagonal block as preconditioner
         for i_b, i_v in qd.ndrange(self._B, self.n_vertices):
-            if not self.batch_active[i_b]:
-                continue
-            # Use 3-by-3 diagonal block inverse for preconditioner
-            self.pcg_state_v[i_b, i_v].prec = self.pcg_state_v[i_b, i_v].diag3x3.inverse()
-
-            # Other options for preconditioner:
-            # Uncomment one of the following lines to test different preconditioners
-            # Use identity for preconditioner
-            # self.pcg_state_v[i_b, i_v].prec = qd.Matrix.identity(gs.qd_float, 3)
-
-            # Use diagonal for preconditioner
-            # self.pcg_state_v[i_b, i_v].prec = qd.Matrix([[1 / self.pcg_state_v[i_b, i_v].diag3x3[0, 0], 0, 0],
-            #                                            [0, 1 / self.pcg_state_v[i_b, i_v].diag3x3[1, 1], 0],
-            #                                            [0, 0, 1 / self.pcg_state_v[i_b, i_v].diag3x3[2, 2]]])
+            if self.batch_active[i_b]:
+                force = -self.elements_v_info[i_v].mass_over_dt2 * (
+                    (self.elements_v[f + 1, i_v, i_b].pos - self.elements_v_energy[i_b, i_v].inertia)
+                    + (self.elements_v[f + 1, i_v, i_b].pos - self.elements_v[f, i_v, i_b].pos) * damping_alpha_dt
+                )
+                diag3x3 = qd.Matrix.identity(gs.qd_float, 3) * (
+                    self.elements_v_info[i_v].mass_over_dt2 * damping_alpha_factor
+                )
+                for i_entry in range(self.vertices_corner_start[i_v], self.vertices_corner_start[i_v + 1]):
+                    i_corner = self.vertices_corner[i_entry]
+                    force += self.elements_corner[i_b, i_corner // 4, i_corner % 4].force
+                    diag3x3 += self.elements_corner[i_b, i_corner // 4, i_corner % 4].diag3x3
+                self.elements_v_energy[i_b, i_v].force = force
+                self.pcg_state_v[i_b, i_v].diag3x3 = diag3x3
+                self.pcg_state_v[i_b, i_v].prec = diag3x3.inverse()
 
     @qd.func
     def compute_Ap(self):
@@ -731,13 +785,6 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
         damping_alpha_factor = damping_alpha_dt + 1.0
         damping_beta_over_dt = self._damping_beta / self._substep_dt
         damping_beta_factor = damping_beta_over_dt + 1.0
-        for i_b, i_v in qd.ndrange(self._B, self.n_vertices):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_state_v[i_b, i_v].Ap = (
-                self.elements_v_info[i_v].mass_over_dt2 * damping_alpha_factor * self.pcg_state_v[i_b, i_v].p
-            )
-
         for i_b, i_e in qd.ndrange(self._B, self.n_elements):
             if not self.batch_pcg_active[i_b]:
                 continue
@@ -758,77 +805,69 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
                     new_p9[i * 3 : i * 3 + 3] + self.elements_el_hessian[i_b, i, j, i_e] @ p9[j * 3 : j * 3 + 3]
                 )
 
-            # atomic
             for i in qd.static(range(4)):
-                self.pcg_state_v[i_b, i_vs[i]].Ap += (
+                self.elements_corner[i_b, i_e, i].Ap = (
                     (S[i, 0] * new_p9[0:3] + S[i, 1] * new_p9[3:6] + S[i, 2] * new_p9[6:9]) * V * damping_beta_factor
                 )
+
+        # Ap per vertex, and the terms of pTAp
+        for i_b, i_v in qd.ndrange(self._B, self.n_vertices):
+            if self.batch_pcg_active[i_b]:
+                Ap = self.elements_v_info[i_v].mass_over_dt2 * damping_alpha_factor * self.pcg_state_v[i_b, i_v].p
+                for i_entry in range(self.vertices_corner_start[i_v], self.vertices_corner_start[i_v + 1]):
+                    i_corner = self.vertices_corner[i_entry]
+                    Ap += self.elements_corner[i_b, i_corner // 4, i_corner % 4].Ap
+                self.pcg_state_v[i_b, i_v].Ap = Ap
+                self.batch_terms_v[i_b, i_v, 0] = self.pcg_state_v[i_b, i_v].p.dot(Ap)
+        lu.func_reduce_terms(self.batch_terms_v, self.batch_partials_v, self.batch_pcg_active)
 
     @qd.kernel
     def init_pcg_solve(self):
         for i_b in range(self._B):
             self.batch_pcg_active[i_b] = self.batch_active[i_b]
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_state[i_b].rTr = 0.0
-            self.pcg_state[i_b].rTz = 0.0
         for i_b, i_v in qd.ndrange(self._B, self.n_vertices):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_state_v[i_b, i_v].x = 0
-            self.pcg_state_v[i_b, i_v].r = self.elements_v_energy[i_b, i_v].force
-            self.pcg_state_v[i_b, i_v].z = self.pcg_state_v[i_b, i_v].prec @ self.pcg_state_v[i_b, i_v].r
-            self.pcg_state_v[i_b, i_v].p = self.pcg_state_v[i_b, i_v].z
-            qd.atomic_add(self.pcg_state[i_b].rTr, self.pcg_state_v[i_b, i_v].r.dot(self.pcg_state_v[i_b, i_v].r))
-            qd.atomic_add(self.pcg_state[i_b].rTz, self.pcg_state_v[i_b, i_v].r.dot(self.pcg_state_v[i_b, i_v].z))
+            if self.batch_pcg_active[i_b]:
+                self.pcg_state_v[i_b, i_v].x = 0
+                self.pcg_state_v[i_b, i_v].r = self.elements_v_energy[i_b, i_v].force
+                self.pcg_state_v[i_b, i_v].z = self.pcg_state_v[i_b, i_v].prec @ self.pcg_state_v[i_b, i_v].r
+                self.pcg_state_v[i_b, i_v].p = self.pcg_state_v[i_b, i_v].z
+                self.batch_terms_v[i_b, i_v, 0] = self.pcg_state_v[i_b, i_v].r.dot(self.pcg_state_v[i_b, i_v].r)
+                self.batch_terms_v[i_b, i_v, 1] = self.pcg_state_v[i_b, i_v].r.dot(self.pcg_state_v[i_b, i_v].z)
+        lu.func_reduce_terms(self.batch_terms_v, self.batch_partials_v, self.batch_pcg_active)
         for i_b in range(self._B):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.batch_pcg_active[i_b] = self.pcg_state[i_b].rTr > self._pcg_threshold
+            if self.batch_pcg_active[i_b]:
+                self.pcg_state[i_b].rTr = lu.func_sum_chunks(i_b, 0, self.batch_partials_v)
+                self.pcg_state[i_b].rTz = lu.func_sum_chunks(i_b, 1, self.batch_partials_v)
+                self.batch_pcg_active[i_b] = self.pcg_state[i_b].rTr > self._pcg_threshold
 
     @qd.kernel
     def one_pcg_iter(self):
         self.compute_Ap()
 
-        # compute pTAp
-        for i_b in range(self._B):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_state[i_b].pTAp = 0.0
-        for i_b, i_v in qd.ndrange(self._B, self.n_vertices):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            qd.atomic_add(self.pcg_state[i_b].pTAp, self.pcg_state_v[i_b, i_v].p.dot(self.pcg_state_v[i_b, i_v].Ap))
-
         # compute alpha and update x, r, z, rTr, rTz
         for i_b in range(self._B):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_state[i_b].alpha = self.pcg_state[i_b].rTz / self.pcg_state[i_b].pTAp
-            self.pcg_state[i_b].rTr_new = 0.0
-            self.pcg_state[i_b].rTz_new = 0.0
+            if self.batch_pcg_active[i_b]:
+                self.pcg_state[i_b].pTAp = lu.func_sum_chunks(i_b, 0, self.batch_partials_v)
+                self.pcg_state[i_b].alpha = self.pcg_state[i_b].rTz / self.pcg_state[i_b].pTAp
         for i_b, i_v in qd.ndrange(self._B, self.n_vertices):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_state_v[i_b, i_v].x += self.pcg_state[i_b].alpha * self.pcg_state_v[i_b, i_v].p
-            self.pcg_state_v[i_b, i_v].r -= self.pcg_state[i_b].alpha * self.pcg_state_v[i_b, i_v].Ap
-            self.pcg_state_v[i_b, i_v].z = self.pcg_state_v[i_b, i_v].prec @ self.pcg_state_v[i_b, i_v].r
-            qd.atomic_add(self.pcg_state[i_b].rTr_new, self.pcg_state_v[i_b, i_v].r.dot(self.pcg_state_v[i_b, i_v].r))
-            qd.atomic_add(self.pcg_state[i_b].rTz_new, self.pcg_state_v[i_b, i_v].r.dot(self.pcg_state_v[i_b, i_v].z))
+            if self.batch_pcg_active[i_b]:
+                self.pcg_state_v[i_b, i_v].x += self.pcg_state[i_b].alpha * self.pcg_state_v[i_b, i_v].p
+                self.pcg_state_v[i_b, i_v].r -= self.pcg_state[i_b].alpha * self.pcg_state_v[i_b, i_v].Ap
+                self.pcg_state_v[i_b, i_v].z = self.pcg_state_v[i_b, i_v].prec @ self.pcg_state_v[i_b, i_v].r
+                self.batch_terms_v[i_b, i_v, 0] = self.pcg_state_v[i_b, i_v].r.dot(self.pcg_state_v[i_b, i_v].r)
+                self.batch_terms_v[i_b, i_v, 1] = self.pcg_state_v[i_b, i_v].r.dot(self.pcg_state_v[i_b, i_v].z)
+        lu.func_reduce_terms(self.batch_terms_v, self.batch_partials_v, self.batch_pcg_active)
 
-        # check convergence
+        # check convergence, then update beta, rTr, rTz
         for i_b in range(self._B):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.batch_pcg_active[i_b] = self.pcg_state[i_b].rTr_new > self._pcg_threshold
-
-        # update beta, rTr, rTz
-        for i_b in range(self._B):
-            if not self.batch_pcg_active[i_b]:
-                continue
-            self.pcg_state[i_b].beta = self.pcg_state[i_b].rTz_new / self.pcg_state[i_b].rTz
-            self.pcg_state[i_b].rTr = self.pcg_state[i_b].rTr_new
-            self.pcg_state[i_b].rTz = self.pcg_state[i_b].rTz_new
+            if self.batch_pcg_active[i_b]:
+                self.pcg_state[i_b].rTr_new = lu.func_sum_chunks(i_b, 0, self.batch_partials_v)
+                self.pcg_state[i_b].rTz_new = lu.func_sum_chunks(i_b, 1, self.batch_partials_v)
+                self.batch_pcg_active[i_b] = self.pcg_state[i_b].rTr_new > self._pcg_threshold
+                if self.batch_pcg_active[i_b]:
+                    self.pcg_state[i_b].beta = self.pcg_state[i_b].rTz_new / self.pcg_state[i_b].rTz
+                    self.pcg_state[i_b].rTr = self.pcg_state[i_b].rTr_new
+                    self.pcg_state[i_b].rTz = self.pcg_state[i_b].rTz_new
 
         # update p
         for i_b, i_v in qd.ndrange(self._B, self.n_vertices):
@@ -849,68 +888,71 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
             self.batch_linesearch_active[i_b] = self.batch_active[i_b]
             if not self.batch_linesearch_active[i_b]:
                 continue
-            self.linesearch_state[i_b].prev_energy = 0.0
             self.linesearch_state[i_b].step_size = 1.0
-            self.linesearch_state[i_b].m = 0.0
 
         # Inertia, x_prev, m
         for i_b, i_v in qd.ndrange(self._B, self.n_vertices):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            diff = self.elements_v[f + 1, i_v, i_b].pos - self.elements_v_energy[i_b, i_v].inertia
-            self.linesearch_state[i_b].prev_energy += 0.5 * self.elements_v_info[i_v].mass_over_dt2 * diff.dot(diff)
-            self.linesearch_state_v[i_b, i_v].x_prev = self.elements_v[f + 1, i_v, i_b].pos
-            self.linesearch_state[i_b].m -= self.pcg_state_v[i_b, i_v].x.dot(self.elements_v_energy[i_b, i_v].force)
+            if self.batch_linesearch_active[i_b]:
+                diff = self.elements_v[f + 1, i_v, i_b].pos - self.elements_v_energy[i_b, i_v].inertia
+                self.batch_terms_v[i_b, i_v, 0] = 0.5 * self.elements_v_info[i_v].mass_over_dt2 * diff.dot(diff)
+                self.batch_terms_v[i_b, i_v, 1] = -self.pcg_state_v[i_b, i_v].x.dot(
+                    self.elements_v_energy[i_b, i_v].force
+                )
+                self.linesearch_state_v[i_b, i_v].x_prev = self.elements_v[f + 1, i_v, i_b].pos
+        lu.func_reduce_terms(self.batch_terms_v, self.batch_partials_v, self.batch_linesearch_active)
         # Elastic
-        for i_b, i_e in qd.ndrange(self._B, self.n_elements):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            self.linesearch_state[i_b].prev_energy += self.elements_el_energy[i_b, i_e].energy * self.elements_i[i_e].V
+        self._func_sum_elements_energy()
+        for i_b in range(self._B):
+            if self.batch_linesearch_active[i_b]:
+                inertia_energy = lu.func_sum_chunks(i_b, 0, self.batch_partials_v)
+                elastic_energy = lu.func_sum_chunks(i_b, 0, self.batch_partials_el)
+                self.linesearch_state[i_b].prev_energy = inertia_energy + elastic_energy
+                self.linesearch_state[i_b].m = lu.func_sum_chunks(i_b, 1, self.batch_partials_v)
 
     @qd.kernel
     def one_linesearch_iter(self, f: qd.i32):
-        for i_b in range(self._B):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            self.linesearch_state[i_b].energy = 0.0
-
         # update pos and compute Inertia energy
         for i_b, i_v in qd.ndrange(self._B, self.n_vertices):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            self.elements_v[f + 1, i_v, i_b].pos = (
-                self.linesearch_state_v[i_b, i_v].x_prev
-                + self.linesearch_state[i_b].step_size * self.pcg_state_v[i_b, i_v].x
-            )
-            diff = self.elements_v[f + 1, i_v, i_b].pos - self.elements_v_energy[i_b, i_v].inertia
-            self.linesearch_state[i_b].energy += 0.5 * self.elements_v_info[i_v].mass_over_dt2 * diff.dot(diff)
-            # damping
-            if self._damping_alpha > 0.0:
-                damping_alpha_dt = self._damping_alpha * self._substep_dt
-                diff = self.elements_v[f + 1, i_v, i_b].pos - self.elements_v[f, i_v, i_b].pos
-                self.linesearch_state[i_b].energy += (
-                    0.5 * self.elements_v_info[i_v].mass_over_dt2 * diff.dot(diff) * damping_alpha_dt
+            if self.batch_linesearch_active[i_b]:
+                self.elements_v[f + 1, i_v, i_b].pos = (
+                    self.linesearch_state_v[i_b, i_v].x_prev
+                    + self.linesearch_state[i_b].step_size * self.pcg_state_v[i_b, i_v].x
                 )
+                diff = self.elements_v[f + 1, i_v, i_b].pos - self.elements_v_energy[i_b, i_v].inertia
+                energy = 0.5 * self.elements_v_info[i_v].mass_over_dt2 * diff.dot(diff)
+                # damping
+                if self._damping_alpha > 0.0:
+                    damping_alpha_dt = self._damping_alpha * self._substep_dt
+                    diff = self.elements_v[f + 1, i_v, i_b].pos - self.elements_v[f, i_v, i_b].pos
+                    energy += 0.5 * self.elements_v_info[i_v].mass_over_dt2 * diff.dot(diff) * damping_alpha_dt
+                self.batch_terms_v[i_b, i_v, 0] = energy
+        lu.func_reduce_terms(self.batch_terms_v, self.batch_partials_v, self.batch_linesearch_active)
 
         # compute elastic energy
         self._func_compute_ele_energy(f)
-        for i_b, i_e in qd.ndrange(self._B, self.n_elements):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            self.linesearch_state[i_b].energy += self.elements_el_energy[i_b, i_e].energy * self.elements_i[i_e].V
+        self._func_sum_elements_energy()
 
         # check condition
         for i_b in range(self._B):
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            self.batch_linesearch_active[i_b] = (
-                self.linesearch_state[i_b].energy
-                > self.linesearch_state[i_b].prev_energy
-                + self._linesearch_c * self.linesearch_state[i_b].step_size * self.linesearch_state[i_b].m
-            )
-            if not self.batch_linesearch_active[i_b]:
-                continue
-            self.linesearch_state[i_b].step_size *= self._linesearch_tau
+            if self.batch_linesearch_active[i_b]:
+                inertia_energy = lu.func_sum_chunks(i_b, 0, self.batch_partials_v)
+                elastic_energy = lu.func_sum_chunks(i_b, 0, self.batch_partials_el)
+                self.linesearch_state[i_b].energy = inertia_energy + elastic_energy
+                self.batch_linesearch_active[i_b] = (
+                    self.linesearch_state[i_b].energy
+                    > self.linesearch_state[i_b].prev_energy
+                    + self._linesearch_c * self.linesearch_state[i_b].step_size * self.linesearch_state[i_b].m
+                )
+                if self.batch_linesearch_active[i_b]:
+                    self.linesearch_state[i_b].step_size *= self._linesearch_tau
+
+    @qd.func
+    def _func_sum_elements_energy(self):
+        """Compute the partial sums of the elastic energy of the elements per batch entry (see lu.get_sum_fields)."""
+        for i_b, i_e in qd.ndrange(self._B, self.n_elements):
+            if self.batch_linesearch_active[i_b]:
+                self.batch_terms_el[i_b, i_e, 0] = self.elements_el_energy[i_b, i_e].energy * self.elements_i[i_e].V
+        lu.func_reduce_terms(self.batch_terms_el, self.batch_partials_el, self.batch_linesearch_active)
 
     @qd.kernel
     def skip_linesearch(self, f: qd.i32):
@@ -1044,6 +1086,12 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
         for frame_i, elem_i, i_b in qd.ndrange(f, self.n_elements_max, self._B):
             self.elements_el.grad[frame_i, elem_i, i_b].actu = 0
 
+        # Zero out the gradients of the element corners of the explicit solver in frame 0..(f-1)
+        if qd.static(not self._use_implicit_solver and self.sim.requires_grad):
+            for frame_i, i_b, elem_i, i_c in qd.ndrange(f, self._B, self.n_elements, 4):
+                self.elements_corner.grad[frame_i, i_b, elem_i, i_c].force = 0
+                self.elements_corner.grad[frame_i, i_b, elem_i, i_c].dv = 0
+
     # ------------------------------------------------------------------------------------
     # ----------------------------------- gradient ---------------------------------------
     # ------------------------------------------------------------------------------------
@@ -1139,6 +1187,22 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
         return qd_to_torch(self.elements_v_energy.force, copy=True)
 
     @qd.kernel
+    def _kernel_compute_vertices_mass(self):
+        """Lump a quarter of the mass of every element onto each of its vertices, summed in the order of corners."""
+        for i_v in range(self.n_vertices):
+            dt2_inv = 1.0 / (self.substep_dt**2)
+            i_start = self.vertices_corner_start[i_v]
+            i_end = self.vertices_corner_start[i_v + 1]
+            if i_end > i_start:
+                mass = 0.0
+                for i_entry in range(i_start, i_end):
+                    i_e = self.vertices_corner[i_entry] // 4
+                    mass += 0.25 * self.elements_i[i_e].mass_scaled / self._vol_scale
+                self.elements_v_info[i_v].mass = mass
+                self.elements_v_info[i_v].mass_over_dt2 = mass * dt2_inv
+                self.elements_v_info[i_v].mass_inv = 1.0 / mass
+
+    @qd.kernel
     def _kernel_add_elements(
         self,
         f: qd.i32,
@@ -1164,11 +1228,8 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
 
         for i_v in range(n_verts_local):
             i_global = i_v + v_start
-            self.elements_v_info[i_global].mass = 0.0
-            self.elements_v_info[i_global].mass_over_dt2 = 0.0
             self.elements_v_info[i_global].friction_mu = mat_friction_mu
 
-        dt2_inv = 1.0 / (self.substep_dt**2)
         n_elems_local = elems.shape[0]
         for i_e in range(n_elems_local):
             i_global = i_e + el_start
@@ -1195,16 +1256,8 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
             self.elements_i[i_global].lam = mat_lam
             self.elements_i[i_global].friction_mu = mat_friction_mu
             self.elements_i[i_global].mass_scaled = mat_rho * V_scaled
-            for j in qd.static(range(4)):
-                mass = 0.25 * mat_rho * V
-                self.elements_v_info[self.elements_i[i_global].el2v[j]].mass += mass
-                self.elements_v_info[self.elements_i[i_global].el2v[j]].mass_over_dt2 += mass * dt2_inv
             self.elements_i[i_global].muscle_group = 0
             self.elements_i[i_global].muscle_direction = qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float)
-
-        for i_v in range(n_verts_local):
-            i_global = i_v + v_start
-            self.elements_v_info[i_global].mass_inv = 1.0 / self.elements_v_info[i_global].mass
 
         for i_e, i_b in qd.ndrange(n_elems_local, self._B):
             i_global = i_e + el_start
