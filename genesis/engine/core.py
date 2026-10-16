@@ -35,8 +35,20 @@ if TYPE_CHECKING:
 # ------------------------------------------------------------------------------------
 
 
+@qd.data_oriented
 class Data:
-    """The state of one System, as device arrays that its Actions bind and its kernels read and write."""
+    """A System-owned device-data root, automatically exposed through GlobalDataContext after initialization."""
+
+
+class DataDeclaration:
+    """One custom device-data parameter exposed by a System through ``@System.data``."""
+
+    def __init__(self, function: Callable[[object], object]) -> None:
+        self.__doc__ = function.__doc__
+        self.function = function
+
+    def __set_name__(self, owner, name) -> None:
+        self._name = name
 
 
 # ------------------------------------------------------------------------------------
@@ -63,9 +75,6 @@ def kind_of(function: Callable[..., Any]) -> ActionKind:
 ACTION_TYPES_MAP: dict[ActionKind, type["Action"]] = {}
 
 
-# WORKAROUND: @qd.data_oriented on the core classes lets Quadrants walk from a kernel parameter through collections and
-# Actions to the bound Data, and lets invoke() run in kernel scope. They hold no kernels.
-@qd.data_oriented
 class Action:
     """A function bound to its leading arguments, which a manager System invokes with the remaining call arguments.
 
@@ -100,28 +109,28 @@ class Action:
         return self.function(*(self.bound_args + call_args))
 
 
-@qd.data_oriented
 class HostAction(Action):
     kind = "host"
 
 
-@qd.data_oriented
 class InlineAction(Action):
     kind = "inline"
 
 
-@qd.data_oriented
 class StageAction(Action):
     kind = "stage"
 
 
-@qd.data_oriented
 class ActionCollection:
     """Protocol storage owned by a manager System, filled by its protocols and frozen by Engine.
 
     `collection.add(action, rank=r)` registers with an explicit position, and `collection += action` registers
     unranked. The frozen order puts ranked entries first, sorted by rank, then unranked entries in registration order.
     The rank belongs to this registration, so one System can take different positions in different managers.
+
+    A rank is only for deterministic arrangement of otherwise independent entries, such as data-layout or stable
+    numbering order. It must never encode a producer/consumer, read/write or barrier dependency. Dependent behavior
+    belongs in distinct, explicitly sequenced pipeline phases.
     """
 
     def __init__(self, owner: "System", name: str, kind: ActionKind, call_args: tuple[str, ...]) -> None:
@@ -144,7 +153,10 @@ class ActionCollection:
         return self
 
     def add(self, action: Action, *, rank: int | None = None) -> None:
-        """Register one Action, optionally at a fixed rank, from inside a protocol of the owner System."""
+        """Register one Action, optionally at a fixed arrangement rank, from inside a protocol of the owner System.
+
+        `rank` is valid only when entries are dependency-free. Use explicit pipeline phases for dependent Actions.
+        """
         where = f"{type(self._owner).__name__}.{self._name}"
         if not isinstance(action, Action):
             gs.raise_exception(f"{where}: expected an Action, got {type(action).__name__}.")
@@ -180,6 +192,25 @@ class ActionCollection:
         )
         unranked_entries = [(rank, action) for rank, action in self._pending if rank is None]
         self._frozen = tuple(action for _, action in (*ranked_entries, *unranked_entries))
+
+
+class _StageSchedule:
+    pass
+
+
+def make_stage_schedule(manager: "System") -> _StageSchedule:
+    """Create the frozen control view of a manager's StageAction collections.
+
+    Device data is discovered from the GlobalDataContext built by ``genesis.utils.qd_ext``. The schedule carries
+    topology only; Action tuples are compile-time control values, not a second data ownership graph.
+    """
+    schedule = _StageSchedule()
+    for name in type(manager).action_collections:
+        collection = manager.__dict__[name]
+        if collection._kind != "stage":
+            continue
+        setattr(schedule, name, collection.actions)
+    return schedule
 
 
 # ------------------------------------------------------------------------------------
@@ -333,6 +364,7 @@ def wrap_protocol(method, doc: str | None, references: tuple[str, ...]) -> Any:
 # ------------------------------------------------------------------------------------
 
 
+@qd.data_oriented
 class System:
     """One backend unit of the simulation, constructed from the scene, that owns its Data and composes with
     other Systems.
@@ -348,6 +380,8 @@ class System:
     action_collections: ClassVar[tuple[str, ...]] = ()
     # Names of the declared Actions
     actions: ClassVar[tuple[str, ...]] = ()
+    # Names of custom data parameters declared with @System.data
+    data_declarations: ClassVar[tuple[str, ...]] = ()
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -358,6 +392,7 @@ class System:
             name for name, value in vars(cls).items() if isinstance(value, ActionCollectionDeclaration)
         )
         cls.actions = tuple(name for name, value in vars(cls).items() if isinstance(value, ActionDeclaration))
+        cls.data_declarations = tuple(name for name, value in vars(cls).items() if isinstance(value, DataDeclaration))
 
     def __init__(self, scene: "Scene") -> None:
         self._scene = scene
@@ -412,6 +447,16 @@ class System:
         The decorated method body is never executed, and its docstring documents the protocol.
         """
         return lambda function: ActionCollectionDeclaration(function, kind, call_args)
+
+    @staticmethod
+    def data(function: Callable[[object], object]) -> DataDeclaration:
+        """Expose one custom device-data parameter through GlobalDataContext.
+
+        Direct System attributes inheriting Data are included automatically and need no declaration. Use this
+        decorator for one custom dataclass, @qd.data_oriented object or ndarray per function. The function is evaluated
+        after initialization and must only return an existing object.
+        """
+        return DataDeclaration(function)
 
     @overload
     @staticmethod
@@ -519,7 +564,8 @@ class Pipeline:
     """One entry point with its bound arguments, recognized from what it wraps: a Python function or a @qd.kernel.
 
     `bound_args` are passed to the entry on every launch and on every resume, followed by the call arguments of that
-    run: `Pipeline(kernel_substep, engine).run(f)` runs `kernel_substep(engine, f)`. Pipeline is final.
+    run: `Pipeline(kernel_substep, engine).run(f)` runs `kernel_substep(engine, f)`. A device Pipeline that supplies a
+    GlobalDataContext binds it first, before control objects such as a schedule. Pipeline is final.
     """
 
     def __init_subclass__(cls, **kwargs):
@@ -580,8 +626,9 @@ def register_system(engine_cls: type["Engine"]) -> Callable[[CreateFunT], Create
     """Register, for one final Engine class, a function that receives the scene and returns the System it calls for, or
     None for no System.
 
-    Used as `@register_system(MyEngine)`, once per Engine class the function serves. The build of an Engine calls every
-    function registered for its exact class once, in registration order, and adds every System returned.
+    Used as `@register_system(MyEngine)`, once per Engine class the function serves. Registering the same function again
+    for the same Engine class does nothing. The build of an Engine calls every function registered for its exact class
+    once, in registration order, and adds every System returned whose class the Engine does not hold yet.
     """
     # Engine.__init_subclass__ makes every proper subclass of Engine final
     if not isinstance(engine_cls, type) or not issubclass(engine_cls, Engine) or engine_cls is Engine:
@@ -591,7 +638,9 @@ def register_system(engine_cls: type["Engine"]) -> Callable[[CreateFunT], Create
         # A create function decides from the scene whether the System exists at all, which a class cannot express
         if isinstance(create_fun, type) or not isinstance(create_fun, Callable):
             gs.raise_exception(f"register_system takes a function that creates a System, got {create_fun!r}.")
-        _system_registry.setdefault(engine_cls, []).append(create_fun)
+        create_funs = _system_registry.setdefault(engine_cls, [])
+        if create_fun not in create_funs:
+            create_funs.append(create_fun)
         return create_fun
 
     return register
@@ -627,8 +676,6 @@ class Engine:
         if type(system) in self.systems:
             gs.raise_exception(f"{type(system).__name__} is already added.")
         self.systems[type(system)] = system
-        # WORKAROUND: expose each System as an attribute so a kernel taking the engine reaches its Data
-        setattr(self, f"_system_{len(self.systems)}", system)
         return system
 
     def find(self, system_type: type[SystemT]) -> SystemT | None:
@@ -652,18 +699,51 @@ class Engine:
             gs.raise_exception(f"{type(self).__name__} requires {system_type.__name__}, which it does not hold.")
         return system
 
+    def create_context(self):
+        """Collect initialized System data parameters and create the first argument of device Pipelines."""
+        from genesis.utils.qd_ext import GlobalDataContext
+
+        data: list[object] = []
+        seen: set[int] = set()
+
+        def add(system: System, name: str, value: object) -> None:
+            if isinstance(value, (tuple, list, dict)):
+                gs.raise_exception(
+                    f"{type(system).__name__}.{name}: @System.data must return exactly one data parameter."
+                )
+            try:
+                GlobalDataContext((value,))
+            except TypeError as error:
+                gs.raise_exception(f"{type(system).__name__}.{name}: {error}")
+            value_id = id(value)
+            if value_id not in seen:
+                seen.add(value_id)
+                data.append(value)
+
+        for system in self.systems.values():
+            for name, value in vars(system).items():
+                if isinstance(value, Data):
+                    add(system, name, value)
+            for name in type(system).data_declarations:
+                declaration = vars(type(system))[name]
+                add(system, name, declaration.function(system))
+
+        return GlobalDataContext(data)
+
     def build(self) -> None:
         """Add the registered and required Systems, resolve every dependency, run build() on every System in add order,
         then freeze every ActionCollection.
 
         Systems added by hand come first, then the Systems the functions registered for this Engine class return for
         the scene (see register_system), then every System an added System or the Engine requires, constructed from
-        the scene, breadth first. A Find adds nothing: it resolves to the System when
+        the scene, breadth first. A registered function returning a class already added by hand adds nothing, the
+        System added by hand taking its place. A Find adds nothing: it resolves to the System when
         something else added it, and to None otherwise.
         """
         for create_fun in _system_registry.get(type(self), ()):
             system = create_fun(self.scene)
-            if system is not None:
+            # Importing the module of a System class registers its function, which must not admit the class twice
+            if system is not None and type(system) not in self.systems:
                 self.add_system(system)
         # Compute the ordered unique closure of required System types before constructing any of them
         for system_type in get_required_system_types((type(self), *self.systems)):

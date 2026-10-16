@@ -19,6 +19,7 @@ from genesis.engine.core import (
 )
 from genesis.utils.array_class import V
 from genesis.utils.misc import qd_to_numpy
+from genesis.utils.qd_ext import invoke_stage_actions
 
 from ..utils.assertions import assert_allclose
 
@@ -99,6 +100,41 @@ def test_registered_manual_and_required_systems():
     finally:
         unregister_system(TestEngine, create_registered)
         unregister_system(TestEngine, create_nothing)
+
+
+# Admission is idempotent: a function registered twice is registered once, and a registered function returning a class
+# already added by hand adds nothing, so importing the module of a System class for the class alone is harmless.
+@pytest.mark.parametrize("backend", [None])
+def test_registration_and_admission_are_idempotent():
+    scene = object()
+
+    class Registered(System):
+        pass
+
+    class IdempotentEngine(Engine):
+        pass
+
+    def create_registered(factory_scene):
+        return Registered(factory_scene)
+
+    register_system(IdempotentEngine)(create_registered)
+    register_system(IdempotentEngine)(create_registered)
+    try:
+        registered_engine = IdempotentEngine(scene)
+        registered_engine.build()
+        assert list(registered_engine.systems) == [Registered]
+
+        manual_engine = IdempotentEngine(scene)
+        manual = manual_engine.add_system(Registered(scene))
+        manual_engine.build()
+        assert list(manual_engine.systems) == [Registered]
+        assert manual_engine.systems[Registered] is manual
+    finally:
+        unregister_system(IdempotentEngine, create_registered)
+
+    unregistered_engine = IdempotentEngine(scene)
+    unregistered_engine.build()
+    assert list(unregistered_engine.systems) == []
 
 
 # Engine creates every declared Action before closing the build window, so a manager invokes one its participant never
@@ -364,6 +400,59 @@ def test_protocol_and_action_collection_enforce_the_schedule_contract():
     assert manager.on_stage.__doc__.endswith("Guide: protocol.md\nReference: paper")
 
 
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_global_data_context_collects_inherited_and_declared_data_for_actions():
+    @qd.data_oriented
+    class AutomaticData(Data):
+        def __init__(self):
+            self.value = qd.ndarray(qd.i32, shape=(1,))
+
+    @qd.data_oriented
+    class CustomData:
+        def __init__(self):
+            self.value = qd.ndarray(qd.i32, shape=(1,))
+
+    class Participant(System):
+        def __init__(self, scene):
+            super().__init__(scene)
+            self.automatic = AutomaticData()
+            self.custom = CustomData()
+
+        @System.data
+        def custom_parameter(self):
+            return self.custom
+
+    class InvalidParticipant(System):
+        @System.data
+        def combined(self):
+            return AutomaticData(), CustomData()
+
+    @qd.func(requires_top_level=True)
+    def write(system: qd.template(), automatic: int, custom: int):
+        for _ in range(1):
+            system.automatic.value[0] = automatic
+            system.custom.value[0] = custom
+
+    @qd.kernel(graph=True)
+    def run(context: qd.template(), action: qd.template()):
+        action.invoke()
+
+    participant = Participant(object())
+    context_engine = Engine(object())
+    context_engine.add_system(participant)
+    context = context_engine.create_context()
+    action = StageAction(write, (participant, 3, 5))
+    run(context, action)
+    qd.sync()
+
+    assert participant.automatic.value.to_numpy().tolist() == [3]
+    assert participant.custom.value.to_numpy().tolist() == [5]
+    with pytest.raises(gs.GenesisException):
+        invalid_engine = Engine(object())
+        invalid_engine.add_system(InvalidParticipant(object()))
+        invalid_engine.create_context()
+
+
 # A Pipeline has one entry point and accepts either a host function or a device kernel. Checkpoint callbacks resume a
 # yielded graph from the callback-selected label with the same bound arguments.
 @pytest.mark.parametrize("backend", [gs.cpu])
@@ -433,7 +522,6 @@ def test_registered_system_actions_integrate_global_dofs():
     class TotalState(Data):
         value: qd.Tensor
 
-    @qd.data_oriented
     class Total(System):
         def __init__(self, scene):
             super().__init__(scene)
@@ -469,7 +557,6 @@ def test_registered_system_actions_integrate_global_dofs():
             total.value[()] += share_state.value[()]
 
     def make_share_system(share):
-        @qd.data_oriented
         class Share(System):
             total = Require(Total)
 
@@ -497,19 +584,16 @@ def test_registered_system_actions_integrate_global_dofs():
     Registered = make_share_system(1.0)
     Manual = make_share_system(2.0)
 
-    @qd.data_oriented
     class TotalEngine(Engine):
         total = Require(Total)
 
         def build(self):
             super().build()
             self.init_pipeline = Pipeline(self.total.init)
-            self.step_pipeline = Pipeline(kernel_step, self)
 
     @qd.kernel(graph=True)
-    def kernel_step(engine: qd.template()):
-        for action in qd.static(engine.total.contributions.actions):
-            action.invoke((engine.total.state,))
+    def kernel_step(context: qd.template(), engine: qd.template()):
+        invoke_stage_actions(engine.total.contributions.actions, (engine.total.state,))
 
     def create_registered(scene):
         return Registered(scene) if scene.sim.rigid_solver.is_active else None
@@ -522,6 +606,11 @@ def test_registered_system_actions_integrate_global_dofs():
         manual = engine.add_system(Manual(scene))
         engine.build()
         engine.init_pipeline.run()
+        engine.step_pipeline = Pipeline(
+            kernel_step,
+            engine.create_context(),
+            engine,
+        )
         engine.step_pipeline.run()
         engine.step_pipeline.run()
 
