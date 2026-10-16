@@ -37,6 +37,21 @@ class GJK_RETURN_CODE(IntEnum):
     NUM_ERROR = 2
 
 
+class GJK_STAGE(IntEnum):
+    """
+    Stage of the safe Gilbert-Johnson-Keerthi (GJK) algorithm that the next support query of a pair serves.
+    """
+
+    # One of the 4 fixed-direction vertices of the initial tetrahedron
+    INITIAL_VERTEX = 0
+    # Replacement of an initial vertex that would make an invalid simplex, along the normal of the triangle so far
+    VERTEX_SEARCH = 1
+    # Replacement of the vertex of the simplex facing the origin the least
+    ITERATE = 2
+    # No query left
+    DONE = 3
+
+
 class PORTAL_STATUS(IntEnum):
     """
     What the penetration depth of a contact is worth, and whether the portal behind it may be reused (perturbation
@@ -55,6 +70,45 @@ class PORTAL_STATUS(IntEnum):
     # The origin projects inside the converged portal, so the depth is exact (Theorem 4.2). The only status whose portal
     # may be reused.
     EXACT = 3
+
+
+class MPR_STAGE(IntEnum):
+    """
+    Stage of the Minkowski portal refinement (MPR) that the next support query of a pair serves.
+    """
+
+    # Probe of the three axes when the two centres coincide within the absolute length resolution of the solver, which
+    # leaves the ray undefined. The axis of largest Minkowski support extent gives the portal the most room to enclose
+    # the origin.
+    AXIS_PROBE = 0
+    # First portal vertex, along the ray from the centre of the Minkowski difference toward the origin
+    PORTAL_VERTEX_1 = 1
+    # Second portal vertex, normal to the ray and the first vertex
+    PORTAL_VERTEX_2 = 2
+    # Third portal vertex, searched until the portal faces the origin
+    PORTAL_VERTEX_3 = 3
+    # Refinement of the portal until it encloses the origin
+    REFINE = 4
+    # Refinement of the enclosing portal until it reaches the surface of the Minkowski difference
+    PENETRATION = 5
+    # No query left
+    DONE = 6
+
+
+class MPR_SUPPORT_TYPE(IntEnum):
+    """
+    Feature of the Minkowski difference supporting the contact found by the Minkowski portal refinement (MPR).
+    """
+
+    # No contact: a portal vertex falls short of the origin, the search of the third portal vertex gives up, or the
+    # refinement finds no portal enclosing the origin
+    NONE = -1
+    # Contact read off the portal refined up to the surface of the Minkowski difference
+    FACE = 0
+    # The first portal vertex vanishes, the geometries touching at a single point
+    VERTEX = 1
+    # The first portal vertex is collinear with the centre of the Minkowski difference, which leaves a segment as portal
+    EDGE = 2
 
 
 class CONTACT_ORDER(IntEnum):

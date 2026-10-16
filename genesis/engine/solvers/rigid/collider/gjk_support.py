@@ -150,7 +150,7 @@ def func_support(
         pos = pos_a if i == 0 else pos_b
         quat = quat_a if i == 0 else quat_b
 
-        sp, sp_, si = support_driver(
+        support_pos, support_localpos, support_id = support_driver(
             i_g,
             i_b,
             i,
@@ -167,13 +167,13 @@ def func_support(
         )
 
         if i == 0:
-            support_point_obj1 = sp
-            support_point_id_obj1 = si
-            support_point_localpos1 = sp_
+            support_point_obj1 = support_pos
+            support_point_id_obj1 = support_id
+            support_point_localpos1 = support_localpos
         else:
-            support_point_obj2 = sp
-            support_point_id_obj2 = si
-            support_point_localpos2 = sp_
+            support_point_obj2 = support_pos
+            support_point_id_obj2 = support_id
+            support_point_localpos2 = support_localpos
 
     support_point_minkowski = support_point_obj1 - support_point_obj2
 

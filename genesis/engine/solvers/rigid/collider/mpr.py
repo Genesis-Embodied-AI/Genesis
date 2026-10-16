@@ -1,10 +1,10 @@
 import quadrants as qd
 
 import genesis as gs
-import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
+import genesis.utils.geom as gu
 from . import support_field
-from .constants import PORTAL_STATUS
+from .constants import MPR_STAGE, MPR_SUPPORT_TYPE, PORTAL_STATUS
 from .contact import func_compute_geom_pair_scale
 
 
@@ -165,29 +165,6 @@ def mpr_portal_can_encapsule_origin(
 
 
 @qd.func
-def mpr_portal_reach_tolerance(
-    i_ga: int,
-    i_gb: int,
-    i_b: int,
-    ccd_tol: float,
-    v: qd.types.vector(3),
-    direction: qd.types.vector(3),
-    mpr_state: array_class.MPRState,
-    collider_info: array_class.ColliderInfo,
-):
-    pv1 = mpr_state.simplex_support.v[1, i_b]
-    pv2 = mpr_state.simplex_support.v[2, i_b]
-    pv3 = mpr_state.simplex_support.v[3, i_b]
-    dv = v.dot(direction)
-    dot1 = qd.min(dv - pv1.dot(direction), dv - pv2.dot(direction), dv - pv3.dot(direction))
-    # A portal plane through the origin makes dv and the three pv projections pure rounding noise.
-    # The rounding error of a dot product scales with its operands, so the tolerance floor scales with the vertices.
-    # Without the floor a noise gap counts as progress, the portal re-adds a held vertex, and refinement never ends.
-    scale = qd.max(qd.abs(v).sum(), qd.abs(pv1).sum(), qd.abs(pv2).sum(), qd.abs(pv3).sum())
-    return dot1 < ccd_tol + collider_info.mpr.CCD_EPS[None] * scale
-
-
-@qd.func
 def support_driver(
     i_g: int,
     i_b: int,
@@ -305,57 +282,6 @@ def func_geom_support(
 
 
 @qd.func
-def mpr_refine_portal(
-    i_ga: int,
-    i_gb: int,
-    i_b: int,
-    ccd_tol: float,
-    pos_a: qd.types.vector(3),
-    quat_a: qd.types.vector(4),
-    pos_b: qd.types.vector(3),
-    quat_b: qd.types.vector(4),
-    collider_state: array_class.ColliderState,
-    mpr_state: array_class.MPRState,
-    dyn_info: array_class.DynInfo,
-    collider_info: array_class.ColliderInfo,
-    rigid_config: qd.template(),
-    collider_static_config: qd.template(),
-):
-    ret = 1
-    while True:
-        direction = mpr_portal_dir(i_ga, i_gb, i_b, mpr_state)
-
-        if mpr_portal_encapsules_origin(i_ga, i_gb, i_b, direction, mpr_state, collider_info):
-            ret = 0
-            break
-
-        v, v1, v2 = compute_support(
-            i_ga,
-            i_gb,
-            i_b,
-            direction,
-            pos_a,
-            quat_a,
-            pos_b,
-            quat_b,
-            collider_state,
-            dyn_info,
-            collider_info,
-            rigid_config,
-            collider_static_config,
-        )
-
-        if not mpr_portal_can_encapsule_origin(v, direction, collider_info) or mpr_portal_reach_tolerance(
-            i_ga, i_gb, i_b, ccd_tol, v, direction, mpr_state, collider_info
-        ):
-            ret = -1
-            break
-
-        mpr_expand_portal(i_ga, i_gb, i_b, v, v1, v2, mpr_state)
-    return ret
-
-
-@qd.func
 def mpr_find_pos(
     i_ga: int,
     i_gb: int,
@@ -451,339 +377,6 @@ def mpr_find_penetr_segment(i_ga: int, i_gb: int, i_b: int, mpr_state: array_cla
     pos = (mpr_state.simplex_support.v1[1, i_b] + mpr_state.simplex_support.v2[1, i_b]) * 0.5
 
     return is_col, normal, penetration, pos
-
-
-@qd.func
-def mpr_find_penetration(
-    i_ga: int,
-    i_gb: int,
-    i_b: int,
-    ccd_tol: float,
-    pos_a: qd.types.vector(3),
-    quat_a: qd.types.vector(4),
-    pos_b: qd.types.vector(3),
-    quat_b: qd.types.vector(4),
-    collider_state: array_class.ColliderState,
-    mpr_state: array_class.MPRState,
-    dyn_info: array_class.DynInfo,
-    collider_info: array_class.ColliderInfo,
-    rigid_config: qd.template(),
-    collider_static_config: qd.template(),
-):
-    iterations = 0
-
-    is_col = False
-    pos = gs.qd_vec3([0.0, 0.0, 0.0])
-    normal = gs.qd_vec3([0.0, 0.0, 0.0])
-    penetration = gs.qd_float(0.0)
-
-    while True:
-        direction = mpr_portal_dir(i_ga, i_gb, i_b, mpr_state)
-        v, v1, v2 = compute_support(
-            i_ga,
-            i_gb,
-            i_b,
-            direction,
-            pos_a,
-            quat_a,
-            pos_b,
-            quat_b,
-            collider_state,
-            dyn_info,
-            collider_info,
-            rigid_config,
-            collider_static_config,
-        )
-        reached = mpr_portal_reach_tolerance(i_ga, i_gb, i_b, ccd_tol, v, direction, mpr_state, collider_info)
-        if reached or iterations > collider_info.mpr.CCD_ITERATIONS[None]:
-            # The contact point is defined as the projection of the origin onto the portal, i.e. the closest point to
-            # the origin that lies inside the portal. Let's consider the portal as an infinite plane rather than a face
-            # triangle. This makes sense because the projection of the origin must be strictly included into the portal
-            # triangle for it to correspond to the true penetration depth. For reference about this property, see
-            # 'Collision Handling with Variable-Step Integrators' Theorem 4.2:
-            # https://modiasim.github.io/Modia3D.jl/resources/documentation/CollisionHandling_Neumayr_Otter_2017.pdf
-            #
-            # In theory, the center should have been shifted to end up with the one and only portal satisfying this
-            # condition. However, a naive implementation of this process must be avoided because it would be very
-            # costly. In practice, assuming the portal is infinite provides a decent approximation of the true
-            # penetration depth (it is actually a lower-bound estimate according to Theorem 4.3) and normal without
-            # requiring any additional computations.
-            # See: https://github.com/danfis/libccd/issues/71#issuecomment-660415008
-            #
-            # An improved version of MPR has been proposed to find the right portal in an efficient way.
-            # See: https://arxiv.org/pdf/2304.07357
-            # Implementation: https://github.com/weigao95/mind-fcl/blob/main/include/fcl/cvx_collide/mpr.h
-            #
-            # The original paper introducing MPR algorithm is available here:
-            # https://archive.org/details/game-programming-gems-7
-            if qd.static(rigid_config.enable_mujoco_compatibility):
-                penetration, pdir = mpr_point_tri_depth(
-                    gs.qd_vec3([0.0, 0.0, 0.0]),
-                    mpr_state.simplex_support.v[1, i_b],
-                    mpr_state.simplex_support.v[2, i_b],
-                    mpr_state.simplex_support.v[3, i_b],
-                    collider_info,
-                )
-                normal = -pdir.normalized()
-            else:
-                penetration = direction.dot(mpr_state.simplex_support.v[1, i_b])
-                normal = -direction
-
-            # Classify what the depth is worth by where the origin projects onto the portal triangle. b1,b2,b3 are the
-            # (unnormalized) barycentric coordinates of that projection: all >= 0 means the origin projects inside, so
-            # the depth is exact (Thm 4.2 -> EXACT), otherwise it is read off the plane of the triangle (-> APPROXIMATE).
-            pv1 = mpr_state.simplex_support.v[1, i_b]
-            pv2 = mpr_state.simplex_support.v[2, i_b]
-            pv3 = mpr_state.simplex_support.v[3, i_b]
-            b1 = pv2.cross(pv3).dot(direction)
-            b2 = pv3.cross(pv1).dot(direction)
-            b3 = pv1.cross(pv2).dot(direction)
-            bsum = b1 + b2 + b3
-            babs = qd.abs(b1) + qd.abs(b2) + qd.abs(b3)
-            min_b = qd.min(b1, qd.min(b2, b3))
-            if not reached:
-                mpr_state.portal_status[i_b] = PORTAL_STATUS.UNCONVERGED
-            elif min_b >= 0.0 and bsum > collider_info.mpr.CCD_EPS[None] * babs:
-                # A portal spanning no area leaves every coordinate at zero, which satisfies min_b >= 0, so it is
-                # excluded explicitly or a portal whose depth means nothing reads as exact.
-                mpr_state.portal_status[i_b] = PORTAL_STATUS.EXACT
-            else:
-                mpr_state.portal_status[i_b] = PORTAL_STATUS.APPROXIMATE
-
-            is_col = True
-            pos = mpr_find_pos(i_ga, i_gb, i_b, mpr_state, collider_info, rigid_config)
-            break
-
-        mpr_expand_portal(i_ga, i_gb, i_b, v, v1, v2, mpr_state)
-        iterations += 1
-
-    return is_col, normal, penetration, pos
-
-
-@qd.func
-def mpr_expand_portal(
-    i_ga: int,
-    i_gb: int,
-    i_b: int,
-    v: qd.types.vector(3),
-    v1: qd.types.vector(3),
-    v2: qd.types.vector(3),
-    mpr_state: array_class.MPRState,
-):
-    v4v0 = v.cross(mpr_state.simplex_support.v[0, i_b])
-    dot = mpr_state.simplex_support.v[1, i_b].dot(v4v0)
-
-    i_s = gs.qd_int(0)
-    if dot > 0:
-        dot = mpr_state.simplex_support.v[2, i_b].dot(v4v0)
-        i_s = 1 if dot > 0 else 3
-
-    else:
-        dot = mpr_state.simplex_support.v[3, i_b].dot(v4v0)
-        i_s = 2 if dot > 0 else 1
-
-    mpr_state.simplex_support.v1[i_s, i_b] = v1
-    mpr_state.simplex_support.v2[i_s, i_b] = v2
-    mpr_state.simplex_support.v[i_s, i_b] = v
-
-
-@qd.func
-def mpr_discover_portal(
-    i_ga: int,
-    i_gb: int,
-    i_b: int,
-    ccd_tol: float,
-    center_a: qd.types.vector(3),
-    center_b: qd.types.vector(3),
-    pos_a: qd.types.vector(3),
-    quat_a: qd.types.vector(4),
-    pos_b: qd.types.vector(3),
-    quat_b: qd.types.vector(4),
-    collider_state: array_class.ColliderState,
-    mpr_state: array_class.MPRState,
-    dyn_info: array_class.DynInfo,
-    collider_info: array_class.ColliderInfo,
-    rigid_config: qd.template(),
-    collider_static_config: qd.template(),
-):
-    mpr_state.simplex_support.v1[0, i_b] = center_a
-    mpr_state.simplex_support.v2[0, i_b] = center_b
-    mpr_state.simplex_support.v[0, i_b] = center_a - center_b
-    mpr_state.simplex_size[i_b] = 1
-
-    # Coincident centers (within the solver's absolute length resolution) leave the ray direction undefined; probe
-    # the three axes and pick the one with the largest Minkowski support extent, which gives portal discovery the
-    # most room to enclose the origin.
-    if (qd.abs(mpr_state.simplex_support.v[0, i_b]) < ccd_tol).all():
-        best_extent = gs.qd_float(0.0)
-        best_dir = qd.Vector.zero(gs.qd_float, 3)
-        for i_axis in range(3):
-            probe = qd.Vector.zero(gs.qd_float, 3)
-            probe[i_axis] = 1.0
-            probe_v, probe_v1, probe_v2 = compute_support(
-                i_ga,
-                i_gb,
-                i_b,
-                probe,
-                pos_a,
-                quat_a,
-                pos_b,
-                quat_b,
-                collider_state,
-                dyn_info,
-                collider_info,
-                rigid_config,
-                collider_static_config,
-            )
-            extent = probe_v.dot(probe)
-            if i_axis == 0 or extent > best_extent:
-                best_extent = extent
-                best_dir = probe
-        mpr_state.simplex_support.v[0, i_b] = best_dir * (10.0 * ccd_tol)
-
-    direction = -mpr_state.simplex_support.v[0, i_b].normalized()
-
-    v, v1, v2 = compute_support(
-        i_ga,
-        i_gb,
-        i_b,
-        direction,
-        pos_a,
-        quat_a,
-        pos_b,
-        quat_b,
-        collider_state,
-        dyn_info,
-        collider_info,
-        rigid_config,
-        collider_static_config,
-    )
-
-    mpr_state.simplex_support.v1[1, i_b] = v1
-    mpr_state.simplex_support.v2[1, i_b] = v2
-    mpr_state.simplex_support.v[1, i_b] = v
-    mpr_state.simplex_size[i_b] = 2
-
-    dot = v.dot(direction)
-
-    ret = 0
-    if dot < 0.0:
-        ret = -1
-    else:
-        direction = mpr_state.simplex_support.v[0, i_b].cross(mpr_state.simplex_support.v[1, i_b])
-        # The touch test must come first and independently: for a vanishing v1 both sides of the relative
-        # collinearity test vanish as well, which would fall through to normalizing a zero cross product.
-        if (
-            qd.abs(mpr_state.simplex_support.v[1, i_b])
-            < collider_info.mpr.CCD_EPS[None] * mpr_state.simplex_support.v[0, i_b].norm()
-        ).all():
-            ret = 1
-        # Relative collinearity test: |v0 x v1|^2 = |v0|^2 * |v1|^2 * sin^2(angle). An absolute epsilon (length^4)
-        # would misclassify non-collinear cm-scale pairs as degenerate, fabricating deep contacts via the segment
-        # path. Must use <= so that an exactly zero cross product is still classified as degenerate.
-        elif (
-            direction.dot(direction)
-            <= collider_info.mpr.CCD_EPS[None]
-            * mpr_state.simplex_support.v[0, i_b].norm_sqr()
-            * mpr_state.simplex_support.v[1, i_b].norm_sqr()
-        ):
-            ret = 2
-        else:
-            direction = direction.normalized()
-            v, v1, v2 = compute_support(
-                i_ga,
-                i_gb,
-                i_b,
-                direction,
-                pos_a,
-                quat_a,
-                pos_b,
-                quat_b,
-                collider_state,
-                dyn_info,
-                collider_info,
-                rigid_config,
-                collider_static_config,
-            )
-            dot = v.dot(direction)
-            if dot < 0.0:
-                ret = -1
-            else:
-                mpr_state.simplex_support.v1[2, i_b] = v1
-                mpr_state.simplex_support.v2[2, i_b] = v2
-                mpr_state.simplex_support.v[2, i_b] = v
-                mpr_state.simplex_size[i_b] = 3
-
-                va = mpr_state.simplex_support.v[1, i_b] - mpr_state.simplex_support.v[0, i_b]
-                vb = mpr_state.simplex_support.v[2, i_b] - mpr_state.simplex_support.v[0, i_b]
-                direction = va.cross(vb)
-                direction = direction.normalized()
-
-                dot = direction.dot(mpr_state.simplex_support.v[0, i_b])
-                if dot > 0:
-                    mpr_swap(i_ga, i_gb, i_b, 1, 2, mpr_state)
-                    direction = -direction
-
-                # FIXME: This algorithm may get stuck in an infinite loop if the actual penetration is smaller than
-                # CCD_EPS and at least one geometry's center is outside its convex hull. Since this deadlock happens
-                # very rarely, a simple fix is to abort computation after a few trials.
-                num_trials = gs.qd_int(0)
-                while mpr_state.simplex_size[i_b] < 4:
-                    v, v1, v2 = compute_support(
-                        i_ga,
-                        i_gb,
-                        i_b,
-                        direction,
-                        pos_a,
-                        quat_a,
-                        pos_b,
-                        quat_b,
-                        collider_state,
-                        dyn_info,
-                        collider_info,
-                        rigid_config,
-                        collider_static_config,
-                    )
-                    dot = v.dot(direction)
-                    if dot < 0.0:
-                        ret = -1
-                        break
-
-                    cont = False
-
-                    va = mpr_state.simplex_support.v[1, i_b].cross(v)
-                    dot = va.dot(mpr_state.simplex_support.v[0, i_b])
-                    if dot < 0.0:
-                        mpr_state.simplex_support.v1[2, i_b] = v1
-                        mpr_state.simplex_support.v2[2, i_b] = v2
-                        mpr_state.simplex_support.v[2, i_b] = v
-                        cont = True
-
-                    if not cont:
-                        va = v.cross(mpr_state.simplex_support.v[2, i_b])
-                        dot = va.dot(mpr_state.simplex_support.v[0, i_b])
-                        if dot < 0.0:
-                            mpr_state.simplex_support.v1[1, i_b] = v1
-                            mpr_state.simplex_support.v2[1, i_b] = v2
-                            mpr_state.simplex_support.v[1, i_b] = v
-                            cont = True
-
-                    if cont:
-                        va = mpr_state.simplex_support.v[1, i_b] - mpr_state.simplex_support.v[0, i_b]
-                        vb = mpr_state.simplex_support.v[2, i_b] - mpr_state.simplex_support.v[0, i_b]
-                        direction = va.cross(vb)
-                        direction = direction.normalized()
-                        num_trials = num_trials + 1
-                        if num_trials == 15:
-                            ret = -1
-                            break
-                    else:
-                        mpr_state.simplex_support.v1[3, i_b] = v1
-                        mpr_state.simplex_support.v2[3, i_b] = v2
-                        mpr_state.simplex_support.v[3, i_b] = v
-                        mpr_state.simplex_size[i_b] = 4
-
-    return ret
 
 
 @qd.func
@@ -894,72 +487,260 @@ def func_mpr_contact_from_centers(
     if qd.static(not rigid_config.enable_mujoco_compatibility):
         ccd_tol = ccd_tol * func_compute_geom_pair_scale(i_ga, i_gb, geoms_init_AABB, dyn_info)
 
-    res = mpr_discover_portal(
-        i_ga,
-        i_gb,
-        i_b,
-        ccd_tol,
-        center_a,
-        center_b,
-        pos_a,
-        quat_a,
-        pos_b,
-        quat_b,
-        collider_state,
-        mpr_state,
-        dyn_info,
-        collider_info,
-        rigid_config,
-        collider_static_config,
-    )
-
     is_col = False
     pos = gs.qd_vec3([0.0, 0.0, 0.0])
     normal = gs.qd_vec3([0.0, 0.0, 0.0])
     penetration = gs.qd_float(0.0)
 
     # Default for the degenerate touch/segment paths (and refine failure): a contact with no reusable refined portal.
-    # The refined-portal path classifies the portal precisely inside mpr_find_penetration.
+    # The refined-portal path classifies the portal precisely once its penetration stage ends.
     mpr_state.portal_status[i_b] = PORTAL_STATUS.NONE
 
-    if res == 1:
-        is_col, normal, penetration, pos = mpr_find_penetr_touch(i_ga, i_gb, i_b, mpr_state)
-    elif res == 2:
-        is_col, normal, penetration, pos = mpr_find_penetr_segment(i_ga, i_gb, i_b, mpr_state)
-    elif res == 0:
-        res = mpr_refine_portal(
+    mpr_state.simplex_support.v1[0, i_b] = center_a
+    mpr_state.simplex_support.v2[0, i_b] = center_b
+    mpr_state.simplex_support.v[0, i_b] = center_a - center_b
+    mpr_state.simplex_size[i_b] = 1
+
+    # Every stage (see MPR_STAGE in constants.py) queries its support points through the single query of the loop below,
+    # each stage setting the direction of the next query and the stage it serves.
+    stage = MPR_STAGE.PORTAL_VERTEX_1
+    direction = qd.Vector.zero(gs.qd_float, 3)
+    i_axis = 0
+    best_extent = gs.qd_float(0.0)
+    best_dir = qd.Vector.zero(gs.qd_float, 3)
+    if (qd.abs(mpr_state.simplex_support.v[0, i_b]) < ccd_tol).all():
+        stage = MPR_STAGE.AXIS_PROBE
+    else:
+        direction = -mpr_state.simplex_support.v[0, i_b].normalized()
+    # Set by the stage that ends the loop (see MPR_SUPPORT_TYPE in constants.py)
+    support_type = MPR_SUPPORT_TYPE.FACE
+    # FIXME: The search of the third portal vertex can cycle when the penetration is below CCD_EPS and a geometry's
+    # center lies outside its convex hull, so it gives up after a few trials
+    n_trials = 0
+    n_iters = 0
+    while stage != MPR_STAGE.DONE:
+        if stage == MPR_STAGE.AXIS_PROBE:
+            direction = qd.Vector.zero(gs.qd_float, 3)
+            direction[i_axis] = 1.0
+        elif stage == MPR_STAGE.REFINE or stage == MPR_STAGE.PENETRATION:
+            direction = mpr_portal_dir(i_ga, i_gb, i_b, mpr_state)
+            if stage == MPR_STAGE.REFINE:
+                if mpr_portal_encapsules_origin(i_ga, i_gb, i_b, direction, mpr_state, collider_info):
+                    stage = MPR_STAGE.PENETRATION
+
+        v, v1, v2 = compute_support(
             i_ga,
             i_gb,
             i_b,
-            ccd_tol,
+            direction,
             pos_a,
             quat_a,
             pos_b,
             quat_b,
             collider_state,
-            mpr_state,
             dyn_info,
             collider_info,
             rigid_config,
             collider_static_config,
         )
-        if res >= 0:
-            is_col, normal, penetration, pos = mpr_find_penetration(
-                i_ga,
-                i_gb,
-                i_b,
-                ccd_tol,
-                pos_a,
-                quat_a,
-                pos_b,
-                quat_b,
-                collider_state,
-                mpr_state,
-                dyn_info,
-                collider_info,
-                rigid_config,
-                collider_static_config,
+
+        if stage == MPR_STAGE.AXIS_PROBE:
+            extent = v.dot(direction)
+            if i_axis == 0 or extent > best_extent:
+                best_extent = extent
+                best_dir = direction
+            i_axis += 1
+            if i_axis == 3:
+                mpr_state.simplex_support.v[0, i_b] = best_dir * (10.0 * ccd_tol)
+                direction = -mpr_state.simplex_support.v[0, i_b].normalized()
+                stage = MPR_STAGE.PORTAL_VERTEX_1
+        elif stage == MPR_STAGE.PORTAL_VERTEX_1:
+            mpr_state.simplex_support.v1[1, i_b] = v1
+            mpr_state.simplex_support.v2[1, i_b] = v2
+            mpr_state.simplex_support.v[1, i_b] = v
+            mpr_state.simplex_size[i_b] = 2
+
+            if v.dot(direction) < 0.0:
+                support_type = MPR_SUPPORT_TYPE.NONE
+                stage = MPR_STAGE.DONE
+            else:
+                direction = mpr_state.simplex_support.v[0, i_b].cross(mpr_state.simplex_support.v[1, i_b])
+                # The touch test must come first and independently: for a vanishing v1 both sides of the relative
+                # collinearity test vanish as well, which would fall through to normalizing a zero cross product.
+                if (
+                    qd.abs(mpr_state.simplex_support.v[1, i_b])
+                    < collider_info.mpr.CCD_EPS[None] * mpr_state.simplex_support.v[0, i_b].norm()
+                ).all():
+                    support_type = MPR_SUPPORT_TYPE.VERTEX
+                    stage = MPR_STAGE.DONE
+                # Relative collinearity test: |v0 x v1|^2 = |v0|^2 * |v1|^2 * sin^2(angle). An absolute epsilon
+                # (length^4) would misclassify non-collinear cm-scale pairs as degenerate, fabricating deep contacts via
+                # the segment path. Must use <= so that an exactly zero cross product counts as degenerate.
+                elif (
+                    direction.dot(direction)
+                    <= collider_info.mpr.CCD_EPS[None]
+                    * mpr_state.simplex_support.v[0, i_b].norm_sqr()
+                    * mpr_state.simplex_support.v[1, i_b].norm_sqr()
+                ):
+                    support_type = MPR_SUPPORT_TYPE.EDGE
+                    stage = MPR_STAGE.DONE
+                else:
+                    direction = direction.normalized()
+                    stage = MPR_STAGE.PORTAL_VERTEX_2
+        elif stage == MPR_STAGE.PORTAL_VERTEX_2:
+            if v.dot(direction) < 0.0:
+                support_type = MPR_SUPPORT_TYPE.NONE
+                stage = MPR_STAGE.DONE
+            else:
+                mpr_state.simplex_support.v1[2, i_b] = v1
+                mpr_state.simplex_support.v2[2, i_b] = v2
+                mpr_state.simplex_support.v[2, i_b] = v
+                mpr_state.simplex_size[i_b] = 3
+
+                va = mpr_state.simplex_support.v[1, i_b] - mpr_state.simplex_support.v[0, i_b]
+                vb = mpr_state.simplex_support.v[2, i_b] - mpr_state.simplex_support.v[0, i_b]
+                direction = va.cross(vb)
+                direction = direction.normalized()
+
+                if direction.dot(mpr_state.simplex_support.v[0, i_b]) > 0:
+                    mpr_swap(i_ga, i_gb, i_b, 1, 2, mpr_state)
+                    direction = -direction
+                stage = MPR_STAGE.PORTAL_VERTEX_3
+        elif stage == MPR_STAGE.PORTAL_VERTEX_3:
+            if v.dot(direction) < 0.0:
+                support_type = MPR_SUPPORT_TYPE.NONE
+                stage = MPR_STAGE.DONE
+            else:
+                is_portal_updated = False
+
+                va = mpr_state.simplex_support.v[1, i_b].cross(v)
+                if va.dot(mpr_state.simplex_support.v[0, i_b]) < 0.0:
+                    mpr_state.simplex_support.v1[2, i_b] = v1
+                    mpr_state.simplex_support.v2[2, i_b] = v2
+                    mpr_state.simplex_support.v[2, i_b] = v
+                    is_portal_updated = True
+
+                if not is_portal_updated:
+                    va = v.cross(mpr_state.simplex_support.v[2, i_b])
+                    if va.dot(mpr_state.simplex_support.v[0, i_b]) < 0.0:
+                        mpr_state.simplex_support.v1[1, i_b] = v1
+                        mpr_state.simplex_support.v2[1, i_b] = v2
+                        mpr_state.simplex_support.v[1, i_b] = v
+                        is_portal_updated = True
+
+                if is_portal_updated:
+                    va = mpr_state.simplex_support.v[1, i_b] - mpr_state.simplex_support.v[0, i_b]
+                    vb = mpr_state.simplex_support.v[2, i_b] - mpr_state.simplex_support.v[0, i_b]
+                    direction = va.cross(vb)
+                    direction = direction.normalized()
+                    n_trials += 1
+                    if n_trials == 15:
+                        support_type = MPR_SUPPORT_TYPE.NONE
+                        stage = MPR_STAGE.DONE
+                else:
+                    mpr_state.simplex_support.v1[3, i_b] = v1
+                    mpr_state.simplex_support.v2[3, i_b] = v2
+                    mpr_state.simplex_support.v[3, i_b] = v
+                    mpr_state.simplex_size[i_b] = 4
+                    stage = MPR_STAGE.REFINE
+        else:
+            # The refinement reaches the surface of the Minkowski difference when the new support point gains less than
+            # the tolerance over at least one portal vertex along the portal normal. A portal plane through the origin
+            # makes these projections pure rounding noise, whose error scales with the operands, so the tolerance has a
+            # floor scaling with the vertices: without it a noise gap counts as progress, the portal re-adds a held
+            # vertex, and the refinement never ends.
+            portal_v1 = mpr_state.simplex_support.v[1, i_b]
+            portal_v2 = mpr_state.simplex_support.v[2, i_b]
+            portal_v3 = mpr_state.simplex_support.v[3, i_b]
+            support_dist = v.dot(direction)
+            support_gain = qd.min(
+                support_dist - portal_v1.dot(direction),
+                support_dist - portal_v2.dot(direction),
+                support_dist - portal_v3.dot(direction),
             )
+            scale = qd.max(qd.abs(v).sum(), qd.abs(portal_v1).sum(), qd.abs(portal_v2).sum(), qd.abs(portal_v3).sum())
+            is_tolerance_reached = support_gain < ccd_tol + collider_info.mpr.CCD_EPS[None] * scale
+
+            is_portal_expanded = False
+            if stage == MPR_STAGE.REFINE:
+                if not mpr_portal_can_encapsule_origin(v, direction, collider_info) or is_tolerance_reached:
+                    support_type = MPR_SUPPORT_TYPE.NONE
+                    stage = MPR_STAGE.DONE
+                else:
+                    is_portal_expanded = True
+            elif is_tolerance_reached or n_iters > collider_info.mpr.CCD_ITERATIONS[None]:
+                # The contact point is defined as the projection of the origin onto the portal, i.e. the closest point
+                # to the origin that lies inside the portal. Let's consider the portal as an infinite plane rather than
+                # a face triangle. This makes sense because the projection of the origin must be strictly included into
+                # the portal triangle for it to correspond to the true penetration depth. For reference about this
+                # property, see 'Collision Handling with Variable-Step Integrators' Theorem 4.2:
+                # https://modiasim.github.io/Modia3D.jl/resources/documentation/CollisionHandling_Neumayr_Otter_2017.pdf
+                #
+                # In theory, the center should have been shifted to end up with the one and only portal satisfying this
+                # condition. However, a naive implementation of this process must be avoided because it would be very
+                # costly. In practice, assuming the portal is infinite provides a decent approximation of the true
+                # penetration depth (it is actually a lower-bound estimate according to Theorem 4.3) and normal without
+                # requiring any additional computations.
+                # See: https://github.com/danfis/libccd/issues/71#issuecomment-660415008
+                #
+                # An improved version of MPR has been proposed to find the right portal in an efficient way.
+                # See: https://arxiv.org/pdf/2304.07357
+                #
+                # The original paper introducing MPR algorithm is available here:
+                # https://archive.org/details/game-programming-gems-7
+                if qd.static(rigid_config.enable_mujoco_compatibility):
+                    origin = gs.qd_vec3([0.0, 0.0, 0.0])
+                    penetration, pdir = mpr_point_tri_depth(origin, portal_v1, portal_v2, portal_v3, collider_info)
+                    normal = -pdir.normalized()
+                else:
+                    penetration = direction.dot(portal_v1)
+                    normal = -direction
+
+                # Classify what the depth is worth by where the origin projects onto the portal triangle. b1,b2,b3 are
+                # the (unnormalized) barycentric coordinates of that projection: all >= 0 means the origin projects
+                # inside, so the depth is exact (Thm 4.2 -> EXACT), otherwise it is read off the plane of the triangle
+                # (-> APPROXIMATE).
+                b1 = portal_v2.cross(portal_v3).dot(direction)
+                b2 = portal_v3.cross(portal_v1).dot(direction)
+                b3 = portal_v1.cross(portal_v2).dot(direction)
+                bsum = b1 + b2 + b3
+                babs = qd.abs(b1) + qd.abs(b2) + qd.abs(b3)
+                min_b = qd.min(b1, qd.min(b2, b3))
+                if not is_tolerance_reached:
+                    mpr_state.portal_status[i_b] = PORTAL_STATUS.UNCONVERGED
+                elif min_b >= 0.0 and bsum > collider_info.mpr.CCD_EPS[None] * babs:
+                    # A portal spanning no area leaves every coordinate at zero, which satisfies min_b >= 0, so it is
+                    # excluded explicitly or a portal whose depth means nothing reads as exact.
+                    mpr_state.portal_status[i_b] = PORTAL_STATUS.EXACT
+                else:
+                    mpr_state.portal_status[i_b] = PORTAL_STATUS.APPROXIMATE
+
+                pos = mpr_find_pos(i_ga, i_gb, i_b, mpr_state, collider_info, rigid_config)
+                is_col = True
+                stage = MPR_STAGE.DONE
+            else:
+                is_portal_expanded = True
+                n_iters += 1
+
+            if is_portal_expanded:
+                # The new support point replaces the portal vertex on the side of the origin it falls on
+                split_normal = v.cross(mpr_state.simplex_support.v[0, i_b])
+                vertex_side = mpr_state.simplex_support.v[1, i_b].dot(split_normal)
+                i_s = 0
+                if vertex_side > 0:
+                    vertex_side = mpr_state.simplex_support.v[2, i_b].dot(split_normal)
+                    i_s = 1 if vertex_side > 0 else 3
+                else:
+                    vertex_side = mpr_state.simplex_support.v[3, i_b].dot(split_normal)
+                    i_s = 2 if vertex_side > 0 else 1
+                mpr_state.simplex_support.v1[i_s, i_b] = v1
+                mpr_state.simplex_support.v2[i_s, i_b] = v2
+                mpr_state.simplex_support.v[i_s, i_b] = v
+
+    if support_type == MPR_SUPPORT_TYPE.VERTEX:
+        is_col, normal, penetration, pos = mpr_find_penetr_touch(i_ga, i_gb, i_b, mpr_state)
+    elif support_type == MPR_SUPPORT_TYPE.EDGE:
+        is_col, normal, penetration, pos = mpr_find_penetr_segment(i_ga, i_gb, i_b, mpr_state)
     return is_col, normal, penetration, pos
 
 
