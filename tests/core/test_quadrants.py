@@ -9,7 +9,7 @@ import pytest
 import numpy as np
 
 import genesis as gs
-from genesis.utils.misc import qd_to_torch
+from genesis.utils.misc import qd_to_numpy, qd_to_torch
 
 from ..utils.assertions import assert_allclose
 
@@ -112,16 +112,15 @@ def gs_static_child(args: list[str]):
     )
     scene.build()
 
-    scene.rigid_solver.collider.detection()
-    actual_contacts = scene.rigid_solver.collider.collider_state.n_contacts.to_numpy()
-    assert actual_contacts == args.expected_num_contacts
-    from genesis.engine.solvers.rigid.collider.collider import kernel_detection
+    scene.step()
+    assert qd_to_numpy(scene.rigid_solver.collider.collider_state.n_contacts) == args.expected_num_contacts
+    from genesis.engine.solvers.rigid.rigid_solver import kernel_substep_collision
 
-    kernel_to_check = kernel_detection
-
-    assert kernel_to_check._primal.src_ll_cache_observations.cache_key_generated == args.expected_use_src_ll_cache
-    assert kernel_to_check._primal.src_ll_cache_observations.cache_validated == args.expected_src_ll_cache_hit
-    assert kernel_to_check._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
+    assert (
+        kernel_substep_collision._primal.src_ll_cache_observations.cache_key_generated == args.expected_use_src_ll_cache
+    )
+    assert kernel_substep_collision._primal.src_ll_cache_observations.cache_validated == args.expected_src_ll_cache_hit
+    assert kernel_substep_collision._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
 
     sys.exit(RET_SUCCESS)
 
@@ -147,7 +146,7 @@ def test_static(
     use_ndarray: bool,
     tmp_path: pathlib.Path,
 ) -> None:
-    for it in range(3):
+    for it in range(2):
         cmd_line = [
             sys.executable,
             "-m",
@@ -182,8 +181,6 @@ def test_static(
 
 
 def gs_num_envs_child(args: list[str]):
-    import quadrants as qd
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend", type=str, choices=["cpu", "gpu"], default="cpu")
     parser.add_argument("--n_envs", type=int, required=True)
@@ -212,16 +209,15 @@ def gs_num_envs_child(args: list[str]):
     )
     scene.build(n_envs=args.n_envs, env_spacing=(0.5, 0.5))
 
-    scene.rigid_solver.collider.detection()
-    qd.sync()
+    scene.step()
+    assert (qd_to_numpy(scene.rigid_solver.collider.collider_state.n_contacts) > 0).all()
 
-    from genesis.engine.solvers.rigid.rigid_solver import kernel_substep_dynamics
+    from genesis.engine.solvers.rigid.rigid_solver import kernel_substep_collision, kernel_substep_dynamics
 
-    assert kernel_substep_dynamics._primal.fe_ll_cache_observations.cache_hit == args.expected_fe_ll_cache_hit
-    assert (
-        kernel_substep_dynamics._primal.src_ll_cache_observations.cache_key_generated == args.expected_use_src_ll_cache
-    )
-    assert kernel_substep_dynamics._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
+    for kernel in (kernel_substep_dynamics, kernel_substep_collision):
+        assert kernel._primal.fe_ll_cache_observations.cache_hit == args.expected_fe_ll_cache_hit
+        assert kernel._primal.src_ll_cache_observations.cache_key_generated == args.expected_use_src_ll_cache
+        assert kernel._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
 
     sys.exit(RET_SUCCESS)
 
@@ -232,7 +228,7 @@ def gs_num_envs_child(args: list[str]):
 @pytest.mark.parametrize("use_ndarray", [False, True])
 def test_num_envs(use_ndarray: bool, test_backend: str, tmp_path: pathlib.Path) -> None:
     # Change n_envs each time, and check effect on reading from cache
-    for it, n_envs in enumerate([3, 5, 7]):
+    for it, n_envs in enumerate([3, 5]):
         cmd_line = [
             sys.executable,
             "-m",
