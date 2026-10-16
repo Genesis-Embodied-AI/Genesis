@@ -215,7 +215,7 @@ class ConstraintSolver:
     @property
     def data(self) -> Iterator[array_class.DataItem]:
         """Yield every array of the constraint solver, tagged by kind (see 'Solver.data')."""
-        yield from array_class.iter_data(self.constraint_state, "constraint_state")
+        yield from array_class.iter_data(self, "constraint_state")
 
     def reset(self, envs_idx=None):
         self._eq_const_info_cache.clear()

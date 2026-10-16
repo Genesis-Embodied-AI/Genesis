@@ -49,15 +49,25 @@ class PORTAL_STATUS(IntEnum):
     NONE = 0
     # MPR hit its iteration cap, so the depth means nothing
     UNCONVERGED = 1
-    # The origin's projection falls so far beyond the portal triangle that the depth is read off an extrapolation of its
-    # plane, or the triangle is degenerate. Untrustworthy.
-    EXTRAPOLATED = 2
-    # The origin's projection falls just outside the triangle, so the depth is a valid lower bound of the true one
-    # (Theorem 4.3), but the portal is not the exact contact face
-    LOWER_BOUND = 3
+    # The origin projects outside the converged portal, or the portal is degenerate, so the depth is read off the plane
+    # of a triangle that is not the exact contact face
+    APPROXIMATE = 2
     # The origin projects inside the converged portal, so the depth is exact (Theorem 4.2). The only status whose portal
     # may be reused.
-    EXACT = 4
+    EXACT = 3
+
+
+class CONTACT_ORDER(IntEnum):
+    """
+    Order in which the contact pruning sorts the contacts of an environment or of one of its link-pair buckets.
+    """
+
+    # By link pair, with the link indices of each contact, to group them into buckets
+    LINK_PAIR = 0
+    # By the intrinsic data of each contact: geom pair, frame-local position, then penetration
+    INTRINSIC = 1
+    # By the projection of each contact on the plane of its bucket, lexicographically
+    POSITION = 2
 
 
 class MULTICONTACT_SLOT(IntEnum):
@@ -69,10 +79,27 @@ class MULTICONTACT_SLOT(IntEnum):
     EMPTY = 0
     # The first contact of the pair, accepted as it is
     BASE = 1
-    # A perturbed contact whose recovered penetration is exact, discarded as soon as it is non-positive
-    EXACT = 2
-    # A perturbed contact whose recovered penetration is first-order, kept within a negative tolerance
-    APPROX = 3
+    # A contact of a perturbed detection, kept unless it repeats a contact already kept
+    PERTURBED = 2
+
+
+class MULTICONTACT_ENTRY(IntEnum):
+    """
+    Where contact 0 of a pair queued for the split multi-contact pass stands, which decides what each stage of the pass
+    runs for it (see func_narrowphase_multicontact).
+    """
+
+    # Stored in slot 0 without Gilbert-Johnson-Keerthi (GJK): the Minkowski portal refinement (MPR) seed of the contact0
+    # kernel, or the analytic detection that the first stage of the pass runs in place of GJK for a pair it resolves
+    # analytically
+    SEED = 0
+    # Left to the first stage of the pass, which detects it with Gilbert-Johnson-Keerthi (GJK)
+    GJK = 1
+    # Detected with Gilbert-Johnson-Keerthi (GJK) by the first stage and stored in slot 0
+    DETECTED = 2
+    # Nothing left to detect: Gilbert-Johnson-Keerthi (GJK) found no contact, a manifold that holds every contact, or a
+    # pair without multi-contact
+    DONE = 3
 
 
 class EPA_POLY_INIT_RETURN_CODE(IntEnum):

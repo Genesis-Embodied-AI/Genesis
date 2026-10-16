@@ -1,5 +1,33 @@
 # Genesis Release Note
 
+## 1.4.4
+
+The minor release speeds up rigid body simulation on GPU while significantly improving the robustness of perturbation-based multi-contact without extra runtime cost.
+
+### New Features
+
+* Let heterogeneous entities differ in scale, fixed base pose and joint parameters. (@duburcqa) (#3497)
+
+### Bug Fixes
+
+* Fix convex contact depth, normal and placement errors. (@duburcqa) (#3512, #3513, #3518, #3520, #3521)
+* Fix convex collision detection edge-cases. (@duburcqa) (#3472, #3514, #3517)
+* Fix multiple box-box contacts edge-cases. (@duburcqa) (#3504)
+* Fix non-deterministic GPU simulations. (@duburcqa) (#3510)
+* Fix alpha cutout of masked glTF material. (@kevin9327) (#3341)
+* Fix named terrain cache invalidation when its subterrain parameters change. (@MohammadHijjawi97) (#3456)
+* Fix contact markers frozen in place after a scene reset. (@duburcqa) (#3493)
+
+### Miscellaneous
+
+* Speed up rigid body simulation on GPU. (@duburcqa) (#3458, #3459, #3462, #3470)
+* Reduce the memory footprint of heterogeneous entities. (@duburcqa) (#3488)
+* Allow fast prototyping by dramatically reducing kernel recompilation. (@duburcqa) (#3464)
+* Bound the number of rigid solver compilations across scenes of different sizes. (@duburcqa) (#3461)
+* Support recording numpy scalars to files. (@MohammadHijjawi97) (#3457)
+* Migrate from deprecated TorchScript to torch.compile. (@duburcqa) (#3479)
+* Show the changes made by setters in the interactive viewer right away. (@duburcqa) (#3494)
+
 ## 1.4.3
 
 This minor release focuses on improving the simulation speed for non-batch to moderate batch sizes (~4000) while reduce memory usage across the board. Besides, compilation should be up to x3 faster on Windows OS.

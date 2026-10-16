@@ -205,7 +205,8 @@ def test_emissive_composites(base_plus_emissive_glb, show_viewer, renderer):
     "renderer_type",
     [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
 )
-@pytest.mark.parametrize("n_envs", [0, 4])
+# Debug mode is forced for the batched scene, whose rendered snapshots are sensitive to fast-math
+@pytest.mark.parametrize("n_envs", [0, pytest.param(4, marks=pytest.mark.debug(True))])
 def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, renderer_type, renderer):
     # Small discrepancies between different hardware due the different physics integration
     png_snapshot.extension._std_err_threshold = 1.2

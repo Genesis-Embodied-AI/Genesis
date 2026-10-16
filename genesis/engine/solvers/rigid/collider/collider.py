@@ -86,17 +86,6 @@ def create_collider_data(rigid: "RigidSolverSystem", sdf: SDF) -> "ColliderData"
 
     collider._mc_perturbation = 1e-3 if rigid._enable_mujoco_compatibility else 3e-3
     collider._mc_tolerance = 1e-3 if rigid._enable_mujoco_compatibility else 1.5e-2
-    # Overlap depth (as a fraction of the pair bounding-box diagonal) past which MPR is upgraded to GJK. It is
-    # portal-dependent: only an EXACT portal corroborated by a warm cache recovers a depth trusted deeper (valid
-    # ratio); every other portal bounds the depth at best and falls back sooner (base ratio). The valid ratio is
-    # capped below the point where trusting deep exact portals lets contacts pump energy.
-    collider._mpr_to_gjk_overlap_ratio = 0.2
-    collider._mpr_to_gjk_overlap_ratio_valid = 0.6
-    # Minimum ratio of the current penetration to the cached warm-start penetration for MPR to be treated as
-    # having resolved a deeper, non-minimal portal (then upgraded to GJK). The jump only moves the threshold
-    # inside [tolerance, overlap_ratio * geom_pair_scale]: a depth at or below the manifold tolerance never
-    # refines, and one past the overlap cap always does.
-    collider._mpr_to_gjk_penetration_ratio = 5.0
     collider._box_MAXCONPAIR = 16
     collider._diff_pos_tolerance = 1e-2
     collider._diff_normal_tolerance = 1e-2
@@ -168,8 +157,8 @@ def create_collider_data(rigid: "RigidSolverSystem", sdf: SDF) -> "ColliderData"
     return collider
 
 
-def iter_collider_data(collider: "ColliderData") -> Iterator[array_class.DataItem]:
-    """Yield every array and static config of the collider, tagged by kind (see 'Solver.data')."""
+def iter_collider_data(collider: "ColliderData") -> Iterator[array_class.DataItem | array_class.ConfigItem]:
+    """Yield every array and static config of the collider (see 'Solver.data')."""
     structs = [
         (collider, "collider_config"),
         (collider.gjk, "gjk_config"),
@@ -183,7 +172,7 @@ def iter_collider_data(collider: "ColliderData") -> Iterator[array_class.DataIte
     elif collider.collider_config.has_non_box_plane_convex_convex:
         structs.append((collider.gjk, "gjk_state"))
     for owner, name in structs:
-        yield from array_class.iter_data(getattr(owner, name), name)
+        yield from array_class.iter_data(owner, name)
 
 
 def _init_static_config(collider: "ColliderData", rigid: "RigidSolverSystem") -> None:
@@ -291,9 +280,6 @@ def _init_collision_fields(collider: "ColliderData", rigid: "RigidSolverSystem")
         collider._sdf._sdf_info,
         mc_perturbation=collider._mc_perturbation,
         mc_tolerance=collider._mc_tolerance,
-        mpr_to_gjk_overlap_ratio=collider._mpr_to_gjk_overlap_ratio,
-        mpr_to_gjk_overlap_ratio_valid=collider._mpr_to_gjk_overlap_ratio_valid,
-        mpr_to_gjk_penetration_ratio=collider._mpr_to_gjk_penetration_ratio,
         diff_pos_tolerance=collider._diff_pos_tolerance,
         diff_normal_tolerance=collider._diff_normal_tolerance,
         contact_pruning_tolerance=rigid._options.contact_pruning_tolerance or 0.0,
@@ -1157,8 +1143,8 @@ class Collider:
         self._rigid = rigid_solver_system
 
     @property
-    def data(self) -> Iterator[array_class.DataItem]:
-        """Yield every array and static config of the collider, tagged by kind (see 'Solver.data')."""
+    def data(self) -> Iterator[array_class.DataItem | array_class.ConfigItem]:
+        """Yield every array and static config of the collider (see 'Solver.data')."""
         return iter_collider_data(self._rigid.collider_data)
 
     def reset(self, envs_idx=None, *, cache_only: bool = True) -> None:

@@ -849,11 +849,9 @@ class Mesh(FileMorph, TetGenMixin):
                     "'offset_quat'. Consider fixing your asset to use the standard Y-up convention instead."
                 )
                 y_up_quat = (1.0, -1.0, 0.0, 0.0)
-                self.offset_quat = tuple(
-                    gu.transform_quat_by_quat(
-                        np.array(y_up_quat, dtype=gs.np_float), np.array(self.offset_quat, dtype=gs.np_float)
-                    )
-                )
+                # Composed in double precision whatever the simulation precision, as every option value is, so the
+                # description reads back unchanged from a file
+                self.offset_quat = tuple(gu.transform_quat_by_quat(np.array(y_up_quat), np.array(self.offset_quat)))
                 if self.scale is not None:
                     scale_arr = np.atleast_1d(np.array(self.scale))
                     if scale_arr.size == 3:

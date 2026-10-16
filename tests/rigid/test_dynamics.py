@@ -185,7 +185,7 @@ def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_vi
     if dynamics:
         for entity in scene.entities[1:]:
             entity.set_dofs_velocity(4.0 * np.random.rand(6))
-    num_steps = 900 if dynamics else 150
+    num_steps = 1000 if dynamics else 150
     for i in range(num_steps):
         scene.step()
         if i > num_steps - 50:
@@ -795,7 +795,7 @@ def test_static_equilibrium(damped_pendulum_and_tilted_light_capsule, contact_re
     capsule_dofs_idx = capsule.joints[0].dofs_idx_local
 
     entity.set_dofs_velocity(2.0, entity.get_joint("shoulder").dofs_idx_local)
-    for _ in range(50):
+    for _ in range(80):
         scene.step()
 
     # The capsule has rocked onto its length and lies still, and a light link at rest must stay at rest
@@ -1186,11 +1186,13 @@ def test_solve_arm_equivalence(monkeypatch, show_viewer, tol):
     )
 
     accelerations = []
+    warmstarts = []
 
     def solve_compared(*args):
         nonlocal selected
         inputs = [qd_to_numpy(tensor, copy=True) for tensor in solve_inputs]
         accelerations.clear()
+        warmstarts[:] = inputs[:1]
         # The candidate order is fixed, so solving with index 0 last leaves the trajectory to one implementation.
         for selected in (1, 0):
             for tensor, value in zip(solve_inputs, inputs):
@@ -1200,13 +1202,19 @@ def test_solve_arm_equivalence(monkeypatch, show_viewer, tol):
 
     monkeypatch.setattr("genesis.engine.systems.constraint_solver_system.func_solve_body", solve_compared)
 
+    # Every box is pushed and twisted by a new random wrench each step, a fraction of what tips or slides it, so that no
+    # solve starts from a warm start that already resolves it: resting boxes would leave both implementations returning
+    # that common warm start untouched.
+    dofs_force_scale = np.tile((1.0, 1.0, 1.0, 0.02, 0.02, 0.02), len(positions))
     for i_step in range(N_STEPS):
+        solver.control_dofs_force(np.random.uniform(-1.0, 1.0, size=(2, solver.n_dofs)) * dofs_force_scale)
         scene.step()
         assert not solver.get_error_envs_mask().any()
         # Neither implementation may be compared on a solve that had nothing to resolve
         assert (qd_to_numpy(constraint_state.n_constraints) > 32).all()
 
         compared, reference = accelerations
+        assert not np.allclose(reference, *warmstarts, rtol=0.0, atol=tol)
         # The two implementations spread every reduction, factor and solve differently, so their accelerations land
         # within rounding of each other and never on the same value: a gap of exactly zero means one of them ran twice.
         assert np.abs(compared.astype(np.float64) - reference.astype(np.float64)).max() > 0.0

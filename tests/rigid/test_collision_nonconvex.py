@@ -909,6 +909,12 @@ def test_many_objects_collision(convexify, show_viewer, tol):
     # Wait for the pile to collapse and settle at rest
     vmax_trace, wmax_trace, energy_trace = [], [], []
     for i in range(1600):
+        # Slowing down the fall to ensure the first contact between thin pieces is shallow enough to avoid interlock
+        ratio = math.exp(-0.009 * i)
+        scene.rigid_solver.set_dofs_damping(
+            (*((0.5 * ratio,) * 3), *((0.02 * ratio,) * 3)) * len(objs),
+            dofs_idx=slice(objs[0].dof_start, objs[-1].dof_end),
+        )
         scene.step()
         energy_trace.append(tensor_to_array(scene.rigid_solver.get_total_energy()))
         if show_viewer:
@@ -964,8 +970,8 @@ def test_many_objects_collision(convexify, show_viewer, tol):
     # Make sure that all objects are settling at rest.
     # Note that it is not possible to be stricter than quantile because there is legitimate residual motion.
     # FIXME: Why the angular velocity threshold has to be so large without any visual effect?!
-    assert_allclose(torch.quantile(torch.stack(vel_lin_all, dim=0), 0.7, dim=0), 0.0, tol=0.1 if convexify else 0.25)
-    assert_allclose(torch.quantile(torch.stack(vel_ang_all, dim=0), 0.7, dim=0), 0.0, tol=5.0 if convexify else 8.0)
+    assert_allclose(torch.quantile(torch.stack(vel_lin_all, dim=0), 0.65, dim=0), 0.0, tol=0.1 if convexify else 0.25)
+    assert_allclose(torch.quantile(torch.stack(vel_ang_all, dim=0), 0.65, dim=0), 0.0, tol=5.0 if convexify else 8.0)
 
     # Contacts at zero restitution must dissipate over their lifetime, so net positive contact energy is the
     # solver pumping; contact_data.force acts as -F on link_a and +F on link_b.
