@@ -96,18 +96,17 @@ def support_driver(
     elif geom_type == gs.GEOM_TYPE.TERRAIN:
         if qd.static(collider_static_config.has_terrain):
             v, vid = support_field._func_support_prism(i_b, direction, collider_state)
-    elif geom_type == gs.GEOM_TYPE.MESH and rigid_config.enable_mujoco_compatibility:
+    elif qd.static(rigid_config.enable_mujoco_compatibility):
         # If mujoco-compatible, do exhaustive search for the vertex
-        v, v_, vid = support_mesh(i_g, i_b, i_o, direction, pos, quat, gjk_state, dyn_info, collider_info)
+        if geom_type == gs.GEOM_TYPE.MESH:
+            v, v_, vid = support_mesh(i_g, i_b, i_o, direction, pos, quat, gjk_state, dyn_info, collider_info)
+        else:
+            v, v_, vid = support_field._func_support_world(
+                i_g, direction, pos, quat, dyn_info, collider_info, exhaustive=True
+            )
     else:
         v, v_, vid = support_field._func_support_world(
-            i_g,
-            direction,
-            pos,
-            quat,
-            dyn_info,
-            collider_info,
-            exhaustive=qd.static(rigid_config.enable_mujoco_compatibility),
+            i_g, direction, pos, quat, dyn_info, collider_info, exhaustive=False
         )
     return v, v_, vid
 
