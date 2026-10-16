@@ -54,6 +54,8 @@ DEFAULT_PLANE_TEXTURE_PATH = "textures/checker.png"  # use checkerboard texture 
 WT_CACHE_VERSION = 7
 # Bumped when the wall-thickness estimate changes for a fixed (mesh, quantile): forces a cache miss on stale entries.
 WTH_CACHE_VERSION = 1
+# Bumped when particle sampling changes for a fixed (mesh, size, sampler): forces a cache miss on stale entries.
+PTC_CACHE_VERSION = 1
 
 
 def color_f32_to_u8(color) -> np.ndarray:
@@ -182,9 +184,9 @@ def get_asset_path(file):
 def get_gsd_path(verts, faces, sdf_res, sdf_cell_size):
     # The grid is fully determined by the mesh plus the resolved per-axis resolution and cell size, so the key is
     # built from those rather than the material defaults: the resolution now also depends on wall thickness, so the
-    # defaults no longer identify the grid. Schema tag bumped when the on-disk SDF layout changes (e.g. scalar ->
-    # per-axis cell size); forces a cache miss on stale entries without manually clearing the cache.
-    schema = "v3-res-keyed"
+    # defaults no longer identify the grid. Schema tag bumped when the on-disk SDF layout or its values change (e.g.
+    # scalar -> per-axis cell size). It forces a cache miss on stale entries without manually clearing the cache.
+    schema = "v4-fast-winding"
     hashkey = get_hashkey(verts, faces, sdf_res, sdf_cell_size, schema)
     return os.path.join(get_gsd_cache_dir(), f"{hashkey}.gsd")
 
@@ -203,7 +205,7 @@ def get_cvx_cache(verts, faces, coacd_options):
 
 
 def get_ptc_cache(verts, faces, p_size, sampler):
-    return MeshCache(get_ptc_cache_dir(), "ptc", verts, faces, p_size, sampler)
+    return MeshCache(get_ptc_cache_dir(), "ptc", verts, faces, p_size, sampler, PTC_CACHE_VERSION)
 
 
 def get_tet_cache(verts, faces, tet_cfg):
@@ -357,7 +359,11 @@ def compute_sdf_data(mesh, res):
     X, Y, Z = np.meshgrid(x, y, z, indexing="ij")
     query_points = np.stack([X, Y, Z], axis=-1).reshape((-1, 3))
 
-    voxels, *_ = igl.signed_distance(query_points, mesh.vertices, mesh.faces)
+    # The fast winding number sign makes the distances bitwise identical for identical inputs, which the default sign
+    # computation of libigl breaks in the last bits from one call to the next.
+    voxels, *_ = igl.signed_distance(
+        query_points, mesh.vertices, mesh.faces, sign_type=igl.SIGNED_DISTANCE_TYPE_FAST_WINDING_NUMBER
+    )
     voxels = voxels.reshape((res, res, res)).astype(gs.np_float, copy=False)
 
     T_mesh_to_sdf = np.eye(4, dtype=gs.np_float)
