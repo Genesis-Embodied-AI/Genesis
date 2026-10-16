@@ -135,7 +135,6 @@ class RigidSolverData(Data):
         self.errno = system._errno
 
 
-@qd.data_oriented
 class RigidSolverSystem(System):
     """Manager of the rigid substep, owning the data of the rigid solver of the scene, which reaches it through
     forwarding attributes.

@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from genesis.engine.scene import Scene
 
 
-@qd.data_oriented
 class RigidRigidContactSystem(System):
     """System detecting the contacts between the rigid geoms of the scene, which it adds when it enables collisions.
 

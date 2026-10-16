@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from genesis.engine.scene import Scene
 
 
-@qd.data_oriented
 class ConstraintSolverSystem(System):
     """System running the constraint solve of the rigid solver, which the scene adds unless it disables constraints.
 
