@@ -143,6 +143,7 @@ def test_urdf_scale(mesh_urdf, show_viewer):
 # ==================== Y-Up Coordinate Tests ====================
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_mesh_yup(show_viewer):
     scene = gs.Scene(show_viewer=show_viewer)
