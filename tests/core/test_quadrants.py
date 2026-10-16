@@ -5,10 +5,15 @@ import pathlib
 import subprocess
 import sys
 
-import pytest
 import numpy as np
+import pytest
+
+import quadrants as qd
 
 import genesis as gs
+from genesis.engine.solvers.rigid.collider.collider import kernel_detection
+from genesis.engine.solvers.rigid.constraint.solver import linear_to_lower_tri
+from genesis.engine.solvers.rigid.rigid_solver import kernel_substep_dynamics
 from genesis.utils.misc import qd_to_numpy, qd_to_torch
 
 from ..utils.assertions import assert_allclose
@@ -55,8 +60,6 @@ def _initialize_genesis(backend: gs.constants.backend | str):
     ],
 )
 def test_to_torch(qd_type_spec, batch_shape, arg_shape):
-    import quadrants as qd
-
     for _ in range(10):
         QD_TYPE_MAP = {
             ("field", "scalar"): qd.field,
@@ -114,13 +117,9 @@ def gs_static_child(args: list[str]):
 
     scene.step()
     assert qd_to_numpy(scene.rigid_solver.collider.collider_state.n_contacts) == args.expected_num_contacts
-    from genesis.engine.solvers.rigid.rigid_solver import kernel_substep_collision
-
-    assert (
-        kernel_substep_collision._primal.src_ll_cache_observations.cache_key_generated == args.expected_use_src_ll_cache
-    )
-    assert kernel_substep_collision._primal.src_ll_cache_observations.cache_validated == args.expected_src_ll_cache_hit
-    assert kernel_substep_collision._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
+    assert kernel_detection._primal.src_ll_cache_observations.cache_key_generated == args.expected_use_src_ll_cache
+    assert kernel_detection._primal.src_ll_cache_observations.cache_validated == args.expected_src_ll_cache_hit
+    assert kernel_detection._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
 
     sys.exit(RET_SUCCESS)
 
@@ -212,9 +211,7 @@ def gs_num_envs_child(args: list[str]):
     scene.step()
     assert (qd_to_numpy(scene.rigid_solver.collider.collider_state.n_contacts) > 0).all()
 
-    from genesis.engine.solvers.rigid.rigid_solver import kernel_substep_collision, kernel_substep_dynamics
-
-    for kernel in (kernel_substep_dynamics, kernel_substep_collision):
+    for kernel in (kernel_substep_dynamics, kernel_detection):
         assert kernel._primal.fe_ll_cache_observations.cache_hit == args.expected_fe_ll_cache_hit
         assert kernel._primal.src_ll_cache_observations.cache_key_generated == args.expected_use_src_ll_cache
         assert kernel._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
@@ -315,8 +312,6 @@ def change_scene(args: list[str]):
     z = qpos.reshape((*qpos.shape[:-1], args.n_objs, 7))[..., 2]
     assert_allclose(z, 0.2, atol=1e-3)
 
-    from genesis.engine.solvers.rigid.rigid_solver import kernel_substep_dynamics
-
     assert kernel_substep_dynamics._primal.src_ll_cache_observations.cache_validated == args.expected_src_ll_cache_hit
     assert kernel_substep_dynamics._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
 
@@ -375,9 +370,6 @@ def test_linear_to_lower_tri(n_dofs):
     # Metal's GPU sqrt can return slightly-below-exact results for perfect squares (e.g. sqrt(11881) ->
     # ~108.999 instead of 109), so the sqrt-based triangular index formula must post-correct the row index
     # against off-by-one selection.
-    import quadrants as qd
-    from genesis.engine.solvers.rigid.constraint.solver import linear_to_lower_tri
-
     n_lower_tri = n_dofs * (n_dofs + 1) // 2
     result_row = qd.field(dtype=qd.i32, shape=(n_lower_tri,))
     result_col = qd.field(dtype=qd.i32, shape=(n_lower_tri,))
