@@ -758,7 +758,7 @@ def test_elliptic_cone_push_isotropy(is_box_mesh, scale, precision, show_viewer,
         ),
         rigid_options=gs.options.RigidOptions(
             friction_cone=gs.friction_cone.elliptic,
-            # Convex resolution generates an artificial upward force to initiate sliding, rocking the box onto its edges.
+            # Convex resolution generates an artificial upward force during sliding, rocking the box onto its edges.
             contact_resolution=gs.contact_resolution.signorini,
         ),
         viewer_options=gs.options.ViewerOptions(
