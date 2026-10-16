@@ -233,6 +233,16 @@ def init(
             cpu_max_num_threads=1,
         )
 
+    # The kernels compiled for a couple of scenes outgrow the default size bound of the offline cache of Quadrants, past
+    # which a quarter of the cached kernels are evicted every time Quadrants shuts down, to be compiled again by the
+    # next session.
+    # FIXME: quadrants#980 - The bound is a 32-bit integer, which caps it at 2 GiB, so a working set larger than that
+    # still gets evicted.
+    if "QD_OFFLINE_CACHE_MAX_SIZE_OF_FILES" not in os.environ:
+        qd_init_kwargs.update(
+            offline_cache_max_size_of_files=2**31 - 1,
+        )
+
     if seed is not None:
         global SEED
         SEED = seed
