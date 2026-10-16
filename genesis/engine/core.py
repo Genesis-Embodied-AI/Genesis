@@ -158,6 +158,8 @@ class ActionCollection:
         `rank` is valid only when entries are dependency-free. Use explicit pipeline phases for dependent Actions.
         """
         where = f"{type(self._owner).__name__}.{self._name}"
+        if self._frozen is not None:
+            gs.raise_exception(f"{where} is already frozen.")
         if not isinstance(action, Action):
             gs.raise_exception(f"{where}: expected an Action, got {type(action).__name__}.")
         # The manager invokes every Action of this collection from one kind of call site. A host function fails in
@@ -168,9 +170,15 @@ class ActionCollection:
         # this collection, and a mismatch fails here instead of during graph compilation
         function = getattr(action.function, "fn", action.function)
         parameters = list(inspect.signature(function).parameters.values())
-        if any(parameter.kind in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD) for parameter in parameters):
-            gs.raise_exception(f"{where}: {function.__qualname__} must not use *args or **kwargs.")
+        positional_kinds = (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        if any(parameter.kind not in positional_kinds for parameter in parameters):
+            gs.raise_exception(f"{where}: {function.__qualname__} must take positional parameters only.")
         n_bound = len(action.bound_args)
+        if n_bound > len(parameters):
+            gs.raise_exception(
+                f"{where}: {function.__qualname__} takes {len(parameters)} parameter(s), "
+                f"but the Action binds {n_bound}."
+            )
         call_args = tuple(parameter.name for parameter in parameters[n_bound:])
         if call_args != self._call_args:
             gs.raise_exception(

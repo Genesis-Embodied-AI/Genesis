@@ -1,3 +1,5 @@
+import dataclasses
+
 import pytest
 
 import quadrants as qd
@@ -346,6 +348,9 @@ def test_protocol_and_action_collection_enforce_the_schedule_contract():
     def stage_with_wrong_name(marker: qd.template(), other: qd.template()):
         pass
 
+    def host_with_keyword_only(marker, *, segment):
+        pass
+
     @qd.func
     def inline(marker: qd.template(), segment: qd.template()):
         pass
@@ -362,7 +367,13 @@ def test_protocol_and_action_collection_enforce_the_schedule_contract():
         def on_stage(self, action: StageAction, rank: int | None = None):
             self.stages.add(action, rank=rank)
 
+    class HostManager(System):
+        @System.action_collection(kind="host", call_args=("segment",))
+        def stages(self):
+            pass
+
     manager = Manager(object())
+    host_manager = HostManager(object())
     actions = [StageAction(stage, (object(),)) for _ in range(4)]
 
     with pytest.raises(gs.GenesisException):
@@ -371,6 +382,7 @@ def test_protocol_and_action_collection_enforce_the_schedule_contract():
         manager.on_stage(actions[0])
 
     manager.is_building = True
+    host_manager.is_building = True
     with pytest.raises(gs.GenesisException):
         manager.on_stage(InlineAction(inline, (object(),)))
     with pytest.raises(gs.GenesisException):
@@ -381,6 +393,10 @@ def test_protocol_and_action_collection_enforce_the_schedule_contract():
         manager.stages.add(StageAction(variadic, ()))
     with pytest.raises(gs.GenesisException):
         manager.stages.add(StageAction(stage_with_wrong_name, (object(),)))
+    with pytest.raises(gs.GenesisException):
+        host_manager.stages.add(HostAction(host_with_keyword_only, (object(),)))
+    with pytest.raises(gs.GenesisException):
+        manager.stages.add(StageAction(stage, (object(), object(), object())))
     with pytest.raises(gs.GenesisException):
         manager.stages.add(actions[0], rank=-1)
     with pytest.raises(gs.GenesisException):
@@ -397,6 +413,8 @@ def test_protocol_and_action_collection_enforce_the_schedule_contract():
     manager.stages.freeze()
 
     assert manager.stages.actions == (actions[2], actions[1], actions[0], actions[3])
+    with pytest.raises(gs.GenesisException):
+        manager.stages.add(StageAction(stage, (object(),)))
     assert manager.on_stage.__doc__.endswith("Guide: protocol.md\nReference: paper")
 
 
@@ -427,6 +445,15 @@ def test_global_data_context_collects_inherited_and_declared_data_for_actions():
         def combined(self):
             return AutomaticData(), CustomData()
 
+    @dataclasses.dataclass(frozen=True)
+    class CustomDataclass:
+        value: int
+
+    class InvalidClassParticipant(System):
+        @System.data
+        def data_class(self):
+            return CustomDataclass
+
     @qd.func(requires_top_level=True)
     def write(system: qd.template(), automatic: int, custom: int):
         for _ in range(1):
@@ -450,6 +477,10 @@ def test_global_data_context_collects_inherited_and_declared_data_for_actions():
     with pytest.raises(gs.GenesisException):
         invalid_engine = Engine(object())
         invalid_engine.add_system(InvalidParticipant(object()))
+        invalid_engine.create_context()
+    with pytest.raises(gs.GenesisException):
+        invalid_engine = Engine(object())
+        invalid_engine.add_system(InvalidClassParticipant(object()))
         invalid_engine.create_context()
 
 

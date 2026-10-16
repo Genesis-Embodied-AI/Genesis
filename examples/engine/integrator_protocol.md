@@ -91,8 +91,8 @@ every step      gather (all) -> dofs_pos += dt * dofs_vel -> scatter (all)
 ## Rejected at registration
 
 - An Action of the wrong kind for its parameter, for example an `InlineAction` passed as `gather`.
-- A function whose parameters after the bound arguments differ from `(segment,)` for `count`, `gather` and `scatter`,
-  or from `()` for `init`.
+- A function that takes non-positional parameters, or whose positional parameters after the bound arguments differ
+  from `(segment,)` for `count`, `gather` and `scatter`, or from `()` for `init`.
 - A rank another participant of the Integrator already holds.
 
 ## References

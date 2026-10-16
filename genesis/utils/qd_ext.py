@@ -25,6 +25,8 @@ class GlobalDataContext:
         for index, value in enumerate(data):
             if isinstance(value, (tuple, list, dict)):
                 raise TypeError("GlobalDataContext parameters must be separate objects, not composite containers.")
+            if isinstance(value, type):
+                raise TypeError("GlobalDataContext parameters must be instances, not classes.")
             if not (
                 isinstance(value, (Ndarray, qd.Tensor))
                 or dataclasses.is_dataclass(value)
