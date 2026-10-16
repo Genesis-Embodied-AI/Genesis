@@ -11,6 +11,7 @@ from threading import Event, RLock, Semaphore, Thread
 from typing import TYPE_CHECKING, Optional
 
 import numpy as np
+import torch
 
 import OpenGL
 from OpenGL.GL import *
@@ -1152,6 +1153,12 @@ class Viewer(pyglet.window.Window):
     def start(self, auto_refresh=True):
         import pyglet  # For some reason, this is necessary if 'pyglet.window.xlib' fails to import...
         import pyglet.app
+
+        # The garbage collector may release the GPU memory of Quadrants arrays on this thread, which requires the
+        # CUDA context they belong to, the primary context of the device, to be current on it.
+        # FIXME: quadrants#981 - Quadrants frees device memory without making its context current.
+        if gs.device.type == "cuda":
+            torch.cuda.set_device(gs.device)
 
         try:
             import pyglet.display.xlib
