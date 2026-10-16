@@ -870,7 +870,6 @@ def initialize_genesis(
             performance_mode=performance_mode,
             use_deterministic_algorithms=use_deterministic_algorithms,
         )
-        gc.collect()
 
         if gs.backend != gs.cpu and gs.device.index is not None:
             # The device torch selected must be one this worker is allowed to use. Anything else - including a
@@ -886,8 +885,6 @@ def initialize_genesis(
         yield
     finally:
         gs.destroy()
-        # Double garbage collection is over-zealous since gstaichi 2.2.1 but let's do it anyway
-        gc.collect()
         gc.collect()
 
 
