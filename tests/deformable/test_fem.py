@@ -198,6 +198,7 @@ def test_implicit_falling_sphere_box(coupler_type, material_model, show_viewer):
     SPHERE_RHO = 500.0
     BOX_POS = (0.0, 0.1, 0.3)
     BOX_SIZE = 0.05
+    N_STEPS_RESET = 5
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -247,9 +248,23 @@ def test_implicit_falling_sphere_box(coupler_type, material_model, show_viewer):
     assert_allclose(sphere_mass_1, sphere_mass_2, tol=gs.EPS)
     assert_allclose(sphere_mass_ref, sphere_mass_1, rtol=0.01)  # Large tolerance due to tessellation
 
-    # Run simulation
+    if coupler_type == gs.options.SAPCouplerOptions:
+        for entity in (sphere, box):
+            pressure_field = entity.pressure_field_np.copy()
+            entity.compute_pressure_field()
+            assert_equal(entity.pressure_field_np, pressure_field)
+
+    # Run simulation, bitwise reproducible after a reset
     n_steps = 40 if coupler_type == gs.options.SAPCouplerOptions else 150
-    for _ in range(n_steps):
+    for _ in range(N_STEPS_RESET):
+        scene.step()
+    entities_pos = [entity.get_state().pos for entity in (sphere, box)]
+    scene.reset()
+    for _ in range(N_STEPS_RESET):
+        scene.step()
+    for entity, pos in zip((sphere, box), entities_pos):
+        assert_equal(entity.get_state().pos, pos)
+    for _ in range(n_steps - N_STEPS_RESET):
         scene.step()
 
     for entity, init_pos, entity_halfsize_ref in zip(scene.entities, (SPHERE_POS, BOX_POS), (SPHERE_RADIUS, BOX_SIZE)):
