@@ -733,12 +733,16 @@ def test_elliptic_cone_push_isotropy(is_box_mesh, scale, precision, show_viewer,
     # height places the pillar rather than driving it: its plane contact carrying its weight holds it there.
     PUSH_START_LOCAL = (-0.15 * scale, 0.03 * scale, (1 - 1e-4) * 0.5 * PILLAR_HEIGHT)
     PUSH_END_LOCAL = (0.02 * scale, 0.03 * scale, (1 - 1e-4) * 0.5 * PILLAR_HEIGHT)
-    # Scaling gravity with length preserves motion. Force scales with mass * gravity, and torque with force * length.
+    # Bounds cover the measured spread across backends, array layouts and debug modes, with headroom on a 1-2-5 grid.
+    # Each bound scales with its quantity and has the precision tolerance as a floor. Shared bounds cover the largest
+    # spread among their quantities. Directions and angular rates are scale-invariant because time is held fixed.
     LENGTH_TOL = max(tol, (2.0 if is_fp64 else 0.1) * tol * scale)
     DIRECTION_TOL = (2.0 if is_fp64 else 1.0) * tol
+    # Constraint-solve residuals propagate into velocities and forces, requiring more slack than contact geometry.
     LIN_VEL_TOL = max(tol, 2.0 * tol * scale)
     ANG_VEL_TOL = (50.0 if is_fp64 else 10.0) * tol
-    # Coplanar contacts share a load with a null space, so individual forces allow more spread than the net torque.
+    # Force scales as mass * gravity (scale**4), and torque gains another length factor. The force bound also covers
+    # stiffness amplification and the nonunique split across coplanar contacts (see the net-wrench checks below).
     FORCE_TOL = max(tol, (500.0 if is_fp64 else 50.0) * tol * scale**4)
     TORQUE_TOL = max(tol, (10.0 if is_fp64 else 5.0) * tol * scale**5)
     GROUND_TOL = max(tol, 2e-4 * scale)
@@ -856,7 +860,8 @@ def test_elliptic_cone_push_isotropy(is_box_mesh, scale, precision, show_viewer,
 
         contacts = scene.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=True)
         counts = [len(positions) for positions in contacts["position"]]
-        # Contact 0 may select any tied support vertex. The complete manifold must agree across rotated scenes.
+        # Contact 0 may select any tied support vertex. Perturbation and pruning must recover the same complete
+        # manifold across rotated scenes regardless of that initial choice.
         is_count_matched = counts == counts[:1] * N_ENVS
         assert is_count_matched, f"contact count differs across envs at step {i_step}: {counts}"
         # Once all geom pairs touch, each pair must retain the contacts supporting its face.
