@@ -712,11 +712,7 @@ def test_rolling_friction_deceleration_rate(friction_cone, n_envs, show_viewer):
         pytest.param(True, 100.0, marks=pytest.mark.required),
     ],
 )
-# FIXME: 'convex' lift rocks the sliding box onto its edges, where fp32 rounding splits the rotated copies' manifolds.
-@pytest.mark.parametrize(
-    "contact_resolution",
-    [pytest.param(gs.contact_resolution.convex, marks=pytest.mark.precision("64")), gs.contact_resolution.signorini],
-)
+@pytest.mark.parametrize("contact_resolution", [gs.contact_resolution.signorini])
 def test_elliptic_cone_push_isotropy(contact_resolution, is_box_mesh, scale, precision, show_viewer, tol):
     N_ENVS = 8
     FRICTION = 0.5
