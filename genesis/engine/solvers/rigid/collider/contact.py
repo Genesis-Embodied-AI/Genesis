@@ -618,8 +618,10 @@ def func_contact_orthogonals(
         i_l = dyn_info.geoms.link_idx[i_g]
         rot = gu.qd_quat_to_R(dyn_state.links.i_quat[i_l, i_b], EPS)
         axis_0_local, axis_1_local = gu.qd_orthogonals(rot.transpose() @ normal)
-        axis_0 = rot @ axis_0_local
-        axis_1 = rot @ axis_1_local
+        # Tilting along a principal direction can leave an entire edge at equal depth, allowing repeated contacts.
+        # Diagonal directions break these ties on faces aligned with the inertial frame
+        axis_0 = qd.sqrt(0.5) * (rot @ (axis_0_local + axis_1_local))
+        axis_1 = qd.sqrt(0.5) * (rot @ (axis_1_local - axis_0_local))
 
     return axis_0, axis_1
 

@@ -70,7 +70,7 @@ class Collider:
     def __init__(self, rigid_solver: "RigidSolver"):
         self._solver = rigid_solver
 
-        self._mc_perturbation = 1e-3 if self._solver._enable_mujoco_compatibility else 3e-3
+        self._mc_perturbation = 1e-3 if self._solver._enable_mujoco_compatibility else 5e-3
         self._mc_tolerance = 1e-3 if self._solver._enable_mujoco_compatibility else 1.5e-2
         self._box_MAXCONPAIR = 16
         self._diff_pos_tolerance = 1e-2
