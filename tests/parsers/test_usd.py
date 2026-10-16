@@ -403,7 +403,12 @@ def test_physics_material_friction_and_density(usd_scene, physics_material_usd):
     # Without an explicit material density, the authored physics-material density (300) and MassAPI
     # density (500) drive the link mass; recompute_inertia re-derives from geometry and authored
     # densities keep driving that estimate.
-    scene = gs.Scene()
+    # See build_mjcf_scene in conftest.py for collision detection.
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
+    )
     entities = scene.add_stage(
         morph=gs.morphs.USD(
             file=physics_material_usd,
@@ -423,7 +428,12 @@ def test_physics_material_friction_and_density(usd_scene, physics_material_usd):
 
 @pytest.mark.required
 def test_align_anchor_with_geom_densities(density_align_usd):
-    scene = gs.Scene()
+    # See build_mjcf_scene in conftest.py for collision detection.
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
+    )
     body = scene.add_entity(
         gs.morphs.USD(
             file=density_align_usd,
@@ -452,7 +462,12 @@ def test_align_anchor_with_geom_densities(density_align_usd):
 @pytest.mark.required
 @pytest.mark.parametrize("align, rho", [(True, None), (None, 1000.0), (None, None)])
 def test_align_requires_all_or_none_geom_densities(density_align_usd, align, rho):
-    scene = gs.Scene()
+    # See build_mjcf_scene in conftest.py for collision detection.
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
+    )
 
     # A density authored on only part of a link's geoms leaves the anchor sensitive to the density the others take.
     # No kinematic entity holds such a density (see '_align_free_roots'), so an explicit align=True raises. The
@@ -510,7 +525,12 @@ def test_collision_approximations(usd_scene, collision_approximation_usd):
 
     # An authored 'none' pins the exact mesh: morph-level decimation only applies to colliders
     # without an authored approximation.
-    scene = gs.Scene()
+    # See build_mjcf_scene in conftest.py for collision detection.
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
+    )
     entities = scene.add_stage(
         morph=gs.morphs.USD(
             file=collision_approximation_usd,
