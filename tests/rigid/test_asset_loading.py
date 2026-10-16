@@ -47,7 +47,11 @@ def test_depth_first_link_ordering(xml_path, model_name, show_viewer):
 @pytest.mark.slow  # ~250s
 @pytest.mark.required
 def test_mjcf_parsing_with_include():
-    scene = gs.Scene()
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
+    )
     robot1 = scene.add_entity(
         morph=gs.morphs.MJCF(
             file="xml/franka_emika_panda/scene.xml",
@@ -564,7 +568,12 @@ def test_urdf_parsing_merge_fixed_links(urdf_path, fixed, show_viewer, tol):
     POS = (0.0, -0.2, 0.5)
     EULER = (0.0, 90.0, 45.0)
 
-    scene = gs.Scene(show_viewer=show_viewer)
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
+        show_viewer=show_viewer,
+    )
     urdf_rootdir = os.path.dirname(urdf_path)
     asset_path = get_hf_dataset(pattern=os.path.join(urdf_rootdir, "*") if urdf_rootdir else urdf_path)
     robot_1 = scene.add_entity(
@@ -774,7 +783,11 @@ def test_default_armature(xml_path, trees_and_slider_mjcf, tol):
         )
         carriers.append((carrier, mounted))
 
-    scene = gs.Scene()
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
+    )
     robot = scene.add_entity(morph)
     robot_without_armature = scene.add_entity(morph_without_armature)
     robot_heterogeneous = scene.add_entity(morphs_heterogeneous)
