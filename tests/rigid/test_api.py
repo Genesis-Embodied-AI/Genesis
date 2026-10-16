@@ -471,6 +471,7 @@ def test_batched_info(batch_links_info, batch_joints_info, batch_dofs_info, tol)
 
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
             batch_links_info=batch_links_info,
             batch_joints_info=batch_joints_info,
             batch_dofs_info=batch_dofs_info,
