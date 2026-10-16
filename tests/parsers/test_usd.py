@@ -41,7 +41,6 @@ from .conftest import (
 # ==================== Primitive Tests ====================
 
 
-@pytest.mark.slow  # ~450s
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["all_primitives_mjcf"])
 @pytest.mark.parametrize("scale", [1.0, 2.0])
@@ -54,7 +53,6 @@ def test_primitives_mjcf_vs_usd(xml_path, all_primitives_usd, scale, tol):
 # ==================== Joint Tests ====================
 
 
-@pytest.mark.slow  # ~350s
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["all_joints_mjcf"])
 @pytest.mark.parametrize("scale", [1.0, 2.0])
@@ -340,7 +338,6 @@ def test_ur10_visual_fallback():
             assert link.n_vgeoms > 0, f"Link {link.name} has collision but no visual geometry (missing fallback)."
 
 
-@pytest.mark.slow  # ~250s
 @pytest.mark.required
 def test_humanoid_generic_joint_detection():
     asset_path = get_hf_dataset(pattern="usd/Humanoid/*")

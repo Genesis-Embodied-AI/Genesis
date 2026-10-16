@@ -9,7 +9,6 @@ from genesis.utils.misc import gaussian_crosstalk_kernel, tensor_to_array
 from ..utils.assertions import assert_allclose, assert_equal
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_surface_distance_sensor_box_sphere(show_viewer, tol, n_envs):
@@ -159,7 +158,6 @@ def test_surface_distance_sensor_box_sphere(show_viewer, tol, n_envs):
     )
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
@@ -635,7 +633,6 @@ def test_contact_depth_probe_hysteresis_gain_and_dead_resample(show_viewer, tol)
     assert not torch.allclose(dead_a, dead_b, atol=1e-3)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_filler_probes_radius_zero(show_viewer, tol, n_envs):

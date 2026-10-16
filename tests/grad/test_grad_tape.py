@@ -80,7 +80,6 @@ def test_horizon_truncation_matches_independent_scenes(model_name, request, show
     assert_allclose(grad2_a, grad2_c, **tol)
 
 
-@pytest.mark.slow
 @pytest.mark.required
 def test_sim_vs_solver_state_grad_parity(show_viewer):
     scene = gs.Scene(

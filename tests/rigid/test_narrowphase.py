@@ -1078,7 +1078,6 @@ def test_contact_patch_full_box_box_manifold(show_viewer: bool) -> None:
         assert_allclose(penetrations, 1e-3, atol=1e-5)
 
 
-@pytest.mark.slow  # ~150s
 @pytest.mark.required
 @pytest.mark.parametrize("gjk_collision", [True, False])
 @pytest.mark.parametrize("n_base_sides", [4, 32])

@@ -208,7 +208,6 @@ def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_vi
             assert_allclose(qpos[3:], 0, atol=0.03)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["double_ball_pendulum"])
 def test_apply_external_wrench(xml_path, show_viewer, tol):

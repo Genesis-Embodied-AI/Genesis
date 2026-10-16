@@ -14,7 +14,6 @@ from ..utils.assets import get_hf_dataset
 from .conftest import RENDERER_TYPE
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)

@@ -44,7 +44,6 @@ def test_depth_first_link_ordering(xml_path, model_name, show_viewer):
         assert sorted(subtree) == list(range(i, i + len(subtree))), f"subtree at link {i} is not contiguous"
 
 
-@pytest.mark.slow  # ~250s
 @pytest.mark.required
 def test_mjcf_parsing_with_include():
     scene = gs.Scene(
@@ -114,7 +113,6 @@ def test_ground_plane_preservation(box_plan):
     assert_equal(sum(geom.type == gs.GEOM_TYPE.BOX for geom in entity_without_ground.geoms), 1)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_urdf_parsing(show_viewer, tol):
     POS_OFFSET = 0.8
@@ -560,7 +558,6 @@ def test_parsing_inertia_defaults(
     assert_allclose(entity.get_pos(), (0.0, 0.0, -0.03), atol=5e-4)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("urdf_path", ["chain.urdf", "dual_arms_glb/dual_arms_glb.urdf", "dual_arms_primitives.urdf"])
 @pytest.mark.parametrize("fixed", [False, True])
@@ -662,7 +659,6 @@ def test_mjcf_parsing_merge_fixed_links(xml_path, show_viewer):
     assert_allclose(robot.get_quat(), QUAT, tol=gs.EPS)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_urdf_capsule(tmp_path, show_viewer, tol):
     urdf_path = tmp_path / "capsule.urdf"
@@ -840,7 +836,6 @@ def test_default_armature(xml_path, trees_and_slider_mjcf, tol):
     assert_allclose(robot_trees.get_links_invweight()[:, 4], (slider_invweight / 3.0, 0.0), tol=tol)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_xacro_loading(xacro_robot, show_viewer, tol):
     scene = gs.Scene(show_viewer=show_viewer)
@@ -1018,7 +1013,7 @@ def test_color_overwrite(overwrite, urdf_with_external_assets, show_viewer):
 @pytest.mark.parametrize(
     "xml_path",
     [
-        pytest.param("xml/franka_emika_panda/panda.xml", marks=pytest.mark.slow),
+        "xml/franka_emika_panda/panda.xml",
         "urdf/go2/urdf/go2.urdf",
         "urdf/panda_bullet/panda.urdf",
     ],
@@ -1125,7 +1120,6 @@ def test_robot_scale_and_dofs_armature(xml_path, monkeypatch, tol):
     assert_allclose(qf_passive, 0.0, tol=tol)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_mesh_primitive_COM(show_viewer):
     scene = gs.Scene(
