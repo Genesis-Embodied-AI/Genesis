@@ -1,5 +1,6 @@
 import collections.abc
 import dataclasses
+import gc
 import hashlib
 import io
 import json
@@ -301,6 +302,11 @@ class Scene(RBC):
             if getattr(self, "_sim", None) is not None:
                 self._sim.destroy()
                 self._sim = None
+
+                # Reference cycles leave the Quadrants arrays of the simulator to a later garbage collection, which
+                # aborts the process if it runs on a thread without their CUDA context, e.g. the viewer render thread.
+                # FIXME: quadrants#981 - Quadrants frees device memory without making its CUDA context current.
+                gc.collect()
 
             # The viewer plugins stopped by the visualizer still require a built scene
             self._is_built = False
