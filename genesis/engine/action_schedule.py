@@ -1,4 +1,15 @@
-"""Recursive compilation of frozen Action control graphs."""
+"""Recursive compilation of frozen Action control graphs.
+
+An ActionSchedule is the compile-time control counterpart of GlobalDataContext:
+
+- GlobalDataContext is the only device-data discovery root.
+- ActionSchedule contains only which frozen Actions execute and how nested Actions are connected.
+
+Graph kernels take the Schedule instead of their manager System. Passing the manager would make Quadrants traverse its
+dependency graph as another data root, duplicate GlobalDataContext's role and hide child Action edges behind arbitrary
+System attributes. The compiler snapshots only explicit edges carried in Action bound arguments, so the graph topology
+is immutable, inspectable and cycle-checked before Quadrants traces a kernel.
+"""
 
 from collections.abc import Mapping
 
@@ -6,15 +17,17 @@ from genesis.engine.core import Action, ActionCollection
 
 
 class ActionSchedule:
-    """Frozen recursive Action control graph.
+    """Frozen recursive Action control graph with no device-data ownership.
 
     Root collection names are exposed as attributes for graph kernels. Nested Action/ActionCollection edges are
-    discovered only through explicit Action bound arguments, validated recursively and captured in ``topology_key``.
+    discovered only through explicit Action bound arguments. ``topology_key`` records the structural graph for
+    diagnostics and cache integration; root/nested attributes retain the exact frozen Action tuples QD statically
+    unrolls.
     """
 
 
 def compile_action_schedule(collections: Mapping[str, ActionCollection]) -> ActionSchedule:
-    """Compile frozen ActionCollections into one recursive, cycle-free control schedule."""
+    """Snapshot frozen roots and every explicit child edge into one validated, cycle-free control schedule."""
     allowed_children = {
         "host": {"host"},
         "inline": {"inline"},

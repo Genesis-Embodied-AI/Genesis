@@ -448,10 +448,12 @@ class System:
         return DataDeclaration(function)
 
     def action_schedule(self, *names: str, kind: ActionKind = "stage"):
-        """Compile selected frozen ActionCollections and every explicit nested Action edge into one schedule.
+        """Compile this manager's selected frozen control topology, separately from GlobalDataContext.
 
         With no names, include every collection of ``kind`` declared by this System. A nested Action or collection must
         appear in an Action's bound arguments; hidden traversal through arbitrary System attributes is not scheduled.
+        Call only after Engine build has frozen all collections. The returned object is a Pipeline/kernel argument, not
+        System-owned Data.
         """
         from genesis.engine.action_schedule import compile_action_schedule
 
