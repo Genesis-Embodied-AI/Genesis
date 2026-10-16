@@ -5,8 +5,10 @@ import pytest
 import quadrants as qd
 
 import genesis as gs
+from genesis.engine.action_schedule import compile_action_schedule
 from genesis.engine.core import (
     Action,
+    ActionCollection,
     Data,
     Engine,
     Find,
@@ -21,7 +23,7 @@ from genesis.engine.core import (
 )
 from genesis.utils.array_class import V
 from genesis.utils.misc import qd_to_numpy
-from genesis.utils.qd_ext import invoke_stage_actions
+from genesis.utils.qd_ext import GlobalDataContext, invoke_stage_actions
 
 from ..utils.assertions import assert_allclose
 
@@ -482,6 +484,60 @@ def test_global_data_context_collects_inherited_and_declared_data_for_actions():
         invalid_engine = Engine(object())
         invalid_engine.add_system(InvalidClassParticipant(object()))
         invalid_engine.create_context()
+
+
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_recursive_action_schedule_forwards_inputs_and_rejects_cycles():
+    @qd.data_oriented
+    class Output(Data):
+        def __init__(self):
+            self.value = qd.ndarray(qd.i32, shape=(1,))
+
+    class Manager(System):
+        @System.action_collection(kind="stage", call_args=("frame", "multiplier"))
+        def roots(self):
+            pass
+
+    @qd.func(requires_top_level=True)
+    def child(output: qd.template(), frame: int, multiplier: int):
+        for _ in range(1):
+            output.value[0] = frame * multiplier
+
+    @qd.func(requires_top_level=True)
+    def parent(children: qd.template(), frame: int, multiplier: int):
+        invoke_stage_actions(children.actions, (frame, multiplier))
+
+    @qd.func(requires_top_level=True)
+    def recursive(children: qd.template(), frame: int, multiplier: int):
+        invoke_stage_actions(children.actions, (frame, multiplier))
+
+    @qd.kernel(graph=True)
+    def run(context: qd.template(), schedule: qd.template(), frame: qd.i32, multiplier: qd.i32):
+        invoke_stage_actions(schedule.roots, (frame, multiplier))
+
+    manager = Manager(object())
+    output = Output()
+    children = ActionCollection(manager, "children", "stage", ("frame", "multiplier"))
+    children.add(StageAction(child, (output,)))
+    children.freeze()
+    manager.roots.add(StageAction(parent, (children,)))
+    manager.roots.freeze()
+
+    schedule = manager.action_schedule()
+    assert schedule.nested_0 is manager.roots.actions
+    assert schedule.nested_1 is children.actions
+    run(GlobalDataContext((output,)), schedule, 7, 6)
+    qd.sync()
+    assert output.value.to_numpy().tolist() == [42]
+
+    left = ActionCollection(manager, "left", "stage", ("frame", "multiplier"))
+    right = ActionCollection(manager, "right", "stage", ("frame", "multiplier"))
+    left.add(StageAction(recursive, (right,)))
+    right.add(StageAction(recursive, (left,)))
+    left.freeze()
+    right.freeze()
+    with pytest.raises(ValueError, match="left -> right -> left"):
+        compile_action_schedule({"left": left})
 
 
 # A Pipeline has one entry point and accepts either a host function or a device kernel. Checkpoint callbacks resume a

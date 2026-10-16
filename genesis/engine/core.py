@@ -202,25 +202,6 @@ class ActionCollection:
         self._frozen = tuple(action for _, action in (*ranked_entries, *unranked_entries))
 
 
-class _StageSchedule:
-    pass
-
-
-def make_stage_schedule(manager: "System") -> _StageSchedule:
-    """Create the frozen control view of a manager's StageAction collections.
-
-    Device data is discovered from the GlobalDataContext built by ``genesis.utils.qd_ext``. The schedule carries
-    topology only; Action tuples are compile-time control values, not a second data ownership graph.
-    """
-    schedule = _StageSchedule()
-    for name in type(manager).action_collections:
-        collection = manager.__dict__[name]
-        if collection._kind != "stage":
-            continue
-        setattr(schedule, name, collection.actions)
-    return schedule
-
-
 # ------------------------------------------------------------------------------------
 # ----------------------------------- Declarations -----------------------------------
 # ------------------------------------------------------------------------------------
@@ -465,6 +446,27 @@ class System:
         after initialization and must only return an existing object.
         """
         return DataDeclaration(function)
+
+    def action_schedule(self, *names: str, kind: ActionKind = "stage"):
+        """Compile selected frozen ActionCollections and every explicit nested Action edge into one schedule.
+
+        With no names, include every collection of ``kind`` declared by this System. A nested Action or collection must
+        appear in an Action's bound arguments; hidden traversal through arbitrary System attributes is not scheduled.
+        """
+        from genesis.engine.action_schedule import compile_action_schedule
+
+        selected_names = names or tuple(
+            name for name in type(self).action_collections if self.__dict__[name]._kind == kind
+        )
+        collections = {}
+        for name in selected_names:
+            if name not in type(self).action_collections:
+                gs.raise_exception(f"{type(self).__name__} has no ActionCollection {name!r}.")
+            collection = self.__dict__[name]
+            if collection._kind != kind:
+                gs.raise_exception(f"{type(self).__name__}.{name} has kind {collection._kind!r}, expected {kind!r}.")
+            collections[name] = collection
+        return compile_action_schedule(collections)
 
     @overload
     @staticmethod
