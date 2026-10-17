@@ -2246,3 +2246,92 @@ def test_per_link_collision_options_unknown_link(three_link_mesh_mjcf_path, show
                 },
             )
         )
+
+
+@pytest.fixture
+def heterogeneous_sphere_mesh_paths(tmp_path):
+    """Write the dimpled icosphere twice, under two different file names.
+
+    A heterogeneous Mesh variant resolves its geom under the baselink name its own file gives it, so the two
+    morphs resolve under different names exactly because the file names differ.
+    """
+    tmesh = trimesh.creation.icosphere(subdivisions=3, radius=0.05)
+    tmesh.vertices[int(np.argmax(tmesh.vertices[:, 2]))] *= 0.7
+    paths = []
+    for file_name in ("dimpled.obj", "coarse.obj"):
+        mesh_path = str(tmp_path / file_name)
+        tmesh.export(mesh_path)
+        paths.append(mesh_path)
+    return paths
+
+
+@pytest.mark.required
+def test_per_link_collision_options_heterogeneous_variant(heterogeneous_sphere_mesh_paths, show_viewer):
+    # A variant morph resolves its geom under its own baselink name, so its entry keys by that name and must be
+    # validated against the links the variant resolves with, not the primary's.
+    dimpled_path, coarse_path = heterogeneous_sphere_mesh_paths
+    scene = gs.Scene(show_viewer=show_viewer)
+    entity = scene.add_entity(
+        [
+            gs.morphs.Mesh(
+                file=dimpled_path,
+                decimate=False,
+                convexify=False,
+                watertighten=None,
+            ),
+            gs.morphs.Mesh(
+                file=coarse_path,
+                decimate=False,
+                convexify=False,
+                watertighten=None,
+                links_collision_options={
+                    "coarse_obj_baselink": gs.morphs.LinkCollisionOptions(
+                        convexify=True,
+                    ),
+                },
+            ),
+        ]
+    )
+    scene.build(n_envs=2)
+
+    # The primary keeps the authored mesh under its morph options; the variant convexifies through the entry keyed
+    # with the baselink name it resolves with.
+    tmeshes = [geom.mesh.trimesh for geom in entity.links[0].geoms]
+    non_convex = [tm for tm in tmeshes if not tm.is_convex]
+    convex = [tm for tm in tmeshes if tm.is_convex]
+    n_source_faces = 1280
+    assert len(non_convex) == 1
+    assert len(non_convex[0].faces) == n_source_faces
+    assert len(convex) == 1
+    assert len(convex[0].faces) < n_source_faces
+
+
+@pytest.mark.required
+def test_per_link_collision_options_unknown_variant_link(heterogeneous_sphere_mesh_paths, show_viewer):
+    # A variant morph never resolves the primary's links, so an entry keyed with one is a typo that would silently
+    # do nothing, and it raises against the links the variant resolves with.
+    dimpled_path, coarse_path = heterogeneous_sphere_mesh_paths
+    scene = gs.Scene(show_viewer=show_viewer)
+    with pytest.raises(gs.GenesisException, match="names unknown links.*coarse_obj_baselink"):
+        scene.add_entity(
+            [
+                gs.morphs.Mesh(
+                    file=dimpled_path,
+                    decimate=False,
+                    convexify=False,
+                    watertighten=None,
+                ),
+                gs.morphs.Mesh(
+                    file=coarse_path,
+                    decimate=False,
+                    convexify=False,
+                    watertighten=None,
+                    links_collision_options={
+                        # The primary's baselink name, which the variant's entry must not silently key by.
+                        "dimpled_obj_baselink": gs.morphs.LinkCollisionOptions(
+                            convexify=True,
+                        ),
+                    },
+                ),
+            ]
+        )

@@ -404,18 +404,24 @@ class KinematicEntityDescription(EntityDescription):
         else:
             gs.raise_exception(f"Unsupported morph: {morph}.")
 
-        # Load heterogeneous variants (if any)
-        self._load_heterogeneous_morphs(resolution)
+        # Load heterogeneous variants (if any), collecting the link names each variant resolves its geoms with, which
+        # its own 'links_collision_options' entries key by and which may differ from the primary's.
+        variant_link_names = self._load_heterogeneous_morphs(resolution)
 
-        # A 'links_collision_options' entry naming no loaded link is a typo that would otherwise silently do nothing.
-        for morph in self.morphs:
-            if isinstance(morph, gs.options.morphs.FileMorph) and morph.links_collision_options:
-                unknown_link_names = morph.links_collision_options.keys() - {link.name for link in self.links}
-                if unknown_link_names:
-                    gs.raise_exception(
-                        f"'links_collision_options' names unknown links {sorted(unknown_link_names)}. Loaded links: "
-                        f"{[link.name for link in self.links]}."
-                    )
+        # A 'links_collision_options' entry naming no link the morph resolves is a typo that would otherwise silently
+        # do nothing. The primary resolves with the loaded links, while each heterogeneous variant resolves with its
+        # own parsed links, so every morph is validated against the names its own resolution looks up.
+        primary_link_names = [link.name for link in self.links]
+        for i_morph, morph in enumerate(self.morphs):
+            if not (isinstance(morph, gs.options.morphs.FileMorph) and morph.links_collision_options):
+                continue
+            morph_link_names = primary_link_names if i_morph == 0 else variant_link_names[i_morph - 1]
+            unknown_link_names = morph.links_collision_options.keys() - morph_link_names
+            if unknown_link_names:
+                gs.raise_exception(
+                    f"'links_collision_options' names unknown links {sorted(unknown_link_names)}. Links the morph "
+                    f"resolves: {morph_link_names}."
+                )
 
         # The per-link inertia (and per heterogeneous variant) is now resolved, so anchor each aligned free root at
         # its fixed subtree center of mass and principal axes. Must run before the solver reads the link poses and
@@ -424,14 +430,16 @@ class KinematicEntityDescription(EntityDescription):
         # and the same qpos must map to the same world pose for both.
         self._align_free_roots(resolution)
 
-    def _load_heterogeneous_morphs(self, resolution: Resolution):
+    def _load_heterogeneous_morphs(self, resolution: Resolution) -> list[set[str]]:
         """Load heterogeneous morphs (additional geometry variants for parallel environments).
 
         Each variant is loaded as additional geoms/vgeoms attached to links.
         Each variant is described beside the links (see 'KinematicVariantDescription').
+
+        Returns the link names each variant resolves its geoms with, one set per variant morph in 'self.morphs[1:]'.
         """
         if not len(self.morphs) > 1:
-            return
+            return []
 
         # The per-variant offset and inertial alignment are tracked for a single root only; a multi-root entity (one
         # MJCF/URDF with several free root bodies) would cross-contaminate the roots' offsets and init poses.
@@ -454,10 +462,12 @@ class KinematicEntityDescription(EntityDescription):
         n_links = len(self.links)
 
         # Load additional heterogeneous variants
+        variant_link_names = []
         for morph in self.morphs[1:]:
             if isinstance(morph, (gs.morphs.URDF, gs.morphs.MJCF)):
                 # Parse variant scene file
                 v_l_infos, v_links_j_infos, v_links_g_infos, _ = self._parse_scene(morph, resolution)
+                variant_link_names.append({v_l_info["name"] for v_l_info in v_l_infos})
 
                 # Validate that the variant has the same joint structure as the primary
                 if len(v_l_infos) != n_links:
@@ -580,6 +590,7 @@ class KinematicEntityDescription(EntityDescription):
                     # A primitive is no FileMorph, so no per-link post-processing applies to it; the name only
                     # mirrors the one '_load_primitive' would have given the link.
                     link_name = f"{type(morph).__name__.lower()}_baselink"
+                variant_link_names.append({link_name})
                 if morph.fixed != self.morphs[0].fixed:
                     gs.raise_exception("Mixing fixed and non-fixed morphs in heterogeneous entities is not supported.")
                 cg_infos, vg_infos = self._resolve_geoms(morph, g_infos, is_robot=False, link_name=link_name)
@@ -633,6 +644,8 @@ class KinematicEntityDescription(EntityDescription):
                 gs.raise_exception(
                     f"Heterogeneous morphs only support URDF, MJCF, Primitive, and Mesh, got: {type(morph).__name__}."
                 )
+
+        return variant_link_names
 
     def _describe_variant_link(
         self, i_link, v_l_info, link_pos, link_quat, joints, cg_infos, vg_infos, morph, inertial_info
