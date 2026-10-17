@@ -5,25 +5,30 @@ An ActionSchedule is the compile-time control counterpart of GlobalDataContext:
 - GlobalDataContext is the only device-data discovery root.
 - ActionSchedule contains only which frozen Actions execute and how nested Actions are connected.
 
-Graph kernels take the Schedule instead of their manager System. Passing the manager would make Quadrants traverse its
-dependency graph as another data root, duplicate GlobalDataContext's role and hide child Action edges behind arbitrary
-System attributes. The compiler snapshots only explicit edges carried in Action bound arguments, so the graph topology
-is immutable, inspectable and cycle-checked before Quadrants traces a kernel.
+Context/schedule-based graph Pipelines take the Schedule instead of their manager System. Passing the manager would
+make Quadrants traverse its dependency graph as another data root, duplicate GlobalDataContext's role and hide child
+Action edges behind arbitrary System attributes. Legacy or subsystem kernels may still take a System directly. The
+compiler snapshots only explicit edges carried in Action bound arguments, so the graph topology is immutable,
+inspectable and cycle-checked before Quadrants traces a kernel.
 """
 
 from collections.abc import Mapping
 
+import genesis as gs
 from genesis.engine.core import Action, ActionCollection
 
 
 class ActionSchedule:
     """Frozen recursive Action control graph with no device-data ownership.
 
-    Root collection names are exposed as attributes for graph kernels. Nested Action/ActionCollection edges are
-    discovered only through explicit Action bound arguments. ``topology_key`` records the structural graph for
-    diagnostics and cache integration; root/nested attributes retain the exact frozen Action tuples QD statically
-    unrolls.
+    Root collection names live under ``collections``. Nested Action/ActionCollection edges are discovered only through
+    explicit Action bound arguments. ``topology_key`` records the structural graph for diagnostics and cache
+    integration; ``nested`` and ``actions`` retain the exact frozen objects QD statically unrolls.
     """
+
+
+class _ScheduleCollections:
+    """Namespace separating user-declared collection names from schedule metadata."""
 
 
 def compile_action_schedule(collections: Mapping[str, ActionCollection]) -> ActionSchedule:
@@ -47,13 +52,13 @@ def compile_action_schedule(collections: Mapping[str, ActionCollection]) -> Acti
 
     def check_kind(parent: Action, child_kind: str) -> None:
         if child_kind not in allowed_children[parent.kind]:
-            raise TypeError(f"{parent.kind} Action cannot invoke {child_kind} Action")
+            gs.raise_exception(f"{parent.kind} Action cannot invoke {child_kind} Action")
 
     def walk_action(action: Action) -> int:
         action_id = id(action)
         if any(action is parent for parent in active_actions):
             cycle = " -> ".join((*[function_key(parent)[1] for parent in active_actions], function_key(action)[1]))
-            raise ValueError(f"recursive Action cycle: {cycle}")
+            gs.raise_exception(f"recursive Action cycle: {cycle}")
         if action_id in direct_action_indices:
             return direct_action_indices[action_id]
 
@@ -77,7 +82,7 @@ def compile_action_schedule(collections: Mapping[str, ActionCollection]) -> Acti
         collection_id = id(collection)
         if any(collection is parent for parent in active_collections):
             cycle = " -> ".join(item._name for item in (*active_collections, collection))
-            raise ValueError(f"recursive ActionCollection cycle: {cycle}")
+            gs.raise_exception(f"recursive ActionCollection cycle: {cycle}")
         if collection_id in collection_indices:
             return collection_indices[collection_id]
 
@@ -94,15 +99,14 @@ def compile_action_schedule(collections: Mapping[str, ActionCollection]) -> Acti
         return index
 
     schedule = ActionSchedule()
+    schedule.collections = _ScheduleCollections()
     root_indices = []
     for name, collection in collections.items():
         if not isinstance(collection, ActionCollection):
-            raise TypeError(f"schedule root {name!r} must be an ActionCollection")
+            gs.raise_exception(f"schedule root {name!r} must be an ActionCollection")
         root_indices.append((name, walk_collection(collection)))
-        setattr(schedule, name, collection.actions)
-    for index, actions in enumerate(nested):
-        setattr(schedule, f"nested_{index}", actions)
-    for index, action in enumerate(direct_actions):
-        setattr(schedule, f"action_{index}", action)
+        setattr(schedule.collections, name, collection.actions)
+    schedule.nested = tuple(nested)
+    schedule.actions = tuple(direct_actions)
     schedule.topology_key = (tuple(root_indices), tuple(topology))
     return schedule

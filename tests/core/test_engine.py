@@ -513,7 +513,7 @@ def test_recursive_action_schedule_forwards_inputs_and_rejects_cycles():
 
     @qd.kernel(graph=True)
     def run(context: qd.template(), schedule: qd.template(), frame: qd.i32, multiplier: qd.i32):
-        invoke_stage_actions(schedule.roots, (frame, multiplier))
+        invoke_stage_actions(schedule.collections.roots, (frame, multiplier))
 
     manager = Manager(object())
     output = Output()
@@ -524,11 +524,15 @@ def test_recursive_action_schedule_forwards_inputs_and_rejects_cycles():
     manager.roots.freeze()
 
     schedule = manager.action_schedule()
-    assert schedule.nested_0 is manager.roots.actions
-    assert schedule.nested_1 is children.actions
+    assert schedule.nested[0] is manager.roots.actions
+    assert schedule.nested[1] is children.actions
     run(GlobalDataContext((output,)), schedule, 7, 6)
     qd.sync()
     assert output.value.to_numpy().tolist() == [42]
+
+    reserved_name_schedule = compile_action_schedule({"nested_0": manager.roots})
+    assert reserved_name_schedule.collections.nested_0 is manager.roots.actions
+    assert reserved_name_schedule.nested[0] is manager.roots.actions
 
     left = ActionCollection(manager, "left", "stage", ("frame", "multiplier"))
     right = ActionCollection(manager, "right", "stage", ("frame", "multiplier"))
@@ -536,7 +540,7 @@ def test_recursive_action_schedule_forwards_inputs_and_rejects_cycles():
     right.add(StageAction(recursive, (left,)))
     left.freeze()
     right.freeze()
-    with pytest.raises(ValueError, match="left -> right -> left"):
+    with pytest.raises(gs.GenesisException, match="left -> right -> left"):
         compile_action_schedule({"left": left})
 
 
