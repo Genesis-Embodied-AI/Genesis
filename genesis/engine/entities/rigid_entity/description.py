@@ -24,7 +24,7 @@ import genesis as gs
 from genesis.constants import EQUALITY_TYPE, GEOM_TYPE, JOINT_TYPE
 from genesis.engine.materials.base import Material
 from genesis.engine.mesh import InertialProperties
-from genesis.options.morphs import Morph
+from genesis.options.morphs import LinkCollisionOptions, Morph
 from genesis.options.options import Options
 from genesis.options.surfaces import Surface
 from genesis.utils import geom as gu
@@ -407,6 +407,16 @@ class KinematicEntityDescription(EntityDescription):
         # Load heterogeneous variants (if any)
         self._load_heterogeneous_morphs(resolution)
 
+        # A 'links_collision_options' entry naming no loaded link is a typo that would otherwise silently do nothing.
+        for morph in self.morphs:
+            if isinstance(morph, gs.options.morphs.FileMorph) and morph.links_collision_options:
+                unknown_link_names = morph.links_collision_options.keys() - {link.name for link in self.links}
+                if unknown_link_names:
+                    gs.raise_exception(
+                        f"'links_collision_options' names unknown links {sorted(unknown_link_names)}. Loaded links: "
+                        f"{[link.name for link in self.links]}."
+                    )
+
         # The per-link inertia (and per heterogeneous variant) is now resolved, so anchor each aligned free root at
         # its fixed subtree center of mass and principal axes. Must run before the solver reads the link poses and
         # inertia. Defined here on the base class so kinematic and rigid entities anchor identically: a kinematic
@@ -493,7 +503,7 @@ class KinematicEntityDescription(EntityDescription):
                 cg_vg_infos = []
                 for v_l_info, v_j_infos, v_g_infos in zip(v_l_infos, v_links_j_infos, v_links_g_infos):
                     is_robot = v_l_info["is_robot"]
-                    cg_infos, vg_infos = self._resolve_geoms(morph, v_g_infos, is_robot)
+                    cg_infos, vg_infos = self._resolve_geoms(morph, v_g_infos, is_robot, v_l_info["name"])
                     cg_vg_infos.append((cg_infos, vg_infos))
 
                 # Extract variant's init_qpos from parsed joint infos, composing the morph offset into the free joint so
@@ -563,11 +573,16 @@ class KinematicEntityDescription(EntityDescription):
             elif isinstance(morph, (gs.morphs.Mesh, gs.morphs.Primitive)):
                 if isinstance(morph, gs.morphs.Mesh):
                     g_infos = self._load_mesh(morph, resolution, load_geom_only_for_heterogeneous=True)
+                    # The baselink name '_load_mesh' would have given the link had it created it.
+                    link_name = f"{os.path.basename(morph.file).replace('.', '_')}_baselink"
                 else:
                     g_infos = self._load_primitive(morph, resolution, load_geom_only_for_heterogeneous=True)
+                    # A primitive is no FileMorph, so no per-link post-processing applies to it; the name only
+                    # mirrors the one '_load_primitive' would have given the link.
+                    link_name = f"{type(morph).__name__.lower()}_baselink"
                 if morph.fixed != self.morphs[0].fixed:
                     gs.raise_exception("Mixing fixed and non-fixed morphs in heterogeneous entities is not supported.")
-                cg_infos, vg_infos = self._resolve_geoms(morph, g_infos, is_robot=False)
+                cg_infos, vg_infos = self._resolve_geoms(morph, g_infos, is_robot=False, link_name=link_name)
 
                 # The COM/principal-axis anchoring is deferred to '_align_free_roots', which runs once every variant
                 # is described. Compose only the morph pose offset here.
@@ -1294,7 +1309,7 @@ class KinematicEntityDescription(EntityDescription):
 
         # Split and convexify collision geometry. Must be done before alignment so that convexified geoms are used
         # to compute the inertia frame.
-        cg_infos, vg_infos = self._resolve_geoms(morph, g_infos, l_info["is_robot"])
+        cg_infos, vg_infos = self._resolve_geoms(morph, g_infos, l_info["is_robot"], l_info["name"])
 
         # Carry the morph pose offset into root links and align them to their collision-geometry COM/principal axes.
         inertial_info = self._align_link(l_info, j_infos, cg_infos, vg_infos, morph, resolution)
@@ -1321,13 +1336,14 @@ class KinematicEntityDescription(EntityDescription):
             vgeoms=[description_from_info(RigidVisGeomDescription, vg_info) for vg_info in vg_infos],
         )
 
-    def _resolve_geoms(self, morph, g_infos, is_robot):
+    def _resolve_geoms(self, morph, g_infos, is_robot, link_name):
         """Split what a parse states about the geoms of one link, and post-process its collision geometry.
 
         Post-processing convexifies the collision meshes, decomposing the ones a single hull cannot approximate within
         the threshold the morph carries. Both kinds of geometry stay as parsed info, so the inertial composition
         treats them alike and '_describe_geoms' resolves the collision coefficients later. A plain load and a
-        heterogeneous variant both go through here.
+        heterogeneous variant both go through here. The morph options apply link-wise, overridden by the
+        'links_collision_options' entry keyed with 'link_name' when the morph states one.
         """
         # An explicitly set material density overrides any asset-authored per-geom density, as material friction does
         # for authored frictions. Dropping the keys up front keeps the align anchor, its all-or-none source check,
@@ -1365,17 +1381,23 @@ class KinematicEntityDescription(EntityDescription):
             else:
                 decompose_error_threshold = morph.decompose_object_error_threshold
 
+            # The 'links_collision_options' entry keyed with this link's name overrides the morph options link-wise;
+            # whatever the entry leaves unset stays on the morph, the robot/object threshold split included.
+            link_collision_options = morph.links_collision_options.get(link_name, LinkCollisionOptions()).resolve(
+                morph, decompose_error_threshold
+            )
+
             # A collision geom may carry per-geom post-processing overrides (a USD MeshCollisionAPI approximation
-            # hint sets "convexify"/"decimate"/"decompose_error_threshold"), with the morph options as defaults for
-            # whatever is left unset. Post-processing merges geoms within a call, so each set of effective options
-            # gets its own call; geoms without overrides share one, preserving the whole-entity merge behavior.
-            # Thresholds match within the tolerance the mesh cache matches options with, so float noise cannot split a
-            # group.
+            # hint sets "convexify"/"decimate"/"decompose_error_threshold"), with the effective options of the link
+            # as defaults for whatever is left unset. Post-processing merges geoms within a call, so each set of
+            # effective options gets its own call; geoms without overrides share one, preserving the whole-link merge
+            # behavior. Thresholds match within the tolerance the mesh cache matches options with, so float noise
+            # cannot split a group.
             cg_infos_by_options: list[tuple[tuple, list]] = []
             for g_info in cg_infos:
-                convexify = g_info.pop("convexify", morph.convexify)
-                decimate = g_info.pop("decimate", morph.decimate)
-                threshold = g_info.pop("decompose_error_threshold", decompose_error_threshold)
+                convexify = g_info.pop("convexify", link_collision_options.convexify)
+                decimate = g_info.pop("decimate", link_collision_options.decimate)
+                threshold = g_info.pop("decompose_error_threshold", link_collision_options.decompose_error_threshold)
                 for options, options_cg_infos in cg_infos_by_options:
                     if options[:2] == (convexify, decimate) and math.isclose(
                         options[2], threshold, rel_tol=mu.MESH_CACHE_MATCH_RTOL
@@ -1390,12 +1412,12 @@ class KinematicEntityDescription(EntityDescription):
                 cg_infos += mu.postprocess_collision_geoms(
                     options_cg_infos,
                     decimate,
-                    morph.decimate_face_num,
-                    morph.decimate_aggressiveness,
+                    link_collision_options.decimate_face_num,
+                    link_collision_options.decimate_aggressiveness,
                     convexify,
                     threshold,
-                    morph.coacd_options,
-                    morph.watertighten,
+                    link_collision_options.coacd_options,
+                    link_collision_options.watertighten,
                 )
 
         # Randomize collision mesh colors. This is especially useful to check convex decomposition.
