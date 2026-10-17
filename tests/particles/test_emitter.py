@@ -38,18 +38,19 @@ def test_emit_recycles_before_capacity_overflow(monkeypatch, emit_omni):
     emitter = scene.add_emitter(material=gs.materials.PBD.Particle(), max_particles=MAX_PARTICLES)
     scene.build()
 
-    # Record the particle indices of every write, as out-of-range indices are silently dropped or corrupt
-    # neighbouring particles in the solver kernels instead of raising.
-    written_indices = []
+    # Record the indices and the values of every write, as out-of-range indices are silently dropped or corrupt
+    # neighbouring particles in the solver kernels instead of raising. The public getters tell whether every write
+    # actually landed in the solver state, which the recorded arguments alone cannot.
+    written = []
     for method_name, write_particles in (
         ("set_particles_pos", emitter.entity.set_particles_pos),
         ("set_particles_vel", emitter.entity.set_particles_vel),
         ("set_particles_active", emitter.entity.set_particles_active),
     ):
 
-        def record_and_write(poss, particles_idx_local=None, write_particles=write_particles, written=written_indices):
-            written.append(particles_idx_local)
-            return write_particles(poss, particles_idx_local)
+        def record_and_write(values, particles_idx_local=None, write_particles=write_particles, written=written):
+            written.append((particles_idx_local, values))
+            return write_particles(values, particles_idx_local)
 
         monkeypatch.setattr(emitter.entity, method_name, record_and_write)
 
@@ -63,12 +64,47 @@ def test_emit_recycles_before_capacity_overflow(monkeypatch, emit_omni):
         f"Emitter cursor should have recycled before the last emission and ended at {len(EXPECTED_INDICES[-1])}, "
         f"got {emitter.next_particle}."
     )
-    assert len(written_indices) == 3 * len(EMIT_SIZES), (
-        f"Expected {3 * len(EMIT_SIZES)} particle writes, got {len(written_indices)}."
-    )
+    assert len(written) == 3 * len(EMIT_SIZES), f"Expected {3 * len(EMIT_SIZES)} particle writes, got {len(written)}."
+
+    # The state the solver actually holds, read through the public getters.
+    all_poss = emitter.entity.get_particles_pos().cpu().numpy()
+    all_vels = emitter.entity.get_particles_vel().cpu().numpy()
+    all_actives = emitter.entity.get_particles_active().cpu().numpy()
+
+    written_particles = set()
     for i_emission, expected_indices in enumerate(EXPECTED_INDICES):
-        for written_idx in written_indices[3 * i_emission : 3 * (i_emission + 1)]:
+        emission_writes = written[3 * i_emission : 3 * (i_emission + 1)]
+        for written_idx, _ in emission_writes:
             assert written_idx.tolist() == list(expected_indices), (
                 f"Emission #{i_emission + 1} wrote particles {written_idx.tolist()} instead of "
                 f"{list(expected_indices)}."
             )
+            written_particles.update(written_idx.tolist())
+
+        # Positions and velocities land where the emission sent them, and the emitted particles are active.
+        idx = emission_writes[0][0].cpu().numpy()
+        np.testing.assert_allclose(
+            all_poss[idx],
+            emission_writes[0][1],
+            atol=1e-6,
+            err_msg=f"Emission #{i_emission + 1} positions did not land in the solver state.",
+        )
+        np.testing.assert_allclose(
+            all_vels[idx],
+            np.broadcast_to(emission_writes[1][1], (len(idx), 3)),
+            atol=1e-6,
+            err_msg=f"Emission #{i_emission + 1} velocities did not land in the solver state.",
+        )
+        np.testing.assert_array_equal(
+            all_actives[idx],
+            True,
+            err_msg=f"Emission #{i_emission + 1} left its particles inactive.",
+        )
+
+    # Particles no emission addressed stay inactive.
+    unwritten = np.setdiff1d(np.arange(MAX_PARTICLES), np.fromiter(written_particles, dtype=int))
+    np.testing.assert_array_equal(
+        all_actives[unwritten],
+        False,
+        err_msg="Particles no emission addressed should stay inactive.",
+    )
