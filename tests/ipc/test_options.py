@@ -3,7 +3,8 @@ import pytest
 import genesis as gs
 
 # Regression tests for https://github.com/Genesis-Embodied-AI/genesis-world/issues/3440
-# These only exercise options construction, so they run without pyuipc and without a GPU.
+# The option tests only exercise options construction, so they run without pyuipc and without a
+# GPU. The passthrough test builds a real IPC scene, so it additionally requires a CUDA GPU.
 
 
 @pytest.mark.required
@@ -41,16 +42,34 @@ def test_ipc_options_reject_invalid_values():
         gs.options.IPCCouplerOptions(collision_detection_method="unsupported_method")
 
 
-def test_ipc_options_passthrough_to_scene_config():
-    """With pyuipc available, the explicit choices must reach the libuipc Scene config unchanged."""
+def test_ipc_options_passthrough_to_ipc_scene():
+    """With pyuipc available, the explicit choices must reach the built IPC scene unchanged."""
     pytest.importorskip("uipc")
 
-    from genesis.engine.couplers.ipc_coupler.utils import build_ipc_scene_config
-
-    options = gs.options.IPCCouplerOptions(
-        linear_system_solver="fused_pcg",
-        collision_detection_method="info_stackless_bvh",
+    scene = gs.Scene(
+        coupler_options=gs.options.IPCCouplerOptions(
+            linear_system_solver="fused_pcg",
+            collision_detection_method="info_stackless_bvh",
+        ),
+        show_viewer=False,
     )
-    config = build_ipc_scene_config(options, gs.options.SimOptions(), dt=0.01)
-    assert config["linear_system"]["solver"] == "fused_pcg"
-    assert config["collision_detection"]["method"] == "info_stackless_bvh"
+    scene.add_entity(
+        gs.morphs.Plane(),
+        material=gs.materials.Rigid(
+            needs_coup=False,
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0, 0, 0.5),
+        ),
+        material=gs.materials.Rigid(
+            needs_coup=False,
+        ),
+    )
+    scene.build()
+
+    ipc_config = scene.sim.coupler._ipc_scene.config()
+    assert ipc_config["linear_system"]["solver"] == "fused_pcg"
+    assert ipc_config["collision_detection"]["method"] == "info_stackless_bvh"
