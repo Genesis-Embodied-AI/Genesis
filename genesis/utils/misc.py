@@ -18,9 +18,6 @@ from typing import Any, NoReturn, Optional, Sequence
 
 import numpy as np
 import torch
-import torch._dynamo
-from torch._inductor.cpp_builder import get_cpp_compiler
-from torch.utils._triton import has_triton
 
 import cpuinfo
 import psutil
@@ -255,7 +252,8 @@ def get_gpu_shared_tile_sizes(max_n_sizes: int) -> tuple[int, ...]:
 
     The shared memory of a block only bounds how many blocks a compute unit runs at once. Each candidate is the largest
     multiple of 8 (keeping the padded row stride odd) that runs a given count of resident one-warp blocks, as bounded by
-    the shared memory of a compute unit and of a block, the driver reservation per block and the warp slots.
+    the shared memory of a compute unit and of a block, the driver reservation and allocation granularity per block and
+    the warp slots.
 
     At most max_n_sizes candidates are kept, so that the static values of a kernel stay a small fixed set: those
     minimizing the mean drop in resident blocks that rounding a row count n up to the next kept size causes against its
@@ -267,16 +265,27 @@ def get_gpu_shared_tile_sizes(max_n_sizes: int) -> tuple[int, ...]:
     if gs.backend == gs.cpu:
         gs.raise_exception("CPU backend not supported by this method.")
     itemsize = 4 if gs.qd_float == qd.f32 else 8
+    # FIXME: quadrants#976 - the shared memory of a block is a 64 KiB lower bound on AMDGPU, which caps the tiles of
+    # CDNA4 (gfx950) below what its 160 KiB per block holds.
     block_bytes = qd.lang.impl.get_max_shared_memory_bytes(is_lowerbound_ok=True)
-    unit_bytes, reserved_bytes, max_blocks = block_bytes, 0, block_bytes // (8 * 9 * itemsize)
+    unit_bytes, reserved_bytes, granule_bytes, max_blocks = block_bytes, 0, 1, block_bytes // (8 * 9 * itemsize)
     if torch.cuda.is_available():
-        # CUDA and ROCm alike: a block of these tiles is one warp (wavefront), so the warp slots bound the resident
-        # blocks, and the driver reserves the shared memory of a compute unit beyond what one block may opt in to.
+        # CUDA and ROCm alike: a block of these tiles is one warp (wavefront), whose slots bound the resident blocks.
         device_property = torch.cuda.get_device_properties(torch.cuda.current_device())
         unit_bytes = device_property.shared_memory_per_multiprocessor
-        reserved_bytes = max(unit_bytes - device_property.shared_memory_per_block_optin, 0)
         max_blocks = device_property.max_threads_per_multi_processor // device_property.warp_size
-        if not torch.version.hip:
+        if torch.version.hip:
+            # FIXME: torch exposes no allocation granularity of the local data share (LDS), which AMD sets per
+            # instruction set (see the LLVM AMDGPU usage guide), a block taking its shared memory in whole granules.
+            if device_property.gcnArchName.startswith("gfx950"):
+                granule_bytes = 1280
+            elif device_property.gcnArchName.startswith("gfx125"):
+                granule_bytes = 2048
+            else:
+                granule_bytes = 512
+        else:
+            # The driver reserves the shared memory of a compute unit beyond what one block may opt in to.
+            reserved_bytes = max(unit_bytes - device_property.shared_memory_per_block_optin, 0)
             # FIXME: torch exposes no cap on the resident blocks of a streaming multiprocessor, which NVIDIA sets per
             # compute capability below the warp slots (see the CUDA C++ programming guide).
             compute_capability = (device_property.major, device_property.minor)
@@ -290,8 +299,8 @@ def get_gpu_shared_tile_sizes(max_n_sizes: int) -> tuple[int, ...]:
     # The largest count of resident blocks of each candidate size
     resident_blocks: dict[int, int] = {}
     for n_blocks in range(1, max_blocks + 1):
-        n_bytes = min(unit_bytes // n_blocks - reserved_bytes, block_bytes)
-        tile_size = int((math.sqrt(1.0 + 4.0 * n_bytes / itemsize) - 1.0) / 2.0) // 8 * 8
+        n_bytes = (min(unit_bytes // n_blocks - reserved_bytes, block_bytes) // granule_bytes) * granule_bytes
+        tile_size = (int((math.sqrt(1.0 + 4.0 * n_bytes / itemsize) - 1.0) / 2.0) // 8) * 8
         if tile_size >= 8:
             resident_blocks[tile_size] = max(resident_blocks.get(tile_size, 0), n_blocks)
     tile_sizes = sorted(resident_blocks)
@@ -509,113 +518,6 @@ def to_gs_tensor(x, dtype: torch.dtype | None = None):
     return tensor.to(dtype=dtype, device=gs.device)
 
 
-@functools.cache
-def _is_torch_compile_supported(device_type: str) -> bool:
-    """Whether TorchInductor can build kernels for tensors of the given torch device type on this machine.
-
-    Kernels for CPU tensors are built by the C++ toolchain of the host, through the torch extension builder: minimal
-    containers and Windows machines without an activated MSVC environment have no compiler, and a host whose Python
-    loaded the standard-library distutils before setuptools fails to import the builder at all. Kernels for CUDA tensors
-    are built by Triton, which is optional on Windows. The answer is cached, since a failing probe spawns the compiler
-    subprocesses again at every call.
-    """
-    if not torch._dynamo.is_dynamo_supported():
-        return False
-    if device_type == "cpu":
-        try:
-            get_cpp_compiler()
-            # The import is the probe: it fails exactly where the builder TorchInductor relies on cannot be loaded
-            import_module("torch.utils.cpp_extension")
-        except (RuntimeError, ImportError, AssertionError):
-            return False
-        return True
-    if device_type == "cuda":
-        return has_triton()
-    return device_type == "mps"
-
-
-def torch_compile(*, elems_ndim: tuple[int, ...]) -> Callable[[Callable], Callable]:
-    """Compile a batched torch function into fused kernels, running it eagerly where TorchInductor cannot build them.
-
-    The leading positional arguments of the decorated function are tensors (or None), the i-th one made of a batch of
-    elements whose last `elems_ndim[i]` dimensions hold one element. Their batch dimensions are broadcast together and
-    collapsed into a single contiguous one of symbolic size before the call, and the batch dimensions of the returned
-    tensor are restored after it. The function is thereby traced once whatever the shape and memory layout of its
-    inputs, then once more for single-element batches and for every new combination of its static inputs (None tensors,
-    values of non-tensor arguments), and on CPU once more for batches of 16384 elements or more. It must trace as a
-    single graph, so data-dependent control flow and `out=` arguments are prohibited.
-
-    The function runs eagerly on devices that TorchInductor cannot target on this machine, and when an input requires
-    gradient, which would double the traced graphs for a backward pass that is never on a hot path. A compiled kernel
-    returns the same bits on every call for the same inputs, which may differ from the eager result by rounding.
-    """
-
-    def decorator(fn: Callable) -> Callable:
-        # Launching a kernel costs more host time than recomputing the intermediates that several outputs share, so
-        # every intermediate is inlined and the whole function lowers to a single kernel.
-        fn_compiled = torch.compile(
-            fn,
-            fullgraph=True,
-            dynamic=True,
-            options={
-                "realize_reads_threshold": sys.maxsize,
-                "realize_opcount_threshold": sys.maxsize,
-                "realize_acc_reads_threshold": sys.maxsize,
-            },
-        )
-
-        @functools.wraps(fn)
-        def wrapper(*args, **kwargs):
-            tensors, args = args[: len(elems_ndim)], args[len(elems_ndim) :]
-            batch_shapes = [
-                tensor.shape[: tensor.ndim - n] for tensor, n in zip(tensors, elems_ndim) if tensor is not None
-            ]
-            batch_shape = batch_shapes[0]
-            # Broadcasting is rare enough for its slow shape inference to be worth skipping when all shapes agree
-            if any(shape != batch_shape for shape in batch_shapes[1:]):
-                batch_shape = torch.broadcast_shapes(*batch_shapes)
-            n_elems = math.prod(batch_shape)
-            device_type = next(tensor for tensor in tensors if tensor is not None).device.type
-            is_compiled = _is_torch_compile_supported(device_type)
-            tensors_flat = []
-            for tensor, n in zip(tensors, elems_ndim):
-                if tensor is not None:
-                    elem_shape = tensor.shape[tensor.ndim - n :]
-                    if tensor.shape[: tensor.ndim - n] != batch_shape:
-                        tensor = tensor.expand((*batch_shape, *elem_shape))
-                    # Broadcast inputs and views of a larger tensor would otherwise key graphs by their strides,
-                    # including the stride of a single-element batch, which reshaping normalizes and contiguity ignores.
-                    tensor = tensor.reshape((n_elems, *elem_shape)).contiguous()
-                    if tensor.requires_grad:
-                        is_compiled = False
-                    else:
-                        # A view is traced along with its base, whose shape would then key the compiled graphs too.
-                        # Detaching drops the base without copying. A Genesis tensor checks the scene of every
-                        # operation in a hook that cannot be traced, so its plain tensor is passed instead.
-                        tensor = tensor.as_subclass(torch.Tensor).detach()
-                    # The sizes of an element are constants that let the elementwise operations unroll and vectorize
-                    if n > 0:
-                        torch._dynamo.mark_static(tensor, tuple(range(1, tensor.ndim)))
-                tensors_flat.append(tensor)
-            # A CPU kernel traced for a small batch runs on a single thread whatever the batch size it is later called
-            # with. Bounding the batch size gives small and large batches graphs of their own, each traced for a batch
-            # of its class. Other devices tune their kernels independently of the batch size they are traced with.
-            if is_compiled and device_type == "cpu" and n_elems > 1:
-                tensor = next(tensor for tensor in tensors_flat if tensor is not None)
-                if n_elems < 16384:
-                    torch._dynamo.mark_dynamic(tensor, 0, min=2, max=16383)
-                else:
-                    torch._dynamo.mark_dynamic(tensor, 0, min=16384, max=sys.maxsize)
-            out = (fn_compiled if is_compiled else fn)(*tensors_flat, *args, **kwargs)
-            if len(batch_shape) == 1:
-                return out
-            return out.reshape((*batch_shape, *out.shape[1:]))
-
-        return wrapper
-
-    return decorator
-
-
 def tensor_to_cpu(x):
     if isinstance(x, torch.Tensor):
         x = x.detach().cpu()
@@ -626,22 +528,28 @@ def tensor_to_array(x: torch.Tensor, dtype: type[np.generic] | None = None) -> n
     return np.asarray(tensor_to_cpu(x), dtype=dtype)
 
 
-def data_to_array(data):
-    """Recursively move any GPU tensor nested in ``data`` to a CPU numpy array, preserving container structure.
+def data_to_array(data, *, to_torch: bool = False, copy: bool | None = None):
+    """Recursively move every tensor and Quadrants array nested in a container to a CPU numpy array, keeping its layout.
 
-    A named tuple, such as the reading of a sensor with several outputs, becomes a dict mapping its field names to their
-    values, which is the form recorders label their data by.
+    With 'to_torch', each one becomes a torch tensor where it lives instead. With 'copy', the result shares no memory
+    with the tensor or Quadrants array it comes from. A numpy array is returned as it is. A named tuple, such as the
+    reading of a sensor with several outputs, becomes a dict mapping its field names to their values, which is the form
+    recorders label their data by.
     """
     if isinstance(data, torch.Tensor):
-        return tensor_to_array(data)
+        if copy:
+            data = data.clone()
+        return data if to_torch else tensor_to_array(data)
+    if isinstance(data, (qd.Tensor, qd.Field, qd.Ndarray)):
+        return qd_to_torch(data, copy=copy) if to_torch else qd_to_numpy(data, copy=copy)
     if isinstance(data, np.ndarray):
         return data
     if isinstance(data, tuple) and (data_asdict := getattr(data, "_asdict", None)) is not None:
-        return {k: data_to_array(v) for k, v in data_asdict().items()}
+        return {k: data_to_array(v, to_torch=to_torch, copy=copy) for k, v in data_asdict().items()}
     if isinstance(data, Mapping):
-        return {k: data_to_array(v) for k, v in data.items()}
+        return {k: data_to_array(v, to_torch=to_torch, copy=copy) for k, v in data.items()}
     if is_sequence(data):
-        return type(data)(data_to_array(v) for v in data)
+        return type(data)(data_to_array(v, to_torch=to_torch, copy=copy) for v in data)
     return data
 
 

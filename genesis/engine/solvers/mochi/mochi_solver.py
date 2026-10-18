@@ -4,6 +4,7 @@
 import dataclasses
 import math
 import sys
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, NamedTuple
 
 import igl
@@ -23,7 +24,7 @@ from genesis.utils import array_class
 from genesis.utils.misc import get_gpu_shared_tile_sizes, qd_to_numpy, qd_to_torch, tensor_to_array
 from genesis.utils.sdf import SDF
 
-from ..base_solver import GravityMixin, StateChange, Subscriber, TimeBasedMixin
+from ..base_solver import GravityMixin, StateChange, Subscriber, TimeBasedMixin, mutates
 from ..kinematic_solver import KinematicSolver
 from ..rigid.abd.accessor import (
     kernel_control_dofs_force,
@@ -2328,6 +2329,15 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         self._external_state_dirty_mask[tensor_to_array(envs_idx)] = False
         self._is_contacts_recorded = False
 
+    @property
+    def data(self) -> Iterator[array_class.DataItem | array_class.ConfigItem]:
+        """Refuse to yield the arrays of a checkpoint or a trajectory frame.
+
+        The arrays of the kinematic tree leave out the deformable vertices, the integration history and the contact
+        state of the solver, so a scene restored from them would silently resume from another state.
+        """
+        gs.raise_exception(f"{type(self).__name__} cannot be checkpointed yet.")
+
     # ------------------------------------------------------------------------------------
     # ----------------------------------- contact API ------------------------------------
     # ------------------------------------------------------------------------------------
@@ -2471,6 +2481,7 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
     # ------------------------------------ control ---------------------------------------
     # ------------------------------------------------------------------------------------
 
+    @mutates(StateChange.MODEL)
     def _set_dofs_info(self, tensor_list, dofs_idx, name, envs_idx=None):
         tensor_list = list(tensor_list)
         for j, tensor in enumerate(tensor_list):
@@ -2679,6 +2690,7 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         kernel_get_dofs_control_force(dofs_idx, envs_idx, tensor, self.dyn_state, self.dyn_info, self.rigid_config)
         return _tensor
 
+    @mutates(StateChange.MODEL)
     def set_links_contact_params(self, links_idx, **params):
         links_idx = tensor_to_array(links_idx).reshape((-1,))
         geoms_idx = np.concatenate(
@@ -2734,6 +2746,7 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
     def set_links_COM(self, com, links_idx=None, envs_idx=None):
         gs.raise_exception("`set_links_COM` is not supported by the MochiSolver: link inertials are fixed at build.")
 
+    @mutates(StateChange.MODEL)
     def set_links_has_gravity(self, links_idx, has_gravity):
         links_idx = tensor_to_array(links_idx).reshape((-1,))
         values = qd_to_numpy(self.mochi_info.links.has_gravity)
@@ -2747,6 +2760,7 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         if self.mochi_config.use_sleeping:
             self._wake_nodes(self._nodes_idx, self._nodes_idx, self._scene._sanitize_envs_idx(envs_idx))
 
+    @mutates(StateChange.MODEL)
     def enable_layer_contact(self, layer_a: str, layer_b: str, is_enabled: bool = True):
         """Enable or disable contact between two contact layers (symmetric)."""
         i_a, i_b = self._layers.index(layer_a), self._layers.index(layer_b)
@@ -2759,6 +2773,7 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             kernel_soft_set_pair_enabled(self._compute_soft_pair_enabled(), self.soft_info, self.rigid_config)
         self._wake_nodes(self._nodes_idx, self._nodes_idx, self._scene._envs_idx)
 
+    @mutates(StateChange.MODEL)
     def enable_entity_contact(self, entity_a, entity_b, is_enabled: bool = True):
         """Enable or disable contact between two entities (symmetric)."""
         is_soft_a = isinstance(entity_a, MochiSoftEntity)
@@ -2981,6 +2996,7 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             i_n = len(self._entities) + entity.idx_in_solver
             self._wake_nodes(self._nodes_idx[i_n : i_n + 1], self._nodes_idx, envs_idx)
 
+    @mutates(StateChange.MODEL)
     def set_soft_entity_contact_params(self, entity, **params):
         material = entity.material
         keys = (

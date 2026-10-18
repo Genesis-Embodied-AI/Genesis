@@ -70,19 +70,8 @@ class Collider:
     def __init__(self, rigid_solver: "RigidSolver"):
         self._solver = rigid_solver
 
-        self._mc_perturbation = 1e-3 if self._solver._enable_mujoco_compatibility else 3e-3
+        self._mc_perturbation = 1e-3 if self._solver._enable_mujoco_compatibility else 5e-3
         self._mc_tolerance = 1e-3 if self._solver._enable_mujoco_compatibility else 1.5e-2
-        # Overlap depth (as a fraction of the pair bounding-box diagonal) past which MPR is upgraded to GJK. It is
-        # portal-dependent: only an EXACT portal corroborated by a warm cache recovers a depth trusted deeper (valid
-        # ratio); every other portal bounds the depth at best and falls back sooner (base ratio). The valid ratio is
-        # capped below the point where trusting deep exact portals lets contacts pump energy.
-        self._mpr_to_gjk_overlap_ratio = 0.2
-        self._mpr_to_gjk_overlap_ratio_valid = 0.6
-        # Minimum ratio of the current penetration to the cached warm-start penetration for MPR to be treated as
-        # having resolved a deeper, non-minimal portal (then upgraded to GJK). The jump only moves the threshold
-        # inside [tolerance, overlap_ratio * geom_pair_scale]: a depth at or below the manifold tolerance never
-        # refines, and one past the overlap cap always does.
-        self._mpr_to_gjk_penetration_ratio = 5.0
         self._box_MAXCONPAIR = 16
         self._diff_pos_tolerance = 1e-2
         self._diff_normal_tolerance = 1e-2
@@ -154,8 +143,8 @@ class Collider:
         self.clear()
 
     @property
-    def data(self) -> Iterator[array_class.DataItem]:
-        """Yield every array and static config of the collider, tagged by kind (see 'Solver.data')."""
+    def data(self) -> Iterator[array_class.DataItem | array_class.ConfigItem]:
+        """Yield every array and static config of the collider (see 'Solver.data')."""
         structs = [
             (self, "collider_config"),
             (self.gjk, "gjk_config"),
@@ -169,7 +158,7 @@ class Collider:
         elif self.collider_config.has_non_box_plane_convex_convex:
             structs.append((self.gjk, "gjk_state"))
         for owner, name in structs:
-            yield from array_class.iter_data(getattr(owner, name), name)
+            yield from array_class.iter_data(owner, name)
 
     def _init_static_config(self) -> None:
         # Identify the convex collision detection (ccd) algorithm
@@ -275,9 +264,6 @@ class Collider:
             self._sdf._sdf_info,
             mc_perturbation=self._mc_perturbation,
             mc_tolerance=self._mc_tolerance,
-            mpr_to_gjk_overlap_ratio=self._mpr_to_gjk_overlap_ratio,
-            mpr_to_gjk_overlap_ratio_valid=self._mpr_to_gjk_overlap_ratio_valid,
-            mpr_to_gjk_penetration_ratio=self._mpr_to_gjk_penetration_ratio,
             diff_pos_tolerance=self._diff_pos_tolerance,
             diff_normal_tolerance=self._diff_normal_tolerance,
             contact_pruning_tolerance=self._solver._options.contact_pruning_tolerance or 0.0,
@@ -865,7 +851,11 @@ class Collider:
         )
 
     def detection(self) -> None:
-        kernel_detection(
+        # The step launches the same graph (see RigidSolver.substep).
+        # FIXME: quadrants#946 - a graph refuses the ndarrays that own a gradient, so a scene tracking gradients
+        # launches the detection without a graph.
+        kernel = kernel_detection_without_graph if self._solver._requires_grad else kernel_detection
+        kernel(
             self._solver.geoms_init_AABB,
             self._solver.dyn_state,
             self.collider_state,
@@ -1233,7 +1223,7 @@ def func_detection(
             func_fill_diff_contact_input_analytic(dyn_state, collider_state, dyn_info, rigid_config)
 
 
-@qd.kernel(fastcache=True)
+@qd.kernel(graph=True, fastcache=True)
 def kernel_detection(
     geoms_init_AABB: array_class.GeomsInitAABB,
     dyn_state: array_class.DynState,
@@ -1257,7 +1247,57 @@ def kernel_detection(
     coop_dedup: qd.template(),
     errno: qd.Tensor,
 ):
-    """Run func_detection on its own, outside the substep graph that captures it (see kernel_substep_collision)."""
+    """Detect the collisions of every environment, captured as one graph."""
+    func_detection(
+        geoms_init_AABB=geoms_init_AABB,
+        dyn_state=dyn_state,
+        collider_state=collider_state,
+        mpr_state=mpr_state,
+        gjk_state=gjk_state,
+        diff_contact_input=diff_contact_input,
+        contact0_mpr_state=contact0_mpr_state,
+        contact0_gjk_state=contact0_gjk_state,
+        multicontact_mpr_state=multicontact_mpr_state,
+        multicontact_gjk_state=multicontact_gjk_state,
+        constraint_state=constraint_state,
+        dyn_info=dyn_info,
+        rigid_info=rigid_info,
+        collider_info=collider_info,
+        rigid_config=rigid_config,
+        collider_static_config=collider_static_config,
+        gjk_static_config=gjk_static_config,
+        has_possible_pairs=has_possible_pairs,
+        split_narrowphase=split_narrowphase,
+        coop_dedup=coop_dedup,
+        errno=errno,
+    )
+
+
+@qd.kernel(fastcache=True)
+def kernel_detection_without_graph(
+    geoms_init_AABB: array_class.GeomsInitAABB,
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    mpr_state: array_class.MPRState,
+    gjk_state: array_class.GJKState,
+    diff_contact_input: array_class.DiffContactInput,
+    contact0_mpr_state: array_class.MPRState,
+    contact0_gjk_state: array_class.GJKState,
+    multicontact_mpr_state: array_class.MPRState,
+    multicontact_gjk_state: array_class.GJKState,
+    constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
+    rigid_config: qd.template(),
+    collider_static_config: qd.template(),
+    gjk_static_config: qd.template(),
+    has_possible_pairs: qd.template(),
+    split_narrowphase: qd.template(),
+    coop_dedup: qd.template(),
+    errno: qd.Tensor,
+):
+    """Detect the collisions of every environment without a graph (see Collider.detection)."""
     func_detection(
         geoms_init_AABB=geoms_init_AABB,
         dyn_state=dyn_state,

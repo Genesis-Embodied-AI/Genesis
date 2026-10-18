@@ -12,7 +12,7 @@ import genesis.utils.geom as gu
 from genesis.constants import link_ref_frame
 from genesis.engine.entities import DroneEntity, RigidEntity, TerrainEntity
 from genesis.engine.materials import Rigid
-from genesis.engine.states import KinematicSolverCheckpoint, RigidSolverState
+from genesis.engine.states import RigidSolverState, SolverCheckpoint
 from genesis.options.morphs import Drone, Morph, Terrain
 from genesis.options.solvers import RigidOptions
 from genesis.utils.misc import (
@@ -139,7 +139,6 @@ from .abd.misc import (
     kernel_wakeup_coupled_links,
 )
 from .collider import Collider
-from .collider.collider import func_detection
 from .constraint import ConstraintSolver
 from .constraint.backward import (
     kernel_accumulate_constraint_solver_grads,
@@ -1303,9 +1302,10 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                     self._errno,
                 )
         else:
-            # The work before the constraint solve is captured as two graphs cut ahead of the collision detection, since
-            # the compile time of a kernel grows faster than its size while one more graph replay costs next to nothing.
-            # The work after the solve is captured as one graph.
+            # The work before the constraint solve is captured as three graphs, since the compile time of a kernel grows
+            # faster than its size while one more graph replay costs next to nothing. The collision detection takes a
+            # graph of its own, the one Collider.detection launches, so that a scene compiles it once whether it steps
+            # or detects collisions alone. The work after the solve is captured as one graph.
             collider = self.collider
             constraint_solver = self.constraint_solver
             collider._contact_data_cache.clear()
@@ -1322,31 +1322,18 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 self._is_backward,
                 not self._disable_constraint,
             )
-            kernel_substep_collision(
-                self.geoms_init_AABB,
-                self.dyn_state,
-                collider.collider_state,
-                collider.mpr.mpr_state,
-                collider.gjk.gjk_state,
-                collider.gjk.gjk_state.diff_contact_input,
-                collider.mpr.contact0_mpr_state,
-                collider.gjk.contact0_gjk_state,
-                collider.mpr.multicontact_mpr_state,
-                collider.gjk.multicontact_gjk_state,
-                constraint_solver.constraint_state,
-                self.dyn_info,
-                self.rigid_info,
-                collider.collider_info,
-                self.rigid_config,
-                collider.collider_config,
-                collider.gjk.gjk_config,
-                not self._disable_constraint,
-                collider._n_possible_pairs > 0,
-                collider._use_split_narrowphase,
-                collider._use_coop_dedup,
-                self._errno,
-            )
+            if self._enable_collision:
+                collider.detection()
             if not self._disable_constraint:
+                kernel_substep_inequality(
+                    self.dyn_state,
+                    collider.collider_state,
+                    constraint_solver.constraint_state,
+                    self.dyn_info,
+                    self.rigid_info,
+                    self.rigid_config,
+                    collider.collider_config,
+                )
                 func_solve_body(
                     self.dyn_state,
                     constraint_solver.constraint_state,
@@ -1931,7 +1918,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         self._restart()
 
     @property
-    def data(self) -> Iterator[array_class.DataItem]:
+    def data(self) -> Iterator[array_class.DataItem | array_class.ConfigItem]:
         yield from super().data
         yield from self.collider.data
         yield from self.constraint_solver.data
@@ -1947,7 +1934,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 entity._prev_prop_t = -1
 
     @mutates(StateChange.GEOMETRY, StateChange.DYNAMICS)
-    def __setstate__(self, state: KinematicSolverCheckpoint) -> None:
+    def __setstate__(self, state: SolverCheckpoint) -> None:
         super().__setstate__(state)
         self._restart()
 
@@ -2267,6 +2254,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
 
+    @mutates(StateChange.MODEL)
     def _set_links_info(self, values, links_idx, name, envs_idx=None, *, scale_inertia=False):
         """Write one inertial property of the given links, then recompute the inverse weights of their trees once.
 
@@ -2439,6 +2427,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         """Set the center of mass (COM) of the given links, as an offset from the origin of their local frame."""
         self._set_links_info(com, links_idx, "COM", envs_idx)
 
+    @mutates(StateChange.MODEL)
     def set_geoms_friction_ratio(self, friction_ratio, geoms_idx=None, envs_idx=None):
         friction_ratio, geoms_idx, envs_idx = self._sanitize_io_variables(
             friction_ratio, geoms_idx, self.n_geoms, "geoms_idx", envs_idx, skip_allocation=True
@@ -2520,6 +2509,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
 
+    @mutates(StateChange.MODEL)
     def set_global_sol_params(self, sol_params):
         """
         Set constraint solver parameters.
@@ -2536,6 +2526,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         sol_params_ = _sanitize_sol_params(sol_params_.clone(), self._sol_min_timeconst)
         kernel_set_global_sol_params(sol_params_, self.dyn_info, self.rigid_config)
 
+    @mutates(StateChange.MODEL)
     def set_sol_params(self, sol_params, geoms_idx=None, envs_idx=None, *, joints_idx=None, eqs_idx=None):
         """
         Set constraint solver parameters.
@@ -2593,6 +2584,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
 
         kernel_set_sol_params(inputs_idx, envs_idx, sol_params_, self.dyn_info, self.rigid_config, int(constraint_type))
 
+    @mutates(StateChange.MODEL)
     def _set_dofs_info(self, tensor_list, dofs_idx, name, envs_idx=None):
         if gs.use_zerocopy and name in {
             "kp",
@@ -3343,36 +3335,44 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
 
         return aabb[0] if self.n_envs == 0 else aabb
 
+    @mutates(StateChange.MODEL)
     def set_geom_friction(self, friction, geoms_idx):
         kernel_set_geom_friction(geoms_idx, friction, self.dyn_info)
 
+    @mutates(StateChange.MODEL)
     def set_geom_friction_torsional(self, friction_torsional, geoms_idx):
         kernel_set_geom_friction_torsional(geoms_idx, friction_torsional, self.dyn_info)
 
+    @mutates(StateChange.MODEL)
     def set_geom_friction_rolling(self, friction_rolling, geoms_idx):
         kernel_set_geom_friction_rolling(geoms_idx, friction_rolling, self.dyn_info)
 
+    @mutates(StateChange.MODEL)
     def set_geoms_friction(self, friction, geoms_idx=None):
         friction, geoms_idx, _ = self._sanitize_io_variables(
             friction, geoms_idx, self.n_geoms, "geoms_idx", envs_idx=None, batched=False, skip_allocation=True
         )
         kernel_set_geoms_friction(geoms_idx, friction, self.dyn_info, self.rigid_config)
 
+    @mutates(StateChange.MODEL)
     def set_geoms_friction_torsional(self, friction_torsional, geoms_idx=None):
         friction_torsional, geoms_idx, _ = self._sanitize_io_variables(
             friction_torsional, geoms_idx, self.n_geoms, "geoms_idx", envs_idx=None, batched=False, skip_allocation=True
         )
         kernel_set_geoms_friction_torsional(geoms_idx, friction_torsional, self.dyn_info, self.rigid_config)
 
+    @mutates(StateChange.MODEL)
     def set_geoms_friction_rolling(self, friction_rolling, geoms_idx=None):
         friction_rolling, geoms_idx, _ = self._sanitize_io_variables(
             friction_rolling, geoms_idx, self.n_geoms, "geoms_idx", envs_idx=None, batched=False, skip_allocation=True
         )
         kernel_set_geoms_friction_rolling(geoms_idx, friction_rolling, self.dyn_info, self.rigid_config)
 
+    @mutates(StateChange.MODEL)
     def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None):
         return self.constraint_solver.add_weld_constraint(link1_idx, link2_idx, envs_idx)
 
+    @mutates(StateChange.MODEL)
     def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx=None):
         return self.constraint_solver.delete_weld_constraint(link1_idx, link2_idx, envs_idx)
 
@@ -3596,63 +3596,19 @@ def kernel_substep_dynamics(
 
 
 @qd.kernel(graph=True, fastcache=True)
-def kernel_substep_collision(
-    geoms_init_AABB: array_class.GeomsInitAABB,
+def kernel_substep_inequality(
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
-    mpr_state: array_class.MPRState,
-    gjk_state: array_class.GJKState,
-    diff_contact_input: array_class.DiffContactInput,
-    contact0_mpr_state: array_class.MPRState,
-    contact0_gjk_state: array_class.GJKState,
-    multicontact_mpr_state: array_class.MPRState,
-    multicontact_gjk_state: array_class.GJKState,
     constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    collider_info: array_class.ColliderInfo,
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
-    gjk_static_config: qd.template(),
-    enable_constraint: qd.template(),
-    has_possible_pairs: qd.template(),
-    split_narrowphase: qd.template(),
-    coop_dedup: qd.template(),
-    errno: qd.Tensor,
 ):
-    """Detect the collisions of a substep, then assemble its inequality constraints, captured as one graph.
-
-    enable_constraint selects the assembly of the inequality constraints. has_possible_pairs, split_narrowphase and
-    coop_dedup configure the detection (see func_detection).
-    """
-    if qd.static(rigid_config.enable_collision):
-        func_detection(
-            geoms_init_AABB=geoms_init_AABB,
-            dyn_state=dyn_state,
-            collider_state=collider_state,
-            mpr_state=mpr_state,
-            gjk_state=gjk_state,
-            diff_contact_input=diff_contact_input,
-            contact0_mpr_state=contact0_mpr_state,
-            contact0_gjk_state=contact0_gjk_state,
-            multicontact_mpr_state=multicontact_mpr_state,
-            multicontact_gjk_state=multicontact_gjk_state,
-            constraint_state=constraint_state,
-            dyn_info=dyn_info,
-            rigid_info=rigid_info,
-            collider_info=collider_info,
-            rigid_config=rigid_config,
-            collider_static_config=collider_static_config,
-            gjk_static_config=gjk_static_config,
-            has_possible_pairs=has_possible_pairs,
-            split_narrowphase=split_narrowphase,
-            coop_dedup=coop_dedup,
-            errno=errno,
-        )
-    if qd.static(enable_constraint):
-        func_add_inequality_constraints(
-            dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config, collider_static_config
-        )
+    """Assemble the inequality constraints of a substep, captured as one graph."""
+    func_add_inequality_constraints(
+        dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config, collider_static_config
+    )
 
 
 @qd.kernel(graph=True, fastcache=True)

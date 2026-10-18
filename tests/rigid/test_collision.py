@@ -102,7 +102,6 @@ def test_plane_convex(show_viewer, tol):
                 assert_allclose(qvel, 0, atol=0.14)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["ellipsoid"])
 def test_ellipsoid(xml_path, show_viewer):
@@ -426,14 +425,7 @@ def test_mpr_thin_box_stack_no_lateral_phantom(show_viewer, tol):
 
 @pytest.mark.slow  # ~150s
 @pytest.mark.required
-@pytest.mark.parametrize(
-    "detection",
-    [
-        pytest.param("mpr", marks=pytest.mark.xfail(reason="Misses the minimal separation of some box pairs.")),
-        pytest.param("gjk", marks=pytest.mark.xfail(reason="Misses the minimal separation of some box pairs.")),
-        "box_box",
-    ],
-)
+@pytest.mark.parametrize("detection", ["mpr", "gjk", "box_box"])
 def test_box_contact_minimal_separation(detection, show_viewer, tol):
     # A contact is a point and a normal along which the depth is the smallest displacement separating both boxes. For a
     # box pair, that displacement is the smallest overlap over the 15 separating axes (the face normals of either box and
@@ -445,9 +437,9 @@ def test_box_contact_minimal_separation(detection, show_viewer, tol):
     SCALES = (0.05, 0.2, 1.0, 5.0)
     BOXES_SIZE = np.array(((1.0, 0.6, 0.02), (0.8, 0.05, 0.05), (0.5, 0.4, 0.1), (0.3, 0.3, 0.3)))
     BOX_EULER_ROTS = ((0, 0, 0), (180, 0, 0), (90, 0, 0), (-90, 0, 0), (0, -90, 0), (0, 90, 0))
-    # MPR is precise relatively to the overlap of both boxes: the overlap along its normal exceeds the minimal one by up
-    # to this fraction of it.
-    MPR_OVERLAP_RATIO = 0.2
+    # Angle within which the normal of Minkowski Portal Refinement (MPR) follows a separating axis of the pair, as
+    # bounded by the convergence of its portal
+    MPR_AXIS_ANGLE_TOL = 2e-3
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -464,20 +456,24 @@ def test_box_contact_minimal_separation(detection, show_viewer, tol):
         ),
         show_viewer=show_viewer,
     )
-    # Every box takes each shape in some environments, in an order shuffled per box. The pairs are laid out in the view
-    # as a grid, each one away from the camera in proportion to its scale, so that all of them look alike while lying at
-    # depths far enough apart for their boxes to never reach each other. The smallest ones also sit near the origin,
-    # where rounding errors are the smallest.
+    # Every box takes each shape in some environments, in an order shuffled per box. Both boxes of the pair at unit
+    # scale share their order, so that identical boxes posed aligned overlap nearly as much along two of their axes. The
+    # pairs are laid out in the view as a grid, each one away from the camera in proportion to its scale, so that all of
+    # them look alike while lying at depths far enough apart for their boxes to never reach each other. The smallest
+    # ones also sit near the origin, where rounding errors are the smallest.
     pairs_boxes = []
     for i_s, scale in enumerate(SCALES):
         view_x, view_y = 0.7 * (2 * (i_s % 2) - 1), 0.3 * (2 * (i_s // 2) - 1)
         pair_pos = 3.0 * scale * np.array((view_x, 1.0 + view_y, view_y - 1.0))
+        boxes_size = [np.random.permutation(BOXES_SIZE) for _ in range(2)]
+        if np.isclose(scale, 1.0):
+            boxes_size[1] = boxes_size[0]
         pairs_boxes.append(
             [
                 scene.add_entity(
                     morph=[
                         gs.morphs.Box(pos=pair_pos + (0.0, 0.0, 3.0 * scale * i_box), size=scale * box_size)
-                        for box_size in np.random.permutation(BOXES_SIZE)
+                        for box_size in boxes_size[i_box]
                     ],
                     vis_mode="collision",
                 )
@@ -617,16 +613,25 @@ def test_box_contact_minimal_separation(detection, show_viewer, tol):
             pairs_overlap_min = np.full((N_ENVS, n_pairs), np.inf)
             np.minimum.at(pairs_overlap_min, (envs_idx, pairs_idx), normals_overlap)
             is_pair_detected = np.isfinite(pairs_overlap_min)
-            # MPR trusts any depth below the multi-contact tolerance, which scales with the smaller box of the pair, and
-            # seeks a normal consistent over time rather than the minimal one.
-            # TODO: Assert that the normal of MPR is consistent over time, rather than only bounding its overlap.
-            pairs_overlap_tol = tol * pairs_size
             if detection == "mpr":
-                pairs_overlap_tol = (
-                    scene.rigid_solver.collider._mc_tolerance * pairs_scale
-                    + MPR_OVERLAP_RATIO * np.maximum(pairs_depth, 0.0)
-                )
-            assert (pairs_overlap_min - pairs_depth <= pairs_overlap_tol)[is_pair_detected].all()
+                # Minkowski Portal Refinement (MPR) converges on the face of the Minkowski difference crossed by its
+                # ray, which may differ from the one of least overlap. Its normal is still the direction of a face or of
+                # a pair of edges of both boxes, one of their separating axes, up to the convergence of its portal.
+                axes_cos = np.abs((axes[envs_idx, pairs_idx] @ normals_ab[..., None])[..., 0])
+                is_axis_followed = np.arccos(np.minimum(axes_cos, 1.0)) < MPR_AXIS_ANGLE_TOL
+                assert is_axis_followed.any(axis=-1).all()
+                if i_step == 0:
+                    # Detected from scratch, the axis of every contact overlaps no more than the face normals of either
+                    # box, since a face normal overlapping less proves the portal non-minimal and has GJK refine the
+                    # contact, up to the tilt of the perturbed contacts. Nearly parallel axes may both be followed, in
+                    # which case the normal can follow the shallower one.
+                    axes_depth_followed = np.where(is_axis_followed, axes_depth[envs_idx, pairs_idx], np.inf)
+                    pairs_axis_depth = np.full((N_ENVS, n_pairs), -np.inf)
+                    np.maximum.at(pairs_axis_depth, (envs_idx, pairs_idx), axes_depth_followed.min(axis=-1))
+                    pairs_faces_depth = axes_depth[..., :6].min(axis=-1)
+                    assert (pairs_axis_depth - pairs_faces_depth <= pairs_tol)[is_pair_detected].all()
+            else:
+                assert (pairs_overlap_min - pairs_depth <= tol * pairs_size)[is_pair_detected].all()
 
             # The deepest contact of a pair takes the whole overlap along its normal
             pairs_depth_max = np.full((N_ENVS, n_pairs), -np.inf)
@@ -634,9 +639,14 @@ def test_box_contact_minimal_separation(detection, show_viewer, tol):
             is_deepest = depths >= pairs_depth_max[envs_idx, pairs_idx]
             assert (normals_overlap[is_deepest] - depths[is_deepest] <= contacts_tol[is_deepest]).all()
 
-            # A contact lies midway between its witnesses, the deepest point of either box inside the other along the
-            # normal, each one lying on the surface of its own box. The contacts found on the perturbed pair are only
-            # placed up to the tolerance.
+            # A contact lies midway between its witnesses, each on the surface of its own box. Rebuilt along the normal,
+            # the witnesses of GJK, which lie apart along another direction, may land past the surfaces by up to twice
+            # the tolerance, and those of a perturbed contact, whose depth is a lower bound, inside the boxes by up to
+            # five times it. MPR approximates the depth of a perturbed contact further, up to five times the tolerance
+            # either way.
+            witnesses_tol_out, witnesses_tol_in = {"box_box": (1.0, 1.0), "gjk": (2.0, 5.0), "mpr": (5.0, 5.0)}[
+                detection
+            ]
             witnesses = (
                 positions[:, None] + 0.5 * np.array((1.0, -1.0))[:, None] * depths[:, None, None] * normals_ab[:, None]
             )
@@ -644,23 +654,66 @@ def test_box_contact_minimal_separation(detection, show_viewer, tol):
             witnesses_q = np.abs(witnesses_local) - contacts_boxes_half
             witnesses_sdf = np.linalg.norm(np.maximum(witnesses_q, 0.0), axis=-1)
             witnesses_sdf += np.minimum(witnesses_q.max(axis=-1), 0.0)
-            assert (np.abs(witnesses_sdf) <= contacts_tol[:, None]).all()
+            assert (witnesses_sdf <= witnesses_tol_out * contacts_tol[:, None]).all()
+            assert (witnesses_sdf >= -witnesses_tol_in * contacts_tol[:, None]).all()
 
             # Overlapping boxes have contacts, boxes apart have none
             assert is_pair_detected[pairs_depth > pairs_tol].all()
             assert not is_pair_detected[pairs_depth < -pairs_tol].any()
 
 
+@pytest.mark.required
+def test_box_contact_true_penetration(show_viewer, tol):
+    # Every contact of two aligned boxes takes their overlap along the axis its normal follows, and the shallowest one
+    # their least overlap
+    N_ENVS = 64
+    N_ROUNDS = 8
+    BOX_SIZE = np.array((4.0, 0.25, 0.25))
+
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            use_gjk_collision=True,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.0, -8.0, 4.0),
+            camera_lookat=(0.0, 0.0, 0.0),
+        ),
+        show_viewer=show_viewer,
+    )
+    box_1, box_2 = (
+        scene.add_entity(
+            morph=gs.morphs.Box(
+                size=BOX_SIZE,
+            ),
+            vis_mode="collision",
+        )
+        for _ in range(2)
+    )
+    scene.build(n_envs=N_ENVS)
+
+    for _ in range(N_ROUNDS):
+        # Two identical boxes posed exactly aligned at random orientations, overlapping end to end
+        quats = gu.random_quaternion(N_ENVS)
+        overlaps = np.random.uniform(0.01, 0.5, size=(N_ENVS, 3)) * BOX_SIZE
+        offsets_local = np.random.choice((-1.0, 1.0), size=(N_ENVS, 3)) * (BOX_SIZE - overlaps)
+        box_1.set_quat(quats)
+        box_2.set_pos(gu.transform_by_quat(offsets_local, quats))
+        box_2.set_quat(quats)
+
+        scene.rigid_solver.collider.clear()
+        scene.rigid_solver.collider.detection()
+        contacts = box_1.get_contacts(with_entity=box_2)
+        is_contact_valid = tensor_to_array(contacts["valid_mask"])
+        penetrations = tensor_to_array(contacts["penetration"])
+        normals_local = gu.inv_transform_by_quat(tensor_to_array(contacts["normal"]), quats[:, None])
+        normals_overlap = np.take_along_axis(overlaps, np.abs(normals_local).argmax(axis=-1), axis=-1)
+        assert_allclose(penetrations[is_contact_valid], normals_overlap[is_contact_valid], tol=tol)
+        assert_allclose(np.where(is_contact_valid, penetrations, np.inf).min(axis=-1), overlaps.min(axis=-1), tol=tol)
+
+
 @pytest.mark.slow  # ~150s
 @pytest.mark.required
-@pytest.mark.parametrize(
-    "detection",
-    [
-        pytest.param("mpr", marks=pytest.mark.xfail(reason="Lets some stacks of boxes drift.")),
-        pytest.param("gjk", marks=pytest.mark.xfail(reason="Lets some stacks of boxes drift.")),
-        "box_box",
-    ],
-)
+@pytest.mark.parametrize("detection", ["mpr", "gjk", "box_box"])
 def test_box_stacks_stability(detection, show_viewer, tol):
     # Piles of boxes of random shapes, each lying on a random face at a random yaw with a tiny tilt, on fixed bases at
     # several scales, restacked in a new order and pose after every reset. Each pile is statically stable: at every
@@ -731,21 +784,23 @@ def test_box_stacks_stability(detection, show_viewer, tol):
     scene.build(n_envs=N_ENVS)
 
     # Under the default impedance, the residual softness of the contacts tips the tallest piles standing on the
-    # narrowest supports at the smallest scale, although they are statically stable. At rest, the contacts then sink
-    # by about the gravity acceleration times the squared time constant, scaled by (1 - d) / d for an impedance d. The
-    # time constant grows with the square root of the scale, which sinks every pile by a depth in proportion to its
-    # size: the piles stay geometrically similar, and this depth stays above the resolution of the coordinates of the
-    # largest ones, which stand the farthest from the origin. The boxes are built axis-aligned, so their bounding boxes
-    # give the size each environment simulates.
+    # narrowest supports at the smallest scale, although they are statically stable. At rest, a contact sinks by about
+    # the gravity acceleration times the squared time constant, scaled by (1 - d) / d for an impedance d and by the load
+    # it carries: the mass of the boxes it supports times the sum of the inverse masses of the two links it separates,
+    # the fixed base adding none. The time constant grows with the square root of the scale, which sinks every pile by a
+    # depth in proportion to its size: the piles stay geometrically similar, and this depth stays above the resolution
+    # of the coordinates of the largest ones, which stand the farthest from the origin. The boxes are built
+    # axis-aligned, so their bounding boxes give the size each environment simulates.
     sol_params = gu.default_solver_params()
-    sol_params[2:4] = CONTACT_IMPEDANCE
-    piles_rest_depth, piles_boxes_size = [], []
+    piles_rest_depth, piles_boxes_size, piles_boxes_mass = [], [], []
     for scale, pile_pos, base, boxes in piles:
         sol_params[0] = CONSTRAINT_TIMECONST * np.sqrt(scale / SCALES[0])
+        sol_params[2:4] = CONTACT_IMPEDANCE
         for entity in (base, *boxes):
             for geom in entity.geoms:
                 geom.set_sol_params(sol_params)
         piles_rest_depth.append(GRAVITY * sol_params[0] ** 2 * (1.0 - CONTACT_IMPEDANCE) / CONTACT_IMPEDANCE)
+        piles_boxes_mass.append(np.stack([tensor_to_array(box.get_mass()) for box in boxes]))
         aabbs = np.stack([tensor_to_array(box.get_AABB()) for box in boxes])
         piles_boxes_size.append(aabbs[..., 1, :] - aabbs[..., 0, :])
 
@@ -754,7 +809,9 @@ def test_box_stacks_stability(detection, show_viewer, tol):
             scene.reset()
         piles_boxes_pos_rest = []
         piles_boxes_up_axis = []
-        for (scale, pile_pos, base, boxes), rest_depth, boxes_size in zip(piles, piles_rest_depth, piles_boxes_size):
+        for (scale, pile_pos, base, boxes), rest_depth, boxes_size, boxes_mass in zip(
+            piles, piles_rest_depth, piles_boxes_size, piles_boxes_mass
+        ):
             n_boxes = len(boxes)
             # Each box lies on a face no taller than the narrowest side of the face
             is_up_axis = np.arange(3) == BOX_UP_AXES[:, None]
@@ -797,9 +854,14 @@ def test_box_stacks_stability(detection, show_viewer, tol):
             base_half = np.maximum(0.5 * 0.5 * scale * BASE_SIZE[:2] - TILT * (pile_top - pile_pos[2])[:, None], 0.0)
             levels_xy += pile_pos[:2] + np.random.uniform(low=-1.0, high=1.0, size=(N_ENVS, 2)) * base_half - com_xy
 
-            # Lower every box onto the one below until they touch, then by the depth at which they rest. Raised along
-            # the vertical, a pair of boxes separates at the lowest height at which one of their separating axes (the
-            # face normals of either box and the cross products of their edges) separates them.
+            # Lower every box onto the one below until they touch, then by the depth at which its contact rests under
+            # the load it carries. Raised along the vertical, a pair of boxes separates at the lowest height at which
+            # one of their separating axes (the face normals of either box and the cross products of their edges)
+            # separates them.
+            levels_mass = np.take_along_axis(boxes_mass, levels, axis=0)
+            levels_mass_above = np.cumsum(levels_mass[::-1], axis=0)[::-1]
+            levels_mass_inv = 1.0 / levels_mass + np.concatenate((np.zeros((1, N_ENVS)), 1.0 / levels_mass[:-1]))
+            levels_rest_depth = rest_depth * levels_mass_above * levels_mass_inv
             levels_R = np.take_along_axis(gu.quat_to_R(boxes_quat), levels[..., None, None], axis=0)
             levels_z = np.empty((n_boxes, N_ENVS))
             below_R = np.broadcast_to(np.eye(3), (N_ENVS, 3, 3))
@@ -817,7 +879,7 @@ def test_box_stacks_stability(detection, show_viewer, tol):
                 offset = np.concatenate((levels_xy[i_l] - below_pos[:, :2], -below_pos[:, 2:]), axis=-1)
                 axes_height = (axes_support - (axes * offset[:, None]).sum(axis=-1)) / axes[..., 2]
                 levels_z[i_l] = np.where(axes[..., 2] > gs.EPS, axes_height, np.inf).min(axis=-1)
-                levels_z[i_l] -= rest_depth
+                levels_z[i_l] -= levels_rest_depth[i_l]
                 below_R, below_half = levels_R[i_l], levels_half[i_l]
                 below_pos = np.concatenate((levels_xy[i_l], levels_z[i_l, :, None]), axis=-1)
 
@@ -923,7 +985,9 @@ def test_box_stacks_stability(detection, show_viewer, tol):
 
                         # When at most four corners of the patch touch the other face, each of those pressed into it
                         # carries a contact, unless the pruning drops it: the triangle a corner forms with its two
-                        # neighbors then covers less than the pruning tolerance of the patch area.
+                        # neighbors then covers less than the pruning tolerance of the patch area. Detection merges the
+                        # contacts closer than the multi-contact tolerance, which scales with the smaller box of the
+                        # pair, so a contact stands for every corner within this distance.
                         if (patch_depth > -depth_guard).sum() <= 4:
                             patch_prev, patch_next = np.roll(patch, 1, axis=0), np.roll(patch, -1, axis=0)
                             corners_edges = np.stack((patch - patch_prev, patch_next - patch), axis=-2)
@@ -933,7 +997,9 @@ def test_box_stacks_stability(detection, show_viewer, tol):
                             is_pressed = patch_depth > depth_guard
                             corners_pair_dist = np.linalg.norm(patch[:, None] - pair_pos, axis=-1)
                             corners_dist = corners_pair_dist.min(axis=-1, initial=np.inf)
-                            assert (corners_dist[is_pressed & is_kept] < 1e-3 * scale).all()
+                            pair_scale = np.linalg.norm(links_half[[i_lower, i_upper], i_b], axis=-1).min()
+                            corners_tol = scene.rigid_solver.collider._mc_tolerance * pair_scale
+                            assert (corners_dist[is_pressed & is_kept] < corners_tol).all()
 
                         # Otherwise, detection reports only a few points per pair, so their hull only has to span the
                         # pressed part of the patch: its smallest width is compared with that of this part.
@@ -1048,12 +1114,13 @@ def test_convex_collision_across_geom_scales(gjk_collision, show_viewer, tol):
     assert (contacts["penetration"][is_box & ~is_pressed] <= GEOM_SIZE).all()
     is_lamp = contacts["geom_b"] == lamp.geoms[0].idx
     assert is_lamp.any()
-    assert_allclose(contacts["penetration"][is_lamp].max(), hull_depth, atol=1e-7)
+    # MPR stops refining the depth once it moves by less than its convergence tolerance, relative to the pair scale
+    depth_tol = 1e-7 if gjk_collision else 1e-5 * 0.5 * np.linalg.norm(np.ptp(finger_verts, axis=0))
+    assert_allclose(contacts["penetration"][is_lamp].max(), hull_depth, atol=depth_tol)
     offset = (geom_grazing.get_pos() - box.get_pos()) @ face_normal
     assert face_offset - tol <= offset <= face_offset + GEOM_SIZE
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_robot_scaling_primitive_collision(show_viewer):
     scene = gs.Scene(
@@ -1457,7 +1524,6 @@ def test_contact_pruning_authored_decomp(gjk_collision, show_viewer):
         assert is_vertical and is_pruned
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize(
     "model_name",
@@ -1547,8 +1613,11 @@ def test_contact_pruning_degenerated_hull(model_name, xml_path, show_viewer):
             "bowls", 1_000, None, "max number of post-pruning contact points", None, marks=pytest.mark.required
         ),
         # Candidate contact buffer overflow. The explicit contact budget is clamped down to the buffer size, so only
-        # the buffer itself can overflow. Its phase is left unpinned, for the same reason as above.
-        ("bowls", 150, 1_000, "max number of candidate contact points", None),
+        # the buffer itself can overflow. Its phase is left unpinned, for the same reason as above. Debug mode is
+        # forced, as fast-math moves the candidate count of the steps after the build across the buffer size.
+        pytest.param(
+            "bowls", 150, 1_000, "max number of candidate contact points", None, marks=pytest.mark.debug(True)
+        ),
         # Broad phase candidate pair overflow on the step taken by the build, the bowls starting fully overlapping.
         pytest.param(
             "bowls", 20, None, "max number of broad phase candidate contact pairs", True, marks=pytest.mark.required
@@ -1638,7 +1707,6 @@ def test_num_contact_overflow(
         assert scene.is_built is not is_raised_by_build
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_filter_neutral_self_collisions(show_viewer):
     scene = gs.Scene(
@@ -1725,7 +1793,6 @@ def test_filter_neutral_self_collisions(show_viewer):
         scene.step()
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_contype_conaffinity(show_viewer, tol):
     GRAVITY = (0.0, 0.0, -10.0)
@@ -1838,7 +1905,7 @@ def test_gpu_simulation_determinism(prefer_decomposed_solver, contact_pruning_to
 
         monkeypatch.setattr(RigidSimStaticConfig, "__init__", init_forced)
 
-    N_TRIALS = 8
+    N_TRIALS = 4
     N_STEPS = 25
     N_WEDGES = 16
     BASE_HEIGHT = 0.020

@@ -215,7 +215,7 @@ class ConstraintSolver:
     @property
     def data(self) -> Iterator[array_class.DataItem]:
         """Yield every array of the constraint solver, tagged by kind (see 'Solver.data')."""
-        yield from array_class.iter_data(self.constraint_state, "constraint_state")
+        yield from array_class.iter_data(self, "constraint_state")
 
     def reset(self, envs_idx=None):
         self._eq_const_info_cache.clear()
@@ -740,46 +740,47 @@ def _add_friction_constraint(
         for i_d in range(n_dofs):
             constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
 
-    same_root = (
-        link_b > -1 and dyn_info.links.root_idx[link_a_maybe_batch] == dyn_info.links.root_idx[link_b_maybe_batch]
-    )
     con_n_dofs = 0
     jac_qvel = gs.qd_float(0.0)
-    for i_ab in range(2):
-        sign = gs.qd_float(-1.0)
-        link = link_a
-        if i_ab == 1:
-            sign = gs.qd_float(1.0)
-            link = link_b
 
-        while link > -1:
-            link_maybe_batch = [link, i_b] if qd.static(rigid_config.batch_links_info) else link
+    # Ancestors share a root center of mass. Factor the angular projection using (w x r) . n = w . (r x n).
+    offset_a = contact_data_pos - dyn_state.links.root_COM[link_a, i_b]
+    offset_b = gs.qd_vec3(0.0, 0.0, 0.0)
+    if link_b >= 0:
+        offset_b = contact_data_pos - dyn_state.links.root_COM[link_b, i_b]
+    direction_ang_a = offset_a.cross(n) + n_ang
+    direction_ang_b = offset_b.cross(n) + n_ang
 
-            # reverse order to make sure dofs in each row of self.jac_dofs_idx are strictly descending
-            for i_d_ in range(dyn_info.links.n_dofs[link_maybe_batch]):
-                i_d = dyn_info.links.dof_end[link_maybe_batch] - 1 - i_d_
+    # Shared ancestors contribute equal contact velocities. Descending link order stops both walks where they meet.
+    i_la, i_lb = link_a, link_b
+    for i_walk in range(dyn_state.links.pos.shape[0]):
+        if i_la == i_lb:
+            break
+        link = qd.max(i_la, i_lb)
+        sign = gs.qd_float(-1.0) if i_la > i_lb else gs.qd_float(1.0)
+        link_maybe_batch = [link, i_b] if qd.static(rigid_config.batch_links_info) else link
 
-                cdof_ang = dyn_state.dofs.cdof_ang[i_d, i_b]
-                cdot_vel = dyn_state.dofs.cdof_vel[i_d, i_b]
+        # reverse order to make sure dofs in each row of self.jac_dofs_idx are strictly descending
+        for i_d_ in range(dyn_info.links.n_dofs[link_maybe_batch]):
+            i_d = dyn_info.links.dof_end[link_maybe_batch] - 1 - i_d_
 
-                t_quat = gu.qd_identity_quat()
-                t_pos = contact_data_pos - dyn_state.links.root_COM[link, i_b]
-                _, vel = gu.qd_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
+            cdof_ang = dyn_state.dofs.cdof_ang[i_d, i_b]
+            cdot_vel = dyn_state.dofs.cdof_vel[i_d, i_b]
 
-                diff = sign * vel
-                jac = diff @ n
-                if qd.static(rigid_config.enable_torsional_friction):
-                    # Unconditional fma even though n_ang is zero on the tangential rows: a per-row gate would
-                    # diverge the per-friction kernel's warps, whose adjacent lanes hold different rows.
-                    jac = jac + (sign * cdof_ang) @ n_ang
-                jac_qvel = jac_qvel + jac * dyn_state.dofs.vel[i_d, i_b]
-                constraint_state.jac[n_con, i_d, i_b] = constraint_state.jac[n_con, i_d, i_b] + jac
+            direction_ang = direction_ang_a if i_la > i_lb else direction_ang_b
+            jac = sign * (cdot_vel.dot(n) + cdof_ang.dot(direction_ang))
+            jac_qvel = jac_qvel + jac * dyn_state.dofs.vel[i_d, i_b]
+            constraint_state.jac[n_con, i_d, i_b] = constraint_state.jac[n_con, i_d, i_b] + jac
 
-                con_n_dofs = _append_relevant_dof(
-                    n_con, i_d, i_b, con_n_dofs, i_ab == 1 and same_root, constraint_state
-                )
+            con_n_dofs = _append_relevant_dof(
+                n_con, i_d, i_b, con_n_dofs, dedup=False, constraint_state=constraint_state
+            )
 
-            link = dyn_info.links.parent_idx[link_maybe_batch]
+        i_parent = dyn_info.links.parent_idx[link_maybe_batch]
+        if i_la > i_lb:
+            i_la = i_parent
+        else:
+            i_lb = i_parent
 
     constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
     _sort_relevant_dofs_descending(n_con, i_b, con_n_dofs, constraint_state, rigid_config)

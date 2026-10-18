@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 import genesis as gs
+from genesis.engine.solvers.base_solver import StateChange, Subscriber
 from genesis.utils.misc import tensor_to_array
 
 from ..utils.assertions import assert_allclose
@@ -115,8 +116,12 @@ def test_arm_pd_control_limits_and_contact(show_viewer):
     kp = np.array([4500.0, 4500.0, 3500.0, 3500.0, 2000.0, 2000.0, 2000.0, 100.0, 100.0])
     kv = np.array([450.0, 450.0, 350.0, 350.0, 200.0, 200.0, 200.0, 10.0, 10.0])
     q_target = np.array([0.0, -0.5, 0.0, -2.0, 0.0, 1.5, 0.8, 0.02, 0.02])
+    # Setting the gains notifies the subscribers of model changes.
+    model_subscriber = Subscriber(frozenset((StateChange.MODEL,)))
+    scene.mochi_solver.subscribe(model_subscriber)
     franka.set_dofs_kp(kp)
     franka.set_dofs_kv(kv)
+    assert model_subscriber.pending == {StateChange.MODEL}
     # The per-DOF info written by the setters reads back through the same getters the rigid solver has.
     assert_allclose(franka.get_dofs_kp(), kp, atol=0.0, rtol=1e-12)
     assert_allclose(franka.get_dofs_kv(), kv, atol=0.0, rtol=1e-12)

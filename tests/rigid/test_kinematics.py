@@ -291,7 +291,6 @@ def test_jacobian(gs_sim, tol):
     assert_allclose(J_p[:3, 0], lin_expected, tol=tol)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_joint_get_anchor_pos_and_axis(n_envs):
@@ -376,7 +375,6 @@ def test_inverse_kinematics_multilink(show_viewer, tol):
     assert_allclose(wrist.get_pos(envs_idx=(1,)), wrist_pos, tol=tol)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_inverse_kinematics_local_point(n_envs, show_viewer, tol):
@@ -522,7 +520,6 @@ def test_inverse_kinematics_local_point(n_envs, show_viewer, tol):
         scene.visualizer.update()
 
 
-@pytest.mark.slow("gpu")  # gpu ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_inverse_kinematics_multilink_local_points(show_viewer, tol):
@@ -580,7 +577,6 @@ def test_inverse_kinematics_multilink_local_points(show_viewer, tol):
         assert_allclose(actual_point_pos, target, tol=tol)
 
 
-@pytest.mark.slow  # ~250s
 @pytest.mark.required
 def test_multi_robot_inverse_kinematics(show_viewer, tol):
     scene = gs.Scene(show_viewer=show_viewer)
@@ -622,9 +618,17 @@ def test_multi_robot_inverse_kinematics(show_viewer, tol):
 
 
 @pytest.mark.slow("gpu")  # gpu ~300s
-@pytest.mark.required
-@pytest.mark.parametrize("n_envs, batch_dofs_info", [(0, True), (2, False), (2, True)])
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize(
+    "backend, n_envs, batch_dofs_info",
+    [
+        pytest.param(gs.cpu, 0, True, marks=pytest.mark.required),
+        pytest.param(gs.cpu, 2, False, marks=pytest.mark.required),
+        (gs.cpu, 2, True),
+        pytest.param(gs.gpu, 0, True, marks=pytest.mark.required),
+        pytest.param(gs.gpu, 2, False, marks=pytest.mark.required),
+        pytest.param(gs.gpu, 2, True, marks=pytest.mark.required),
+    ],
+)
 def test_path_planning_avoidance(backend, n_envs, batch_dofs_info, show_viewer, tol):
     CUBE_SIZE = 0.07
     DOF_LIMIT = 0.5
@@ -893,7 +897,6 @@ def test_setters(show_viewer, tol):
     assert_allclose([tensor_to_array(entity.get_vAABB()) for entity in scene.entities], frozen_vaabb, tol=gs.EPS)
 
 
-@pytest.mark.slow  # ~250s
 @pytest.mark.required
 def test_track_rigid(show_viewer, tol):
     scene = gs.Scene(

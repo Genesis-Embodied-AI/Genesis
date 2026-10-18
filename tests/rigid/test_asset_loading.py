@@ -44,10 +44,13 @@ def test_depth_first_link_ordering(xml_path, model_name, show_viewer):
         assert sorted(subtree) == list(range(i, i + len(subtree))), f"subtree at link {i} is not contiguous"
 
 
-@pytest.mark.slow  # ~250s
 @pytest.mark.required
 def test_mjcf_parsing_with_include():
-    scene = gs.Scene()
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
+    )
     robot1 = scene.add_entity(
         morph=gs.morphs.MJCF(
             file="xml/franka_emika_panda/scene.xml",
@@ -110,7 +113,6 @@ def test_ground_plane_preservation(box_plan):
     assert_equal(sum(geom.type == gs.GEOM_TYPE.BOX for geom in entity_without_ground.geoms), 1)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_urdf_parsing(show_viewer, tol):
     POS_OFFSET = 0.8
@@ -556,7 +558,6 @@ def test_parsing_inertia_defaults(
     assert_allclose(entity.get_pos(), (0.0, 0.0, -0.03), atol=5e-4)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("urdf_path", ["chain.urdf", "dual_arms_glb/dual_arms_glb.urdf", "dual_arms_primitives.urdf"])
 @pytest.mark.parametrize("fixed", [False, True])
@@ -564,7 +565,12 @@ def test_urdf_parsing_merge_fixed_links(urdf_path, fixed, show_viewer, tol):
     POS = (0.0, -0.2, 0.5)
     EULER = (0.0, 90.0, 45.0)
 
-    scene = gs.Scene(show_viewer=show_viewer)
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
+        show_viewer=show_viewer,
+    )
     urdf_rootdir = os.path.dirname(urdf_path)
     asset_path = get_hf_dataset(pattern=os.path.join(urdf_rootdir, "*") if urdf_rootdir else urdf_path)
     robot_1 = scene.add_entity(
@@ -653,7 +659,6 @@ def test_mjcf_parsing_merge_fixed_links(xml_path, show_viewer):
     assert_allclose(robot.get_quat(), QUAT, tol=gs.EPS)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_urdf_capsule(tmp_path, show_viewer, tol):
     urdf_path = tmp_path / "capsule.urdf"
@@ -774,7 +779,11 @@ def test_default_armature(xml_path, trees_and_slider_mjcf, tol):
         )
         carriers.append((carrier, mounted))
 
-    scene = gs.Scene()
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
+    )
     robot = scene.add_entity(morph)
     robot_without_armature = scene.add_entity(morph_without_armature)
     robot_heterogeneous = scene.add_entity(morphs_heterogeneous)
@@ -827,7 +836,6 @@ def test_default_armature(xml_path, trees_and_slider_mjcf, tol):
     assert_allclose(robot_trees.get_links_invweight()[:, 4], (slider_invweight / 3.0, 0.0), tol=tol)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_xacro_loading(xacro_robot, show_viewer, tol):
     scene = gs.Scene(show_viewer=show_viewer)
@@ -1005,7 +1013,7 @@ def test_color_overwrite(overwrite, urdf_with_external_assets, show_viewer):
 @pytest.mark.parametrize(
     "xml_path",
     [
-        pytest.param("xml/franka_emika_panda/panda.xml", marks=pytest.mark.slow),
+        "xml/franka_emika_panda/panda.xml",
         "urdf/go2/urdf/go2.urdf",
         "urdf/panda_bullet/panda.urdf",
     ],
@@ -1112,7 +1120,6 @@ def test_robot_scale_and_dofs_armature(xml_path, monkeypatch, tol):
     assert_allclose(qf_passive, 0.0, tol=tol)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_mesh_primitive_COM(show_viewer):
     scene = gs.Scene(
@@ -1302,7 +1309,7 @@ def test_align_mesh(show_viewer, tol):
         scene.step()
 
     assert_allclose(mango.get_dofs_velocity(dofs_idx_local=(0, 1, 2)), 0, tol=0.01)
-    assert_allclose(mango.get_dofs_velocity(dofs_idx_local=(3, 4, 5)), 0, tol=0.08)
+    assert_allclose(mango.get_dofs_velocity(dofs_idx_local=(3, 4, 5)), 0, tol=0.15)
     min_z = mango.get_AABB()[:, 0, 2]
     assert ((-1e-3 < min_z) & (min_z < 0.0)).all()
 

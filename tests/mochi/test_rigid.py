@@ -1,3 +1,5 @@
+import pickle
+
 import numpy as np
 import pytest
 import torch
@@ -279,6 +281,9 @@ def test_state_reset_restores_trajectory(show_viewer):
         material=gs.materials.Mochi.Rigid(),
     )
     scene.build()
+    # A checkpoint would leave out the integration history and the contact state, so it is refused.
+    with pytest.raises(gs.GenesisException, match="cannot be checkpointed"):
+        pickle.dumps(scene)
     for _ in range(10):
         scene.step()
     state = scene.get_state()

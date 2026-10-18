@@ -131,6 +131,8 @@ class SensorManager:
         )
 
     def build(self):
+        self._sim.step_timer.add_phases(*(f"sensors/{sensor_cls.__name__}" for sensor_cls in self._sensors_by_type))
+
         # Sort each class by entity_idx so sensors attached to the same entity occupy a contiguous slice of the class
         # cache. Static sensors have entity_idx=-1 and group together. Python's sort is stable, so registration order is
         # preserved within each entity bucket.
@@ -325,9 +327,9 @@ class SensorManager:
         for context in self._shared_contexts.values():
             context.update()
 
-        fps_tracker = self._sim.fps_tracker
+        step_timer = self._sim.step_timer
         for sensor_cls, sensors in self._sensors_by_type.items():
-            fps_tracker.start_phase(f"sensors/{sensor_cls.__name__}")
+            step_timer.start_phase(f"sensors/{sensor_cls.__name__}")
             dtype = sensor_cls._get_intermediate_dtype()
             cache_slice = self._cache_slices_by_type[sensor_cls]
             ground_truth_slice = self._ground_truth_intermediate_cache[dtype][cache_slice]
@@ -379,7 +381,7 @@ class SensorManager:
             # for any return space (bool, uint8, quantized float, ...).
             sensor_cls._apply_delay(metadata, measured_return_ring, self._return_cache[sensor_cls])
 
-        fps_tracker.stop_phase()
+        step_timer.stop_phase()
 
     def draw_debug(self, context: "RasterizerContext"):
         for sensor in self.sensors:

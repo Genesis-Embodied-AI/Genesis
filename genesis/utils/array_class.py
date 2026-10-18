@@ -13,7 +13,7 @@ import quadrants as qd
 from quadrants.lang import impl
 
 import genesis as gs
-from genesis.utils.misc import qd_to_torch
+from genesis.utils.misc import data_to_array
 
 
 def _tensor_backend():
@@ -118,31 +118,33 @@ def V_SCALAR_FROM(dtype, value):
 
 
 class DataKind(IntEnum):
-    """The kind of every array or static config a solver yields (see 'Solver.data'), which checkpoints and trajectories
+    """The kind of every array or scalar a solver yields (see 'Solver.data'), which checkpoints and trajectories
     select by.
 
-    CONFIG is a static config of plain Python natives that keys the compiled kernels, recorded as provenance only.
     CONSTANT is an array the build computes from the scene description once. INFO is a model parameter the setters
-    write, such as mass, friction, gains or limits. STATE is the reduced-space configuration, velocities,
-    accelerations, control inputs, contacts and constraint solution. WARMSTART is a cache the next solve reads to
-    reproduce the previous result bit-for-bit. Forward kinematics and dynamics recompute DERIVED from STATE. A step or
-    a solve writes SCRATCH before it reads it.
+    write, such as mass, friction, gains or limits. STATE is what specifies the scene with INFO: the reduced-space
+    configuration, velocities, accelerations, control inputs and the warm starts of the collision detection and the
+    constraint solve, which change the result of the next step. DERIVED is what the next step or forward kinematics
+    recomputes from STATE and INFO, such as the link poses, the contacts and the constraint forces, and recomputing it
+    changes the result at the last bits at most. A step or a solve writes SCRATCH before it reads it.
+
+    The kinds decide what a minimal trajectory records (see TrajectoryFile), so every solver classifies its arrays by
+    one rule: an array the next step reads before writing it is STATE or INFO, and a DERIVED array is recomputed
+    before it is read, by the next step or by the restore of a record without it (see 'Solver.__setstate__').
     """
 
-    CONFIG = 0
-    CONSTANT = 1
-    INFO = 2
-    STATE = 3
-    WARMSTART = 4
-    DERIVED = 5
-    SCRATCH = 6
+    CONSTANT = 0
+    INFO = 1
+    STATE = 2
+    DERIVED = 3
+    SCRATCH = 4
 
 
 # Metadata key under which 'of_kind' stores the kind of a field.
 KIND = "kind"
-# The kinds a checkpoint carries: INFO, STATE, WARMSTART and DERIVED. The static configs travel in a separate field of
-# the checkpoint as provenance.
-CHECKPOINT_KINDS = frozenset((DataKind.INFO, DataKind.STATE, DataKind.WARMSTART, DataKind.DERIVED))
+# The kinds a checkpoint carries: INFO, STATE and DERIVED. The static configs travel in a separate field of the
+# checkpoint as provenance.
+CHECKPOINT_KINDS = frozenset((DataKind.INFO, DataKind.STATE, DataKind.DERIVED))
 
 
 def of_kind(kind: DataKind):
@@ -150,92 +152,144 @@ def of_kind(kind: DataKind):
     return dataclasses.field(metadata={KIND: kind})
 
 
-class DataItem(NamedTuple):
-    """One array or static config a solver holds, under the dotted name of the slot and fields reaching it."""
+class ArrayItem(NamedTuple):
+    """An array of a solver or of the simulator, under the dotted name of the slot and fields reaching it.
+
+    It lives on the device of the backend, and a restore fills it in place (see 'iter_data'). It is a quadrants array,
+    or a torch tensor such as the step counts of the simulator. An unused quadrants array is the 0-d placeholder of a
+    feature switched off (see 'maybe_shape'), which a restore leaves as built (see 'check_data').
+    """
 
     name: str
-    value: object
     kind: DataKind
+    array: qd.Tensor | qd.Field | qd.Ndarray | torch.Tensor
 
 
-def iter_data(struct, name: str, kind: DataKind | None = None) -> Iterator[DataItem]:
-    """Yield a DataItem for every array in a struct of arrays, named by 'name' plus field names joined with dots.
+class ScalarItem(NamedTuple):
+    """A Python native scalar of a solver, such as a flag, under the name of its attribute (see 'iter_data').
 
-    Structs are the frozen dataclasses and named tuples of this module, nested to any depth. The class attribute
-    'kind' gives the default kind of a struct's fields, and 'of_kind' on a field overrides it. An override on a
-    struct-valued field applies to every array of that struct. An array carrying gradients yields them as one more item
-    of its kind, named 'grad'. A static config yields one item of kind CONFIG, and anything else raises and names the
-    offending slot.
+    It is the attribute 'attr' of 'owner', a property with a setter included, which a restore sets back.
     """
-    if isinstance(struct, (qd.Tensor, qd.Field, qd.Ndarray)):
+
+    name: str
+    kind: DataKind
+    owner: object
+    attr: str
+
+
+# What a solver yields among its data, which a checkpoint or a trajectory reads and writes back (see 'iter_data')
+DataItem = ArrayItem | ScalarItem
+
+
+class ConfigItem(NamedTuple):
+    """A static config of plain Python natives that keys the compiled kernels of a solver, under its name.
+
+    A checkpoint and a trajectory record it as provenance alone, and never write it back.
+    """
+
+    name: str
+    config: object
+
+
+def iter_data(owner: object, attr: str, kind: DataKind | None = None) -> Iterator[DataItem | ConfigItem]:
+    """Yield the data of an attribute, one item per array if it is a struct, named by the fields reaching it.
+
+    The attribute is 'attr' of 'owner', and an item of a struct is named by 'attr' plus field names joined with dots.
+    Structs are the frozen dataclasses and named tuples of this module, nested to any depth. The class attribute 'kind'
+    gives the default kind of a struct's fields, and 'of_kind' on a field overrides it. An override on a struct-valued
+    field applies to every array of that struct. An array is a quadrants array or a torch tensor, and a quadrants array
+    carrying gradients yields them as one more item of its kind, named 'grad'. A Python native scalar of an object that
+    is no struct, such as a flag, yields an item of the given kind, which a restore sets back as the attribute. A static
+    config yields a ConfigItem. Anything else raises and names the offending attribute.
+    """
+    value = getattr(owner, attr)
+    if isinstance(type(value), AutoInitMeta):
+        yield ConfigItem(attr, value)
+    elif isinstance(value, (qd.Tensor, qd.Field, qd.Ndarray, torch.Tensor)):
         if kind is None:
-            gs.raise_exception(f"'{name}' holds an array that no struct or annotation gives a kind.")
-        yield DataItem(name, struct, kind)
-        if struct.has_grad():
-            yield DataItem(f"{name}.grad", struct.grad, kind)
-    elif isinstance(type(struct), AutoInitMeta):
-        yield DataItem(name, struct, DataKind.CONFIG)
-    elif dataclasses.is_dataclass(struct) or isinstance(struct, tuple):
-        if dataclasses.is_dataclass(struct):
-            values = vars(struct)
-            members = [
-                (field.name, values[field.name], field.metadata.get(KIND)) for field in dataclasses.fields(struct)
-            ]
+            gs.raise_exception(f"'{attr}' holds an array that no struct or annotation gives a kind.")
+        yield ArrayItem(attr, kind, value)
+        if not isinstance(value, torch.Tensor) and value.has_grad():
+            yield ArrayItem(f"{attr}.grad", kind, value.grad)
+    elif dataclasses.is_dataclass(value) or isinstance(value, tuple):
+        if dataclasses.is_dataclass(value):
+            members = [(field.name, field.metadata.get(KIND)) for field in dataclasses.fields(value)]
         else:
-            members = [(member, value, None) for member, value in zip(struct._fields, struct)]
-        for member, value, stated_kind in members:
-            if stated_kind is None and kind is None and isinstance(value, (qd.Tensor, qd.Field, qd.Ndarray)):
-                stated_kind = type(struct).kind
-            yield from iter_data(value, f"{name}.{member}", kind if stated_kind is None else stated_kind)
+            members = [(member, None) for member in value._fields]
+        for member, stated_kind in members:
+            is_member_array = isinstance(getattr(value, member), (qd.Tensor, qd.Field, qd.Ndarray, torch.Tensor))
+            if stated_kind is None and kind is None and is_member_array:
+                stated_kind = type(value).kind
+            for item in iter_data(value, member, kind if stated_kind is None else stated_kind):
+                yield item._replace(name=f"{attr}.{item.name}")
+    elif isinstance(value, (bool, int, float)) and not (dataclasses.is_dataclass(owner) or isinstance(owner, tuple)):
+        if kind is None:
+            gs.raise_exception(f"'{attr}' holds a {type(value).__name__} that no annotation gives a kind.")
+        yield ScalarItem(attr, kind, owner, attr)
     else:
-        gs.raise_exception(f"'{name}' holds a {type(struct).__name__} where an array or a struct of arrays stands.")
+        gs.raise_exception(f"'{attr}' holds a {type(value).__name__} where an array, a struct or a scalar stands.")
 
 
-def check_data(items: Iterable[DataItem], values: Mapping[str, np.ndarray | torch.Tensor]) -> list[tuple]:
-    """Return the (array, value) pairs 'fill_data' writes, rejecting a record made for another scene.
+def check_data(items: Iterable[DataItem], values: Mapping[str, np.ndarray | torch.Tensor]) -> list[DataItem]:
+    """Return the items 'fill_data' writes, rejecting a record made for another scene.
 
-    A value with the array's shape fills it, cast to its dtype, so a one-byte boolean fills an int32 flag. A floating
-    value for an integer array, or the reverse, raises. 'maybe_shape' shapes an unused array as (), so an array with
-    that shape on either side stays as built. Any other shape mismatch raises, since the record comes from a different
-    build. A name on one side only raises, since the record comes from another build or version.
+    A value read from a record has the shape of its item, and is floating exactly when its item is. Its dtype may
+    differ otherwise, as it is cast when written: a one-byte boolean fills an int32 flag. Any other mismatch raises,
+    and so does a name on one side only, since the record comes from another build or version. 'maybe_shape' shapes an
+    unused array as (), so an array with that shape on either side stays as built, and is left out.
     """
     items = tuple(items)
-    unshared = sorted({name for name, _, _ in items} ^ set(values))
+    unshared = sorted({item.name for item in items} ^ set(values))
     if unshared:
         gs.raise_exception(f"The record and this scene do not share {unshared}: another build or version wrote it.")
     writes = []
-    for name, array, _ in items:
-        value = values[name]
-        element_shape = array.element_shape if isinstance(array, (qd.VectorTensor, qd.MatrixTensor)) else ()
-        if tuple(array.shape) == () or tuple(value.shape) == element_shape:
-            continue
-        shape = (*array.shape, *element_shape)
+    for item in items:
+        value = values[item.name]
+        if isinstance(item, ArrayItem) and isinstance(item.array, torch.Tensor):
+            shape, dtype = tuple(item.array.shape), item.array.dtype
+            is_item_real = dtype.is_floating_point
+        elif isinstance(item, ArrayItem):
+            array = item.array
+            element_shape = array.element_shape if isinstance(array, (qd.VectorTensor, qd.MatrixTensor)) else ()
+            if tuple(array.shape) == () or tuple(value.shape) == element_shape:
+                continue
+            shape, dtype = (*array.shape, *element_shape), array.dtype
+            is_item_real = dtype in qd.types.primitive_types.real_types
+        else:
+            scalar = getattr(item.owner, item.attr)
+            shape, dtype = (), type(scalar).__name__
+            is_item_real = isinstance(scalar, float)
         if tuple(value.shape) != shape:
-            gs.raise_exception(f"'{name}' is shaped {shape} here and {value.shape} in the record: another build.")
+            gs.raise_exception(f"'{item.name}' is shaped {shape} here and {value.shape} in the record: another build.")
         if isinstance(value, torch.Tensor):
             is_real = value.dtype.is_floating_point
         else:
             is_real = np.issubdtype(value.dtype, np.floating)
-        if is_real != (array.dtype in qd.types.primitive_types.real_types):
-            gs.raise_exception(f"'{name}' holds {array.dtype} values here where {value.dtype} ones were recorded.")
-        writes.append((array, value))
+        if is_real != is_item_real:
+            gs.raise_exception(f"'{item.name}' holds {dtype} values here where {value.dtype} ones were recorded.")
+        writes.append(item)
     return writes
 
 
 def fill_data(items: Iterable[DataItem], values: Mapping[str, np.ndarray | torch.Tensor]) -> None:
-    """Write into each array the value recorded under its name, once every value passed 'check_data', so a record
-    from another build leaves the scene as it was.
+    """Write back into each item the value recorded under its name, once every value passed 'check_data', so that a
+    record made for another scene leaves the scene as it was.
 
-    Where zero-copy views exist the values go through them, so a device-resident record stays on the device. On Metal
-    these writes stay on the torch stream, so the caller must call 'torch.mps.synchronize' once before the next kernel.
+    An array is filled in place, through its zero-copy view where one exists, so that a device-resident record stays on
+    the device. On Metal these writes stay on the torch stream, so the caller must call 'torch.mps.synchronize' once
+    before the next kernel. A scalar is set back as the Python native the host code reading it expects.
     """
-    # A value is cast to the dtype of its array as it reaches the device, which may support no other precision
-    for array, value in check_data(items, values):
-        if gs.use_zerocopy:
-            view = qd_to_torch(array, copy=False)
+    for item in check_data(items, values):
+        value = values[item.name]
+        if isinstance(item, ScalarItem):
+            # 'check_data' admits a boolean record for an integer, so the value takes the native type of the attribute
+            setattr(item.owner, item.attr, type(getattr(item.owner, item.attr))(value.item()))
+        elif isinstance(item.array, torch.Tensor) or gs.use_zerocopy:
+            view = data_to_array(item.array, to_torch=True, copy=False)
+            # A value is cast to the dtype of its array as it reaches the device, which may support no other precision
             view.copy_(torch.as_tensor(value, dtype=view.dtype, device=view.device))
         else:
-            array.from_numpy(value)
+            item.array.from_numpy(value)
 
 
 # =========================================== ErrorCode ===========================================
@@ -866,20 +920,20 @@ class ConstraintState:
 
     # Union-find partition of links into contact islands, read by the per-island Newton solve and hibernation.
     island: IslandState
-    is_warmstart: qd.Tensor = of_kind(DataKind.WARMSTART)
-    n_constraints: qd.Tensor = of_kind(DataKind.STATE)
+    is_warmstart: qd.Tensor = of_kind(DataKind.STATE)
+    n_constraints: qd.Tensor = of_kind(DataKind.DERIVED)
     qd_n_equalities: qd.Tensor = of_kind(DataKind.STATE)
     jac: qd.Tensor
     diag: qd.Tensor
     aref: qd.Tensor
     jac_dofs_idx: qd.Tensor
     jac_n_dofs: qd.Tensor
-    n_constraints_equality: qd.Tensor = of_kind(DataKind.STATE)
-    n_constraints_frictionloss: qd.Tensor = of_kind(DataKind.STATE)
+    n_constraints_equality: qd.Tensor = of_kind(DataKind.DERIVED)
+    n_constraints_frictionloss: qd.Tensor = of_kind(DataKind.DERIVED)
     # Number of elliptic-cone contact rows (rows_per_contact per contact), laid out contiguously at the start of the
     # collision segment. Zero for the pyramidal cone. The cone rows occupy
     # [ne + n_frictionloss, ne + n_frictionloss + n_cone).
-    n_constraints_cone: qd.Tensor = of_kind(DataKind.STATE)
+    n_constraints_cone: qd.Tensor = of_kind(DataKind.DERIVED)
     improved: qd.Tensor
     Jaref: qd.Tensor
     Ma: qd.Tensor
@@ -899,12 +953,12 @@ class ConstraintState:
     # contact sliding friction coefficient read by the cone solver, and with torsional friction the spin row carries
     # the torsional coefficient the same way (the tangent rows hold 0).
     efc_frictionloss: qd.Tensor
-    efc_force: qd.Tensor = of_kind(DataKind.STATE)
-    active: qd.Tensor = of_kind(DataKind.STATE)
+    efc_force: qd.Tensor = of_kind(DataKind.DERIVED)
+    active: qd.Tensor = of_kind(DataKind.DERIVED)
     prev_active: qd.Tensor
     qfrc_constraint: qd.Tensor = of_kind(DataKind.STATE)
     qacc: qd.Tensor = of_kind(DataKind.STATE)
-    qacc_ws: qd.Tensor = of_kind(DataKind.WARMSTART)
+    qacc_ws: qd.Tensor = of_kind(DataKind.STATE)
     cost_ws: qd.Tensor
     cost: qd.Tensor
     mv: qd.Tensor
@@ -1165,7 +1219,7 @@ def get_constraint_state(constraint_solver, solver, collider):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class ContactData:
-    kind: ClassVar[DataKind] = DataKind.STATE
+    kind: ClassVar[DataKind] = DataKind.DERIVED
 
     geom_a: qd.Tensor
     geom_b: qd.Tensor
@@ -1255,7 +1309,7 @@ def get_diff_contact_input(_B, max_contacts_per_pair, is_active, requires_grad=F
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class SortBuffer:
-    kind: ClassVar[DataKind] = DataKind.WARMSTART
+    kind: ClassVar[DataKind] = DataKind.STATE
 
     value: qd.Tensor
     i_g: qd.Tensor
@@ -1274,7 +1328,7 @@ def get_sort_buffer(solver):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class ContactCache:
-    kind: ClassVar[DataKind] = DataKind.WARMSTART
+    kind: ClassVar[DataKind] = DataKind.STATE
 
     normal: qd.Tensor
     # Previous-step penetration per pair (reset to 0 when out of contact), the warm-start for the MPR->GJK gate.
@@ -1306,9 +1360,10 @@ class NarrowphaseWorkQueues:
     mpr_normal: qd.Tensor
     mpr_penetration: qd.Tensor
     mpr_contact_status: qd.Tensor
-    # Whether contact0 preferred GJK (the per-pair MPR->GJK gate fired). The multicontact pass uses GJK for contact0
-    # when set, and otherwise tries MPR first and falls back to GJK per perturbed contact.
-    mpr_prefer_gjk: qd.Tensor
+    # Where contact 0 of the entry stands (see MULTICONTACT_ENTRY in collider/constants.py). The contact0 kernel leaves
+    # it to Gilbert-Johnson-Keerthi (GJK) when the per-pair gate from Minkowski portal refinement (MPR) to GJK fired,
+    # and each perturbed contact otherwise falls back from MPR to GJK.
+    mpr_contact0_status: qd.Tensor
     mpr_queue_size: qd.Tensor
     mpr_work_counter: qd.Tensor
 
@@ -1325,7 +1380,7 @@ def get_narrowphase_work_queues(max_entries, n_slots, active):
         mpr_normal=V_VEC(3, dtype=gs.qd_float, shape=slots_shape),
         mpr_penetration=V(dtype=gs.qd_float, shape=slots_shape),
         mpr_contact_status=V(dtype=gs.qd_int, shape=maybe_shape((max_entries, n_slots), active and n_slots > 1)),
-        mpr_prefer_gjk=V(dtype=gs.qd_int, shape=entries_shape),
+        mpr_contact0_status=V(dtype=gs.qd_int, shape=entries_shape),
         mpr_queue_size=V(dtype=gs.qd_int, shape=maybe_shape((1,), active)),
         mpr_work_counter=V(dtype=gs.qd_int, shape=maybe_shape((1,), active)),
     )
@@ -1352,19 +1407,19 @@ class ColliderState:
     box_pu: qd.Tensor
     xyz_max_min: qd.Tensor
     prism: qd.Tensor
-    n_contacts: qd.Tensor = of_kind(DataKind.STATE)
+    n_contacts: qd.Tensor = of_kind(DataKind.DERIVED)
     # Kept contacts of the sleepers, at the front of the contact buffer with the identity permutation: a hibernated
     # link's contacts against fixed bodies are carried from step to step with the force of the last solve they took
     # part in, for the contact getters and the per-link contact force alone. Every per-step pass (prune, sort, island
     # edges, constraint rows, noslip) walks the live contacts after them, [n_contacts_hibernated, n_contacts).
-    n_contacts_hibernated: qd.Tensor = of_kind(DataKind.STATE)
-    first_time: qd.Tensor = of_kind(DataKind.WARMSTART)
+    n_contacts_hibernated: qd.Tensor = of_kind(DataKind.DERIVED)
+    first_time: qd.Tensor = of_kind(DataKind.STATE)
     contact_cache: ContactCache
     # Input data for differentiable contact detection used in the backward pass
     diff_contact_input: DiffContactInput
     narrowphase_work_queues: NarrowphaseWorkQueues
     contact_sort_key: qd.Tensor
-    contact_sort_idx: qd.Tensor = of_kind(DataKind.STATE)
+    contact_sort_idx: qd.Tensor = of_kind(DataKind.DERIVED)
     contact_proj_v: qd.Tensor
     contact_keep: qd.Tensor
     contact_hull_stack: qd.Tensor
@@ -1425,9 +1480,11 @@ def get_collider_state(
         contact_data=get_contact_data(solver, max_candidate_contacts, requires_grad),
         diff_contact_input=get_diff_contact_input(_B, max(max_candidate_contacts, 1), True, requires_grad),
         # A pair holds its first contact and its four perturbed ones (see N_PERTURBATIONS in narrowphase.py), or its
-        # first contact alone under the contact patch (see NarrowphaseWorkQueues)
+        # first contact alone under the contact patch (see NarrowphaseWorkQueues).
         narrowphase_work_queues=get_narrowphase_work_queues(
-            max(max_collision_pairs_broad, 1) * _B, 1 if solver._options.enable_contact_patch else 5, split_narrowphase
+            max(max_collision_pairs_broad, 1) * _B,
+            1 if solver._options.enable_contact_patch else 5,
+            split_narrowphase,
         ),
         contact_sort_key=V(dtype=gs.qd_float, shape=(max(max_candidate_contacts, 1), _B)),
         contact_sort_idx=V(dtype=gs.qd_int, shape=(max(max_candidate_contacts, 1), _B)),
@@ -1532,7 +1589,6 @@ class MPRInfo:
     CCD_EPS: qd.Tensor
     CCD_TOLERANCE: qd.Tensor
     CCD_ITERATIONS: qd.Tensor
-    CCD_EXTRAPOLATION_TOL: qd.Tensor
 
 
 def get_mpr_info(**kwargs):
@@ -1540,7 +1596,6 @@ def get_mpr_info(**kwargs):
         CCD_EPS=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["CCD_EPS"]),
         CCD_TOLERANCE=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["CCD_TOLERANCE"]),
         CCD_ITERATIONS=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["CCD_ITERATIONS"]),
-        CCD_EXTRAPOLATION_TOL=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["CCD_EXTRAPOLATION_TOL"]),
     )
 
 
@@ -1985,17 +2040,23 @@ class GJKStaticConfig(metaclass=AutoInitMeta):
 class SupportFieldInfo:
     kind: ClassVar[DataKind] = DataKind.CONSTANT
 
+    # First cell of the table of each geom
     support_cell_start: qd.Tensor
+    # First extra candidate of each cell, past those of its record, its extras ending where those of the next start
+    support_list_start: qd.Tensor
+    # Mesh-frame position and index of each candidate vertex: the record of every cell at twice the index of the cell,
+    # holding the first two candidates of the cell (a single candidate twice), then the extra candidates of all cells
     support_v: qd.Tensor
     support_vid: qd.Tensor
     support_res: qd.Tensor
 
 
-def get_support_field_info(n_geoms, n_support_cells, support_res):
+def get_support_field_info(n_geoms, n_support_cells, n_support_candidates, support_res):
     return SupportFieldInfo(
         support_cell_start=V(dtype=gs.qd_int, shape=(max(n_geoms, 1),)),
-        support_v=V_VEC(3, dtype=gs.qd_float, shape=(max(n_support_cells, 1),)),
-        support_vid=V(dtype=gs.qd_int, shape=(max(n_support_cells, 1),)),
+        support_list_start=V(dtype=gs.qd_int, shape=(n_support_cells + 1,)),
+        support_v=V_VEC(3, dtype=gs.qd_float, shape=(max(n_support_candidates, 1),)),
+        support_vid=V(dtype=gs.qd_int, shape=(max(n_support_candidates, 1),)),
         support_res=V_SCALAR_FROM(dtype=gs.qd_int, value=support_res),
     )
 
@@ -2097,9 +2158,6 @@ class ColliderInfo:
     # multi contact perturbation and tolerance
     mc_perturbation: qd.Tensor
     mc_tolerance: qd.Tensor
-    mpr_to_gjk_overlap_ratio: qd.Tensor
-    mpr_to_gjk_overlap_ratio_valid: qd.Tensor
-    mpr_to_gjk_penetration_ratio: qd.Tensor
     # differentiable contact tolerance
     diff_pos_tolerance: qd.Tensor
     diff_normal_tolerance: qd.Tensor
@@ -2149,9 +2207,6 @@ def get_collider_info(
         terrain_xyz_maxmin=V(dtype=gs.qd_float, shape=(6,)),
         mc_perturbation=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mc_perturbation"]),
         mc_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mc_tolerance"]),
-        mpr_to_gjk_overlap_ratio=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mpr_to_gjk_overlap_ratio"]),
-        mpr_to_gjk_overlap_ratio_valid=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mpr_to_gjk_overlap_ratio_valid"]),
-        mpr_to_gjk_penetration_ratio=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mpr_to_gjk_penetration_ratio"]),
         diff_pos_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["diff_pos_tolerance"]),
         diff_normal_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["diff_normal_tolerance"]),
         contact_pruning_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["contact_pruning_tolerance"]),
