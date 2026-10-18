@@ -27,8 +27,8 @@ from .newton import func_is_env_active
 def func_assemble_links(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     mochi_info: MochiInfo,

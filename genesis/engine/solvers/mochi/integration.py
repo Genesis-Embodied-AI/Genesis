@@ -50,8 +50,8 @@ def func_quat_extrapolate(quat_1, quat_2, alpha, eps):
 def func_step_start(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -202,8 +202,8 @@ def kernel_step_start(
 def func_store_stage_start_poses(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     dyn_state: array_class.DynState,
     mochi_state: MochiState,
     rigid_config: qd.template(),
@@ -246,8 +246,8 @@ def kernel_store_stage_start_poses(
 def func_post_stage(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,

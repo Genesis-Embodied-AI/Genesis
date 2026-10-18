@@ -39,8 +39,8 @@ def func_rod_band_add_vertex_block(i_va, i_vb, weight, D, i_b, soft_info: MochiS
 def func_rod_band_factor(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_state: MochiState,
     soft_info: MochiSoftInfo,
     soft_state: MochiSoftState,
@@ -205,8 +205,8 @@ def func_rod_band_factor(
 def func_rod_band_solve(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     r: qd.Tensor,
     z: qd.Tensor,
     mochi_state: MochiState,

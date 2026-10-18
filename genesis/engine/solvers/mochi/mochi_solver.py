@@ -46,6 +46,7 @@ from ..rigid.abd.misc import (
     kernel_init_geom_fields,
     kernel_init_link_dynamics,
     kernel_init_vert_fields,
+    kernel_set_zero,
 )
 from .articulated import kernel_assemble_joints, kernel_project_links_residual, kernel_update_conv_weights
 from .colliders import query_collider
@@ -2929,6 +2930,8 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         envs_idx, pos = self._soft_values_of_entity(entity, pos, envs_idx)
         kernel_soft_set_vertices_positions(envs_idx, entity.v_start, pos, self.soft_state, self.rigid_config)
         self._mark_external_state_dirty(envs_idx)
+        # Setting the configuration of a deformable body clears the error of its environments, as `set_qpos` does.
+        kernel_set_zero(envs_idx, self._errno)
         self._is_contacts_recorded = False
 
     def set_soft_vertices_velocity(self, entity, vel, envs_idx=None):
@@ -2936,24 +2939,44 @@ class MochiSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         kernel_soft_set_vertices_velocities(envs_idx, entity.v_start, vel, self.soft_state, self.rigid_config)
         self._mark_external_state_dirty(envs_idx)
 
+    def _per_env_vertices(self, verts_idx, envs_idx):
+        """Lay out a vertex set as one row per environment of `envs_idx`, from a set shared by all of them or one per
+        environment."""
+        if verts_idx.ndim == 1:
+            return verts_idx[None].expand(len(envs_idx), -1).contiguous()
+        if verts_idx.shape[0] != len(envs_idx):
+            gs.raise_exception(
+                f"A per-environment vertex set must have one row per environment: got {verts_idx.shape[0]} rows "
+                f"for {len(envs_idx)} environments."
+            )
+        return verts_idx.contiguous()
+
     def set_soft_vertices_fixed(self, entity, verts_idx, is_fixed, envs_idx=None):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-        verts_idx = np.asarray(verts_idx, dtype=gs.np_int) + entity.v_start
-        kernel_soft_set_vertices_fixed(envs_idx, verts_idx, int(bool(is_fixed)), self.soft_state, self.rigid_config)
+        verts_idx = self._per_env_vertices(verts_idx, envs_idx)
+        kernel_soft_set_vertices_fixed(
+            envs_idx, verts_idx, entity.v_start, int(bool(is_fixed)), self.soft_state, self.rigid_config
+        )
         self._mark_external_state_dirty(envs_idx)
 
     def set_soft_vertices_target(self, entity, verts_idx, pos, envs_idx=None):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-        verts_idx = np.asarray(verts_idx, dtype=gs.np_int) + entity.v_start
-        pos = torch.as_tensor(tensor_to_array(pos), dtype=gs.tc_float, device=gs.device)
-        if pos.shape == (len(verts_idx), 3):
+        is_shared = verts_idx.ndim == 1
+        verts_idx = self._per_env_vertices(verts_idx, envs_idx)
+        n_verts = verts_idx.shape[1]
+        # A tensor already on the device goes straight to the kernel: this is called every control step.
+        pos = torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device)
+        if is_shared and pos.shape == (n_verts, 3):
             pos = pos[None].expand(len(envs_idx), -1, -1)
-        if pos.shape != (len(envs_idx), len(verts_idx), 3):
+        if pos.shape != (len(envs_idx), n_verts, 3):
             gs.raise_exception(
-                f"Expected an array of shape ({len(envs_idx)}, {len(verts_idx)}, 3) or ({len(verts_idx)}, 3), got "
-                f"{tuple(pos.shape)}."
+                f"Expected an array of shape ({len(envs_idx)}, {n_verts}, 3)"
+                + (f" or ({n_verts}, 3)" if is_shared else "")
+                + f", got {tuple(pos.shape)}."
             )
-        kernel_soft_set_vertices_target(envs_idx, verts_idx, pos.contiguous(), self.soft_state, self.rigid_config)
+        kernel_soft_set_vertices_target(
+            envs_idx, verts_idx, entity.v_start, pos.contiguous(), self.soft_state, self.rigid_config
+        )
         if self.mochi_config.use_sleeping:
             i_n = len(self._entities) + entity.idx_in_solver
             self._wake_nodes(self._nodes_idx[i_n : i_n + 1], self._nodes_idx, envs_idx)

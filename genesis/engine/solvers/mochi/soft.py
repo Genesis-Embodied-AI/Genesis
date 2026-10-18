@@ -377,8 +377,8 @@ def func_shape_gradients(Dm_inv):
 def func_soft_step_start(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_state: MochiState,
     soft_info: MochiSoftInfo,
     soft_state: MochiSoftState,
@@ -459,8 +459,8 @@ def kernel_soft_step_start(
 def func_soft_post_stage(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_state: MochiState,
     soft_info: MochiSoftInfo,
     soft_state: MochiSoftState,
@@ -512,8 +512,8 @@ def kernel_soft_post_stage(
 def func_soft_update_conv_weights(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_info: MochiInfo,
     mochi_state: MochiState,
     soft_info: MochiSoftInfo,
@@ -562,8 +562,8 @@ def kernel_soft_update_conv_weights(
 def func_soft_store_ls_ref(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_state: MochiState,
     soft_state: MochiSoftState,
     rigid_config: qd.template(),
@@ -606,8 +606,8 @@ def kernel_soft_store_ls_ref(
 def func_soft_apply_increment(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_state: MochiState,
     soft_info: MochiSoftInfo,
     soft_state: MochiSoftState,
@@ -655,8 +655,8 @@ def kernel_soft_apply_increment(
 def func_soft_zero_assembly(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_state: MochiState,
     soft_state: MochiSoftState,
     rigid_config: qd.template(),
@@ -745,8 +745,8 @@ def kernel_soft_zero_assembly(
 def func_soft_assemble_elements(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_info: MochiInfo,
     mochi_state: MochiState,
     soft_info: MochiSoftInfo,
@@ -925,8 +925,8 @@ def kernel_soft_assemble_elements(
 def func_soft_dirichlet(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_state: MochiState,
     soft_info: MochiSoftInfo,
     soft_state: MochiSoftState,
@@ -974,8 +974,8 @@ def kernel_soft_dirichlet(
 def func_soft_conservative_bounds(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_info: MochiInfo,
     soft_info: MochiSoftInfo,
     soft_state: MochiSoftState,
@@ -1057,8 +1057,8 @@ def kernel_soft_conservative_bounds(
 def func_soft_broadphase(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     mochi_info: MochiInfo,
@@ -1149,8 +1149,8 @@ def kernel_soft_broadphase(
 def func_soft_contact_eval(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     sdf_info: array_class.SDFInfo,
@@ -1354,8 +1354,8 @@ def kernel_soft_contact_eval(
 def func_soft_pairs_to_blocks(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     dyn_state: array_class.DynState,
     mochi_info: MochiInfo,
     mochi_state: MochiState,
@@ -1481,8 +1481,8 @@ def func_soft_point_force_add(
 def func_soft_hit_counts_max(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     soft_state: MochiSoftState,
     rigid_config: qd.template(),
 ):
@@ -1504,8 +1504,8 @@ def func_soft_hit_counts_max(
 def func_attachments_stage_start(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_state: MochiState,
     soft_info: MochiSoftInfo,
     soft_state: MochiSoftState,
@@ -1544,8 +1544,8 @@ def kernel_attachments_stage_start(
 def func_assemble_attachments(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     dyn_state: array_class.DynState,
     mochi_state: MochiState,
     soft_info: MochiSoftInfo,
@@ -1631,8 +1631,8 @@ def kernel_assemble_attachments(
 def func_soft_matvec(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     src: qd.Tensor,
     dst: qd.Tensor,
     dyn_state: array_class.DynState,
@@ -1830,8 +1830,8 @@ def func_soft_matvec(
 def func_soft_precondition(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     r: qd.Tensor,
     z: qd.Tensor,
     mochi_state: MochiState,
@@ -1886,8 +1886,8 @@ def func_soft_precondition(
 def func_soft_condense_dense(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     mochi_state: MochiState,
@@ -2239,40 +2239,54 @@ def kernel_soft_set_vertices_velocities(
 def kernel_soft_set_vertices_fixed(
     envs_idx: qd.types.ndarray(),
     verts_idx: qd.types.ndarray(),
+    v_start: qd.i32,
     is_fixed: qd.i32,
     soft_state: MochiSoftState,
     rigid_config: qd.template(),
 ):
+    """Fix the given vertices at their current position (Dirichlet condition), or release them.
+
+    `verts_idx` holds one row of entity-local vertex indices per environment of `envs_idx`, offset by `v_start` into
+    the solver, and its negative entries are padding.
+    """
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
-    for i_v_, i_b_ in qd.ndrange(verts_idx.shape[0], envs_idx.shape[0]):
-        i_b = envs_idx[i_b_]
-        i_v = verts_idx[i_v_]
-        soft_state.verts_is_fixed[i_v, i_b] = is_fixed != 0
-        if is_fixed != 0:
-            soft_state.verts_target[i_v, i_b] = soft_state.verts_pos[i_v, i_b]
-            soft_state.verts_vel[i_v, i_b] = qd.Vector.zero(gs.qd_float, 3)
-            for j in qd.static(range(N_HISTORY)):
-                soft_state.verts_vel_prev[j, i_v, i_b] = qd.Vector.zero(gs.qd_float, 3)
+    for i_v_, i_b_ in qd.ndrange(verts_idx.shape[1], envs_idx.shape[0]):
+        i_v_local = verts_idx[i_b_, i_v_]
+        if i_v_local >= 0:
+            i_b = envs_idx[i_b_]
+            i_v = i_v_local + v_start
+            soft_state.verts_is_fixed[i_v, i_b] = is_fixed != 0
+            if is_fixed != 0:
+                soft_state.verts_target[i_v, i_b] = soft_state.verts_pos[i_v, i_b]
+                soft_state.verts_vel[i_v, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                for j in qd.static(range(N_HISTORY)):
+                    soft_state.verts_vel_prev[j, i_v, i_b] = qd.Vector.zero(gs.qd_float, 3)
 
 
 @qd.kernel
 def kernel_soft_set_vertices_target(
     envs_idx: qd.types.ndarray(),
     verts_idx: qd.types.ndarray(),
+    v_start: qd.i32,
     pos: qd.types.ndarray(),
     soft_state: MochiSoftState,
     rigid_config: qd.template(),
 ):
-    """Prescribe the end-of-step positions of the given vertices (moving Dirichlet condition): the vertices become
-    fixed and reach their target within the next step; their velocity history is kept."""
+    """Prescribe the end-of-step positions of the given vertices (moving Dirichlet condition).
+
+    The vertices become fixed and reach their target within the next step, their velocity history being kept.
+    `verts_idx` is laid out as in `kernel_soft_set_vertices_fixed`.
+    """
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
-    for i_v_, i_b_ in qd.ndrange(verts_idx.shape[0], envs_idx.shape[0]):
-        i_b = envs_idx[i_b_]
-        i_v = verts_idx[i_v_]
-        soft_state.verts_is_fixed[i_v, i_b] = True
-        soft_state.verts_target[i_v, i_b] = qd.Vector(
-            [pos[i_b_, i_v_, 0], pos[i_b_, i_v_, 1], pos[i_b_, i_v_, 2]], dt=gs.qd_float
-        )
+    for i_v_, i_b_ in qd.ndrange(verts_idx.shape[1], envs_idx.shape[0]):
+        i_v_local = verts_idx[i_b_, i_v_]
+        if i_v_local >= 0:
+            i_b = envs_idx[i_b_]
+            i_v = i_v_local + v_start
+            soft_state.verts_is_fixed[i_v, i_b] = True
+            soft_state.verts_target[i_v, i_b] = qd.Vector(
+                [pos[i_b_, i_v_, 0], pos[i_b_, i_v_, 1], pos[i_b_, i_v_, 2]], dt=gs.qd_float
+            )
 
 
 @qd.kernel
@@ -2497,8 +2511,8 @@ def func_hash_insert(heads: qd.template(), nexts: qd.template(), i_item, cell_lo
 def func_pc_hash_build(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_state: MochiState,
     soft_info: MochiSoftInfo,
     soft_state: MochiSoftState,
@@ -2549,8 +2563,8 @@ def func_tet_aabb(i_el, i_b, soft_info: MochiSoftInfo, soft_state: MochiSoftStat
 def func_tet_tree_refit(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_state: MochiState,
     soft_info: MochiSoftInfo,
     soft_state: MochiSoftState,
@@ -2650,8 +2664,8 @@ def func_query_point(
 def func_soft_collider_eval(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     mochi_info: MochiInfo,
@@ -3026,8 +3040,8 @@ def kernel_init_shell_fields(
 def func_shell_stage_start(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     soft_info: MochiSoftInfo,
     soft_state: MochiSoftState,
     rigid_config: qd.template(),
@@ -3074,8 +3088,8 @@ def kernel_shell_stage_start(
 def func_shell_assemble(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_info: MochiInfo,
     mochi_state: MochiState,
     soft_info: MochiSoftInfo,
@@ -3332,8 +3346,8 @@ def func_rod_tangent(i_r, i_b, field: qd.Tensor, soft_info: MochiSoftInfo):
 def func_rod_step_start(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_state: MochiState,
     soft_info: MochiSoftInfo,
     soft_state: MochiSoftState,
@@ -3424,8 +3438,8 @@ def kernel_rod_step_start(
 def func_rod_assemble(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_info: MochiInfo,
     mochi_state: MochiState,
     soft_info: MochiSoftInfo,
@@ -3618,8 +3632,8 @@ def kernel_rod_assemble(
 def func_rod_apply_increment(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_state: MochiState,
     soft_info: MochiSoftInfo,
     soft_state: MochiSoftState,
@@ -3666,8 +3680,8 @@ def kernel_rod_apply_increment(
 def func_rod_store_ls_ref(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_state: MochiState,
     soft_state: MochiSoftState,
     rigid_config: qd.template(),
@@ -3709,8 +3723,8 @@ def kernel_rod_store_ls_ref(
 def func_rod_post_stage(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_state: MochiState,
     soft_info: MochiSoftInfo,
     soft_state: MochiSoftState,
@@ -3758,8 +3772,8 @@ def kernel_rod_post_stage(
 def func_rod_update_conv_weights(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_info: MochiInfo,
     mochi_state: MochiState,
     soft_info: MochiSoftInfo,
@@ -3818,8 +3832,8 @@ def kernel_rod_update_conv_weights(
 def func_pc_collider_eval(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     mochi_info: MochiInfo,

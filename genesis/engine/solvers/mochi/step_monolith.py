@@ -117,8 +117,8 @@ def func_update_kinematics_env(
 def func_assemble(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,

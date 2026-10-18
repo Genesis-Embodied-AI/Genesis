@@ -53,8 +53,8 @@ def func_aabbs_overlap(min_a, max_a, min_b, max_b):
 def func_build_islands(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     dyn_info: array_class.DynInfo,
     mochi_info: MochiInfo,
     mochi_state: MochiState,
@@ -244,8 +244,8 @@ def kernel_build_islands(
 def func_cholesky_solve_islands(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_info: MochiInfo,
     mochi_state: MochiState,
     island_state: MochiIslandState,

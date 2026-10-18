@@ -35,8 +35,8 @@ def func_is_env_active(i_b, mochi_state: MochiState, skip_ls_done):
 def func_reset_newton(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_state: MochiState,
     rigid_config: qd.template(),
 ):
@@ -69,8 +69,8 @@ def kernel_reset_newton(mochi_state: MochiState, rigid_config: qd.template()):
 def func_residual_norms(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_state: MochiState,
     island_state: MochiIslandState,
     rigid_config: qd.template(),
@@ -141,8 +141,8 @@ def kernel_residual_norms(
 def func_store_initial_norms(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     rigid_info: array_class.RigidInfo,
     mochi_state: MochiState,
     island_state: MochiIslandState,
@@ -192,8 +192,8 @@ def kernel_store_initial_norms(
 def func_linesearch_begin(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     rigid_info: array_class.RigidInfo,
     mochi_state: MochiState,
     rigid_config: qd.template(),
@@ -253,8 +253,8 @@ def kernel_linesearch_begin(
 def func_apply_increment(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     mochi_info: MochiInfo,
@@ -340,8 +340,8 @@ def kernel_apply_increment(
 def func_linesearch_decide(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     rigid_info: array_class.RigidInfo,
     mochi_info: MochiInfo,
     mochi_state: MochiState,
@@ -406,8 +406,8 @@ def kernel_linesearch_decide(
 def func_convergence_check(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_info: MochiInfo,
     mochi_state: MochiState,
     island_state: MochiIslandState,
@@ -483,8 +483,8 @@ def kernel_convergence_check(
 def func_update_linear_tolerance(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     mochi_info: MochiInfo,
     mochi_state: MochiState,
     rigid_config: qd.template(),

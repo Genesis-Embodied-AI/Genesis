@@ -79,8 +79,8 @@ def kernel_update_kinematics(
 
 @qd.func
 def func_update_kinematics(
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     geoms_init_AABB: array_class.GeomsInitAABB,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,

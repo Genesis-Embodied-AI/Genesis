@@ -121,8 +121,8 @@ def func_joint_dof_displacement(
 def func_project_links_residual(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     mochi_info: MochiInfo,
@@ -170,8 +170,8 @@ def kernel_project_links_residual(
 def func_assemble_joints(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -331,8 +331,8 @@ def kernel_assemble_joints(
 def func_update_conv_weights(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     mochi_info: MochiInfo,

@@ -528,19 +528,39 @@ class MochiSoftEntity(Entity):
         self._solver.set_soft_vertices_velocity(self, vel, envs_idx)
 
     def _sanitize_vertices_idx(self, verts_idx_local):
-        verts_idx = np.atleast_1d(np.asarray(tensor_to_array(verts_idx_local), dtype=gs.np_int))
-        if verts_idx.min(initial=0) < 0 or verts_idx.max(initial=-1) >= self.n_vertices:
-            gs.raise_exception("Vertex index out of range.")
+        """Sanitize a vertex set into a device tensor, one set shared by every environment (n,) or one set per
+        environment (n_envs, n) whose -1 entries are padding.
+
+        The range check of device-resident indices synchronizes the host with the device.
+        """
+        verts_idx = torch.atleast_1d(torch.as_tensor(verts_idx_local, dtype=gs.tc_int, device=gs.device))
+        if verts_idx.ndim != 1 and verts_idx.ndim != 2:
+            gs.raise_exception(
+                "Pass one vertex set shared by every environment, of shape (n,), or one set per environment, of shape "
+                f"(n_envs, n) padded with -1. Got an array of shape {tuple(verts_idx.shape)}."
+            )
+        # Padding only makes sense in a per-environment set, where rows hold different numbers of vertices.
+        verts_idx_min = 0 if verts_idx.ndim == 1 else -1
+        if ((verts_idx < verts_idx_min) | (verts_idx >= self.n_vertices)).any():
+            gs.raise_exception(f"Vertex index out of range [{verts_idx_min}, {self.n_vertices}).")
         return verts_idx
 
     def set_vertices_fixed(self, verts_idx_local, is_fixed=True, envs_idx=None):
-        """Fix the given vertices at their current position (Dirichlet condition), or release them."""
+        """Fix the given vertices at their current position (Dirichlet condition), or release them.
+
+        `verts_idx_local` is one set for every environment, shape (n,), or one set per environment, shape (n_envs, n),
+        whose -1 entries are skipped.
+        """
         self._solver.set_soft_vertices_fixed(self, self._sanitize_vertices_idx(verts_idx_local), is_fixed, envs_idx)
 
     def set_vertices_target(self, verts_idx_local, pos, envs_idx=None):
         """Prescribe the positions the given vertices must reach at the end of the next step (moving Dirichlet
-        condition); the vertices become fixed until released with `set_vertices_fixed(..., is_fixed=False)`. `pos`
-        has shape (n_verts_idx, 3) or (n_envs, n_verts_idx, 3)."""
+        condition); the vertices become fixed until released with `set_vertices_fixed(..., is_fixed=False)`.
+
+        `verts_idx_local` is one set for every environment, shape (n,), with `pos` of shape (n, 3) or (n_envs, n, 3),
+        or one set per environment, shape (n_envs, n) whose -1 entries are skipped, with `pos` of shape (n_envs, n, 3).
+        This is how a gripper carries whichever vertices it closed on in each environment.
+        """
         self._solver.set_soft_vertices_target(self, self._sanitize_vertices_idx(verts_idx_local), pos, envs_idx)
 
     def set_contact_params(

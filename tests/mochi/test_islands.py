@@ -159,7 +159,19 @@ def test_sleeping_islands_freeze_and_wake(n_envs, show_viewer):
             nu=0.45,
         ),
     )
+    pinned_cube = scene.add_entity(
+        gs.morphs.Box(
+            size=(2.0 * size, 2.0 * size, 2.0 * size),
+            pos=(-1.0, -1.0, 0.5),
+            maxvolume=0.001,
+        ),
+        material=gs.materials.Mochi.Elastic(
+            E=1e6,
+            nu=0.45,
+        ),
+    )
     scene.build(n_envs=n_envs)
+    pinned_cube.set_vertices_fixed(range(pinned_cube.n_vertices))
 
     # The boxes resting on the plane settle, then sleep: their pose stops changing at all, to the last bit.
     for _ in range(40):
@@ -191,6 +203,14 @@ def test_sleeping_islands_freeze_and_wake(n_envs, show_viewer):
         scene.step()
     assert np.all(tensor_to_array(pushed.get_pos())[..., 0] > pushed_pos[..., 0] + 0.02)
     assert_allclose(soft_cube.get_vertices_position(), soft_cube_pos, tol=0.0)
+
+    # Releasing pinned vertices wakes their body, the vertex set given per environment: the sleeping cube falls.
+    pinned_cube_pos = tensor_to_array(pinned_cube.get_vertices_position())
+    pinned_cube.set_vertices_fixed(np.tile(np.arange(pinned_cube.n_vertices), (max(n_envs, 1), 1)), is_fixed=False)
+    for _ in range(10):
+        scene.step()
+    pinned_cube_drop = pinned_cube_pos[..., 2] - tensor_to_array(pinned_cube.get_vertices_position())[..., 2]
+    assert np.all(pinned_cube_drop.min(axis=-1) > 0.02)
 
     # A change of gravity wakes every body: tilted beyond the friction cone, it drags the sleeping soft cube sideways.
     scene.mochi_solver.set_gravity((9.8, 0.0, -9.8))

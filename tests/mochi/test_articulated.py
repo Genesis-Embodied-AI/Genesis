@@ -178,8 +178,32 @@ def test_articulated_free_base_chain_and_batching(pendulum_urdf_path, show_viewe
         gs.morphs.URDF(file=pendulum_urdf_path, pos=(0.0, 0.0, 3.0), fixed=False, default_armature=0.0),
         material=gs.materials.Mochi.Rigid(has_gravity=True),
     )
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=0.1,
+            pos=(5.0, 0.0, 0.3),
+        ),
+        material=gs.materials.Mochi.Rigid(),
+    )
+    # The table is the third kinematic root but the fourth link, the two links of the pendulum coming before it.
+    table = scene.add_entity(
+        gs.morphs.Box(
+            size=(1.0, 1.0, 0.2),
+            pos=(5.0, 0.0, 0.1),
+            fixed=True,
+        ),
+        material=gs.materials.Mochi.Rigid(
+            collider_type="sdf",
+        ),
+    )
     scene.build(n_envs=n_envs)
-    assert scene.mochi_solver.n_dofs == 7
+    assert pendulum.n_dofs == 7
+    # The grid collider of the table stands where the table is from the build on.
+    distances, _, is_valid = scene.mochi_solver.get_collider_distances(
+        table.geoms[0].idx, [[5.0, 0.0, 0.2], [5.0, 0.0, 0.3]]
+    )
+    assert is_valid.all()
+    assert_allclose(distances, [0.0, 0.1], atol=1e-3)
     heights = 3.0 + 0.5 * np.arange(n_envs)
     pendulum.set_pos(np.stack([np.zeros(n_envs), np.zeros(n_envs), heights], axis=-1))
     n_steps = 40
@@ -190,6 +214,9 @@ def test_articulated_free_base_chain_and_batching(pendulum_urdf_path, show_viewe
     assert_allclose(tensor_to_array(pendulum.get_pos())[:, 2], z_expected, atol=1e-6, rtol=0.0)
     assert_allclose(tensor_to_array(pendulum.get_dofs_position())[:, 6], 0.0, atol=1e-9)
     assert_allclose(tensor_to_array(pendulum.get_dofs_velocity())[:, 6], 0.0, atol=1e-9)
+    # The sphere set on the table rests on its top (z = 0.2).
+    sphere_drop = 0.3 - tensor_to_array(sphere.get_pos())[:, 2]
+    assert np.all((sphere_drop > -1e-3) & (sphere_drop < 3e-3))
 
 
 @pytest.fixture(scope="session")

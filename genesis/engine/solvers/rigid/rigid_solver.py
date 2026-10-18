@@ -1376,9 +1376,6 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                     f + 1, self.dyn_state, self._rigid_adjoint_cache, self.rigid_info, self.rigid_config
                 )
 
-    def get_error_envs_mask(self):
-        return qd_to_torch(self._errno) > 0
-
     def check_errno(self):
         if gs.use_zerocopy:
             errno = np.bitwise_or.reduce(qd_to_numpy(self._errno))

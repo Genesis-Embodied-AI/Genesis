@@ -135,8 +135,8 @@ def func_joint_coupling(
 def func_equalities_stage_start(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     mochi_info: MochiInfo,
@@ -202,8 +202,8 @@ def kernel_equalities_stage_start(
 def func_assemble_equalities(
     i_b_env,
     per_env: qd.template(),
-    envs: qd.types.ndarray(),
-    n_envs: qd.types.ndarray(),
+    envs: qd.Tensor,
+    n_envs: qd.Tensor,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
