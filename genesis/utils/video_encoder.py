@@ -123,6 +123,7 @@ class VideoEncoder:
         self._bitrate = bitrate
         self._codec_options = codec_options
         self._is_threaded = is_threaded
+        self._n_frames_written = 0
 
         self._container = None
         self._stream = None
@@ -224,6 +225,8 @@ class VideoEncoder:
         if frame.ndim != 2 + is_color or not np.issubdtype(frame.dtype, np.integer):
             gs.raise_exception("Frames must be either grayscale [H, W] or color [H, W, RGB] of integer type.")
 
+        self._n_frames_written += 1
+
         if self._is_threaded:
             if self._thread is None:
                 self._is_encoding_over = False
@@ -240,6 +243,14 @@ class VideoEncoder:
             self._enqueue(frame)
         else:
             self._encode(frame)
+
+    @property
+    def has_written_frames(self):
+        """
+        Whether at least one frame was handed to the encoder, so a video file holds or will hold this recording.
+        Counted on the calling thread, so it stays reliable whatever the encoding thread has flushed so far.
+        """
+        return self._n_frames_written > 0
 
     def close(self):
         """

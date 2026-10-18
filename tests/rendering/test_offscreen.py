@@ -1810,13 +1810,36 @@ def test_video_recording_clear(tmp_path, renderer, show_viewer):
     assert not video_path.exists()
     cam.clear()
 
-    # A fresh recording may reuse the filename the discarded one had, with any framerate
-    cam.start_recording(save_to_filename=video_path, fps=2.0 * FPS)
+    # A recording that received no frame does not delete a completed video a previous recording saved under the
+    # same filename, since it never replaced its content
+    cam.start_recording(save_to_filename=video_path, fps=FPS)
+    for _ in range(N_STEPS):
+        scene.step()
+    cam.stop_recording()
+    assert video_path.exists()
+
+    cam.start_recording(save_to_filename=video_path, fps=FPS)
+    cam.clear()
+    assert video_path.exists()
+
+    # A recording that received frames replaces any earlier content, so clearing discards the file
+    cam.start_recording(save_to_filename=video_path, fps=FPS)
     for _ in range(N_STEPS):
         scene.step()
     cam.pause_recording()
     cam.clear()
     assert not video_path.exists()
+
+    # A fresh recording may reuse the filename the discarded ones had, with any framerate, which the video honors
+    cam.start_recording(save_to_filename=video_path, fps=2.0 * FPS)
+    for _ in range(N_STEPS):
+        scene.step()
+    cam.stop_recording()
+
+    with av.open(video_path) as container:
+        stream = container.streams.video[0]
+        assert stream.average_rate == 2.0 * FPS
+        assert sum(1 for _ in container.decode(stream)) == N_STEPS
 
     with pytest.raises(gs.GenesisException, match="Recording not started"):
         cam.stop_recording()

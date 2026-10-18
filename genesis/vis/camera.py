@@ -843,8 +843,13 @@ class Camera(RBC):
         if not self._recorded_encoders:
             return
 
-        # Every file is finalized before the first failure is reported, so that one environment failing to encode
-        # neither leaves the others open nor holds the camera in a state where recording cannot be started again.
+        # A file a previous recording saved under the same name belongs to that recording, so only a filename whose
+        # encoder received frames, replacing any earlier content with this recording's own, may be deleted.
+        has_written_frames = [encoder.has_written_frames for encoder in self._recorded_encoders]
+
+        # Every file is finalized before the first failure is reported, and every output is deleted, so that one
+        # environment failing to encode neither leaves partial videos behind nor holds the camera in a state where
+        # recording cannot be started again.
         error = None
         for encoder in self._recorded_encoders:
             try:
@@ -853,16 +858,19 @@ class Camera(RBC):
                 error = e
         self._recorded_encoders.clear()
         self._is_recording = False
-        if error is not None:
-            raise error
 
-        # A file is absent only when no frame was ever written, in which case the encoder left nothing behind anyway.
-        for filename in self._recorded_filenames:
+        for filename, encoder_has_written_frames in zip(self._recorded_filenames, has_written_frames):
+            if not encoder_has_written_frames:
+                continue
+            # A file is absent only when no frame was ever written, in which case the encoder left nothing behind.
             try:
                 os.remove(filename)
             except FileNotFoundError:
                 pass
         self._recorded_filenames.clear()
+
+        if error is not None:
+            raise error
 
     def get_pos(self, envs_idx=None):
         """The current position of the camera."""
