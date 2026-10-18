@@ -1768,6 +1768,62 @@ def test_video_recording_lifecycle(tmp_path, monkeypatch, renderer, show_viewer)
 
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+def test_video_recording_clear(tmp_path, renderer, show_viewer):
+    DT = 0.01
+    FPS = 50.0
+    N_STEPS = 4
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.5, 0.0, 1.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+        ),
+        renderer=renderer,
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    scene.add_entity(
+        gs.morphs.Box(
+            pos=(0.0, 0.0, 0.5),
+            size=(0.2, 0.2, 0.2),
+        ),
+    )
+    cam = scene.add_camera(
+        res=(64, 64),
+        pos=(2.5, 0.0, 1.5),
+        lookat=(0.0, 0.0, 0.5),
+    )
+    scene.build()
+
+    video_path = tmp_path / "discarded.mp4"
+    cam.start_recording(save_to_filename=video_path, fps=FPS)
+    for _ in range(N_STEPS):
+        scene.step()
+    cam.clear()
+
+    # The discarded video is gone, and clearing with nothing to discard changes nothing
+    assert not video_path.exists()
+    cam.clear()
+
+    # A fresh recording may reuse the filename the discarded one had, with any framerate
+    cam.start_recording(save_to_filename=video_path, fps=2.0 * FPS)
+    for _ in range(N_STEPS):
+        scene.step()
+    cam.pause_recording()
+    cam.clear()
+    assert not video_path.exists()
+
+    with pytest.raises(gs.GenesisException, match="Recording not started"):
+        cam.stop_recording()
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 def test_transparent_surfaces_show_what_lies_behind_them(renderer, show_viewer):
     ALPHA = 0.5
     RES = 64

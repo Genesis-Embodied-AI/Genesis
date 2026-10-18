@@ -126,6 +126,7 @@ class Camera(RBC):
         self._recorded_steps_per_frame = 1
         self._recorded_t_next = 0
         self._recorded_encoders = []
+        self._recorded_filenames = []
 
         self._attached_link = None
         self._attached_offset_T = None
@@ -789,6 +790,7 @@ class Camera(RBC):
             filenames = [save_to_filename]
         for filename in filenames:
             self._recorded_encoders.append(VideoEncoder(filename, fps_recorded, is_threaded=True))
+        self._recorded_filenames = filenames
 
         self._recorded_t_next = self._visualizer.scene.sim.cur_step_global + self._recorded_steps_per_frame
         self._is_recording = True
@@ -827,6 +829,40 @@ class Camera(RBC):
         self._is_recording = False
         if error is not None:
             raise error
+
+    @gs.assert_built
+    def clear(self):
+        """
+        Discard the recording in progress, whether active or paused, frames included: the encoders are closed and the
+        video file(s) written so far are deleted. The camera is left as if no recording had ever been started, so the
+        next `camera.start_recording()` opens fresh file(s) with any filename and framerate.
+
+        Does nothing when there is no recording to discard, so it can be called at the start of every episode without
+        checking whether one was started.
+        """
+        if not self._recorded_encoders:
+            return
+
+        # Every file is finalized before the first failure is reported, so that one environment failing to encode
+        # neither leaves the others open nor holds the camera in a state where recording cannot be started again.
+        error = None
+        for encoder in self._recorded_encoders:
+            try:
+                encoder.close()
+            except gs.GenesisException as e:
+                error = e
+        self._recorded_encoders.clear()
+        self._is_recording = False
+        if error is not None:
+            raise error
+
+        # A file is absent only when no frame was ever written, in which case the encoder left nothing behind anyway.
+        for filename in self._recorded_filenames:
+            try:
+                os.remove(filename)
+            except FileNotFoundError:
+                pass
+        self._recorded_filenames.clear()
 
     def get_pos(self, envs_idx=None):
         """The current position of the camera."""
