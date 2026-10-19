@@ -17,6 +17,7 @@ from OpenGL.GL import *
 import pyglet
 
 import genesis as gs
+from genesis.utils.cache import get_cache_dir
 from genesis.utils.misc import get_default_screen
 from genesis.vis.keybindings import Key, KeyAction, Keybind, Keybindings, KeyMod
 from genesis.vis.viewer_plugins import EVENT_HANDLE_STATE, EVENT_HANDLED, ViewerPlugin
@@ -631,7 +632,7 @@ class Viewer(pyglet.window.Window):
             from moviepy.video.io.ffmpeg_writer import FFMPEG_VideoWriter
 
             self._video_recorder = FFMPEG_VideoWriter(
-                filename=os.path.join(gs.utils.misc.get_cache_dir(), "tmp_video.mp4"),
+                filename=os.path.join(get_cache_dir(), "tmp_video.mp4"),
                 fps=self.viewer_flags["refresh_rate"],
                 size=self.viewport_size,
             )
