@@ -3,6 +3,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Iterable
 
 import genesis as gs
+from genesis.utils.cache import disable_owned_cache_release, enable_owned_cache_release, is_owned_cache_release_enabled
 from genesis.utils.misc import with_lock
 from genesis.vis.viewer_plugins.plugins import DefaultControlsPlugin
 
@@ -295,41 +296,48 @@ class InteractiveScene:
             if pyrender_window is not None:
                 # Detach so scene.destroy() does not close the preserved window.
                 scene.viewer._pyrender_viewer = None
-            scene.destroy()
-            # Re-initialize the SAME object in place so external references survive the rebuild.
-            scene.__init__(**self._scene_kwargs)
-            # The in-place re-init keeps the digest cached for the previous description
-            scene.__dict__.pop("_desc_digest", None)
-            # Re-register the pre-step callback: the in-place re-init cleared Scene's callback list.
-            scene.register_pre_step_callback(self._pre_step)
-            for name, kwargs in self._entities_kwargs.items():
-                morph = kwargs["morph"]
-                morphs = (morph,) if isinstance(morph, gs.morphs.Morph) else tuple(morph)  # heterogeneous entity
-                desc = entities_desc.get(name)
-                # A USD morph describes a whole stage (potentially many bodies); add_stage parses and adds them and
-                # takes no name. Every other morph is a single entity added by name.
-                if isinstance(morph, gs.morphs.USD):
-                    scene.add_stage(**kwargs)
-                # An entity handed the very objects its description was resolved from is unchanged by the edit, so it is
-                # created from that description without reading its asset again. An edit hands in new objects.
-                elif (
-                    desc is not None
-                    and len(morphs) == len(desc.morphs)
-                    and all(kwargs_morph is desc_morph for kwargs_morph, desc_morph in zip(morphs, desc.morphs))
-                    and kwargs.get("material") is desc.material
-                    and kwargs.get("surface") is desc.surface
-                    and kwargs.get("visualize_contact", False) == desc.visualize_contact
-                    and kwargs.get("vis_mode") in (None, desc.surface.vis_mode)
-                ):
-                    scene._sim._add_entity(desc=desc)
-                else:
-                    scene.add_entity(name=name, **kwargs)
-            for sensor_opts in self._sensors_kwargs:
-                scene.add_sensor(sensor_opts)
-            # Hand the preserved window to the new viewer so build() reuses it instead of opening a new one.
-            if pyrender_window is not None and scene.viewer is not None:
-                scene.viewer._pyrender_viewer = pyrender_window
-            scene.build(**self._build_kwargs)
+            # The data cached for the destroyed scene is kept until the rebuilt one owns what it uses again
+            was_owned_cache_release_enabled = is_owned_cache_release_enabled()
+            disable_owned_cache_release()
+            try:
+                scene.destroy()
+                # Re-initialize the SAME object in place so external references survive the rebuild.
+                scene.__init__(**self._scene_kwargs)
+                # The in-place re-init keeps the digest cached for the previous description
+                scene.__dict__.pop("_desc_digest", None)
+                # Re-register the pre-step callback: the in-place re-init cleared Scene's callback list.
+                scene.register_pre_step_callback(self._pre_step)
+                for name, kwargs in self._entities_kwargs.items():
+                    morph = kwargs["morph"]
+                    morphs = (morph,) if isinstance(morph, gs.morphs.Morph) else tuple(morph)  # heterogeneous entity
+                    desc = entities_desc.get(name)
+                    # A USD morph describes a whole stage (potentially many bodies); add_stage parses and adds them and
+                    # takes no name. Every other morph is a single entity added by name.
+                    if isinstance(morph, gs.morphs.USD):
+                        scene.add_stage(**kwargs)
+                    # An entity handed the very objects its description was resolved from is unchanged by the edit, so
+                    # it is created from that description without reading its asset again. An edit hands in new objects.
+                    elif (
+                        desc is not None
+                        and len(morphs) == len(desc.morphs)
+                        and all(kwargs_morph is desc_morph for kwargs_morph, desc_morph in zip(morphs, desc.morphs))
+                        and kwargs.get("material") is desc.material
+                        and kwargs.get("surface") is desc.surface
+                        and kwargs.get("visualize_contact", False) == desc.visualize_contact
+                        and kwargs.get("vis_mode") in (None, desc.surface.vis_mode)
+                    ):
+                        scene._sim._add_entity(desc=desc)
+                    else:
+                        scene.add_entity(name=name, **kwargs)
+                for sensor_opts in self._sensors_kwargs:
+                    scene.add_sensor(sensor_opts)
+                # Hand the preserved window to the new viewer so build() reuses it instead of opening a new one.
+                if pyrender_window is not None and scene.viewer is not None:
+                    scene.viewer._pyrender_viewer = pyrender_window
+                scene.build(**self._build_kwargs)
+            finally:
+                if was_owned_cache_release_enabled:
+                    enable_owned_cache_release()
 
             new_viewer = scene.viewer
             if new_viewer is not None:

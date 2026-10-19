@@ -1,5 +1,5 @@
-import os
 import math
+import os
 import pickle as pkl
 from pathlib import Path
 
@@ -11,7 +11,7 @@ import genesis as gs
 from genesis.ext.isaacgym import terrain_utils as isaacgym_terrain_utils
 from genesis.options.morphs import Terrain
 
-from .mesh import get_gnd_path
+from .cache import get_gnd_path
 from .misc import tensor_to_array
 
 

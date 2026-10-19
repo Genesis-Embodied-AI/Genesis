@@ -33,6 +33,7 @@ from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
+from genesis.utils.cache import MESH_CACHE_MATCH_RTOL
 from genesis.utils.misc import get_assets_dir
 
 from ..base_entity import EntityDescription
@@ -1440,7 +1441,7 @@ class KinematicEntityDescription(EntityDescription):
                 threshold = g_info.pop("decompose_error_threshold", decompose_error_threshold)
                 for options, options_cg_infos in cg_infos_by_options:
                     if options[:2] == (convexify, decimate) and math.isclose(
-                        options[2], threshold, rel_tol=mu.MESH_CACHE_MATCH_RTOL
+                        options[2], threshold, rel_tol=MESH_CACHE_MATCH_RTOL
                     ):
                         options_cg_infos.append(g_info)
                         break

@@ -11,7 +11,7 @@ import quadrants as qd
 
 import genesis as gs
 from genesis.typing import Vec3FType
-from genesis.utils.misc import register_cache_clear
+from genesis.utils.cache import register_cache_clear
 
 # ------------------------------------------------------------------------------------
 # ------------------------------------- Quadrants ----------------------------------------
