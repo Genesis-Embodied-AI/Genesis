@@ -260,7 +260,7 @@ class Collider:
             self.collider_config,
             self.mpr._mpr_info,
             self.gjk._gjk_info,
-            self._support_field._support_field_info,
+            self._support_field.support_field_info,
             self._sdf._sdf_info,
             mc_perturbation=self._mc_perturbation,
             mc_tolerance=self._mc_tolerance,

@@ -1137,13 +1137,12 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             # estimate the exact contact information.
             geoms_center = []
             for geom in geoms:
-                tmesh = geom.mesh.trimesh
                 # A geom enclosing no volume has no center of mass, and its inertial reports no mass
-                if tmesh.is_watertight and geom.mesh.inertial.mass > 0.0:
+                if geom.mesh.is_watertight and geom.mesh.inertial.mass > 0.0:
                     geoms_center.append(geom.mesh.inertial.com)
                 else:
                     # Still fallback to mean vertex position if no better option...
-                    geoms_center.append(np.mean(tmesh.vertices, axis=0))
+                    geoms_center.append(np.mean(geom.mesh.verts, axis=0))
 
             # A geom is hollow when its own center lies in a cavity rather than inside its material (bowl, mug,
             # nut), i.e. its own SDF is positive at its center. This is a static property of the collision

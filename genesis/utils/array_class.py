@@ -2037,12 +2037,13 @@ class GJKStaticConfig(metaclass=AutoInitMeta):
 class SupportFieldInfo:
     kind: ClassVar[DataKind] = DataKind.CONSTANT
 
-    # First cell of the table of each geom
+    # First cell of the table of each geom, the geoms of one trimesh sharing one table
     support_cell_start: qd.Tensor
     # First extra candidate of each cell, past those of its record, its extras ending where those of the next start
     support_list_start: qd.Tensor
-    # Mesh-frame position and index of each candidate vertex: the record of every cell at twice the index of the cell,
-    # holding the first two candidates of the cell (a single candidate twice), then the extra candidates of all cells
+    # Mesh-frame position and index of each candidate vertex, among the vertices of its geom: the record of every cell
+    # at twice the index of the cell, holding the first two candidates of the cell (a single candidate twice), then the
+    # extra candidates of all cells
     support_v: qd.Tensor
     support_vid: qd.Tensor
     support_res: qd.Tensor

@@ -1,9 +1,11 @@
+import functools
 import os
 from itertools import chain
 from typing import Any, NamedTuple
 
-import fast_simplification
 import numpy as np
+
+import fast_simplification
 import trimesh
 from scipy.spatial import QhullError
 
@@ -11,13 +13,13 @@ import genesis as gs
 import genesis.utils.gltf as gltf_utils
 import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
-from genesis.constants import GLTF_FORMATS, MESH_FORMATS
 import genesis.utils.point_cloud as pc
+from genesis.constants import GLTF_FORMATS, MESH_FORMATS
 from genesis.options.surfaces import Surface
 from genesis.repr_base import RBC
 from genesis.typing import Matrix3x3Type, Vec3FType
 from genesis.utils import serialization
-from genesis.utils.misc import redirect_libc_stderr
+from genesis.utils.misc import OwnedCache, redirect_libc_stderr
 
 
 class InertialProperties(NamedTuple):
@@ -26,6 +28,41 @@ class InertialProperties(NamedTuple):
     mass: float
     com: Vec3FType
     i: Matrix3x3Type
+
+
+# Data derived from the trimesh of a mesh alone, shared by the meshes of one trimesh (see 'Mesh.tmesh_hash')
+_TMESH_CACHE = OwnedCache()
+
+
+def cached_by_tmesh(method):
+    """Wrap a method of 'Mesh' computing data from its trimesh alone, so that the meshes of one trimesh share it.
+
+    The value is computed by the method on the first call, keyed on its name and the hash of the trimesh (see
+    'Mesh.tmesh_hash').
+    """
+
+    @functools.wraps(method)
+    def wrapper(self):
+        return _TMESH_CACHE.get(self, (method.__name__, self.tmesh_hash), functools.partial(method, self))
+
+    return wrapper
+
+
+def mutates_tmesh(method):
+    """Wrap a method of 'Mesh' changing its trimesh, so that the mesh gives up the data derived from its former one.
+
+    The data derived from the trimesh alone is shared through the trimesh cache (see 'Mesh.tmesh_hash'), which the mesh
+    releases once the method returns, its hash being computed again from the new trimesh when next asked.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        result = method(self, *args, **kwargs)
+        self._tmesh_hash = None
+        _TMESH_CACHE.release(self)
+        return result
+
+    return wrapper
 
 
 class Mesh(RBC, serialization.SerializationMixin):
@@ -77,17 +114,8 @@ class Mesh(RBC, serialization.SerializationMixin):
         self._metadata: dict[str, Any] = metadata or {}
         self._color = np.array([1.0, 1.0, 1.0, 1.0], dtype=gs.np_float)
 
-        # Geometry-derived data (independent of appearance) computed lazily and reused. When the same processed
-        # collision geometry backs many entities, these are shared by reference so each entity reads them instead of
-        # recomputing the unique-edge list and the vertex-adjacency graph.
-        self._unique_edges: "np.ndarray | None" = None
-        self._vert_adjacency: "tuple[np.ndarray, np.ndarray, np.ndarray] | None" = None
-        self._is_convex: "bool | None" = None
-        self._inertial: "InertialProperties | None" = None
-        # A mesh sharing another's processed geometry (a cached collision template) delegates its inertia query to that
-        # source, so the (convex-hull) mass-property computation runs at most once per geometry and only when an entity
-        # actually needs it - never eagerly for e.g. fixed or articulated assets whose link frames are not aligned.
-        self._inertial_source: "Mesh | None" = None
+        # The data derived from the trimesh alone is shared through the trimesh cache (see 'tmesh_hash')
+        self._tmesh_hash: "str | None" = None
 
         # By default, all meshes are considered zup, unless the "FileMorph.file_meshes_are_zup" option was set to False
         self._metadata.setdefault("imported_as_zup", True)
@@ -122,6 +150,7 @@ class Mesh(RBC, serialization.SerializationMixin):
         if decimate:
             self.decimate(decimate_face_num, decimate_aggressiveness)
 
+    @mutates_tmesh
     def convexify(self):
         """
         Convexify the mesh.
@@ -129,9 +158,9 @@ class Mesh(RBC, serialization.SerializationMixin):
         if self._mesh.vertices.shape[0] > 3:
             self._mesh = mu.convex_hull(self._mesh)
             self._metadata["convexified"] = True
-        self._invalidate_geometry_cache()
         self.clear_visuals()
 
+    @mutates_tmesh
     def watertighten(self, aggressiveness=7):
         """Replace `self._mesh` with a closed manifold wrap of the current geometry.
 
@@ -149,9 +178,9 @@ class Mesh(RBC, serialization.SerializationMixin):
         )
         self._mesh = trimesh.Trimesh(vertices=v, faces=f, process=False)
         self._metadata["watertightened"] = True
-        self._invalidate_geometry_cache()
         self.clear_visuals()
 
+    @mutates_tmesh
     def decimate(self, decimate_face_num, decimate_aggressiveness):
         """
         Decimate the mesh.
@@ -169,9 +198,9 @@ class Mesh(RBC, serialization.SerializationMixin):
             )
             self._metadata["decimated"] = True
 
-        self._invalidate_geometry_cache()
         self.clear_visuals()
 
+    @mutates_tmesh
     def remesh(self, edge_len_abs=None, edge_len_ratio=0.01, fix=True):
         """
         Remesh for tetrahedralization.
@@ -202,7 +231,6 @@ class Mesh(RBC, serialization.SerializationMixin):
 
         verts, faces = remeshed
         self._mesh = trimesh.Trimesh(vertices=verts, faces=faces)
-        self._invalidate_geometry_cache()
         self.clear_visuals()
 
     def tetrahedralize(self, tet_cfg):
@@ -254,68 +282,62 @@ class Mesh(RBC, serialization.SerializationMixin):
         self._surface = gs.surfaces.Default()
         self._surface.update_texture()
 
-    def _invalidate_geometry_cache(self):
-        # Drop memoized geometry-derived data (unique edges, vertex adjacency, convexity, inertia) when the underlying
-        # trimesh is replaced or its vertices change, so the next query recomputes from the current geometry instead of
-        # returning stale topology or inertia.
-        self._unique_edges = None
-        self._vert_adjacency = None
-        self._is_convex = None
-        self._inertial = None
-        self._inertial_source = None
+    @property
+    def tmesh_hash(self) -> str:
+        """
+        Hash of the vertices and faces of the mesh, identifying its trimesh.
 
+        The meshes of one trimesh share the data derived from it alone, which is computed once for all of them and
+        kept as long as any of them lives (see 'OwnedCache').
+        """
+        if self._tmesh_hash is None:
+            self._tmesh_hash = mu.get_hashkey(self.verts, self.faces)
+        return self._tmesh_hash
+
+    @cached_by_tmesh
     def get_unique_edges(self):
         """
         Get the unique edges of the mesh.
         """
-        if self._unique_edges is None:
-            r_face = np.roll(self.faces, 1, axis=1)
-            edges = np.concatenate(np.array([self.faces, r_face]).T)
-
-            # do a first pass to remove duplicates
-            edges.sort(axis=1)
-            edges = np.unique(edges, axis=0)
-            self._unique_edges = edges[edges[:, 0] != edges[:, 1]]
-
-        return self._unique_edges
+        edges = np.concatenate(np.array([self.faces, np.roll(self.faces, 1, axis=1)]).T)
+        edges.sort(axis=1)
+        edges = np.unique(edges, axis=0)
+        return edges[edges[:, 0] != edges[:, 1]]
 
     @property
+    @cached_by_tmesh
     def inertial(self):
         """
         Mass, center of mass and inertia tensor of the geometry in its own frame, at unit density.
 
-        Non-watertight geometry is closed by its convex hull first so the volume integral is well-defined; a degenerate
-        geometry has no mass, and composes as a geom of no mass at the origin. The result is memoized and shared by
-        reference across entities backed by the same geometry.
+        Non-watertight geometry is closed by its convex hull first so the volume integral is well-defined. A degenerate
+        geometry has no mass, and composes as a geom of no mass at the origin. The result is shared by reference across
+        the meshes of one trimesh.
         """
-        if self._inertial_source is not None:
-            return self._inertial_source.inertial
-        if self._inertial is None:
-            # A degenerate geometry carries no inertia: one enclosing no volume has no center of mass, and the convex
-            # hull closing a non-watertight one raises when it has fewer than 4 non-coplanar vertices.
-            try:
-                tmesh = self._mesh
-                if not self._mesh.is_watertight:
-                    gs.logger.warning(
-                        "Mesh is not watertight. Falling back to convex hull for estimating inertial properties."
-                    )
-                    tmesh = mu.convex_hull(self._mesh)
-                volume = mu.get_signed_volume(tmesh.vertices, tmesh.faces)
-            except QhullError:
-                volume = 0.0
-            if volume < 0.0:
-                # Inward-facing winding gives a negative volume and inverted mass properties (e.g. a closed terrain
-                # block, which bypasses watertighten since it is already watertight). Flip the mesh so the inertia
-                # integral reflects the actual solid rather than estimating from an inverted one.
-                tmesh = tmesh.copy()
-                tmesh.invert()
-                volume = -volume
-            if volume > 0.0:
-                self._inertial = InertialProperties(tmesh.mass, tmesh.center_mass, tmesh.moment_inertia)
-            else:
-                self._inertial = InertialProperties(0.0, np.zeros(3), np.zeros((3, 3)))
-        return self._inertial
+        # A degenerate geometry carries no inertia: one enclosing no volume has no center of mass, and the convex hull
+        # closing a non-watertight one raises when it has fewer than 4 non-coplanar vertices.
+        try:
+            tmesh = trimesh.Trimesh(self.verts, self.faces, process=False)
+            if not tmesh.is_watertight:
+                gs.logger.warning(
+                    "Mesh is not watertight. Falling back to convex hull for estimating inertial properties."
+                )
+                tmesh = mu.convex_hull(tmesh)
+            volume = mu.get_signed_volume(tmesh.vertices, tmesh.faces)
+        except QhullError:
+            volume = 0.0
+        if volume < 0.0:
+            # Inward-facing winding gives a negative volume and inverted mass properties (e.g. a closed terrain block,
+            # which bypasses watertighten since it is already watertight). Flip the mesh so that the inertia integral
+            # reflects the actual solid.
+            tmesh = tmesh.copy()
+            tmesh.invert()
+            volume = -volume
+        if volume > 0.0:
+            return InertialProperties(tmesh.mass, tmesh.center_mass, tmesh.moment_inertia)
+        return InertialProperties(0.0, np.zeros(3), np.zeros((3, 3)))
 
+    @cached_by_tmesh
     def get_vert_adjacency(self):
         """
         Get the per-vertex adjacency graph as flat arrays (vert_neighbors, vert_n_neighbors, vert_neighbor_start).
@@ -323,15 +345,11 @@ class Mesh(RBC, serialization.SerializationMixin):
         vert_neighbors concatenates each vertex's neighbor indices, vert_n_neighbors holds the neighbor count of each
         vertex, and vert_neighbor_start the offset of each vertex's slice into vert_neighbors.
         """
-        if self._vert_adjacency is None:
-            tmesh = trimesh.Trimesh(vertices=self.verts, faces=self.faces, process=False)
-            vert_neighbors_list = tmesh.vertex_neighbors
-            vert_neighbors = np.array(tuple(chain.from_iterable(vert_neighbors_list)), dtype=gs.np_int)
-            vert_n_neighbors = np.array(tuple(map(len, vert_neighbors_list)), dtype=gs.np_int)
-            vert_neighbor_start = np.array((0, *np.cumsum(vert_n_neighbors)[:-1]), dtype=gs.np_int)
-            self._vert_adjacency = (vert_neighbors, vert_n_neighbors, vert_neighbor_start)
-
-        return self._vert_adjacency
+        vert_neighbors_list = trimesh.Trimesh(self.verts, self.faces, process=False).vertex_neighbors
+        vert_neighbors = np.array(tuple(chain.from_iterable(vert_neighbors_list)), dtype=gs.np_int)
+        vert_n_neighbors = np.array(tuple(map(len, vert_neighbors_list)), dtype=gs.np_int)
+        vert_neighbor_start = np.array((0, *np.cumsum(vert_n_neighbors)[:-1]), dtype=gs.np_int)
+        return vert_neighbors, vert_n_neighbors, vert_neighbor_start
 
     def copy(self):
         """
@@ -356,9 +374,15 @@ class Mesh(RBC, serialization.SerializationMixin):
         metadata=None,
         surface=None,
         is_mesh_zup=True,
+        share_arrays=False,
     ):
         """
         Create a genesis.Mesh from a trimesh.Trimesh object.
+
+        The mesh holds a copy of the trimesh, unless 'share_arrays' asks for its arrays to be wrapped in a trimesh of
+        its own, so that the meshes built from one trimesh share its geometry. Sharing requires that nothing writes into
+        those arrays in place, which holds for a trimesh that Genesis alone holds, transforms replacing the arrays they
+        change.
         """
         if surface is None:
             surface = gs.surfaces.Default()
@@ -366,7 +390,20 @@ class Mesh(RBC, serialization.SerializationMixin):
         else:
             surface = surface.model_copy()
 
-        mesh = mesh.copy(**(dict(include_cache=True) if isinstance(mesh, trimesh.Trimesh) else {}))
+        # Only the normals cached by the given trimesh are carried over, read from its cache since trimesh offers no
+        # public query for them. Normals keep apart the vertices they distinguish when merging, so computing the
+        # missing ones here would prevent the welding of vertex soups later on.
+        if share_arrays:
+            assert isinstance(mesh, trimesh.Trimesh)
+            tmesh = trimesh.Trimesh(
+                vertices=mesh.vertices,
+                faces=mesh.faces,
+                face_normals=mesh._cache["face_normals"],
+                vertex_normals=mesh._cache["vertex_normals"],
+                process=False,
+            )
+        else:
+            tmesh = mesh.copy(**(dict(include_cache=True) if isinstance(mesh, trimesh.Trimesh) else {}))
 
         # Always parse uvs if available because roughness and normal map also need uvs.
         # Note that some visual may not have uv, e.g. ColorVisuals.
@@ -444,10 +481,12 @@ class Mesh(RBC, serialization.SerializationMixin):
                 opacity_texture=opacity_texture,
                 roughness_texture=roughness_texture,
             )
-            mesh.visual = mu.surface_uvs_to_trimesh_visual(surface, uvs, len(mesh.vertices))
+            tmesh.visual = mu.surface_uvs_to_trimesh_visual(surface, uvs, len(mesh.vertices))
+        elif share_arrays:
+            tmesh.visual = mesh.visual.copy()
 
         return cls(
-            mesh=mesh,
+            mesh=tmesh,
             surface=surface,
             uvs=uvs,
             scale=scale,
@@ -544,12 +583,12 @@ class Mesh(RBC, serialization.SerializationMixin):
         self._mesh.visual = mu.surface_uvs_to_trimesh_visual(self.surface, self.uvs, len(self.verts))
         self._metadata["is_visual_overwritten"] = True
 
+    @mutates_tmesh
     def apply_transform(self, T):
         """
         Apply a 4x4 transformation matrix (translation on the right column) to the mesh.
         """
         self._mesh.apply_transform(T)
-        self._invalidate_geometry_cache()
 
     @property
     def uid(self):
@@ -570,20 +609,23 @@ class Mesh(RBC, serialization.SerializationMixin):
         """
         Whether the mesh is convex.
         """
-        # 'dict.get' would evaluate the (expensive) convexity test eagerly even when the flag is already set, so branch
-        # explicitly. The trimesh fallback is memoized to stay cheap when many entities share the same geometry.
+        # The flag of a mesh replaced by its convex hull spares the test. It describes that mesh alone, so it stays out
+        # of the trimesh cache, which only holds the test shared by the meshes of one trimesh.
         if "convexified" in self.metadata:
             return self.metadata["convexified"]
-        if self._is_convex is None:
-            self._is_convex = self._mesh.is_convex
-        return self._is_convex
+        key = ("is_convex", self.tmesh_hash)
+        is_convex = _TMESH_CACHE.find(key)
+        if is_convex is None:
+            is_convex = trimesh.Trimesh(self.verts, self.faces, process=False).is_convex
+        return _TMESH_CACHE.own(self, key, is_convex)
 
     @property
+    @cached_by_tmesh
     def is_watertight(self) -> bool:
         """
         Whether the mesh is a closed manifold surface.
         """
-        return self._mesh.is_watertight
+        return trimesh.Trimesh(self.verts, self.faces, process=False).is_watertight
 
     @property
     def metadata(self):
@@ -600,13 +642,13 @@ class Mesh(RBC, serialization.SerializationMixin):
         return self._mesh.vertices
 
     @verts.setter
+    @mutates_tmesh
     def verts(self, verts):
         """
         Set the vertices of the mesh.
         """
         assert len(verts) == len(self.verts)
         self._mesh.vertices = verts
-        self._invalidate_geometry_cache()
 
     @property
     def faces(self):
@@ -674,9 +716,9 @@ class Mesh(RBC, serialization.SerializationMixin):
     def load(cls, raw: dict, loading: serialization.Loading) -> "Mesh":
         """Recreate the mesh exactly as exported, processing none of its geometry again.
 
-        Meshes written from one geometry are handed the edges, the vertex adjacency and the inertia of the first of
-        them, exactly as 'postprocess_collision_geoms' hands them to the entities it builds from one asset. Each
-        keeps its own trimesh and surface, so a mesh drawn in its own colour still costs one copy of the geometry.
+        Meshes written from one trimesh share the data derived from it, as the meshes of one asset do (see
+        'tmesh_hash'). Each keeps its own trimesh and surface, so a mesh drawn in its own colour still costs one copy of
+        the geometry.
         """
         mesh = cls(
             mesh=_loaded_geometry(raw["geometry"], loading),
@@ -689,11 +731,6 @@ class Mesh(RBC, serialization.SerializationMixin):
         # the only visual a file carries (see '_exported_geometry'), so a textured mesh gets its visual back this way.
         if raw["geometry"]["colours"] is None:
             mesh._mesh.visual = mu.surface_uvs_to_trimesh_visual(mesh.surface, mesh.uvs, len(mesh.verts))
-        source = loading.shared.setdefault((raw["geometry"]["verts"], raw["geometry"]["faces"]), mesh)
-        if source is not mesh:
-            mesh._unique_edges = source.get_unique_edges()
-            mesh._vert_adjacency = source.get_vert_adjacency()
-            mesh._inertial_source = source
         return mesh
 
 

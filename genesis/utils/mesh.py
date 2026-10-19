@@ -21,6 +21,7 @@ import genesis as gs
 
 from . import geom as gu
 from .misc import (
+    OwnedCache,
     SizeCappedCache,
     get_assets_dir,
     get_cvx_cache_dir,
@@ -594,27 +595,35 @@ def postprocess_collision_geoms(
             coacd_options,
             watertighten,
         )
-        n_bytes = sum(g_info["mesh"].verts.nbytes + g_info["mesh"].faces.nbytes for g_info in cached)
+        # The normals the geoms built from the cache share are computed on it, the vertex normals from the face
+        # normals, so both count in what it holds
+        n_bytes = sum(
+            g_info["mesh"].verts.nbytes
+            + g_info["mesh"].faces.nbytes
+            + g_info["mesh"].trimesh.face_normals.nbytes
+            + g_info["mesh"].trimesh.vertex_normals.nbytes
+            for g_info in cached
+        )
         _COLLISION_GEOMS_CACHE.put(key, cached, n_bytes)
 
-    # Hand back per-entity geoms that share the cached geometry and its derived data (edges, vertex adjacency, inertia)
-    # with the template, but own their trimesh and surface. This keeps appearance per-entity (each entity gets an
-    # independent, e.g. randomized, collision color) while the heavy geometry is computed once and its arrays are
-    # shared. Edges and adjacency are always needed, so they are populated up front; inertia is queried lazily through
-    # the template (only entities that align their link frame need it) to avoid eager convex-hull work.
+    # Hand back per-entity geoms that share the arrays of the cached geometry, and the data derived from it since they
+    # have its hash (see 'Mesh.tmesh_hash'), but own their trimesh and surface. This keeps appearance per-entity (each
+    # entity gets an independent, e.g. randomized, collision color) while the heavy geometry is computed once.
     result = []
     for g_info in cached:
         template = g_info["mesh"]
         template_tmesh = template.trimesh
         mesh = gs.Mesh(
-            mesh=trimesh.Trimesh(vertices=template_tmesh.vertices, faces=template_tmesh.faces, process=False),
+            mesh=trimesh.Trimesh(
+                vertices=template_tmesh.vertices,
+                faces=template_tmesh.faces,
+                vertex_normals=template_tmesh.vertex_normals,
+                process=False,
+            ),
             surface=gs.surfaces.Collision(),
             uvs=template.uvs,
             metadata=template.metadata.copy(),
         )
-        mesh._unique_edges = template.get_unique_edges()
-        mesh._vert_adjacency = template.get_vert_adjacency()
-        mesh._inertial_source = template
         result.append({**g_info, "mesh": mesh})
     return result
 
@@ -913,16 +922,56 @@ def _load_trimesh_scene_cached(path, group_by_material, mtime) -> "trimesh.Scene
 register_cache_clear(_load_trimesh_scene_cached.cache_clear)
 
 
-def parse_mesh_trimesh(path, group_by_material, scale, is_mesh_zup, surface) -> "list[gs.Mesh]":
-    meshes: list[gs.Mesh] = []
-    scene = _load_trimesh_scene_cached(path, group_by_material, os.path.getmtime(path))
+# Meshes of a file brought to the z-up frame and scaled, kept as long as any mesh built from them lives
+_FILE_TMESHES_CACHE = OwnedCache()
+
+
+def _load_trimesh_geometries(path, group_by_material, scale, is_mesh_zup, mtime) -> "tuple[trimesh.Trimesh, ...]":
+    """Load the meshes of a file, brought to the z-up frame and scaled.
+
+    Their arrays are read-only, the meshes built from them sharing them (see 'Mesh.from_trimesh'), so that writing
+    into them raises rather than changing every one of those meshes.
+    """
+    scene = _load_trimesh_scene_cached(path, group_by_material, mtime)
+    tmeshes = []
     for tmesh in scene.geometry.values():
         if not isinstance(tmesh, trimesh.Trimesh):
             gs.raise_exception(f"Mesh type not supported: {path}")
-        mesh = gs.Mesh.from_trimesh(
-            mesh=tmesh, scale=scale, surface=surface, is_mesh_zup=is_mesh_zup, metadata={"mesh_path": path}
+        tmesh = tmesh.copy(include_cache=True)
+        if not is_mesh_zup:
+            tmesh.apply_transform(Y_UP_TRANSFORM.T)
+        tmesh.apply_scale(np.atleast_1d(scale))
+        # The transforms leave the normals stored in the file strided, which every trimesh wrapping them would copy back
+        # to contiguous (see 'Mesh.from_trimesh' for the cache read)
+        face_normals, vertex_normals = tmesh._cache["face_normals"], tmesh._cache["vertex_normals"]
+        if face_normals is not None:
+            tmesh.face_normals = np.ascontiguousarray(face_normals)
+        if vertex_normals is not None:
+            tmesh.vertex_normals = np.ascontiguousarray(vertex_normals)
+        for array in (tmesh.vertices, tmesh.faces, tmesh._cache["face_normals"], tmesh._cache["vertex_normals"]):
+            if array is not None:
+                array.flags.writeable = False
+        tmeshes.append(tmesh)
+    return tuple(tmeshes)
+
+
+def parse_mesh_trimesh(path, group_by_material, scale, is_mesh_zup, surface) -> "list[gs.Mesh]":
+    # The meshes of a file are processed once for all the entities instantiating it at one scale, which share them
+    key = (path, group_by_material, scale, is_mesh_zup, os.path.getmtime(path))
+    tmeshes = _FILE_TMESHES_CACHE.find(key)
+    if tmeshes is None:
+        tmeshes = _load_trimesh_geometries(*key)
+    meshes = [
+        gs.Mesh.from_trimesh(
+            mesh=tmesh,
+            surface=surface,
+            metadata={"mesh_path": path, "imported_as_zup": is_mesh_zup},
+            share_arrays=True,
         )
-        meshes.append(mesh)
+        for tmesh in tmeshes
+    ]
+    for mesh in meshes:
+        _FILE_TMESHES_CACHE.own(mesh, key, tmeshes)
     return meshes
 
 
