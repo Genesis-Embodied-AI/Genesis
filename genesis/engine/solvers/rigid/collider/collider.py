@@ -432,7 +432,8 @@ class Collider:
         # Lazily compute geom meshes only for geoms that need neutral overlap checks
         geoms_mesh: dict[int, trimesh.Trimesh] = {}
         # Voxel grid and filled-voxel centers of a geom, built the first time it enters a pair with overlapping bounds
-        # and shared by every other pair it enters
+        # and shared by every other pair it enters, since voxelization dominates this check and a link usually overlaps
+        # several others in the neutral configuration
         geoms_voxels: dict[int, tuple[trimesh.voxel.VoxelGrid, np.ndarray]] = {}
         if needs_neutral_check:
             self_root_indices = np.where(valid & same_root)[0]
