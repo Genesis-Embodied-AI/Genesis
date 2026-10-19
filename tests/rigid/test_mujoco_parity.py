@@ -76,14 +76,13 @@ def test_equality_link(gs_sim, mj_sim):
     )
 
 
-@pytest.mark.required
 @pytest.mark.parametrize("model_name", ["box_plan"])
 @pytest.mark.parametrize(
     "gs_solver, gs_integrator",
     [
         (gs.constraint_solver.CG, gs.integrator.implicitfast),
-        (gs.constraint_solver.CG, gs.integrator.Euler),
-        (gs.constraint_solver.Newton, gs.integrator.implicitfast),
+        pytest.param(gs.constraint_solver.CG, gs.integrator.Euler, marks=pytest.mark.required),
+        pytest.param(gs.constraint_solver.Newton, gs.integrator.implicitfast, marks=pytest.mark.required),
         (gs.constraint_solver.Newton, gs.integrator.Euler),
         # Elliptic (second-order) friction cone must match MuJoCo's elliptic cone. The box lands and slides with an
         # initial tangential + angular velocity so the tangential cone rows are exercised in both the sliding (cone
@@ -91,13 +90,13 @@ def test_equality_link(gs_sim, mj_sim):
         pytest.param(
             gs.constraint_solver.CG,
             gs.integrator.implicitfast,
-            marks=pytest.mark.friction_cone(gs.friction_cone.elliptic),
+            marks=(pytest.mark.friction_cone(gs.friction_cone.elliptic), pytest.mark.required),
             id="CG-implicitfast-elliptic",
         ),
         pytest.param(
             gs.constraint_solver.Newton,
             gs.integrator.implicitfast,
-            marks=pytest.mark.friction_cone(gs.friction_cone.elliptic),
+            marks=(pytest.mark.friction_cone(gs.friction_cone.elliptic), pytest.mark.required),
             id="Newton-implicitfast-elliptic",
         ),
     ],
@@ -177,7 +176,7 @@ def test_torsional_and_rolling_friction(gs_sim, mj_sim, tol):
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=qpos, qvel=qvel, num_steps=60, tol=tol)
 
 
-@pytest.mark.required
+@pytest.mark.required("pairwise")
 @pytest.mark.adjacent_collision(True)
 @pytest.mark.parametrize("model_name", ["chain_capsule_hinge_mesh"])  # FIXME: , "chain_capsule_hinge_capsule"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
@@ -188,7 +187,7 @@ def test_simple_kinematic_chain(gs_sim, mj_sim, tol):
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=200, tol=tol)
 
 
-@pytest.mark.required
+@pytest.mark.required("sparse")
 @pytest.mark.parametrize("xml_path", ["xml/walker.xml"])
 @pytest.mark.parametrize(
     "gs_solver",
@@ -220,7 +219,7 @@ def test_walker(gs_sim, mj_sim, gjk_collision, tol):
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=90, tol=tol)
 
 
-@pytest.mark.required
+@pytest.mark.required("sparse")
 @pytest.mark.parametrize("xml_path", ["xml/one_ball_joint.xml"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
@@ -232,7 +231,7 @@ def test_one_ball_joint(gs_sim, mj_sim, tol):
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=600, tol=tol)
 
 
-@pytest.mark.required
+@pytest.mark.required("pairwise")
 @pytest.mark.parametrize("xml_path", ["xml/rope_ball.xml", "xml/rope_hinge.xml"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
@@ -251,11 +250,10 @@ def test_rope_ball(gs_sim, mj_sim, gs_solver, tol):
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=5e-9)
 
 
-@pytest.mark.required
 @pytest.mark.parametrize("xml_path", ["linear_deformable.urdf"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast])
-@pytest.mark.parametrize("gjk_collision", [True, False])
+@pytest.mark.parametrize("gjk_collision", [pytest.param(True, marks=pytest.mark.required), False])
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_urdf_rope(gs_sim, mj_sim, gs_solver, xml_path):
     # Must increase sol params to improve numerical stability
@@ -271,7 +269,7 @@ def test_urdf_rope(gs_sim, mj_sim, gs_solver, xml_path):
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=5e-5)
 
 
-@pytest.mark.required
+@pytest.mark.required("pairwise")
 @pytest.mark.parametrize(
     "model_name, gjk_collision",
     [

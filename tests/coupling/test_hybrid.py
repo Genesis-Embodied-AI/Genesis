@@ -304,15 +304,14 @@ def test_deformable_parallel(show_viewer):
     assert_allclose(water.get_particles_vel(), 0.0, atol=5e-2)
 
 
-@pytest.mark.required
 @pytest.mark.parametrize(
     "n_envs, material_type",
     [
-        (0, gs.materials.SPH.Liquid),
+        pytest.param(0, gs.materials.SPH.Liquid, marks=pytest.mark.required),
         (1, gs.materials.SPH.Liquid),
-        (2, gs.materials.SPH.Liquid),
-        (2, gs.materials.PBD.Liquid),
-        (2, gs.materials.MPM.Liquid),
+        pytest.param(2, gs.materials.SPH.Liquid, marks=pytest.mark.required),
+        pytest.param(2, gs.materials.PBD.Liquid, marks=pytest.mark.required),
+        pytest.param(2, gs.materials.MPM.Liquid, marks=pytest.mark.required),
         (2, gs.materials.MPM.Sand),
         (2, gs.materials.MPM.Snow),
         (2, gs.materials.MPM.Elastic),  # This makes little sense but nothing prevents doing this

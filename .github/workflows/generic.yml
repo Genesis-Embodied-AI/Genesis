@@ -147,7 +147,16 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pytest -v -ra --logical ${{ matrix.GS_ENABLE_NDARRAY != '0' && '--dev' || '' }} --backend ${{ matrix.GS_BACKEND }} -m 'required and not slow' --forked ./tests
+          pytest -v -ra --logical ${{ matrix.GS_ENABLE_NDARRAY != '0' && '--dev' || '' }} --backend ${{ matrix.GS_BACKEND }} -m 'required and not slow' --forked --failure-artifacts-dir "${{ runner.temp }}/failure_artifacts" ./tests
+
+      # The image a mismatching snapshot test rendered
+      - name: Upload the artifacts of the failed tests
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-artifacts-${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}-${{ matrix.GS_BACKEND }}-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}
+          path: ${{ runner.temp }}/failure_artifacts
+          if-no-files-found: ignore
 
   publish-pypi:
     name: Publish on PyPI

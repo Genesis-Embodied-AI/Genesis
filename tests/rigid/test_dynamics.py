@@ -114,7 +114,7 @@ def test_all_fixed(show_viewer):
     assert_allclose(scene.rigid_solver.get_links_acc(), 0, tol=gs.EPS)
 
 
-@pytest.mark.required
+@pytest.mark.required("sparse")
 @pytest.mark.parametrize("model_name", ["box_box"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])

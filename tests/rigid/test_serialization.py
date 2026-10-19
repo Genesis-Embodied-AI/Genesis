@@ -599,7 +599,8 @@ def test_export_rejects_unsupported_physics(checkpoint_scene, tmp_path):
         checkpoint_scene.export(tmp_path / f"wind{SCENE_FORMAT}")
 
 
-@pytest.mark.parametrize("n_envs", [0, pytest.param(2, marks=pytest.mark.required)])
+@pytest.mark.required("sparse")
+@pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("requires_grad", [False, True])
 def test_pickle_resume(n_envs, requires_grad, checkpoint_scene, tmp_path, show_viewer):
     scene = checkpoint_scene

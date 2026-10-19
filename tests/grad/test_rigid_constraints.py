@@ -96,8 +96,14 @@ def test_joint_limit_grad_matches_fd(grad_slider_limit, precision, show_viewer):
     )
 
 
-@pytest.mark.required
-@pytest.mark.parametrize("model_name", ["grad_slider_limit", "grad_cartpole", "grad_hopper"])
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "grad_slider_limit",
+        pytest.param("grad_cartpole", marks=pytest.mark.required),
+        pytest.param("grad_hopper", marks=pytest.mark.required),
+    ],
+)
 @pytest.mark.debug(False)
 def test_per_step_force_into_limit_grad_matches_fd(model_name, request, precision, show_viewer):
     # Per-step control-force adjoint driving a joint into its limit, across three topologies. A constant force over
