@@ -29,6 +29,9 @@ WTH_CACHE_VERSION = 2
 # Bumped when the particles sampled for a fixed key change or when the layout of an entry does: forces a cache miss on
 # stale entries.
 PTC_CACHE_VERSION = 1
+# Bumped when the signed distance field (SDF) cell size found for a fixed (mesh, maximum resolution, tolerance) changes:
+# forces a cache miss on stale entries.
+SDC_CACHE_VERSION = 2
 
 
 def get_cache_dir():
@@ -81,6 +84,10 @@ def get_wt_cache_dir():
 
 def get_wth_cache_dir():
     return os.path.join(get_cache_dir(), "wth")
+
+
+def get_sdc_cache_dir():
+    return os.path.join(get_cache_dir(), "sdc")
 
 
 def get_exr_cache_dir():
@@ -326,6 +333,10 @@ def get_wt_cache(verts, faces, aggressiveness):
 
 def get_wth_cache(verts, faces, quantile):
     return MeshCache(get_wth_cache_dir(), "wth", verts, faces, quantile, WTH_CACHE_VERSION)
+
+
+def get_sdc_cache(verts, faces, max_res, tolerance):
+    return MeshCache(get_sdc_cache_dir(), "sdc", verts, faces, max_res, tolerance, SDC_CACHE_VERSION)
 
 
 def get_exr_path(file_path):
