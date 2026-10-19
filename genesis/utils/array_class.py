@@ -38,7 +38,12 @@ def maybe_shape(shape, is_on):
 
 @dataclass_transform(eq_default=True, kw_only_default=False, frozen_default=True)
 class AutoInitMeta(type):
-    """Metaclass that generates __init__ from annotations, like a mutable dataclass."""
+    """Metaclass generating __init__, __eq__ and __hash__ from annotations, like a frozen dataclass.
+
+    Kernels key their compiled instances on the static configs they take, by equality, so configs holding the same
+    values let a rebuilt scene reuse the kernels compiled for the previous one. A config is immutable, since a write
+    would change the key under which its kernels are stored.
+    """
 
     def __new__(cls, name, bases, namespace):
         names = tuple(namespace["__annotations__"].keys())
@@ -69,9 +74,21 @@ class AutoInitMeta(type):
 
             # Set attributes
             for key, value in assigned.items():
-                setattr(self, key, value)
+                object.__setattr__(self, key, value)
+
+        def __setattr__(self, key, value):
+            raise AttributeError(f"{name} is immutable")
+
+        def __eq__(self, other):
+            return type(other) is type(self) and vars(other) == vars(self)
+
+        def __hash__(self):
+            return hash((type(self), *(vars(self)[key] for key in names)))
 
         namespace["__init__"] = __init__
+        namespace["__setattr__"] = __setattr__
+        namespace["__eq__"] = __eq__
+        namespace["__hash__"] = __hash__
 
         return super().__new__(cls, name, bases, namespace)
 
