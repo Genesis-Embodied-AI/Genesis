@@ -932,7 +932,7 @@ def test_many_objects_collision(convexify, show_viewer, tol):
     links, link_names = [], []
     for obj, name in zip(objs, obj_names):
         for link in obj.links:
-            links.append([(geom.get_verts(), geom.get_trimesh().faces) for geom in link.geoms])
+            links.append([(geom.get_verts(), geom.trimesh.faces) for geom in link.geoms])
             link_names.append(name)
     max_penetration, crossings = get_genuine_interpenetration(links)
     # FIXME: Rare (~5% of initial-pose draws) stem-through-wall traps exceed this bound by design: a thin feature

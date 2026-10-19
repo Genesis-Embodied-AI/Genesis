@@ -280,9 +280,9 @@ class Raytracer:
 
                 for geom in geoms:
                     if "sdf" in rigid_entity.surface.vis_mode:
-                        mesh = geom.get_sdf_trimesh()
+                        mesh = geom.sdf_trimesh
                     else:
-                        mesh = geom.get_trimesh()
+                        mesh = geom.trimesh
                     self.add_rigid_batch(
                         name=str(geom.uid),
                         vertices=mesh.vertices,
@@ -296,7 +296,7 @@ class Raytracer:
             for kinematic_entity in self.sim.kinematic_solver.entities:
                 assert kinematic_entity.surface.vis_mode == "visual"
                 for geom in kinematic_entity.vgeoms:
-                    mesh = geom.get_trimesh()
+                    mesh = geom.trimesh
                     self.add_rigid_batch(
                         name=str(geom.uid),
                         vertices=mesh.vertices,
