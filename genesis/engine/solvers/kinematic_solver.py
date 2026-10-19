@@ -178,6 +178,7 @@ class KinematicSolver(Solver):
         self._enable_mujoco_compatibility = False
         self._requires_grad = False
         self._enable_heterogeneous = False  # Set to True when any entity has heterogeneous morphs
+        self._use_system = False
 
         self.collider = None
         self.constraint_solver = None
@@ -373,7 +374,7 @@ class KinematicSolver(Solver):
 
         # A rigid-only scene lets RigidSolverSystem allocate and own the kinematic portion of the rigid data. The
         # standalone KinematicSolver never sets this flag and keeps the legacy initialization below.
-        if getattr(self, "_use_system", False):
+        if self._use_system:
             return
 
         self._build_static_config()

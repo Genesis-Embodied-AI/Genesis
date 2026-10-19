@@ -217,11 +217,33 @@ def _sanitize_sol_params(
     return sol_params
 
 
+def _forward_system_flag(name: str) -> property:
+    """Share a scalar lifecycle flag with RigidSolverSystem while retaining local storage on the legacy path."""
+    legacy_name = f"_legacy{name}"
+
+    def get(solver):
+        system = solver.__dict__.get("_system")
+        return getattr(system, name) if system is not None else solver.__dict__[legacy_name]
+
+    def set(solver, value):
+        system = solver.__dict__.get("_system")
+        if system is not None:
+            setattr(system, name, value)
+        else:
+            solver.__dict__[legacy_name] = value
+
+    return property(get, set)
+
+
 class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
     material_cls = Rigid
     _entity_classes = ((Drone, DroneEntity), (Terrain, TerrainEntity), (Morph, RigidEntity))
     # override typing
     _entities: list[RigidEntity] = gs.List()
+
+    _is_forward_pos_updated = _forward_system_flag("_is_forward_pos_updated")
+    _is_forward_vel_updated = _forward_system_flag("_is_forward_vel_updated")
+    _is_backward = _forward_system_flag("_is_backward")
 
     # ------------------------------------------------------------------------------------
     # --------------------------------- Initialization -----------------------------------
@@ -300,7 +322,6 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
 
         # Simulator enables the System path only when Rigid is the sole active solver. In every mixed or coupled
         # scene this solver keeps the legacy ownership and implementation.
-        self._use_system = False
         self._system = None
         self._dofs_mass_block_start = None
         self._dofs_mass_block_end = None
@@ -332,9 +353,6 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             "qpos0",
             "links_T",
             "_vfaces_raycast_mask",
-            "_is_forward_pos_updated",
-            "_is_forward_vel_updated",
-            "_is_backward",
             "_errno",
             "mass_mat",
             "mass_mat_L",
@@ -484,26 +502,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                     f"numerically stable. {remedy} Note that increasing the solver iterations would not help."
                 )
 
-        # Morph pose offset of each collision geom, conjugated into the geom's own frame so the relative getters
-        # revert it for geoms rotated relative to the link. Each root link carries its own offset; child-link geoms
-        # inherit it through the kinematic chain and keep an identity offset. Forward offset device tensors, None when
-        # everything is identity; the relative geom getters recompute the inverse.
-        geoms_offset_pos = np.zeros((self.n_geoms, 3), dtype=gs.np_float)
-        geoms_offset_quat = np.tile(gu.identity_quat(), (self.n_geoms, 1))
-        for entity in self._entities:
-            ranges = entity.base_link._variant_geom_ranges if entity._desc.variants else None
-            _fill_base_link_geom_offsets(geoms_offset_pos, geoms_offset_quat, entity, entity.geoms, ranges)
-        self._geoms_offset_pos = self._geoms_offset_quat = None
-        if not (
-            np.allclose(geoms_offset_pos, 0.0, atol=gs.EPS)
-            and np.allclose(gu.quat_to_xyz(geoms_offset_quat), 0.0, atol=gs.EPS)
-        ):
-            self._geoms_offset_pos = torch.from_numpy(geoms_offset_pos).to(device=gs.device, dtype=gs.tc_float)
-            self._geoms_offset_quat = torch.from_numpy(geoms_offset_quat).to(device=gs.device, dtype=gs.tc_float)
-
-        # FIXME: when the migration is finished, we will remove the about two lines
-        self._func_vel_at_point = func_vel_at_point
-        self._func_apply_coupling_force = func_apply_coupling_force
+        self._finalize_frontend_model()
 
     def _finalize_frontend_model(self):
         """Finish host-side model state needed by the public facade before its System allocates device data."""

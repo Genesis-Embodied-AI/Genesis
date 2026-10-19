@@ -13,9 +13,21 @@ inspectable and cycle-checked before Quadrants traces a kernel.
 """
 
 from collections.abc import Mapping
+from dataclasses import FrozenInstanceError
 
 import genesis as gs
 from genesis.engine.core import Action, ActionCollection
+
+
+class _ScheduleCollections:
+    """Immutable namespace separating user-declared collection names from schedule metadata."""
+
+    def __init__(self, collections: Mapping[str, tuple[Action, ...]]) -> None:
+        for name, actions in collections.items():
+            object.__setattr__(self, name, actions)
+
+    def __setattr__(self, name, value) -> None:
+        raise FrozenInstanceError(f"cannot assign to field {name!r}")
 
 
 class ActionSchedule:
@@ -26,9 +38,20 @@ class ActionSchedule:
     integration; ``nested`` and ``actions`` retain the exact frozen objects QD statically unrolls.
     """
 
+    def __init__(
+        self,
+        collections: _ScheduleCollections,
+        nested: tuple[tuple[Action, ...], ...],
+        actions: tuple[Action, ...],
+        topology_key: tuple,
+    ) -> None:
+        object.__setattr__(self, "collections", collections)
+        object.__setattr__(self, "nested", nested)
+        object.__setattr__(self, "actions", actions)
+        object.__setattr__(self, "topology_key", topology_key)
 
-class _ScheduleCollections:
-    """Namespace separating user-declared collection names from schedule metadata."""
+    def __setattr__(self, name, value) -> None:
+        raise FrozenInstanceError(f"cannot assign to field {name!r}")
 
 
 def compile_action_schedule(collections: Mapping[str, ActionCollection]) -> ActionSchedule:
@@ -98,15 +121,16 @@ def compile_action_schedule(collections: Mapping[str, ActionCollection]) -> Acti
         )
         return index
 
-    schedule = ActionSchedule()
-    schedule.collections = _ScheduleCollections()
+    roots = {}
     root_indices = []
     for name, collection in collections.items():
         if not isinstance(collection, ActionCollection):
             gs.raise_exception(f"schedule root {name!r} must be an ActionCollection")
         root_indices.append((name, walk_collection(collection)))
-        setattr(schedule.collections, name, collection.actions)
-    schedule.nested = tuple(nested)
-    schedule.actions = tuple(direct_actions)
-    schedule.topology_key = (tuple(root_indices), tuple(topology))
-    return schedule
+        roots[name] = collection.actions
+    return ActionSchedule(
+        collections=_ScheduleCollections(roots),
+        nested=tuple(nested),
+        actions=tuple(direct_actions),
+        topology_key=(tuple(root_indices), tuple(topology)),
+    )

@@ -533,6 +533,10 @@ def test_recursive_action_schedule_forwards_inputs_and_rejects_cycles():
     reserved_name_schedule = compile_action_schedule({"nested_0": manager.roots})
     assert reserved_name_schedule.collections.nested_0 is manager.roots.actions
     assert reserved_name_schedule.nested[0] is manager.roots.actions
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        reserved_name_schedule.actions = ()
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        reserved_name_schedule.collections.nested_0 = ()
 
     left = ActionCollection(manager, "left", "stage", ("frame", "multiplier"))
     right = ActionCollection(manager, "right", "stage", ("frame", "multiplier"))

@@ -17,6 +17,15 @@ def test_rigid_only_uses_rigid_solver_system(show_viewer, requires_grad):
     assert scene.rigid_solver._system is not None
     assert scene.rigid_solver.data_manager is scene.rigid_solver._system.data_manager
 
+    system = scene.rigid_solver._system
+    system._is_forward_pos_updated = True
+    system._is_forward_vel_updated = True
+    scene.rigid_solver.set_qpos(scene.rigid_solver.get_qpos(), skip_forward=True)
+    assert not system._is_forward_pos_updated
+    assert not system._is_forward_vel_updated
+    system._is_backward = True
+    assert scene.rigid_solver._is_backward
+
     scene.step()
 
 
