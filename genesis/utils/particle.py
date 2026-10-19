@@ -50,13 +50,18 @@ def trimesh_to_particles_simple(mesh, p_size, sampler):
     """
     assert sampler in ("random", "regular")
 
-    # compute file name via hashing for caching
-    cache = msu.get_ptc_cache(mesh.vertices, mesh.faces, p_size, sampler)
+    # The particles the random sampler draws follow the state of the global generator, which 'gs.init' seeds and the
+    # sampling advances. An entry is therefore keyed on the state the sampling starts from and holds the state it ends
+    # at, which a hit restores, so that a run draws exactly what it would draw without the cache.
+    random_state = np.random.get_state() if sampler == "random" else None
+    cache = msu.get_ptc_cache(mesh.vertices, mesh.faces, p_size, sampler, random_state)
 
-    # loading pre-computed cache if available
-    positions = cache.load()
-    if positions is not None:
+    entry = cache.load()
+    if entry is not None:
         gs.logger.debug("Sampled particles file (`.ptc`) found in cache.")
+        positions, random_state_end = entry
+        if random_state_end is not None:
+            np.random.set_state(random_state_end)
         return positions
 
     with gs.logger.timer(f"Sampling particles with ~<{sampler}>~ sampler and generating `.ptc` file:"):
@@ -68,7 +73,7 @@ def trimesh_to_particles_simple(mesh, p_size, sampler):
         sd, *_ = igl.signed_distance(positions, mesh.vertices, mesh.faces)
         positions = positions[sd < 0.0]
 
-        cache.save(positions)
+        cache.save((positions, np.random.get_state() if sampler == "random" else None))
 
     return positions
 
@@ -84,8 +89,8 @@ def trimesh_to_particles_pbs(mesh, p_size, sampler, pos=(0, 0, 0)):
     if not (sys.platform == "linux" and platform.machine() == "x86_64"):
         gs.raise_exception(f"Physics-based particle sampler '{sampler}' is only supported on Linux x86.")
 
-    # compute file name via hashing for caching
-    cache = msu.get_ptc_cache(mesh.vertices, mesh.faces, p_size, sampler)
+    # The physics-based sampler draws nothing from the global generator, which its entries leave out of their key
+    cache = msu.get_ptc_cache(mesh.vertices, mesh.faces, p_size, sampler, None)
 
     # loading pre-computed cache if available
     positions = cache.load()

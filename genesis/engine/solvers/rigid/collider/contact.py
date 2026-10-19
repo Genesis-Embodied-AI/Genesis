@@ -957,6 +957,7 @@ def func_contact_support_hull(
     collider_state: array_class.ColliderState,
     tol: float,
     rounding: float,
+    eps: float,
     sort_positions: bool,
 ):
     """Find the support polygon of a bucket of coplanar contacts, as the vertices of their convex hull in the plane.
@@ -972,7 +973,8 @@ def func_contact_support_hull(
     but the sort, which is linearithmic.
 
     'rounding' is the length within which points of the bucket count as lying on one line, relative to the size of the
-    bucket so that the outcome does not depend on where it stands.
+    bucket so that the outcome does not depend on where it stands. 'eps' bounds the relative rounding error of the float
+    type (see gs.EPS).
 
     Return the simplified hull size and the deepest original corner's bucket-logical index (-1 if absent). Hull
     vertices are stored in 'contact_hull_stack' from 'i_cb_start' on.
@@ -1003,7 +1005,12 @@ def func_contact_support_hull(
                     [collider_state.contact_sort_key[i_ht, i_b], collider_state.contact_proj_v[i_ht, i_b]]
                 )
                 dir_t, dir_p = pos_t - pos_s, pos_p - pos_s
-                if dir_t[0] * dir_p[1] - dir_t[1] * dir_p[0] <= 0.0:
+                # Under fused multiply-add contraction, the difference of two equal products evaluates to the rounding
+                # error of one of them, of either sign, so coincident and collinear points would turn either way
+                # depending on the compiler. A turn within the rounding error of its products counts as none.
+                cross_lhs = dir_t[0] * dir_p[1]
+                cross_rhs = dir_t[1] * dir_p[0]
+                if cross_lhs - cross_rhs <= 2.0 * eps * (qd.abs(cross_lhs) + qd.abs(cross_rhs)):
                     n_hull -= 1
                     i_ht = i_hs
                     if n_hull >= 2:
@@ -1367,7 +1374,8 @@ def func_clamp_prune_contacts(
                                 i_cb_end,
                                 collider_state,
                                 tol,
-                                qd.sqrt(EPS * max_in_plane_r2),
+                                rounding=qd.sqrt(EPS * max_in_plane_r2),
+                                eps=EPS,
                                 sort_positions=True,
                             )
 
@@ -1706,7 +1714,8 @@ def func_clamp_prune_contacts_coop(
                             i_cb_end,
                             collider_state,
                             tol,
-                            qd.sqrt(EPS * max_in_plane_r2),
+                            rounding=qd.sqrt(EPS * max_in_plane_r2),
+                            eps=EPS,
                             sort_positions=False,
                         )
 

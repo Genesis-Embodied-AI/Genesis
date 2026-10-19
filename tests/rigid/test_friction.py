@@ -12,7 +12,7 @@ from ..utils.assertions import assert_allclose, assert_equal
 from ..utils.assets import get_hf_dataset
 
 
-@pytest.mark.required
+@pytest.mark.required("sparse")
 @pytest.mark.parametrize("model_name", ["hinge_slide"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
@@ -107,10 +107,10 @@ def test_frictionloss_advanced(show_viewer, tol):
         # x geometry matrix, in which every axis value appears four times and every pair of values twice.
         pytest.param(gs.cpu, "noslip", 0.5, 2, gs.constraint_solver.Newton, 0.04, False, marks=pytest.mark.required),
         (gs.cpu, "noslip", 0.5, 2, gs.constraint_solver.Newton, 1.0, True),
-        pytest.param(gs.cpu, "noslip", 2.0, 2, gs.constraint_solver.Newton, 0.04, True, marks=pytest.mark.required),
+        (gs.cpu, "noslip", 2.0, 2, gs.constraint_solver.Newton, 0.04, True),
         (gs.cpu, "noslip", 2.0, 2, gs.constraint_solver.Newton, 1.0, False),
         (gs.gpu, "noslip", 0.5, 2, gs.constraint_solver.Newton, 0.04, True),
-        pytest.param(gs.gpu, "noslip", 0.5, 2, gs.constraint_solver.Newton, 1.0, False, marks=pytest.mark.required),
+        (gs.gpu, "noslip", 0.5, 2, gs.constraint_solver.Newton, 1.0, False),
         (gs.gpu, "noslip", 2.0, 2, gs.constraint_solver.Newton, 0.04, False),
         pytest.param(gs.gpu, "noslip", 2.0, 2, gs.constraint_solver.Newton, 1.0, True, marks=pytest.mark.required),
         # Constraint solver coverage: the CG configurations document the baseline users can expect from CG. It holds the
@@ -119,14 +119,14 @@ def test_frictionloss_advanced(show_viewer, tol):
         # At this low friction the push is so strong that every interface satisfies the balance criterion of the test
         # body, and the full contact manifold holds with no orientation control at all.
         (gs.cpu, "elliptic", 0.25, 2, gs.constraint_solver.Newton, 1.0, False),
-        (gs.cpu, "elliptic", 0.25, 3, gs.constraint_solver.CG, 1.0, False),
+        pytest.param(gs.cpu, "elliptic", 0.25, 3, gs.constraint_solver.CG, 1.0, False, marks=pytest.mark.required),
         # Three floating boxes: the longer friction chain that both mechanisms must hold. At 18 DOF the chain turns
         # contact islands on and, past the 16 DOF cooperative threshold on GPU, engages the decomposed solver arm; the
         # elliptic configurations without islands are covered by test_elliptic_cone_coulomb_isotropy. CG takes the
         # lightly loaded configurations, and the mesh configurations at small scale cover scale and mesh contacts.
         pytest.param(gs.cpu, "elliptic", 2.0, 3, gs.constraint_solver.Newton, 1.0, False, marks=pytest.mark.required),
         (gs.cpu, "elliptic", 0.5, 3, gs.constraint_solver.Newton, 0.04, True),
-        pytest.param(gs.gpu, "elliptic", 2.0, 3, gs.constraint_solver.Newton, 1.0, False, marks=pytest.mark.required),
+        (gs.gpu, "elliptic", 2.0, 3, gs.constraint_solver.Newton, 1.0, False),
         (gs.gpu, "elliptic", 0.5, 3, gs.constraint_solver.Newton, 0.04, True),
         pytest.param(gs.cpu, "noslip", 2.0, 3, gs.constraint_solver.Newton, 0.04, True, marks=pytest.mark.required),
         (gs.cpu, "noslip", 0.5, 3, gs.constraint_solver.CG, 1.0, False),
@@ -528,7 +528,7 @@ def test_elliptic_cone_coulomb_isotropy(sparse_solve, show_viewer):
     assert (torch.linalg.norm(box.get_dofs_velocity(dofs_idx_local=[0, 1]), dim=1) < 5e-5).all()
 
 
-@pytest.mark.required
+@pytest.mark.required("sparse")
 @pytest.mark.parametrize("friction_cone", [gs.friction_cone.pyramidal, gs.friction_cone.elliptic])
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_torsional_friction_spin_down_rate(friction_cone, n_envs, show_viewer):
@@ -615,7 +615,7 @@ def test_torsional_friction_spin_down_rate(friction_cone, n_envs, show_viewer):
     assert_allclose(w_runtime_start - spheres[0].get_dofs_velocity()[..., 5], spin_downs[-1], rtol=0.05, atol=1e-3)
 
 
-@pytest.mark.required
+@pytest.mark.required("sparse")
 @pytest.mark.parametrize("friction_cone", [gs.friction_cone.pyramidal, gs.friction_cone.elliptic])
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_rolling_friction_deceleration_rate(friction_cone, n_envs, show_viewer):
@@ -955,8 +955,7 @@ def test_elliptic_cone_push_isotropy(is_box_mesh, scale, precision, show_viewer,
     assert_allclose(rel_yaw, rel_yaw.mean(), atol=DIRECTION_TOL)
 
 
-@pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
+@pytest.mark.parametrize("n_envs", [0, pytest.param(2, marks=pytest.mark.required)])
 def test_kinetic_friction(n_envs, show_viewer):
     GRAVITY = 9.81
     SIZE = 0.1

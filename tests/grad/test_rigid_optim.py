@@ -9,8 +9,7 @@ from ..utils.assertions import assert_allclose
 from .utils import make_diff_scene_pair
 
 
-@pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize("backend", [pytest.param(gs.cpu, marks=pytest.mark.required), gs.gpu])
 @pytest.mark.parametrize("control_target", ["init_vel", "control_force"])
 @pytest.mark.debug(False)
 def test_reference_trajectory_recovery_converges(control_target, grad_cartpole, show_viewer):

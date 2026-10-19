@@ -8,7 +8,6 @@ import genesis as gs
 from .utils import assert_grad_matches_fd, make_diff_scene_pair
 
 
-@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize(
     "model_name",
@@ -16,11 +15,11 @@ from .utils import assert_grad_matches_fd, make_diff_scene_pair
         "grad_free",
         "grad_revolute",
         "grad_prismatic",
-        "grad_spherical",
-        "grad_free_with_revolute",
+        pytest.param("grad_spherical", marks=pytest.mark.required),
+        pytest.param("grad_free_with_revolute", marks=pytest.mark.required),
         "grad_chain3",
-        "grad_cartpole",
-        "grad_hopper",
+        pytest.param("grad_cartpole", marks=pytest.mark.required),
+        pytest.param("grad_hopper", marks=pytest.mark.required),
     ],
 )
 def test_fk_grad_matches_fd(model_name, request, precision, show_viewer):
@@ -118,18 +117,17 @@ def test_fk_grad_matches_fd(model_name, request, precision, show_viewer):
         )
 
 
-@pytest.mark.required
 @pytest.mark.parametrize(
     "model_name",
     [
         "grad_free",
         "grad_revolute",
         "grad_prismatic",
-        "grad_free_with_revolute",
+        pytest.param("grad_free_with_revolute", marks=pytest.mark.required),
         "grad_chain3",
-        "grad_spherical",
-        "grad_cartpole",
-        "grad_hopper",
+        pytest.param("grad_spherical", marks=pytest.mark.required),
+        pytest.param("grad_cartpole", marks=pytest.mark.required),
+        pytest.param("grad_hopper", marks=pytest.mark.required),
     ],
 )
 @pytest.mark.debug(False)
