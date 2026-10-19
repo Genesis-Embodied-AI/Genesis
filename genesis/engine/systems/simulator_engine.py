@@ -1,13 +1,13 @@
-"""Engine of a rigid-only simulator."""
+"""Engine owning and composing the Rigid solver of a simulator."""
 
 from genesis.engine.core import Engine, Pipeline
 
 
 class SimulatorEngine(Engine):
-    """The engine used when Rigid is the simulator's only active solver.
+    """The Engine owning Rigid's active or padded inactive data in every simulator.
 
     Each System registers the function that creates it for this Engine from its own module (see register_system). The
-    simulator keeps the step loop, the clock and the checkpoints.
+    simulator keeps the step loop, clock and checkpoints; mixed/coupled scenes enter the Systems through legacy APIs.
     """
 
     def build(self):

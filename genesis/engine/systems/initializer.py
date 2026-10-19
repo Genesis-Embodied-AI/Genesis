@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from genesis.engine.core import Find, Require, System, register_system
+from genesis.engine.core import Require, System, register_system
 
 from .constraint_solver_system import ConstraintSolverSystem
 from .rigid_rigid_contact_system import RigidRigidContactSystem
@@ -15,12 +15,12 @@ if TYPE_CHECKING:
 
 
 class Initializer(System):
-    """Initialize the Systems of the rigid-only engine in dependency order."""
+    """Initialize the Rigid owner Systems in dependency order."""
 
     rigid_sdf = Require(RigidSdfSystem)
     rigid = Require(RigidSolverSystem)
-    rigid_rigid_contact = Find(RigidRigidContactSystem)
-    constraint = Find(ConstraintSolverSystem)
+    rigid_rigid_contact = Require(RigidRigidContactSystem)
+    constraint = Require(ConstraintSolverSystem)
 
     def initialize(self) -> None:
         """Initialize the data of every System."""
@@ -29,12 +29,9 @@ class Initializer(System):
         self.rigid.initialize_model.invoke()
         self.rigid_sdf.initialize.invoke()
         self.rigid.initialize.invoke()
-        # The rigid-rigid contact and the constraint solve record the configuration of the collider and of the
-        # constraint solver that the rigid initialization constructs
-        if self.rigid_rigid_contact is not None:
-            self.rigid_rigid_contact.initialize.invoke()
-        if self.constraint is not None:
-            self.constraint.initialize.invoke()
+        self.rigid_rigid_contact.initialize.invoke()
+        self.constraint.initialize.invoke()
+        self.rigid.finalize.invoke()
 
 
 @register_system(SimulatorEngine)

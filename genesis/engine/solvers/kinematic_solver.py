@@ -372,8 +372,8 @@ class KinematicSolver(Solver):
             self._options.batch_joints_info = True
             self._options.batch_dofs_info = True
 
-        # A rigid-only scene lets RigidSolverSystem allocate and own the kinematic portion of the rigid data. The
-        # standalone KinematicSolver never sets this flag and keeps the legacy initialization below.
+        # RigidSolverSystem allocates and owns the Rigid solver's kinematic data, including its padded inactive layout.
+        # The standalone KinematicSolver never sets this flag and keeps the legacy initialization below.
         if self._use_system:
             return
 

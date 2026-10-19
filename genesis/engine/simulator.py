@@ -109,8 +109,8 @@ class Simulator(RBC):
                 "LegacyCouplerOptions, or IPCCouplerOptions."
             )
 
-        # The compositional engine is intentionally confined to rigid-only scenes. Mixed and coupled scenes keep the
-        # legacy solver and coupler ownership and control flow.
+        # The compositional engine owns active Rigid data in every scene. Mixed and coupled scenes keep the legacy
+        # Simulator/Solver/Coupler API control flow around the System-backed Rigid facade.
         self._engine: SimulatorEngine | None = None
         self._rigid_substep_pipeline: Pipeline | None = None
         self._use_rigid_solver_system = False
@@ -218,14 +218,14 @@ class Simulator(RBC):
         # Counted per environment to support per-env reset, as steps rather than seconds to avoid drifting over time.
         self._steps = torch.zeros((self._B,), dtype=gs.tc_int, device=gs.device)
 
-        # The Rigid System path is selected before solver build because it decides who allocates and owns rigid data.
-        # Any other active solver, SAP, or IPC keeps every solver -- Rigid included -- on the legacy path.
-        self._use_rigid_solver_system = (
+        # Rigid always uses System ownership, including its padded inactive layout. A rigid-only scene may execute its
+        # Pipeline directly; mixed and coupled scenes retain the legacy Simulator/Solver/Coupler API call order.
+        self._use_rigid_solver_system = True
+        self._rigid_only = (
             self.rigid_solver.is_active
             and isinstance(self._coupler, LegacyCoupler)
             and not any(solver.is_active for solver in self._solvers if solver is not self.rigid_solver)
         )
-        self._rigid_only = self._use_rigid_solver_system
         self.rigid_solver._use_system = self._use_rigid_solver_system
 
         # solvers
@@ -233,12 +233,13 @@ class Simulator(RBC):
             solver.build()
             if solver.is_active:
                 self._active_solvers.append(solver)
-
-        if self._use_rigid_solver_system:
-            self._engine = SimulatorEngine(self.scene)
-            self._engine.build()
-            self._engine.init_pipeline.run()
-            self._rigid_substep_pipeline = self._engine.rigid_substep_pipeline
+            # Rigid's owner Systems initialize before later legacy solvers build: MPM CPIC and similar legacy APIs may
+            # query the rigid Collider during their own build.
+            if solver is self.rigid_solver:
+                self._engine = SimulatorEngine(self.scene)
+                self._engine.build()
+                self._engine.init_pipeline.run()
+                self._rigid_substep_pipeline = self._engine.rigid_substep_pipeline
 
         # A coupler exchanges state once per substep, so it is built once the rate that loop runs at is known.
         self._coupler.build()

@@ -30,7 +30,6 @@ from genesis.utils.misc import (
     qd_to_torch,
     tensor_to_array,
 )
-from genesis.engine.core import Data
 from genesis.utils.sdf import SDF
 
 from . import gjk, mpr, support_field
@@ -57,7 +56,6 @@ from .narrowphase import (
 )
 
 if TYPE_CHECKING:
-    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
     from genesis.engine.systems.rigid_solver_system import RigidSolverSystem
 
 
@@ -68,19 +66,12 @@ NEUTRAL_COLLISION_RES_ABS = 0.01
 NEUTRAL_COLLISION_RES_REL = 0.05
 
 
-# WORKAROUND: the collision data belongs to RigidSolverSystem rather than to RigidRigidContactSystem, and exists whether
-# or not the scene enables collisions, since the constraint solve assembles the contact constraints straight from
-# collider_state and writes the contact forces back into it, while the broad phase reads the weld constraints
-# registered at run time from constraint_state. Once those two exchanges are protocols between the contact and the
-# constraint Systems, this data moves to RigidRigidContactSystem, its host-side tables and caches leave it, and the
-# narrowphase sub-components (MPR, GJK, SupportField), which still read the rigid model through the System they are
-# built with, become Data of their own.
-class ColliderData(Data):
+class ColliderData:
     """The collision data of the rigid geoms: the collider info, state and static configuration, the narrowphase
     sub-components, and the host-side tables and caches derived from the rigid model."""
 
 
-def create_collider_data(rigid: "RigidSolver | RigidSolverSystem", sdf: SDF) -> "ColliderData":
+def create_collider_data(rigid: "RigidSolverSystem", sdf: SDF) -> "ColliderData":
     """Create the collision data of the rigid geoms from the rigid model, the signed distance fields of the geoms
     being embedded in its collider info."""
     collider = ColliderData()
@@ -872,7 +863,11 @@ def collider_clear(collider: "ColliderData", rigid: "RigidSolverSystem", envs_id
     )
 
 
-def collider_detection(collider: "ColliderData", rigid: "RigidSolver | RigidSolverSystem") -> None:
+def collider_detection(
+    collider: "ColliderData",
+    rigid: "RigidSolverSystem",
+    constraint_state: array_class.ConstraintState,
+) -> None:
     # FIXME: quadrants#946 - a graph refuses the ndarrays that own a gradient, so a scene tracking gradients
     # launches the detection without a graph.
     kernel = kernel_detection_without_graph if rigid._requires_grad else kernel_detection
@@ -887,7 +882,7 @@ def collider_detection(collider: "ColliderData", rigid: "RigidSolver | RigidSolv
         collider.gjk.contact0_gjk_state,
         collider.mpr.multicontact_mpr_state,
         collider.gjk.multicontact_gjk_state,
-        rigid.constraint_solver.constraint_state,
+        constraint_state,
         rigid.dyn_info,
         rigid.rigid_info,
         collider.collider_info,
@@ -1119,16 +1114,16 @@ def forward_to_collider_data(name: str) -> property:
     """Attribute of the facade that forwards to the collision data, settable as an attribute of the collider is."""
 
     def get(facade):
-        return getattr(facade._rigid.collider_data, name)
+        return getattr(facade._data, name)
 
     def set(facade, value):
-        setattr(facade._rigid.collider_data, name, value)
+        setattr(facade._data, name, value)
 
     return property(get, set)
 
 
 class Collider:
-    """User-facing collision facade over data owned by either legacy RigidSolver or RigidSolverSystem."""
+    """User-facing collision facade over legacy Solver-owned or ContactSystem-owned data."""
 
     collider_config = forward_to_collider_data("collider_config")
     collider_info = forward_to_collider_data("collider_info")
@@ -1154,35 +1149,40 @@ class Collider:
     _use_coop_dedup = forward_to_collider_data("_use_coop_dedup")
     _contact_data_cache = forward_to_collider_data("_contact_data_cache")
 
-    def __init__(self, rigid_solver_system: "RigidSolver | RigidSolverSystem") -> None:
-        self._rigid = rigid_solver_system
+    def __init__(
+        self,
+        rigid: "RigidSolverSystem",
+        collider_data: ColliderData,
+        constraint_solver,
+    ) -> None:
+        self._rigid = rigid
+        self._data = collider_data
+        self._constraint_solver = constraint_solver
 
     @property
     def data(self) -> Iterator[array_class.DataItem | array_class.ConfigItem]:
         """Yield every array and static config of the collider (see 'Solver.data')."""
-        return iter_collider_data(self._rigid.collider_data)
+        return iter_collider_data(self._data)
 
     def reset(self, envs_idx=None, *, cache_only: bool = True) -> None:
-        collider_reset(self._rigid.collider_data, self._rigid, envs_idx, cache_only=cache_only)
+        collider_reset(self._data, self._rigid, envs_idx, cache_only=cache_only)
 
     def clear(self, envs_idx=None) -> None:
-        collider_clear(self._rigid.collider_data, self._rigid, envs_idx)
+        collider_clear(self._data, self._rigid, envs_idx)
 
     def detection(self) -> None:
-        collider_detection(self._rigid.collider_data, self._rigid)
+        collider_detection(self._data, self._rigid, self._constraint_solver.constraint_state)
 
     def get_contacts(
         self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False, is_padded: bool = False
     ):
-        return collider_get_contacts(
-            self._rigid.collider_data, self._rigid, as_tensor, to_torch, keep_batch_dim, is_padded
-        )
+        return collider_get_contacts(self._data, self._rigid, as_tensor, to_torch, keep_batch_dim, is_padded)
 
     def backward(self, dL_dposition, dL_dnormal, dL_dpenetration) -> None:
-        collider_backward(self._rigid.collider_data, self._rigid, dL_dposition, dL_dnormal, dL_dpenetration)
+        collider_backward(self._data, self._rigid, dL_dposition, dL_dnormal, dL_dpenetration)
 
     def backward_narrowphase(self) -> None:
-        collider_backward_narrowphase(self._rigid.collider_data, self._rigid)
+        collider_backward_narrowphase(self._data, self._rigid)
 
     def activate_sdf(self) -> None:
         """Activate the rigid SDF through the legacy Collider API."""

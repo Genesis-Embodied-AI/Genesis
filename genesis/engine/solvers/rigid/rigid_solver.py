@@ -15,7 +15,6 @@ from genesis.engine.materials import Rigid
 from genesis.engine.states import RigidSolverState, SolverCheckpoint
 from genesis.options.morphs import Drone, Morph, Terrain
 from genesis.options.solvers import RigidOptions
-from genesis.utils.sdf import SDF
 from genesis.utils.misc import (
     DeprecationError,
     assign_indexed_tensor,
@@ -140,8 +139,6 @@ from .abd.misc import (
     kernel_wakeup_coupled_links,
 )
 from .collider import Collider
-from .collider.collider import create_collider_data
-from .constraint import ConstraintSolver
 from .constraint.backward import (
     kernel_accumulate_constraint_solver_grads,
     kernel_load_dL_dqacc_from_acc_grad,
@@ -319,8 +316,8 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             else:
                 options.impratio = 1.0
 
-        # Simulator enables the System path only when Rigid is the sole active solver. In every mixed or coupled
-        # scene this solver keeps the legacy ownership and implementation.
+        # Rigid always uses System ownership, including its padded inactive layout. Mixed and coupled scenes still call
+        # this facade through the legacy API control flow.
         self._system = None
         self._dofs_mass_block_start = None
         self._dofs_mass_block_end = None
@@ -338,7 +335,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         pass
 
     def _bind_system_data(self, system) -> None:
-        """Expose System-owned rigid data through the legacy public Solver facade."""
+        """Expose RigidSolverSystem-owned dynamics through the legacy public Solver facade."""
         self._system = system
         for name in (
             "rigid_config",
@@ -360,15 +357,17 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             "geoms_init_AABB",
             "_dofs_mass_block_start",
             "_dofs_mass_block_end",
-            "collider_data",
-            "constraint_solver",
         ):
             setattr(self, name, getattr(system, name))
         for name in ("n_awake_dofs", "dyn_state_adjoint_cache"):
             if hasattr(system, name):
                 setattr(self, name, getattr(system, name))
         self.sdf = system.sdf
-        self.collider = Collider(system)
+
+    def _bind_system_services(self, system, contact_system, constraint_system) -> None:
+        """Wire public collider and constraint APIs to their owner Systems."""
+        self.constraint_solver = constraint_system.constraint_solver
+        self.collider = Collider(system, contact_system.collider_data, self.constraint_solver)
 
     def build(self):
         self._n_geoms = self.n_geoms
@@ -1303,12 +1302,10 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             )
 
     def _init_collider(self):
-        self.sdf = SDF(self)
-        self.collider_data = create_collider_data(self, self.sdf)
-        self.collider = Collider(self)
+        gs.raise_exception("Rigid collision data must be initialized by RigidRigidContactSystem.")
 
     def _init_constraint_solver(self):
-        self.constraint_solver = ConstraintSolver(self)
+        gs.raise_exception("Rigid constraint data must be initialized by ConstraintSolverSystem.")
 
     def update_forward_pos(self):
         """Run forward kinematics over links and geoms if they are not already up to date for the current pose.
