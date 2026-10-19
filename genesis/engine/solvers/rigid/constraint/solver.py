@@ -546,24 +546,17 @@ def kernel_get_equality_constraints(
             iout[i_e, 1] = dyn_info.equalities.eq_obj1id[i_e_, i_b]
             iout[i_e, 2] = dyn_info.equalities.eq_obj2id[i_e_, i_b]
 
-            if dyn_info.equalities.eq_type[i_e_, i_b] == gs.EQUALITY_TYPE.CONNECT:
-                for i_c_ in qd.static(range(3)):
-                    i_c = i_c_start + i_c_
-                    fout[i_e, i_c_] = constraint_state.efc_force[i_c, i_b]
-                i_c_start = i_c_start + 3
-            elif dyn_info.equalities.eq_type[i_e_, i_b] == gs.EQUALITY_TYPE.WELD:
-                for i_c_ in qd.static(range(6)):
-                    i_c = i_c_start + i_c_
-                    fout[i_e, i_c_] = constraint_state.efc_force[i_c, i_b]
-                i_c_start = i_c_start + 6
-            elif dyn_info.equalities.eq_type[i_e_, i_b] == gs.EQUALITY_TYPE.JOINT:
-                fout[i_e, 0] = constraint_state.efc_force[i_c_start, i_b]
-                i_c_start = i_c_start + 1
-            elif dyn_info.equalities.eq_type[i_e_, i_b] == gs.EQUALITY_TYPE.SCREW:
-                for i_c_ in qd.static(range(5)):
-                    i_c = i_c_start + i_c_
-                    fout[i_e, i_c_] = constraint_state.efc_force[i_c, i_b]
-                i_c_start = i_c_start + 5
+            eq_type = dyn_info.equalities.eq_type[i_e_, i_b]
+            n_rows = 1
+            if eq_type == gs.EQUALITY_TYPE.CONNECT:
+                n_rows = 3
+            elif eq_type == gs.EQUALITY_TYPE.WELD:
+                n_rows = 6
+            elif eq_type == gs.EQUALITY_TYPE.SCREW:
+                n_rows = 5
+            for i_c_ in range(n_rows):
+                fout[i_e, i_c_] = constraint_state.efc_force[i_c_start + i_c_, i_b]
+            i_c_start = i_c_start + n_rows
 
 
 # =====================================================================================================================
