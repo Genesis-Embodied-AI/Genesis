@@ -46,7 +46,7 @@ def main():
 
     scene.add_entity(gs.morphs.Plane())
 
-    steel = gs.materials.Rigid(rho=7850.0)  # Density of steel
+    steel = gs.materials.Rigid(rho=7850.0)
 
     bolt = scene.add_entity(
         gs.morphs.Mesh(

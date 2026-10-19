@@ -224,6 +224,7 @@ def test_dynamic_screw(n_envs, swinging_spindle, show_viewer, tol):
             pos=POST_POS,
             fixed=True,
         ),
+        vis_mode="collision",
     )
     nut_helix, nut_slider, nut_hinge, nut_held, nut_seated, nut_capped, nut_braked = (
         scene.add_entity(
@@ -231,6 +232,7 @@ def test_dynamic_screw(n_envs, swinging_spindle, show_viewer, tol):
                 size=(0.1, 0.1, 0.02),
                 pos=(x, 0.0, NUT_Z),
             ),
+            vis_mode="collision",
         )
         for x in (0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
     )
@@ -241,6 +243,7 @@ def test_dynamic_screw(n_envs, swinging_spindle, show_viewer, tol):
             file=swinging_spindle,
             pos=(7.0, 0.0, 0.0),
         ),
+        vis_mode="collision",
     )
     scene.build(n_envs=n_envs)
 
@@ -327,11 +330,11 @@ def test_dynamic_screw(n_envs, swinging_spindle, show_viewer, tol):
     assert_allclose(nut_helix.get_pos()[..., :2], (0.0, 0.0), tol=1e-3)
     assert_allclose(nut_slider.get_pos()[..., 2] - NUT_Z, -GRAVITY * fall_factor, tol=tol)
     assert_allclose(nut_slider.get_quat(), (1.0, 0.0, 0.0, 0.0), tol=1e-3)
-    assert_allclose(nut_hinge.get_pos()[..., 2], NUT_Z, tol=1e-3)
+    assert_allclose(nut_hinge.get_pos()[..., 2] - NUT_Z, 0.0, atol=2e-4)
     hinge_turn = gu.quat_to_rotvec(tensor_to_array(nut_hinge.get_quat()))[..., 2]
     assert_allclose(hinge_turn, HINGE_SPIN_RATE * N_STEPS_SCREWED * DT, tol=1e-2)
-    assert_allclose(nut_braked.get_pos()[..., 2], NUT_Z, tol=5e-3)
-    assert_allclose(nut_held.get_pos()[..., 2], NUT_Z, tol=1e-3)
+    assert_allclose(nut_braked.get_pos()[..., 2] - NUT_Z, 0.0, atol=2e-3)
+    assert_allclose(nut_held.get_pos()[..., 2] - NUT_Z, 0.0, atol=5e-4)
     # Both nuts follow the axis of the swinging spindle, and the travel of the jointed one follows its turn.
     swing, travel_spindle, turn_spindle = spindle.get_qpos()[..., :3].unbind(-1)
     assert (swing.abs() > 0.1).all()
