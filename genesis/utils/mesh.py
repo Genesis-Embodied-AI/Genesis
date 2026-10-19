@@ -1,9 +1,5 @@
-import hashlib
-import marshal
 import math
 import os
-import pickle as pkl
-from collections import OrderedDict
 from functools import lru_cache
 from pathlib import Path
 
@@ -20,29 +16,19 @@ from PIL import Image
 import genesis as gs
 
 from . import geom as gu
-from .misc import (
+from .cache import (
     OwnedCache,
     SizeCappedCache,
-    get_assets_dir,
-    get_cvx_cache_dir,
-    get_exr_cache_dir,
-    get_gnd_cache_dir,
-    get_gsd_cache_dir,
-    get_ptc_cache_dir,
-    get_remesh_cache_dir,
-    get_src_dir,
-    get_tet_cache_dir,
-    get_usd_cache_dir,
-    get_wt_cache_dir,
-    get_wth_cache_dir,
+    get_cvx_cache,
+    get_exr_path,
+    get_hashkey,
+    get_wt_cache,
+    get_wth_cache,
     register_cache_clear,
 )
+from .misc import get_assets_dir, get_src_dir
 
 MESH_REPAIR_ERROR_THRESHOLD = 0.01
-# Largest coordinate discrepancy, as a fraction of the bounding-box diagonal, under which two meshes are considered
-# identical by the on-disk caches. Orders of magnitude below the spacing of genuinely distinct geometry, and orders of
-# magnitude above the last-significant-digit noise separating two exports of the same model.
-MESH_CACHE_MATCH_RTOL = 1e-6
 # Vertex welding quantum: co-located vertices are authored with identical coordinates, so a tight absolute quantum
 # absorbs sub-nanometer parsing noise while keeping genuinely distinct vertices separate.
 VERT_WELD_QUANTIZE_FACTOR = 1e-8
@@ -50,14 +36,6 @@ Y_UP_TRANSFORM = np.asarray(  # translation on the bottom row
     [[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, -1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]], dtype=np.float32
 )
 DEFAULT_PLANE_TEXTURE_PATH = "textures/checker.png"  # use checkerboard texture by default
-
-# Bumped when watertighten output changes for a fixed (mesh, aggressiveness): forces a cache miss on stale entries.
-WT_CACHE_VERSION = 7
-# Bumped when the wall-thickness estimate changes for a fixed (mesh, quantile): forces a cache miss on stale entries.
-WTH_CACHE_VERSION = 2
-# Bumped when the particles sampled for a fixed key change or when the layout of an entry does: forces a cache miss on
-# stale entries.
-PTC_CACHE_VERSION = 1
 
 
 def color_f32_to_u8(color) -> np.ndarray:
@@ -214,160 +192,6 @@ class MeshInfoGroup:
 
 def get_asset_path(file):
     return os.path.join(get_src_dir(), "assets", file)
-
-
-def get_gsd_path(verts, faces, sdf_res, sdf_cell_size):
-    # The mesh, the resolution and the cell size determine the grid. The schema tag is bumped whenever the layout of a
-    # file changes, which forces a cache miss on stale entries.
-    schema = "v4-sdf-grid"
-    hashkey = get_hashkey(verts, faces, sdf_res, sdf_cell_size, schema)
-    return os.path.join(get_gsd_cache_dir(), f"{hashkey}.gsd")
-
-
-def get_gnd_path(
-    name, subterrain_types, subterrain_size, horizontal_scale, vertical_scale, n_subterrains, subterrain_parameters
-):
-    hashkey = get_hashkey(
-        name, subterrain_types, subterrain_size, horizontal_scale, vertical_scale, n_subterrains, subterrain_parameters
-    )
-    return os.path.join(get_gnd_cache_dir(), f"{hashkey}.gnd")
-
-
-def get_cvx_cache(verts, faces, coacd_options):
-    return MeshCache(get_cvx_cache_dir(), "cvx", verts, faces, coacd_options.__dict__)
-
-
-def get_ptc_cache(verts, faces, p_size, sampler, random_state):
-    return MeshCache(get_ptc_cache_dir(), "ptc", verts, faces, p_size, sampler, random_state, PTC_CACHE_VERSION)
-
-
-def get_tet_cache(verts, faces, tet_cfg):
-    return MeshCache(get_tet_cache_dir(), "tet", verts, faces, tet_cfg)
-
-
-def get_remesh_cache(verts, faces, edge_len_abs, edge_len_ratio, fix):
-    return MeshCache(get_remesh_cache_dir(), "rm", verts, faces, edge_len_abs, edge_len_ratio, fix)
-
-
-def get_wt_cache(verts, faces, aggressiveness):
-    return MeshCache(get_wt_cache_dir(), "wt", verts, faces, aggressiveness, WT_CACHE_VERSION)
-
-
-def get_wth_cache(verts, faces, quantile):
-    return MeshCache(get_wth_cache_dir(), "wth", verts, faces, quantile, WTH_CACHE_VERSION)
-
-
-def get_exr_path(file_path):
-    hashkey = get_hashkey(Path(file_path))
-    return os.path.join(get_exr_cache_dir(), f"{hashkey}.exr")
-
-
-def get_usd_zip_path(file_path):
-    hashkey = get_hashkey(Path(file_path))
-    return os.path.join(get_usd_cache_dir(), "zip", hashkey)
-
-
-def get_usd_bake_path(file_path):
-    hashkey = get_hashkey(Path(file_path))
-    return os.path.join(get_usd_cache_dir(), "bake", hashkey)
-
-
-def get_hashkey(*args):
-    # Containers are replaced by the tuples of their items, sorted for sets and for dicts other than OrderedDict since
-    # equal ones may iterate in different orders (string hashes are salted per process). Items are replaced before their
-    # container, so that sorting compares canonical representations, which order items of any type.
-    values, nodes = [], [(args, False)]
-    while nodes:
-        node, is_expanded = nodes.pop()
-        if is_expanded:
-            items = [values.pop() for _ in range(len(node))]
-            if isinstance(node, (set, frozenset)) or (isinstance(node, dict) and not isinstance(node, OrderedDict)):
-                items.sort(key=repr)
-            values.append(tuple(items))
-        elif isinstance(node, (dict, list, tuple, set, frozenset)):
-            nodes.append((node, True))
-            nodes.extend((item, False) for item in (node.items() if isinstance(node, dict) else node))
-        else:
-            values.append(node)
-
-    hasher = hashlib.sha256()
-    for arg in (*values[0], gs.__version__.encode()):
-        if isinstance(arg, Path):
-            file_stats = arg.stat()
-            arg = (str(arg).encode(), file_stats.st_size, file_stats.st_mtime)
-        if isinstance(arg, str):
-            arg = arg.encode()
-        elif not isinstance(arg, bytes):
-            try:
-                arg = bytes(memoryview(arg))
-            except TypeError:
-                arg = marshal.dumps(arg)
-        hasher.update(arg)
-    return hasher.hexdigest()
-
-
-class MeshCache:
-    """On-disk cache of data derived from a mesh, keyed on its geometry up to the noise of a re-export.
-
-    Exporting the same model twice from an authoring tool perturbs its coordinates in the last significant digits,
-    which changes any exact hash of them and forces every derived artifact to be recomputed from scratch. Rounding
-    the coordinates onto a grid before hashing does not fix this: a coordinate lying near a grid boundary changes
-    bucket under an arbitrarily small perturbation, and a single such coordinate out of the tens of thousands of a
-    mesh already changes the key. Entries are therefore grouped into buckets keyed on what is exactly reproducible -
-    the vertex count, the face connectivity and the generation parameters - and a lookup that misses the exact vertex
-    key scans its bucket, accepting the first candidate matching within 'MESH_CACHE_MATCH_RTOL'. Both arms compare
-    the vertices, so a hit is always verified rather than inferred from a key.
-
-    An entry stores its reference vertices ahead of the payload in the same file, so the scan deserializes only that
-    leading record for the candidates it rejects.
-
-    Parameters
-    ----------
-    cache_dir : str
-        Directory holding the buckets of this kind of derived data.
-    ext : str
-        Extension of the cache files, identifying the kind of derived data they hold.
-    verts : np.ndarray
-        Vertices identifying the mesh, in the frame the derived data is expressed in. Pass them normalized whenever
-        the derived data is invariant to a transform, so that meshes related by one share a single entry.
-    faces : np.ndarray
-        Face connectivity identifying the mesh.
-    *params
-        Every generation parameter the derived data depends on. Must be exactly reproducible across runs.
-    """
-
-    def __init__(self, cache_dir: str, ext: str, verts: np.ndarray, faces: np.ndarray, *params):
-        self._verts = np.ascontiguousarray(verts)
-        bucket_key = get_hashkey(len(self._verts), np.ascontiguousarray(faces), *params)
-        self._bucket_dir = os.path.join(cache_dir, bucket_key)
-        self._filename = f"{get_hashkey(self._verts)}.{ext}"
-
-    def load(self):
-        """Return the payload of the matching entry, or None if this bucket holds none."""
-        if not os.path.isdir(self._bucket_dir):
-            return None
-        atol = MESH_CACHE_MATCH_RTOL * np.linalg.norm(self._verts.max(axis=0) - self._verts.min(axis=0))
-        # Trying the exact key first keeps an unchanged asset from ever paying for the scan.
-        for filename in sorted(os.listdir(self._bucket_dir), key=lambda name: name != self._filename):
-            try:
-                with open(os.path.join(self._bucket_dir, filename), "rb") as file:
-                    # Each record needs its own unpickler: one reused across both would carry its memo from the
-                    # vertices into the payload and misread it.
-                    verts_ref = pkl.load(file)
-                    if verts_ref.shape != self._verts.shape or (np.abs(self._verts - verts_ref) > atol).any():
-                        continue
-                    return pkl.load(file)
-            except (EOFError, ModuleNotFoundError, pkl.UnpicklingError, TypeError, MemoryError):
-                gs.logger.info("Ignoring corrupted cache.")
-        return None
-
-    def save(self, payload) -> None:
-        """Store the payload as the entry of this mesh. It must not be None, which 'load' reserves for a miss."""
-        assert payload is not None
-        os.makedirs(self._bucket_dir, exist_ok=True)
-        with open(os.path.join(self._bucket_dir, self._filename), "wb") as file:
-            pkl.dump(self._verts, file, protocol=pkl.HIGHEST_PROTOCOL)
-            pkl.dump(payload, file, protocol=pkl.HIGHEST_PROTOCOL)
 
 
 def load_mesh(file):

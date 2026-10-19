@@ -453,7 +453,7 @@ sys.excepthook = _custom_excepthook
 
 from .ext import _trimesh_patch
 from .utils.misc import get_src_dir as _get_src_dir
-from .utils.misc import clear_caches as _clear_caches
+from .utils.cache import clear_caches as _clear_caches
 
 # Eagerly load native extensions under redirected stderr to silence dlopen-time noise (e.g. macOS
 # objc duplicate-class warnings when several libraries ship their own copy of GLFW).

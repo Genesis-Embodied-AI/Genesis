@@ -300,7 +300,7 @@ def test_file_writers(tmp_path):
 
 
 @pytest.mark.required
-def test_error_handling(tmp_path):
+def test_error_handling(tmp_path, caplog):
     scene = gs.Scene(
         show_viewer=False,
     )
@@ -376,8 +376,11 @@ def test_error_handling(tmp_path):
         scene.step()
     with pytest.raises(gs.GenesisException, match="Unsupported data type"):
         scene.step()
-    # A reset restarts the recorders that did not fail
-    scene.reset()
+    # A reset leaves the recorders that failed out, and the others keep recording through it
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        scene.reset()
+    assert len(caplog.records) == 0
     scene.step()
     scene.step()
 

@@ -367,6 +367,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
     def _bind_system_services(self, system, island_system, contact_system, constraint_system) -> None:
         """Wire public collider and constraint APIs to their owner Systems."""
         self._island_data = island_system.data
+        self._island_state = island_system.data.island
         self.constraint_solver = None if constraint_system is None else constraint_system.constraint_solver
         self.collider = (
             None
@@ -1007,7 +1008,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             jac_row,
             solve_out,
             self.dyn_state,
-            self._island_data,
+            self._island_state,
             self.dyn_info,
             self.rigid_info,
             self.rigid_config,
@@ -1464,7 +1465,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
     def _func_forward_dynamics(self):
         kernel_forward_dynamics(
             self.dyn_state,
-            self._island_data,
+            self._island_state,
             self.dyn_info,
             self.rigid_info,
             self.rigid_config,
@@ -1542,7 +1543,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 links_idx,
                 envs_idx,
                 self.dyn_state,
-                self._island_data,
+                self._island_state,
                 self.dyn_info,
                 self.rigid_info,
                 self.rigid_config,
@@ -1673,7 +1674,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
 
         kernel_forward_dynamics_without_qacc.grad(
             self.dyn_state,
-            self._island_data,
+            self._island_state,
             self.dyn_info,
             self.rigid_info,
             self.rigid_config,
@@ -1781,10 +1782,8 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 dofs_hibernated_dst = qd_to_torch(self.dyn_state.dofs.is_hibernated, transpose=True, copy=False)
                 geoms_hibernated_dst = qd_to_torch(self.dyn_state.geoms.is_hibernated, transpose=True, copy=False)
                 entities_hibernated_dst = qd_to_torch(self.dyn_state.entities.is_hibernated, transpose=True, copy=False)
-                islands_hibernated_dst = qd_to_torch(self._island_data.island.is_hibernated, transpose=True, copy=False)
-                islands_next_link_dst = qd_to_torch(
-                    self._island_data.island.hibernated_next_link, transpose=True, copy=False
-                )
+                islands_hibernated_dst = qd_to_torch(self._island_state.is_hibernated, transpose=True, copy=False)
+                islands_next_link_dst = qd_to_torch(self._island_state.hibernated_next_link, transpose=True, copy=False)
                 n_awake_dofs_dst = qd_to_torch(self.rigid_info.n_awake_dofs, copy=False)
 
             if envs_idx is not None and not isinstance(envs_idx, torch.Tensor):
@@ -1862,7 +1861,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 kernel_reset_hibernation(
                     envs_idx,
                     self.dyn_state,
-                    self._island_data,
+                    self._island_state,
                     self.dyn_info,
                     self.rigid_info,
                     self.rigid_config,
@@ -2067,7 +2066,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                     links_idx,
                     envs_idx,
                     self.dyn_state,
-                    self._island_data,
+                    self._island_state,
                     self.dyn_info,
                     self.rigid_info,
                     self.rigid_config,
@@ -2201,7 +2200,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                     links_idx,
                     envs_idx,
                     self.dyn_state,
-                    self._island_data,
+                    self._island_state,
                     self.dyn_info,
                     self.rigid_info,
                     self.rigid_config,
@@ -2317,7 +2316,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 self.data_manager.weight_scratch.jac_row,
                 self.data_manager.weight_scratch.solve_out,
                 self.dyn_state,
-                self._island_data,
+                self._island_state,
                 self.dyn_info,
                 self.rigid_info,
                 self.rigid_config,
@@ -2333,7 +2332,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 self.data_manager.weight_scratch.jac_row,
                 self.data_manager.weight_scratch.solve_out,
                 self.dyn_state,
-                self._island_data,
+                self._island_state,
                 self.dyn_info,
                 self.rigid_info,
                 self.rigid_config,
@@ -2348,7 +2347,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 self.data_manager.weight_scratch.jac_row,
                 self.data_manager.weight_scratch.solve_out,
                 self.dyn_state,
-                self._island_data,
+                self._island_state,
                 self.dyn_info,
                 self.rigid_info,
                 self.rigid_config,
@@ -2457,7 +2456,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                     qs_idx,
                     envs_idx,
                     self.dyn_state,
-                    self._island_data,
+                    self._island_state,
                     self.dyn_info,
                     self.rigid_info,
                     self.rigid_config,
@@ -2700,7 +2699,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 dofs_idx,
                 envs_idx,
                 self.dyn_state,
-                self._island_data,
+                self._island_state,
                 self.dyn_info,
                 self.rigid_info,
                 self.rigid_config,
@@ -3453,7 +3452,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
 @qd.func
 def func_step_1(
     dyn_state: array_class.DynState,
-    island_data: qd.template(),
+    island_state: array_class.IslandState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
@@ -3469,13 +3468,13 @@ def func_step_1(
     if qd.static(not is_forward_vel_updated):
         func_forward_velocity(dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
 
-    func_forward_dynamics(dyn_state, island_data, dyn_info, rigid_info, rigid_config, is_backward)
+    func_forward_dynamics(dyn_state, island_state, dyn_info, rigid_info, rigid_config, is_backward)
 
 
 @qd.kernel(fastcache=True)
 def kernel_step_1(
     dyn_state: array_class.DynState,
-    island_data: qd.template(),
+    island_state: array_class.IslandState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
@@ -3486,7 +3485,7 @@ def kernel_step_1(
     """Run the first half of a substep on its own (see func_step_1)."""
     func_step_1(
         dyn_state,
-        island_data,
+        island_state,
         dyn_info,
         rigid_info,
         rigid_config,
@@ -3543,7 +3542,7 @@ def kernel_step_2(
 @qd.kernel(graph=True, fastcache=True)
 def kernel_substep_dynamics(
     dyn_state: array_class.DynState,
-    island_data: qd.template(),
+    island_state: array_class.IslandState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
@@ -3560,7 +3559,7 @@ def kernel_substep_dynamics(
     """
     func_step_1(
         dyn_state,
-        island_data,
+        island_state,
         dyn_info,
         rigid_info,
         rigid_config,

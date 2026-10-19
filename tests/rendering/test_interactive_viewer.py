@@ -4,8 +4,10 @@ import threading
 import time
 
 import numpy as np
-import OpenGL.error
 import pytest
+
+import av
+import OpenGL.error
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -15,7 +17,7 @@ from genesis.vis.keybindings import Key, KeyAction, Keybind, KeyMod, MouseButton
 from genesis.vis.viewer_plugins.plugins.mouse_interaction import GRAB_ACC
 
 from ..conftest import IS_INTERACTIVE_VIEWER_AVAILABLE, SKIP_NO_IMGUI_BUNDLE, SKIP_NO_VIEWER, is_imgui_bundle_supported
-from ..utils.assertions import assert_allclose, assert_equal
+from ..utils.assertions import assert_allclose, assert_equal, rgb_array_to_png_bytes
 from .conftest import RENDERER_TYPE
 
 CAM_RES = (480, 320)
@@ -199,22 +201,22 @@ def test_default_plugin(n_envs):
 @pytest.mark.skipif(not is_imgui_bundle_supported, reason=SKIP_NO_IMGUI_BUNDLE)
 def test_key_press(renderer_type, tmp_path, monkeypatch, renderer, png_snapshot):
     IMAGE_FILENAME = tmp_path / "screenshot.png"
+    VIDEO_FILENAME = tmp_path / "video.mp4"
 
     # Mock 'get_save_filename' to avoid poping up an interactive dialog
     def get_save_filename(self, file_exts):
-        return IMAGE_FILENAME
+        return VIDEO_FILENAME if file_exts == ["mp4"] else IMAGE_FILENAME
 
     monkeypatch.setattr("genesis.ext.pyrender.viewer.Viewer._get_save_filename", get_save_filename)
 
     # Mock 'on_key_release' to determine whether requests have been processed
-    is_done = False
+    n_key_releases = 0
     on_key_release_orig = gs.ext.pyrender.viewer.Viewer.on_key_release
 
     def on_key_release(self, symbol: int, modifiers: int):
-        nonlocal is_done
-        assert not is_done
+        nonlocal n_key_releases
         ret = on_key_release_orig(self, symbol, modifiers)
-        is_done = True
+        n_key_releases += 1
         return ret
 
     monkeypatch.setattr("genesis.ext.pyrender.viewer.Viewer.on_key_release", on_key_release)
@@ -239,7 +241,7 @@ def test_key_press(renderer_type, tmp_path, monkeypatch, renderer, png_snapshot)
         show_viewer=True,
         show_FPS=False,
     )
-    scene.add_entity(
+    box = scene.add_entity(
         gs.morphs.Box(
             size=(0.5, 0.5, 0.5),
             pos=(0.0, 0.0, 0.0),
@@ -251,19 +253,23 @@ def test_key_press(renderer_type, tmp_path, monkeypatch, renderer, png_snapshot)
 
     # Try saving the current frame
     pyrender_viewer.dispatch_event("on_key_release", Key.S, 0)
+    wait_for_viewer_events(pyrender_viewer, lambda: n_key_releases == 1)
 
-    # Waiting for request completion
-    if pyrender_viewer.run_in_thread:
-        for i in range(100):
-            if is_done:
-                is_done = False
-                break
-            time.sleep(0.1)
-        else:
-            raise AssertionError("Keyboard event not processed before timeout")
-    else:
-        pyrender_viewer.dispatch_pending_events()
-        pyrender_viewer.dispatch_events()
+    # Record a video of the pose the recording starts at and of another one, a frame each however many times the viewer
+    # draws them. The viewer records a frame once the simulation advances, so a step follows the pose setter.
+    pyrender_viewer.dispatch_event("on_key_release", Key.R, 0)
+    wait_for_viewer_events(pyrender_viewer, lambda: n_key_releases == 2)
+    scene.visualizer.update(force=True)
+    wait_for_viewer_events(pyrender_viewer, lambda: pyrender_viewer._last_recorded_t == scene.sim.cur_step_global)
+    box.set_pos((0.0, 0.4, 0.0))
+    scene.step()
+    scene.visualizer.update(force=True)
+    wait_for_viewer_events(pyrender_viewer, lambda: pyrender_viewer._last_recorded_t == scene.sim.cur_step_global)
+    pyrender_viewer.dispatch_event("on_key_release", Key.R, 0)
+    wait_for_viewer_events(pyrender_viewer, lambda: n_key_releases == 3)
+    with av.open(VIDEO_FILENAME) as container:
+        frames = [frame.to_ndarray(format="rgb24") for frame in container.decode(video=0)]
+    assert len(frames) == 2
 
     # Skip the rest of the test if necessary.
     # Similarly, 'glBlitFramebuffer(..., GL_DEPTH_BUFFER_BIT, GL_NEAREST)' involved in offscreen rendering of depth map
@@ -279,6 +285,8 @@ def test_key_press(renderer_type, tmp_path, monkeypatch, renderer, png_snapshot)
     # Make sure that the result is valid
     with open(IMAGE_FILENAME, "rb") as f:
         assert f.read() == png_snapshot
+    for frame in frames:
+        assert rgb_array_to_png_bytes(frame) == png_snapshot
 
 
 @pytest.mark.required

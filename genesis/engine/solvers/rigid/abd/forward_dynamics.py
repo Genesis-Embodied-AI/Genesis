@@ -100,7 +100,7 @@ def kernel_compute_mass_matrix(
 @qd.func
 def func_forward_dynamics(
     dyn_state: array_class.DynState,
-    island_data: qd.template(),
+    island_state: array_class.IslandState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
@@ -117,7 +117,7 @@ def func_forward_dynamics(
     # The fused solve needs the forces, and the force passes never read the factor, so it runs after them
     if qd.static(not rigid_config.enable_fused_smooth_acc_solve):
         func_factor_mass(dyn_state, dyn_info, rigid_info, rigid_config, implicit_damping=False)
-    func_torque_and_passive_force(dyn_state, island_data, dyn_info, rigid_info, rigid_config, is_backward)
+    func_torque_and_passive_force(dyn_state, island_state, dyn_info, rigid_info, rigid_config, is_backward)
     func_update_acc(dyn_state, dyn_info, rigid_info, rigid_config, update_cacc=False, is_backward=is_backward)
     func_update_force(dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
     func_bias_force(dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
@@ -129,12 +129,12 @@ def func_forward_dynamics(
 @qd.kernel(fastcache=True)
 def kernel_forward_dynamics(
     dyn_state: array_class.DynState,
-    island_data: qd.template(),
+    island_state: array_class.IslandState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
-    func_forward_dynamics(dyn_state, island_data, dyn_info, rigid_info, rigid_config, is_backward=False)
+    func_forward_dynamics(dyn_state, island_state, dyn_info, rigid_info, rigid_config, is_backward=False)
 
 
 @qd.kernel(fastcache=True)
@@ -1471,7 +1471,7 @@ def kernel_refresh_invweight_and_meaninertia(
     jac_row: qd.Tensor,
     solve_out: qd.Tensor,
     dyn_state: array_class.DynState,
-    island_data: qd.template(),
+    island_state: array_class.IslandState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
@@ -1489,8 +1489,8 @@ def kernel_refresh_invweight_and_meaninertia(
         for i_l, i_b_ in qd.ndrange(dyn_info.links.parent_idx.shape[0], envs_idx.shape[0]):
             i_b = envs_idx[i_b_]
             if dyn_state.links.is_hibernated[i_l, i_b]:
-                i_is = island_data.island.links_island_idx[i_l, i_b]
-                func_wakeup_island(i_is, i_b, dyn_state, island_data, dyn_info, rigid_info, rigid_config)
+                i_is = island_state.links_island_idx[i_l, i_b]
+                func_wakeup_island(i_is, i_b, dyn_state, island_state, dyn_info, rigid_info, rigid_config)
 
     func_enter_neutral_configuration(envs_idx, dyn_state, dyn_info, rigid_info, rigid_config)
 
@@ -1537,7 +1537,7 @@ def kernel_refresh_invweight_and_meaninertia(
 @qd.func
 def func_torque_and_passive_force(
     dyn_state: array_class.DynState,
-    island_data: qd.template(),
+    island_state: array_class.IslandState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
@@ -1639,8 +1639,8 @@ def func_torque_and_passive_force(
                 # Actuation on a sleeping link wakes its island, the unit that sleeps and wakes together (see
                 # func_wakeup_island, whose atomic claim serves the links of one island waking it at once)
                 if wakeup and dyn_state.links.is_hibernated[i_l, i_b]:
-                    i_is = island_data.island.links_island_idx[i_l, i_b]
-                    func_wakeup_island(i_is, i_b, dyn_state, island_data, dyn_info, rigid_info, rigid_config)
+                    i_is = island_state.links_island_idx[i_l, i_b]
+                    func_wakeup_island(i_is, i_b, dyn_state, island_state, dyn_info, rigid_info, rigid_config)
 
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_d, i_b in qd.ndrange(dyn_state.dofs.ctrl_mode.shape[0], dyn_state.dofs.ctrl_mode.shape[1]):
@@ -2332,7 +2332,7 @@ def func_count_settled_step(
 @qd.kernel(fastcache=True)
 def kernel_forward_dynamics_without_qacc(
     dyn_state: array_class.DynState,
-    island_data: qd.template(),
+    island_state: array_class.IslandState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
@@ -2350,7 +2350,7 @@ def kernel_forward_dynamics_without_qacc(
         qd.static(rigid_config.integrator == gs.integrator.approximate_implicitfast),
         is_backward,
     )
-    func_torque_and_passive_force(dyn_state, island_data, dyn_info, rigid_info, rigid_config, is_backward)
+    func_torque_and_passive_force(dyn_state, island_state, dyn_info, rigid_info, rigid_config, is_backward)
     func_update_acc(dyn_state, dyn_info, rigid_info, rigid_config, update_cacc=False, is_backward=is_backward)
     func_update_force(dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
     func_bias_force(dyn_state, dyn_info, rigid_info, rigid_config, is_backward)

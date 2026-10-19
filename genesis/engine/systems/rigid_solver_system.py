@@ -190,7 +190,7 @@ class RigidSolverSystem(System):
             jac_row,
             solve_out,
             self.dyn_state,
-            self.island_system.data,
+            self.island_system.data.island,
             self.dyn_info,
             self.rigid_info,
             self.rigid_config,
@@ -391,7 +391,7 @@ class RigidSolverSystem(System):
         self.wakeup_coupled_links()
         kernel_step_1(
             self.dyn_state,
-            self.island_system.data,
+            self.island_system.data.island,
             self.dyn_info,
             self.rigid_info,
             self.rigid_config,
@@ -450,7 +450,7 @@ class RigidSolverSystem(System):
         if self._use_hibernation and len(self.sim.active_solvers) > 1:
             kernel_wakeup_coupled_links(
                 self.dyn_state,
-                self.island_system.data,
+                self.island_system.data.island,
                 self.dyn_info,
                 self.rigid_info,
                 self.rigid_config,
@@ -481,7 +481,7 @@ def func_substep_forward_dynamics(
     already up to date."""
     func_step_1(
         rigid_data.dyn_state,
-        island_data,
+        island_data.island,
         rigid_data.dyn_info,
         rigid_data.rigid_info,
         rigid_config,
@@ -1069,10 +1069,13 @@ def rigid_init_geom_fields(system):
         for geom, center in zip(geoms, geoms_center):
             is_hollow = False
             if geom.type not in (gs.GEOM_TYPE.SPHERE, gs.GEOM_TYPE.PLANE, gs.GEOM_TYPE.TERRAIN) and not geom.is_convex:
-                grid_pos = geom.T_mesh_to_sdf[:3, :3] @ center + geom.T_mesh_to_sdf[:3, 3]
-                cell = np.minimum(np.maximum(np.floor(grid_pos).astype(gs.np_int), 0), geom.sdf_res - 2)
+                sdf_grid = geom.desc.mesh.get_sdf_grid(geom.desc.sdf)
+                grid_pos = sdf_grid.T_mesh_to_sdf[:3, :3] @ center + sdf_grid.T_mesh_to_sdf[:3, 3]
+                cell = np.minimum(
+                    np.maximum(np.floor(grid_pos).astype(gs.np_int), 0), np.subtract(geom.desc.sdf.n_nodes, 2)
+                )
                 frac = grid_pos - cell
-                corners = geom.sdf_val[cell[0] : cell[0] + 2, cell[1] : cell[1] + 2, cell[2] : cell[2] + 2]
+                corners = sdf_grid.value[cell[0] : cell[0] + 2, cell[1] : cell[1] + 2, cell[2] : cell[2] + 2]
                 weights_x, weights_y, weights_z = ([1.0 - frac[i], frac[i]] for i in range(3))
                 sd_center = np.einsum("i,j,k,ijk->", weights_x, weights_y, weights_z, corners)
                 is_hollow = sd_center > gs.EPS

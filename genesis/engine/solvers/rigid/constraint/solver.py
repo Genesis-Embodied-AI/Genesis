@@ -5838,7 +5838,7 @@ def func_update_contact_force(
         if qd.static(rigid_config.use_hibernation):
             for i_island in range(constraint_state.island.n_islands[i_b]):
                 func_hibernate_island_if_settled(
-                    i_island, i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config
+                    i_island, i_b, dyn_state, constraint_state.island, dyn_info, rigid_info, rigid_config
                 )
 
 
