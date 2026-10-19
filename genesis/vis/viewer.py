@@ -44,9 +44,9 @@ class Viewer(RBC):
         self._run_in_thread = options.run_in_thread
         self._refresh_rate = options.refresh_rate
         self._realtime_factor = options.realtime_factor
-        self._camera_init_pos = np.asarray(options.camera_pos, dtype=gs.np_float)
-        self._camera_init_lookat = np.asarray(options.camera_lookat, dtype=gs.np_float)
-        self._camera_up = np.asarray(options.camera_up, dtype=gs.np_float)
+        self._camera_init_pos = np.asarray(options.camera_pos, dtype=np.float64)
+        self._camera_init_lookat = np.asarray(options.camera_lookat, dtype=np.float64)
+        self._camera_up = np.asarray(options.camera_up, dtype=np.float64)
         self._camera_fov = options.camera_fov
 
         self._enable_help_text = options.enable_help_text
@@ -279,14 +279,14 @@ class Viewer(RBC):
             Camera lookat point.
         """
         if pose is None:
-            pos = self._camera_init_pos if pos is None else tensor_to_array(pos, dtype=gs.np_float)
-            lookat = self._camera_init_lookat if lookat is None else tensor_to_array(lookat, dtype=gs.np_float)
+            pos = self._camera_init_pos if pos is None else tensor_to_array(pos, dtype=np.float64)
+            lookat = self._camera_init_lookat if lookat is None else tensor_to_array(lookat, dtype=np.float64)
             up = self._camera_up
 
             pose = gu.pos_lookat_up_to_T(pos, lookat, up)
             self._camera_up = pose[:3, 1].copy()
         else:
-            pose = tensor_to_array(pose, dtype=gs.np_float)
+            pose = tensor_to_array(pose, dtype=np.float64)
             if pose.shape != (4, 4):
                 gs.raise_exception("pose should be a 4x4 matrix.")
 
