@@ -358,6 +358,7 @@ def test_scene_rebuild():
     scene.step()
     duck_aabb_scaled = scene.get_entity("duck").get_AABB()
     assert_allclose(duck_aabb_scaled[1] - duck_aabb_scaled[0], 2.0 * (duck_aabb[1] - duck_aabb[0]), tol=1e-3)
+    # A checkpoint restore compares against the cached digest, so the cache must follow the edit
     assert scene._desc_digest != digest_before
 
     # Switching the visual mode of an entity gives its geoms fresh nodes, which must keep following the simulation:

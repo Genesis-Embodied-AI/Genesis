@@ -299,7 +299,7 @@ class InteractiveScene:
             # Re-initialize the SAME object in place so external references survive the rebuild.
             scene.__init__(**self._scene_kwargs)
             # The in-place re-init keeps the digest cached for the previous description
-            vars(scene).pop("_desc_digest", None)
+            scene.__dict__.pop("_desc_digest", None)
             # Re-register the pre-step callback: the in-place re-init cleared Scene's callback list.
             scene.register_pre_step_callback(self._pre_step)
             for name, kwargs in self._entities_kwargs.items():
