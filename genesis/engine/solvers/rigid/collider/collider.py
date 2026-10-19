@@ -429,8 +429,8 @@ class Collider:
         needs_self_check = self._solver._enable_self_collision and np.any(valid & same_root)
         needs_neutral_check = needs_self_check and not self._solver._enable_neutral_collision
 
-        # Lazily compute geom meshes only for geoms that need neutral overlap checks
-        geoms_mesh: dict[int, trimesh.Trimesh] = {}
+        # Lazily compute geom vertices only for geoms that need neutral overlap checks
+        geoms_verts: dict[int, np.ndarray] = {}
         # Voxel grid and filled-voxel centers of a geom, built the first time it enters a pair with overlapping bounds
         # and shared by every other pair it enters, since voxelization dominates this check and a link usually overlaps
         # several others in the neutral configuration
@@ -452,7 +452,7 @@ class Collider:
                 verts = gu.transform_by_trans_quat(geom.init_verts, geom_pos, geom_quat)
                 centroid = verts.mean(axis=0, keepdims=True)
                 verts = centroid + (1.0 - 1e-3) * (verts - centroid)
-                geoms_mesh[i_g] = trimesh.Trimesh(vertices=verts, faces=geom.init_faces, process=False)
+                geoms_verts[i_g] = verts
 
         if needs_self_check:
             self_root_indices = np.where(valid & same_root)[0]
@@ -479,11 +479,14 @@ class Collider:
 
                 # active in neutral configuration (qpos0)
                 if needs_neutral_check:
-                    bounds_a, bounds_b = geoms_mesh[i_ga].bounds, geoms_mesh[i_gb].bounds
+                    verts_a = geoms_verts[i_ga]
+                    mesh_a = trimesh.Trimesh(vertices=verts_a, faces=geoms[i_ga].init_faces, process=False)
+                    verts_b = geoms_verts[i_gb]
+                    mesh_b = trimesh.Trimesh(vertices=verts_b, faces=geoms[i_gb].init_faces, process=False)
+                    bounds_a, bounds_b = mesh_a.bounds, mesh_b.bounds
                     if not ((bounds_a[1] < bounds_b[0]).any() or (bounds_b[1] < bounds_a[0]).any()):
-                        for i_g in (i_ga, i_gb):
+                        for i_g, mesh in ((i_ga, mesh_a), (i_gb, mesh_b)):
                             if i_g not in geoms_voxels:
-                                mesh = geoms_mesh[i_g]
                                 voxels = mesh.voxelized(
                                     pitch=min(NEUTRAL_COLLISION_RES_ABS, NEUTRAL_COLLISION_RES_REL * max(mesh.extents))
                                 )
