@@ -1152,7 +1152,14 @@ def png_snapshot(request, snapshot):
 
 
 @pytest.fixture
-def trajectory_snapshot(request) -> Path:
+def load_trajectory_snapshot(request):
+    """Return a function loading the trajectory snapshot of the test, recorded from a scene with '--snapshot-update'.
+
+    The function takes the unbuilt scene the snapshot records, the number of environments it is built with, the number
+    of steps it records, and whether the replay shows the viewer, and returns the loaded trajectory. The scene is built
+    and recorded only when the snapshots are updated, the published snapshot being loaded otherwise.
+    """
+    import genesis as gs
     from genesis.recorders.trajectory import TRAJECTORY_FORMAT
 
     from .utils.assets import get_hf_dataset
@@ -1160,12 +1167,25 @@ def trajectory_snapshot(request) -> Path:
     # The path is the one syrupy gives a single-file snapshot of the test. The test reads the file itself, so syrupy
     # leaves it out of its count of unused snapshots.
     path = request.path.parent / "__snapshots__" / request.path.stem / f"{request.node.name}{TRAJECTORY_FORMAT}"
-    # The brackets of a parametrized test name are escaped for the same reason as in 'png_snapshot'
-    snapshot_pattern = "".join(f"[{char}]" if char in ("[", "]") else char for char in path.name)
-    tests_dir = Path(__file__).parent
-    get_hf_dataset(
-        pattern=f"{path.parent.relative_to(tests_dir).as_posix()}/{snapshot_pattern}",
-        repo_name="snapshots",
-        local_dir=tests_dir,
-    )
-    return path
+    must_update_snapshot = request.config.getoption("--snapshot-update")
+    if not must_update_snapshot:
+        # The brackets of a parametrized test name are escaped for the same reason as in 'png_snapshot'
+        snapshot_pattern = "".join(f"[{char}]" if char in ("[", "]") else char for char in path.name)
+        tests_dir = Path(__file__).parent
+        get_hf_dataset(
+            pattern=f"{path.parent.relative_to(tests_dir).as_posix()}/{snapshot_pattern}",
+            repo_name="snapshots",
+            local_dir=tests_dir,
+        )
+
+    def load(scene, n_envs, n_steps, show_viewer):
+        if must_update_snapshot:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            scene.start_recording(gs.recorders.TrajectoryFile(filename=str(path)))
+            scene.build(n_envs=n_envs)
+            for _ in range(n_steps):
+                scene.step()
+            scene.stop_recording()
+        return gs.Scene.load_trajectory(path, show_viewer=show_viewer)
+
+    return load

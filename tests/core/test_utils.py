@@ -920,7 +920,7 @@ def test_genuine_interpenetration(show_viewer):
                     gu.inv_transform_by_trans_quat(
                         tensor_to_array(geom.get_verts(), dtype=np.float64), links_pos0[link.idx], links_quat0[link.idx]
                     ),
-                    geom.get_trimesh().faces.astype(np.int64),
+                    geom.trimesh.faces.astype(np.int64),
                 )
                 for link in entity.links
                 for geom in link.geoms

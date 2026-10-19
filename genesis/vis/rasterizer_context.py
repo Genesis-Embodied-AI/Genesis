@@ -275,7 +275,7 @@ class RasterizerContext:
 
         entity = geom.entity
         vis_mode = entity.surface.vis_mode
-        mesh = geom.get_sdf_trimesh() if "sdf" in vis_mode else geom.get_trimesh()
+        mesh = geom.sdf_trimesh if "sdf" in vis_mode else geom.trimesh
         geom_T = geoms_T[:, geom.idx]
         envs = np.isin(self.rendered_envs_idx, geom_envs_idx)
         is_shared_floor = False
@@ -550,7 +550,7 @@ class RasterizerContext:
                             if len(geom_envs_idx) == 0:
                                 continue
 
-                            mesh = geom.get_trimesh()
+                            mesh = geom.trimesh
                             v_start = geom.vvert_start + custom_offset
                             v_end = geom.vvert_end + custom_offset
                             for i_b in geom_envs_idx:

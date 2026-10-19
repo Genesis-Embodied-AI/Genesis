@@ -335,9 +335,9 @@ def test_export_and_load_rigid(
     assert restored.entities[14].surface.normal_texture is None
     assert restored.entities[14].vgeoms[0].vmesh.surface.normal_texture is None
     # A mesh holding uvs is drawn with its texture, laid out as the authored one
-    restored_visual = restored.entities[6].vgeoms[0].get_trimesh().visual
+    restored_visual = restored.entities[6].vgeoms[0].trimesh.visual
     assert restored_visual.kind == "texture"
-    assert_equal(restored_visual.uv, anchored.vgeoms[0].get_trimesh().visual.uv)
+    assert_equal(restored_visual.uv, anchored.vgeoms[0].trimesh.visual.uv)
     # A morph names the asset it was created from, since the description stands for what was parsed out of it
     assert restored.entities[15].morph.file == "two_link.urdf.xacro"
     # A mesh states the asset it was read from by name, wherever that asset stood
@@ -905,9 +905,9 @@ def test_trajectory_replay(n_envs, checkpoint_scene, tmp_path, show_viewer, tol)
 @pytest.mark.required
 @pytest.mark.precision("32")
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_trajectory_replay_across_backends(n_envs, trajectory_snapshot, show_viewer, tol):
+def test_trajectory_replay_across_backends(n_envs, checkpoint_scene, load_trajectory_snapshot, show_viewer, tol):
     # The snapshot is a log recorded on CPU in single precision, replayed here on whatever backend the session runs
-    trajectory = gs.Scene.load_trajectory(trajectory_snapshot, show_viewer=show_viewer)
+    trajectory = load_trajectory_snapshot(checkpoint_scene, n_envs=n_envs, n_steps=10, show_viewer=show_viewer)
     assert trajectory.n_envs == n_envs
     replay_scene = trajectory.scene
     for index in range(len(trajectory)):

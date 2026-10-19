@@ -954,8 +954,8 @@ def _kernel_kinematic_taxel_bvh(
 class KinematicTactileSensorMixin(ContactDepthQuerySensorMixin, ProbeSensorMixin[ProbeSensorSharedMetadataT]):
     """Contact-depth probe family (ContactDepthProbe, ContactProbe, KinematicTaxel).
 
-    The class-wide SDF/raycast backend is resolved and activated by ``ContactDepthQuerySensorMixin.build``;
-    subclasses add their own metadata.
+    The class-wide SDF/raycast backend is resolved by ``ContactDepthQuerySensorMixin.build``, and subclasses add their
+    own metadata.
     """
 
     def build(self):
