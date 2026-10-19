@@ -141,9 +141,9 @@ class Recorder(Generic[T]):
 
     @gs.assert_built
     def start(self):
-        """Start the recording thread if run_in_thread is True."""
+        """Start the recording thread if run_in_thread is True, keeping the one a reset finds running."""
         self._is_recording = True
-        if self.run_in_thread:
+        if self.run_in_thread and self._processor_thread is None:
             self.start_thread()
 
     @gs.assert_built
