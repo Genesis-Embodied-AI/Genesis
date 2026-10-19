@@ -13,7 +13,8 @@ import quadrants as qd
 from quadrants.lang import impl
 
 import genesis as gs
-from genesis.utils.misc import data_to_array, register_cache_clear
+from genesis.utils.cache import register_cache_clear
+from genesis.utils.misc import data_to_array
 
 
 def _tensor_backend():
