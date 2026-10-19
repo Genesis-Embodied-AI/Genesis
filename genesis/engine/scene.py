@@ -10,6 +10,7 @@ import sys
 import weakref
 import zipfile
 from collections import Counter
+from functools import cached_property
 from typing import BinaryIO, Callable, Iterable, Literal, NamedTuple, TYPE_CHECKING, overload
 
 import numpy as np
@@ -244,7 +245,6 @@ class Scene(RBC):
 
         # description
         self._desc = SceneDescription(options=self.options)
-        self._digest: str | None = None
 
         # simulator
         self._sim = Simulator(scene=self, options=self.options)
@@ -1998,12 +1998,10 @@ class Scene(RBC):
         """
         return self._desc
 
-    @property
+    @cached_property
     def _desc_digest(self) -> str:
         """The digest of this scene's description (see 'description_digest'), which a saved state must share."""
-        if self._digest is None:
-            self._digest = description_digest(self._desc)
-        return self._digest
+        return description_digest(self._desc)
 
     def get_entity(self, name: str | None = None, *, uid: str | None = None) -> "Entity":
         """

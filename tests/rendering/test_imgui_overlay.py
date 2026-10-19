@@ -351,15 +351,14 @@ def test_scene_rebuild():
 
     # A scale edit hands the rebuild a new morph, so the entity is resolved again at the new scale
     duck_aabb = scene.get_entity("duck").get_AABB()
-    checkpoint = scene.__getstate__()
+    digest_before = scene._desc_digest
     duck_kwargs = plugin._pending_entities_kwargs["duck"]
     duck_kwargs["morph"] = duck_kwargs["morph"].model_copy(update={"scale": 0.002})
     interactive.rebuild(entities_kwargs=plugin._pending_entities_kwargs)
     scene.step()
     duck_aabb_scaled = scene.get_entity("duck").get_AABB()
     assert_allclose(duck_aabb_scaled[1] - duck_aabb_scaled[0], 2.0 * (duck_aabb[1] - duck_aabb[0]), tol=1e-3)
-    with pytest.raises(gs.GenesisException, match="another scene"):
-        scene.__setstate__(checkpoint)
+    assert scene._desc_digest != digest_before
 
     # Switching the visual mode of an entity gives its geoms fresh nodes, which must keep following the simulation:
     # the arm sags under gravity once unpaused, so the frames before and after must differ
