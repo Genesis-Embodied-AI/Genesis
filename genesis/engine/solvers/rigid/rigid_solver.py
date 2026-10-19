@@ -570,7 +570,9 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             enable_signorini_contact=self._contact_resolution == gs.contact_resolution.signorini,
             enable_torsional_friction=self._options.enable_torsional_friction,
             enable_rolling_friction=self._options.enable_rolling_friction,
-            enable_screw_constraints=self._options.enable_screw_constraints,
+            enable_screw_constraints=(
+                self._options.enable_screw_constraints and self._options.max_dynamic_constraints > 0
+            ),
             enable_multi_contact=self._enable_multi_contact,
             enable_collision=self._enable_collision,
             enable_joint_limit=self._enable_joint_limit,

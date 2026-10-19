@@ -284,8 +284,6 @@ def test_dynamic_screw(n_envs, show_viewer, tol):
     scene_with_grad.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1)))
     with pytest.raises(gs.GenesisException, match="Screw constraints are not supported yet"):
         scene_with_grad.build()
-    with pytest.raises(gs.GenesisException, match="max_dynamic_constraints"):
-        gs.options.RigidOptions(max_dynamic_constraints=0, enable_screw_constraints=True)
     assert_equal(rigid.get_equality_constraints()["type"], gs.EQUALITY_TYPE.SCREW)
 
     # The nut descends with the acceleration g_eff of a mass m sliding along the axis while spinning with an axial

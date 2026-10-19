@@ -156,7 +156,11 @@ class ConstraintSolver:
             + sum(joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC) for joint in self._solver.joints)
             + self._solver.n_dofs
             + self._solver.n_candidate_equalities_ * 6
-            + (self._solver._options.max_dynamic_constraints if self._solver._options.enable_screw_constraints else 0)
+            + (
+                rigid_solver._options.max_dynamic_constraints
+                if rigid_solver.rigid_config.enable_screw_constraints
+                else 0
+            )
         )
         self.len_constraints_ = max(1, self.len_constraints)
         # Max cone rows (rows_per_contact per contact); sizes the elliptic-only previous-residual buffer to exactly
@@ -454,7 +458,7 @@ class ConstraintSolver:
                 f"'max_dynamic_constraints' ({self._solver._options.max_dynamic_constraints})."
             )
 
-        if self._solver._options.enable_screw_constraints:
+        if self._solver.rigid_config.enable_screw_constraints:
             n_eq_data_tail = array_class.EQ_DATA_N_TAIL_SCREW
         else:
             n_eq_data_tail = array_class.EQ_DATA_N_TAIL

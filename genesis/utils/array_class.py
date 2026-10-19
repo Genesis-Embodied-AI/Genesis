@@ -1231,12 +1231,15 @@ def get_constraint_state(constraint_solver, solver, collider):
         screws_jac_free=V(
             dtype=gs.qd_float,
             shape=maybe_shape(
-                (solver._options.max_dynamic_constraints, solver.n_dofs_, _B), solver._options.enable_screw_constraints
+                (solver._options.max_dynamic_constraints, solver.n_dofs_, _B),
+                solver.rigid_config.enable_screw_constraints,
             ),
         ),
         screws_i_con=V(
             dtype=gs.qd_int,
-            shape=maybe_shape((solver._options.max_dynamic_constraints, _B), solver._options.enable_screw_constraints),
+            shape=maybe_shape(
+                (solver._options.max_dynamic_constraints, _B), solver.rigid_config.enable_screw_constraints
+            ),
         ),
         # Allocated last to preserve the allocation order of the tensors above (see the warning at the top).
         island=get_island_state(solver, collider, len_constraints_),
@@ -2890,8 +2893,8 @@ EQ_DATA_N_TAIL_SCREW = 8
 def get_equalities_info(solver, is_active=True):
     shape = (solver.n_candidate_equalities_, solver._B) if is_active else ()
 
-    # Only the rigid solver, which is the active one, carries the screw option.
-    n_tail = EQ_DATA_N_TAIL_SCREW if is_active and solver._options.enable_screw_constraints else EQ_DATA_N_TAIL
+    # Only the rigid solver, which is the active one, carries the screw config.
+    n_tail = EQ_DATA_N_TAIL_SCREW if is_active and solver.rigid_config.enable_screw_constraints else EQ_DATA_N_TAIL
     return EqualitiesInfo(
         eq_obj1id=V(dtype=gs.qd_int, shape=shape),
         eq_obj2id=V(dtype=gs.qd_int, shape=shape),
