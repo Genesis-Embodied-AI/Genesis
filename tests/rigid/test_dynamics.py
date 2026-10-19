@@ -1078,8 +1078,8 @@ def test_cholesky_tiling(monkeypatch, tol):
 
     values = []
     for enable_tiled_cholesky in (True, False):
-        # Static configs are frozen and shared by every scene holding the same values, so the flags are forced where
-        # the solver constructs its config rather than written on the built solver.
+        # Static configs are immutable, so the flags are forced where the solver constructs its config rather than
+        # written on the built solver.
         def rigid_sim_static_config_init(self, **kwargs):
             kwargs["enable_tiled_cholesky_mass_matrix"] = enable_tiled_cholesky
             if not enable_tiled_cholesky:

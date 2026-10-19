@@ -13,7 +13,6 @@ import quadrants as qd
 from quadrants.lang import impl
 
 import genesis as gs
-from genesis.utils.cache import register_cache_clear
 from genesis.utils.misc import data_to_array
 
 
@@ -37,21 +36,14 @@ def maybe_shape(shape, is_on):
     return shape if is_on else ()
 
 
-_STATIC_CONFIGS: dict[tuple, Any] = {}
-register_cache_clear(_STATIC_CONFIGS.clear)
-
-
 @dataclass_transform(eq_default=True, kw_only_default=False, frozen_default=True)
 class AutoInitMeta(type):
-    """Metaclass generating __init__ from annotations like a frozen dataclass, sharing one instance per set of values.
+    """Metaclass generating __init__, __eq__ and __hash__ from annotations, like a frozen dataclass.
 
-    Kernels specialize on a static config by reference, so sharing lets a rebuilt scene reuse its compiled kernels. The
-    instances live for the process, since collecting one would drop the kernels specialized on it.
+    Kernels key their compiled instances on the static configs they take, by equality, so configs holding the same
+    values let a rebuilt scene reuse the kernels compiled for the previous one. A config is immutable, since a write
+    would change the key under which its kernels are stored.
     """
-
-    def __call__(cls, *args, **kwargs):
-        config = super().__call__(*args, **kwargs)
-        return _STATIC_CONFIGS.setdefault((cls, tuple(sorted(vars(config).items()))), config)
 
     def __new__(cls, name, bases, namespace):
         names = tuple(namespace["__annotations__"].keys())
@@ -85,10 +77,18 @@ class AutoInitMeta(type):
                 object.__setattr__(self, key, value)
 
         def __setattr__(self, key, value):
-            raise AttributeError(f"{name} is shared by every scene holding the same values and cannot be modified")
+            raise AttributeError(f"{name} is immutable")
+
+        def __eq__(self, other):
+            return type(other) is type(self) and vars(other) == vars(self)
+
+        def __hash__(self):
+            return hash((type(self), *(vars(self)[key] for key in names)))
 
         namespace["__init__"] = __init__
         namespace["__setattr__"] = __setattr__
+        namespace["__eq__"] = __eq__
+        namespace["__hash__"] = __hash__
 
         return super().__new__(cls, name, bases, namespace)
 
