@@ -14,7 +14,7 @@ import genesis as gs
 
 from . import geom as gu
 from . import mesh as mu
-from .misc import OwnedCache
+from .cache import OwnedCache
 
 # Images of the glTF files, decoded once for all the meshes built from them, and kept as long as any of them lives
 _GLB_IMAGES_CACHE = OwnedCache()

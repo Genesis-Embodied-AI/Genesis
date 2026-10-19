@@ -926,7 +926,7 @@ def initialize_genesis(
         shutil.rmtree(numba_cache_dir, ignore_errors=True)
 
     # Redirect name terrain cache directory to some test-local temporary location to avoid conflict and persistence
-    monkeypatch.setattr("genesis.utils.misc.get_gnd_cache_dir", lambda: str(tmp_path / ".cache" / "terrain"))
+    monkeypatch.setattr("genesis.utils.cache.get_gnd_cache_dir", lambda: str(tmp_path / ".cache" / "terrain"))
 
     try:
         # Skip if requested backend is not available

@@ -21,7 +21,8 @@ from genesis.options.surfaces import Surface
 from genesis.repr_base import RBC
 from genesis.typing import Matrix3x3Type, Vec3FType
 from genesis.utils import serialization
-from genesis.utils.misc import OwnedCache, redirect_libc_stderr
+from genesis.utils.cache import OwnedCache, get_gsd_path, get_hashkey, get_remesh_cache
+from genesis.utils.misc import redirect_libc_stderr
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity.description import SignedDistanceFieldDescription
@@ -225,7 +226,7 @@ class Mesh(RBC, serialization.SerializationMixin):
         """
         Remesh for tetrahedralization.
         """
-        cache = mu.get_remesh_cache(self.verts, self.faces, edge_len_abs, edge_len_ratio, fix)
+        cache = get_remesh_cache(self.verts, self.faces, edge_len_abs, edge_len_ratio, fix)
 
         remeshed = cache.load()
         if remeshed is not None:
@@ -311,7 +312,7 @@ class Mesh(RBC, serialization.SerializationMixin):
         kept as long as any of them lives (see 'OwnedCache').
         """
         if self._tmesh_hash is None:
-            self._tmesh_hash = mu.get_hashkey(self.verts, self.faces)
+            self._tmesh_hash = get_hashkey(self.verts, self.faces)
         return self._tmesh_hash
 
     @cached_by_tmesh
@@ -781,7 +782,7 @@ def _get_sdf_grid(
     'sdf_tmesh' (see 'Mesh.get_sdf_grid'). 'mesh_descr' names the mesh in the warnings.
     """
     n_nodes, cell_size = np.array(sdf.n_nodes), np.array(sdf.cell_size)
-    gsd_path = mu.get_gsd_path(verts, faces, n_nodes, cell_size)
+    gsd_path = get_gsd_path(verts, faces, n_nodes, cell_size)
     sdf_grid = None
     if os.path.exists(gsd_path):
         gs.logger.debug(f"Preprocessed file (`.gsd`) found in cache: {gsd_path}.")
