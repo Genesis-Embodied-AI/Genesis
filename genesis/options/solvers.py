@@ -574,9 +574,10 @@ class RigidOptions(GravityMixin, TimeBasedMixin):
         Maximum number of dynamic constraints (like suction cup) per environment. Adding one past it raises. Defaults
         to 8.
     enable_screw_constraints : bool, optional
-        Whether screw constraints can be added at runtime (see `RigidSolver.add_screw_constraint`). Enabling it
-        lengthens the compilation of the scene noticeably, whether or not any screw is added, so leave it off unless
-        the scene uses them. Not supported with `requires_grad`. Defaults to False.
+        Whether screw constraints can be added at runtime in performance mode (see `RigidSolver.add_screw_constraint`).
+        Outside performance mode, they are always available. Enabling it lengthens the compilation of the scene,
+        whether or not any screw is added, so leave it off unless the scene uses them. Not supported with
+        `requires_grad`. Defaults to False.
     use_gjk_collision: bool, optional
         Whether to use GJK for collision detection instead of MPR. More stable but much slower. Defaults to
         `sim_options.requires_grad`.

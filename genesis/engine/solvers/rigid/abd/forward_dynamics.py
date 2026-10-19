@@ -1872,11 +1872,11 @@ def func_midpoint_eligible(
 
     Eligible: a 6-DOF free-joint link that is its own whole kinematic tree (no parent, and no DOF-bearing descendant, so
     its mass block holds its own DOFs alone, see dofs_mass_block_start in array_class.py), and unconstrained this step
-    (no contact on the body, fixed children included, and no connect/weld equality, per the involvement flag the
-    assembly writes, see is_constrained in array_class.py). The flag covers dynamically registered welds, and entities
-    merged at build time via attach fail the tree tests. A constrained body keeps the standard update: the solver
-    resolves the constraint impulse at the current configuration, and the discrete free rigid-body equation would count
-    it again. In the MuJoCo compatibility mode, the body is the link alone, without fixed children.
+    (no contact on the body, fixed children included, and no connect/weld/screw equality, per the involvement flag the
+    assembly writes, see is_constrained in array_class.py). The flag covers dynamically registered constraints, and
+    entities merged at build time via attach fail the tree tests. A constrained body keeps the standard update: the
+    solver resolves the constraint impulse at the current configuration, and the discrete free rigid-body equation would
+    count it again. In the MuJoCo compatibility mode, the body is the link alone, without fixed children.
     """
     I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
     is_eligible = False

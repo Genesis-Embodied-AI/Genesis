@@ -557,6 +557,15 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                     n_lane_steps = n_lanes_per_env * (-(-levels_n_links // n_lanes_per_env)).sum() * self._sim._B
                     enable_level_sweep &= bool(n_lane_steps <= groups_n_links.max() * get_gpu_core_count())
 
+        # Screw constraints can be added to any scene outside performance mode, which compiles generic kernels once for
+        # all scenes. In performance mode, their rows lengthen the compilation of every scene, so they are left to the
+        # option. Either way, they need a dynamic constraint slot and are not differentiable.
+        enable_screw_constraints = (
+            (is_generic or self._options.enable_screw_constraints)
+            and self._options.max_dynamic_constraints > 0
+            and not self.sim.options.requires_grad
+        )
+
         rigid_config = dict(
             backend=gs.backend,
             para_level=self.sim._para_level,
@@ -570,9 +579,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             enable_signorini_contact=self._contact_resolution == gs.contact_resolution.signorini,
             enable_torsional_friction=self._options.enable_torsional_friction,
             enable_rolling_friction=self._options.enable_rolling_friction,
-            enable_screw_constraints=(
-                self._options.enable_screw_constraints and self._options.max_dynamic_constraints > 0
-            ),
+            enable_screw_constraints=enable_screw_constraints,
             enable_multi_contact=self._enable_multi_contact,
             enable_collision=self._enable_collision,
             enable_joint_limit=self._enable_joint_limit,
@@ -3437,8 +3444,12 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        if not self._options.enable_screw_constraints:
-            gs.raise_exception("Screw constraints require 'RigidOptions(enable_screw_constraints=True)'.")
+        if not self.rigid_config.enable_screw_constraints:
+            gs.raise_exception(
+                "Screw constraints are unavailable in this scene. They require a positive 'max_dynamic_constraints', "
+                "'RigidOptions(enable_screw_constraints=True)' in performance mode, and are not supported with "
+                "'requires_grad'."
+            )
         axis = np.asarray(axis, dtype=gs.np_float)
         axis_norm = np.linalg.norm(axis)
         anchor_pos = np.zeros(3, dtype=gs.np_float) if pos is None else np.asarray(pos, dtype=gs.np_float)
@@ -3450,13 +3461,14 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             or anchor_pos.shape != (3,)
             or not np.isfinite(anchor_pos).all()
             or limit.shape != (2,)
-            or not limit[0] <= limit[1]
-            or not frictionloss >= 0.0
+            or not limit[0] <= 0.0 <= limit[1]
+            or not 0.0 <= frictionloss < np.inf
         ):
             gs.raise_exception(
                 "Invalid screw constraint: 'axis' must be a finite non-zero 3D vector, 'pitch' a number, 'pos' a "
-                "finite 3D point, 'limit' an ordered (lower, upper) pair and 'frictionloss' non-negative. Got "
-                f"axis={axis}, pitch={pitch}, pos={pos}, limit={limit} and frictionloss={frictionloss}."
+                "finite 3D point, 'limit' a (lower, upper) pair enclosing the current pose and 'frictionloss' finite "
+                f"and non-negative. Got axis={axis}, pitch={pitch}, pos={pos}, limit={limit} and "
+                f"frictionloss={frictionloss}."
             )
 
         # The pitch enters the constraint per radian, as the direction (cos, sin) of (1, pitch / 2pi), which stays

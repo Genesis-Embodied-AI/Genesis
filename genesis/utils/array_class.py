@@ -1036,11 +1036,6 @@ class ConstraintState:
     noslip_rows_color: qd.Tensor
     noslip_islands_n_colors: qd.Tensor
     noslip_blocks_n_colors: qd.Tensor
-    # Scratch of the screw constraints (empty when they are disabled), one entry per dynamic equality slot: the Jacobian
-    # of the free motion of the screw, and the row of its coupling constraint. The equality rows write both, and the
-    # friction and limit rows combine them (see func_add_screw_axis_constraints in constraint/solver.py).
-    screws_jac_free: qd.Tensor
-    screws_i_con: qd.Tensor
 
 
 def get_constraint_state(constraint_solver, solver, collider):
@@ -1227,19 +1222,6 @@ def get_constraint_state(constraint_solver, solver, collider):
             dtype=gs.qd_int,
             shape=maybe_shape((solver.n_dofs_, _B), is_noslip_cooperative),
             layout=dof_vec_layout if is_noslip_cooperative else None,
-        ),
-        screws_jac_free=V(
-            dtype=gs.qd_float,
-            shape=maybe_shape(
-                (solver._options.max_dynamic_constraints, solver.n_dofs_, _B),
-                solver.rigid_config.enable_screw_constraints,
-            ),
-        ),
-        screws_i_con=V(
-            dtype=gs.qd_int,
-            shape=maybe_shape(
-                (solver._options.max_dynamic_constraints, _B), solver.rigid_config.enable_screw_constraints
-            ),
         ),
         # Allocated last to preserve the allocation order of the tensors above (see the warning at the top).
         island=get_island_state(solver, collider, len_constraints_),
@@ -2878,27 +2860,20 @@ class EqualitiesInfo:
 
     eq_obj1id: qd.Tensor
     eq_obj2id: qd.Tensor
+    # The data of a screw constraint, the largest one, sizes the entries of all equalities (see func_screw_frame in
+    # constraint/solver.py)
     eq_data: qd.Tensor
     eq_type: qd.Tensor
     sol_params: qd.Tensor
 
 
-# Entries of the data of an equality past the first 10, which hold the anchor in both links and their relative
-# orientation: 1 for most equalities, and 8 for a screw constraint, which adds its axis, pitch, travel limits and
-# friction.
-EQ_DATA_N_TAIL = 1
-EQ_DATA_N_TAIL_SCREW = 8
-
-
 def get_equalities_info(solver, is_active=True):
     shape = (solver.n_candidate_equalities_, solver._B) if is_active else ()
 
-    # Only the rigid solver, which is the active one, carries the screw config.
-    n_tail = EQ_DATA_N_TAIL_SCREW if is_active and solver.rigid_config.enable_screw_constraints else EQ_DATA_N_TAIL
     return EqualitiesInfo(
         eq_obj1id=V(dtype=gs.qd_int, shape=shape),
         eq_obj2id=V(dtype=gs.qd_int, shape=shape),
-        eq_data=V(dtype=qd.types.vector(10 + n_tail, gs.qd_float), shape=shape),
+        eq_data=V(dtype=gs.qd_vec18, shape=shape),
         eq_type=V(dtype=gs.qd_int, shape=shape),
         sol_params=V(dtype=gs.qd_vec7, shape=shape),
     )
@@ -3078,7 +3053,8 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # extra opposing pyramid pairs per contact with the pyramidal cone, two extra cone rows with the elliptic cone.
     # Requires enable_torsional_friction (the rolling rows sit after the spin row in the contact row layout).
     enable_rolling_friction: bool = False
-    # Whether the constraint assembly carries the rows of the screw constraints added at runtime.
+    # Whether the constraint assembly carries the rows of the screw constraints added at runtime (see their
+    # resolution in the rigid solver).
     enable_screw_constraints: bool = False
     # Consecutive sub-tolerance steps a body's max DOF velocity must hold before it is ready to hibernate. Guards
     # against a body that is only momentarily slow (e.g. at the apex of a toss) sleeping prematurely.
