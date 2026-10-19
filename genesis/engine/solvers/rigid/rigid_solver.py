@@ -3394,6 +3394,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
     def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx=None):
         self.constraint_solver.delete_dynamic_constraint(gs.EQUALITY_TYPE.WELD, link1_idx, link2_idx, envs_idx)
 
+    @mutates(StateChange.MODEL)
     def add_screw_constraint(
         self,
         link1_idx: int,
@@ -3475,6 +3476,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             envs_idx=envs_idx,
         )
 
+    @mutates(StateChange.MODEL)
     def delete_screw_constraint(self, link1_idx: int, link2_idx: int, envs_idx=None):
         self.constraint_solver.delete_dynamic_constraint(gs.EQUALITY_TYPE.SCREW, link1_idx, link2_idx, envs_idx)
 
