@@ -99,7 +99,7 @@ IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
 
 
 class ConstraintSolver:
-    def __init__(self, rigid_solver: "RigidSolverSystem", collider_data):
+    def __init__(self, rigid_solver: "RigidSolverSystem", collider_data, island_data):
         self._solver = rigid_solver
         self._collider = collider_data
         self._B = rigid_solver._B
@@ -122,8 +122,10 @@ class ConstraintSolver:
         # When 'max_contacts' is set, it overrides the post-pruning contact budget enforced by the collider.
         # Resolve the max_contacts option in place: from the collider's post-pruning budget when unset, else clamped
         # to the candidate budget and written back so the collider honors the user's cap. Downstream reads the option.
-        collider_info = self._collider.collider_info
-        if rigid_solver._options.max_contacts is None:
+        collider_info = None if self._collider is None else self._collider.collider_info
+        if collider_info is None:
+            rigid_solver._options.max_contacts = 0
+        elif rigid_solver._options.max_contacts is None:
             rigid_solver._options.max_contacts = collider_info.max_contacts[None]
         else:
             rigid_solver._options.max_contacts = min(
@@ -143,9 +145,12 @@ class ConstraintSolver:
         # frictionloss.
         self.n_cone_constraints_ = max(1, rows_per_contact * rigid_solver._options.max_contacts)
 
-        self.constraint_state = array_class.get_constraint_state(self, self._solver, self._collider)
-        self.constraint_state.qd_n_equalities.from_numpy(
-            np.full((self._solver._B,), self._solver.n_equalities, dtype=gs.np_int)
+        self.constraint_state = array_class.get_constraint_state(
+            self,
+            self._solver,
+            self._collider,
+            island_data.island,
+            island_data.qd_n_equalities,
         )
 
         self._eq_const_info_cache = {}
@@ -188,34 +193,12 @@ class ConstraintSolver:
 
         self.reset()
 
-        # A static link belongs to no tree, so the partition build labels it with no island (see func_build_islands):
-        # its slot of links_island_idx holds -1 for the life of the scene. The hibernated-island daisy chain must start
-        # empty (-1 = no successor); it persists across steps, written when an island hibernates and cleared on wakeup.
-        self.constraint_state.island.links_island_idx.fill(-1)
-        if self._solver._use_hibernation:
-            self.constraint_state.island.hibernated_next_link.fill(-1)
-            # A single-island scene keeps one island holding the links of its one tree, which the sleep and wake paths
-            # read: the list is written once here, and the partition build leaves it (see func_build_single_island).
-            if self._solver.rigid_config.is_single_island:
-                links_idx = np.flatnonzero(qd_to_numpy(self._solver.rigid_info.links_tree_idx) == 0)
-                link_id = qd_to_numpy(self.constraint_state.island.link_id)
-                link_id[: len(links_idx)] = links_idx[:, None]
-                self.constraint_state.island.link_id.from_numpy(link_id)
-                links_island_idx = qd_to_numpy(self.constraint_state.island.links_island_idx)
-                links_island_idx[links_idx] = 0
-                self.constraint_state.island.links_island_idx.from_numpy(links_island_idx)
-                for link_slice in (
-                    self.constraint_state.island.link_slices.n,
-                    self.constraint_state.island.link_slices.curr,
-                ):
-                    link_slice_np = qd_to_numpy(link_slice)
-                    link_slice_np[0] = len(links_idx)
-                    link_slice.from_numpy(link_slice_np)
-
     @property
     def data(self) -> Iterator[array_class.DataItem]:
         """Yield every array of the constraint solver, tagged by kind (see 'Solver.data')."""
-        yield from array_class.iter_data(self, "constraint_state")
+        for item in array_class.iter_data(self, "constraint_state"):
+            if not item.name.startswith(("constraint_state.island.", "constraint_state.qd_n_equalities")):
+                yield item
 
     def reset(self, envs_idx=None):
         self._eq_const_info_cache.clear()

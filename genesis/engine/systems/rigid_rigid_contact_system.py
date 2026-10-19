@@ -39,16 +39,15 @@ class RigidRigidContactSystem(System):
     """Own the rigid-rigid collision data and detect contacts when collision is enabled.
 
     It covers every pair of rigid geoms, terrains and planes included, and hands the contacts to the constraint solve.
-    The contacts of other solvers with rigid geoms belong to their couplings. The System exists even when collision is
-    disabled because the constraint layout and public Collider facade require its padded data layout.
+    The contacts of other solvers with rigid geoms belong to their couplings.
     """
 
     rigid_solver_system = Require(RigidSolverSystem)
 
     def __init__(self, scene: "Scene") -> None:
         super().__init__(scene)
-        rigid_solver = scene.sim.rigid_solver
-        self.enabled = rigid_solver.is_active and rigid_solver._enable_collision
+        rigid = scene.sim.rigid_solver
+        self.enabled = rigid.is_active and rigid._enable_collision
 
     @System.action(kind="host")
     def initialize(self):
@@ -75,11 +74,9 @@ class RigidRigidContactSystem(System):
         return self.clear_contacts
 
     def build(self):
-        # Imported here to avoid the contact/constraint module cycle. Initializer requires both Systems, so the lookup
-        # only resolves the already-fixed System set.
-        from .constraint_solver_system import ConstraintSolverSystem
+        from .rigid_island_system import RigidIslandSystem
 
-        self.constraint_solver_system = self.require(ConstraintSolverSystem)
+        self.island_system = self.require(RigidIslandSystem)
         if self.enabled:
             self.rigid_solver_system.on_detect(
                 prepare=self.prepare, detect=self.detect, detect_kernels=self.detect_kernels
@@ -107,7 +104,7 @@ class RigidRigidContactSystem(System):
         collider_detection(
             self.collider_data,
             self.rigid_solver_system,
-            self.constraint_solver_system.constraint_solver.constraint_state,
+            self.island_system.data.qd_n_equalities,
         )
 
     def reset_contacts(self, envs_idx) -> None:
@@ -121,12 +118,12 @@ class RigidRigidContactSystem(System):
 
 @register_system(SimulatorEngine)
 def create_rigid_rigid_contact_system(scene: "Scene") -> RigidRigidContactSystem:
-    """Create the owner of the scene's rigid collision data."""
+    """Create the rigid contact data owner used by the public Collider API."""
     return RigidRigidContactSystem(scene)
 
 
 @qd.func(requires_top_level=True)
-def func_substep_detection(contact_system: qd.template(), contact_data: qd.template(), constraint_data: qd.template()):
+def func_substep_detection(contact_system: qd.template(), contact_data: qd.template(), island_data: qd.template()):
     """Detect the contacts between rigid geoms of a substep, configured by the static configuration the System
     records (see func_detection)."""
     rigid_data = contact_system.rigid_solver_system.data
@@ -141,7 +138,7 @@ def func_substep_detection(contact_system: qd.template(), contact_data: qd.templ
         contact0_gjk_state=contact_data.contact0_gjk_state,
         multicontact_mpr_state=contact_data.multicontact_mpr_state,
         multicontact_gjk_state=contact_data.multicontact_gjk_state,
-        constraint_state=constraint_data.constraint_state,
+        qd_n_equalities=island_data.qd_n_equalities,
         dyn_info=rigid_data.dyn_info,
         rigid_info=rigid_data.rigid_info,
         collider_info=contact_data.collider_info,

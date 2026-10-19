@@ -134,8 +134,8 @@ class RigidSolverSystem(System):
         host     every solve
         graph 3  every constraint force update, then the integration
     The work before the solve is cut ahead of the detection, since the compile time of a kernel grows faster than its
-    size while one more graph replay costs next to nothing. The rigid-rigid contact and constraint owner Systems
-    always exist for their data layout and register on_detect/on_constrain Actions only when their feature is enabled.
+    size while one more graph replay costs next to nothing. RigidRigidContactSystem provides the Collider API data;
+    ConstraintSolverSystem exists and registers on_constrain Actions only when constraint solving is enabled.
     """
 
     # The collision detection embeds the signed distance fields of the geoms in its collider info
@@ -148,12 +148,13 @@ class RigidSolverSystem(System):
         self.is_active = self.solver.is_active
 
     def build(self) -> None:
-        # Imported here to avoid module cycles. Both owner Systems are admitted by Initializer before build.
         from .constraint_solver_system import ConstraintSolverSystem
+        from .rigid_island_system import RigidIslandSystem
         from .rigid_rigid_contact_system import RigidRigidContactSystem
 
+        self.island_system = self.require(RigidIslandSystem)
         self.contact_system = self.require(RigidRigidContactSystem)
-        self.constraint_system = self.require(ConstraintSolverSystem)
+        self.constraint_system = self.find(ConstraintSolverSystem)
 
     @property
     def sdf(self):
@@ -163,7 +164,7 @@ class RigidSolverSystem(System):
     @property
     def constraint_solver(self):
         """Constraint solver owned by ConstraintSolverSystem."""
-        return self.constraint_system.constraint_solver
+        return None if self.constraint_system is None else self.constraint_system.constraint_solver
 
     def sanitize_joint_sol_params(self, sol_params):
         """Floor the time constant of the solver parameters of the joints at the one the substep resolves."""
@@ -185,20 +186,14 @@ class RigidSolverSystem(System):
             )
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
 
-        # The computation needs one vector of size n_dofs and one mass-matrix solve against it. Build time borrows
-        # both from the constraint solver, so that a scene never writing an inertial property allocates no scratch of
-        # its own.
-        if in_place:
-            constraint_state = self.constraint_solver.constraint_state
-            jac_row, solve_out = constraint_state.grad, constraint_state.Mgrad
-        else:
-            jac_row, solve_out = self.data_manager.weight_scratch.jac_row, self.data_manager.weight_scratch.solve_out
+        jac_row = self.data_manager.weight_scratch.jac_row
+        solve_out = self.data_manager.weight_scratch.solve_out
         kernel_refresh_invweight_and_meaninertia(
             envs_idx,
             jac_row,
             solve_out,
             self.dyn_state,
-            self.constraint_solver.constraint_state,
+            self.island_system.data,
             self.dyn_info,
             self.rigid_info,
             self.rigid_config,
@@ -246,9 +241,9 @@ class RigidSolverSystem(System):
         self.solver._bind_system_data(self)
 
     def finalize_data(self) -> None:
-        """Finish initialization after contact and constraint owners have allocated their data."""
+        """Finish initialization after island, contact and optional constraint owners have allocated their data."""
         rigid_finalize_dynamics(self)
-        self.solver._bind_system_services(self, self.contact_system, self.constraint_system)
+        self.solver._bind_system_services(self, self.island_system, self.contact_system, self.constraint_system)
 
     @System.action_collection(kind="host")
     def preparations(self):
@@ -258,7 +253,7 @@ class RigidSolverSystem(System):
     def equality_assemblies(self):
         """Stage Actions that follow the forward dynamics in the first graph."""
 
-    @System.action_collection(kind="stage", call_args=("contact_data", "constraint_data"))
+    @System.action_collection(kind="stage", call_args=("contact_data", "island_data"))
     def detections(self):
         """Stage Actions that open the second graph."""
 
@@ -371,17 +366,19 @@ class RigidSolverSystem(System):
         self.wakeup_coupled_links()
         for action in self.preparations.actions:
             action.invoke()
+        constraint_data = None if self.constraint_system is None else self.constraint_system.data
         kernel_substep_dynamics(
             self,
+            self.island_system.data,
             self.contact_system.data,
-            self.constraint_system.data,
+            constraint_data,
             self._is_forward_pos_updated,
             self._is_forward_vel_updated,
         )
-        kernel_substep_collision(self, self.contact_system.data, self.constraint_system.data)
+        kernel_substep_collision(self, self.island_system.data, self.contact_system.data, constraint_data)
         for action in self.solves.actions:
             action.invoke()
-        kernel_substep_post(self, self.contact_system.data, self.constraint_system.data)
+        kernel_substep_post(self, self.contact_system.data, constraint_data)
         self.mark_forward_updated()
 
     # FIXME: quadrants#946 - a graph refuses the ndarrays that own a gradient, so a scene tracking gradients launches
@@ -398,7 +395,7 @@ class RigidSolverSystem(System):
         self.wakeup_coupled_links()
         kernel_step_1(
             self.dyn_state,
-            self.constraint_solver.constraint_state,
+            self.island_system.data,
             self.dyn_info,
             self.rigid_info,
             self.rigid_config,
@@ -412,7 +409,6 @@ class RigidSolverSystem(System):
         self.constraint_force()
         kernel_step_2(
             self.dyn_state,
-            self.constraint_solver.constraint_state,
             self.dyn_info,
             self.rigid_info,
             self.rigid_config,
@@ -443,7 +439,6 @@ class RigidSolverSystem(System):
             update_qacc_from_qvel_delta(self.dyn_state, self.rigid_info, self.rigid_config)
             kernel_step_2(
                 self.dyn_state,
-                self.constraint_solver.constraint_state,
                 self.dyn_info,
                 self.rigid_info,
                 self.rigid_config,
@@ -459,7 +454,7 @@ class RigidSolverSystem(System):
         if self._use_hibernation and len(self.sim.active_solvers) > 1:
             kernel_wakeup_coupled_links(
                 self.dyn_state,
-                self.constraint_solver.constraint_state,
+                self.island_system.data,
                 self.dyn_info,
                 self.rigid_info,
                 self.rigid_config,
@@ -481,7 +476,7 @@ def create_rigid_solver_system(scene: "Scene") -> RigidSolverSystem:
 @qd.func(requires_top_level=True)
 def func_substep_forward_dynamics(
     rigid_data: qd.template(),
-    constraint_data: qd.template(),
+    island_data: qd.template(),
     rigid_config: qd.template(),
     is_forward_pos_updated: qd.template(),
     is_forward_vel_updated: qd.template(),
@@ -490,7 +485,7 @@ def func_substep_forward_dynamics(
     already up to date."""
     func_step_1(
         rigid_data.dyn_state,
-        constraint_data.constraint_state,
+        island_data,
         rigid_data.dyn_info,
         rigid_data.rigid_info,
         rigid_config,
@@ -501,11 +496,10 @@ def func_substep_forward_dynamics(
 
 
 @qd.func(requires_top_level=True)
-def func_substep_integrate(rigid_data: qd.template(), constraint_data: qd.template(), rigid_config: qd.template()):
+def func_substep_integrate(rigid_data: qd.template(), rigid_config: qd.template()):
     """Integrate a substep, then update the cartesian space and the velocities the next substep starts from."""
     func_step_2(
         rigid_data.dyn_state,
-        constraint_data.constraint_state,
         rigid_data.dyn_info,
         rigid_data.rigid_info,
         rigid_config,
@@ -521,6 +515,7 @@ def func_substep_integrate(rigid_data: qd.template(), constraint_data: qd.templa
 @qd.kernel(graph=True)
 def kernel_substep_dynamics(
     rigid_solver_system: qd.template(),
+    island_data: qd.template(),
     contact_data: qd.template(),
     constraint_data: qd.template(),
     is_forward_pos_updated: qd.template(),
@@ -528,7 +523,7 @@ def kernel_substep_dynamics(
 ):
     func_substep_forward_dynamics(
         rigid_solver_system.data,
-        constraint_data,
+        island_data,
         rigid_solver_system.rigid_config,
         is_forward_pos_updated,
         is_forward_vel_updated,
@@ -540,11 +535,12 @@ def kernel_substep_dynamics(
 @qd.kernel(graph=True)
 def kernel_substep_collision(
     rigid_solver_system: qd.template(),
+    island_data: qd.template(),
     contact_data: qd.template(),
     constraint_data: qd.template(),
 ):
     for action in qd.static(rigid_solver_system.detections.actions):
-        action.invoke((contact_data, constraint_data))
+        action.invoke((contact_data, island_data))
     for action in qd.static(rigid_solver_system.inequality_assemblies.actions):
         action.invoke((contact_data, constraint_data))
 
@@ -559,7 +555,6 @@ def kernel_substep_post(
         action.invoke((contact_data, constraint_data))
     func_substep_integrate(
         rigid_solver_system.data,
-        constraint_data,
         rigid_solver_system.rigid_config,
     )
 

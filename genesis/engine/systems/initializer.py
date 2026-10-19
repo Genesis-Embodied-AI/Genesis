@@ -2,9 +2,10 @@
 
 from typing import TYPE_CHECKING
 
-from genesis.engine.core import Require, System, register_system
+from genesis.engine.core import Find, Require, System, register_system
 
 from .constraint_solver_system import ConstraintSolverSystem
+from .rigid_island_system import RigidIslandSystem
 from .rigid_rigid_contact_system import RigidRigidContactSystem
 from .rigid_sdf_system import RigidSdfSystem
 from .rigid_solver_system import RigidSolverSystem
@@ -19,8 +20,9 @@ class Initializer(System):
 
     rigid_sdf = Require(RigidSdfSystem)
     rigid = Require(RigidSolverSystem)
+    island = Require(RigidIslandSystem)
     rigid_rigid_contact = Require(RigidRigidContactSystem)
-    constraint = Require(ConstraintSolverSystem)
+    constraint = Find(ConstraintSolverSystem)
 
     def initialize(self) -> None:
         """Initialize the data of every System."""
@@ -30,7 +32,9 @@ class Initializer(System):
         self.rigid_sdf.initialize.invoke()
         self.rigid.initialize.invoke()
         self.rigid_rigid_contact.initialize.invoke()
-        self.constraint.initialize.invoke()
+        self.island.initialize.invoke()
+        if self.constraint is not None:
+            self.constraint.initialize.invoke()
         self.rigid.finalize.invoke()
 
 

@@ -33,15 +33,10 @@ class ConstraintSolverSystem(System):
 
     It assembles the equality constraints after the forward dynamics and the inequality constraints after collision
     detection, solves them on the host, then turns the solved forces into accelerations and contact forces. The System
-    exists with a padded data layout even when constraints are disabled because rigid dynamics use its scratch arrays.
+    is absent entirely when constraints are disabled.
     """
 
     rigid_solver_system = Require(RigidSolverSystem)
-
-    def __init__(self, scene: "Scene") -> None:
-        super().__init__(scene)
-        rigid_solver = scene.sim.rigid_solver
-        self.enabled = rigid_solver.is_active and not rigid_solver._disable_constraint
 
     @System.action(kind="host")
     def initialize(self):
@@ -68,25 +63,26 @@ class ConstraintSolverSystem(System):
         return func_substep_resolve_post, self
 
     def build(self):
-        # Imported here to avoid the contact/constraint module cycle.
+        from .rigid_island_system import RigidIslandSystem
         from .rigid_rigid_contact_system import RigidRigidContactSystem
 
+        self.island_system = self.require(RigidIslandSystem)
         self.contact_system = self.require(RigidRigidContactSystem)
-        if self.enabled:
-            self.rigid_solver_system.on_constrain(
-                prepare=self.prepare,
-                assemble_equalities=self.assemble_equalities,
-                assemble_inequalities=self.assemble_inequalities,
-                solve=self.solve,
-                update_forces=self.update_forces,
-            )
+        self.rigid_solver_system.on_constrain(
+            prepare=self.prepare,
+            assemble_equalities=self.assemble_equalities,
+            assemble_inequalities=self.assemble_inequalities,
+            solve=self.solve,
+            update_forces=self.update_forces,
+        )
 
     def initialize_data(self) -> None:
         """Allocate constraint data from the rigid model and the contact layout."""
         rigid_solver_system = self.rigid_solver_system
-        self.constraint_solver = ConstraintSolver(rigid_solver_system, self.contact_system.collider_data)
+        collider_data = self.contact_system.collider_data
+        self.constraint_solver = ConstraintSolver(rigid_solver_system, collider_data, self.island_system.data)
         self.data = ConstraintSolverData(self.constraint_solver)
-        self.collider_config = self.contact_system.collider_data.collider_config
+        self.collider_config = None if collider_data is None else collider_data.collider_config
         self.n_iterations = self.constraint_solver._n_iterations
         self.noslip = rigid_solver_system._options.noslip_iterations > 0
 
@@ -109,9 +105,10 @@ class ConstraintSolverSystem(System):
 
 
 @register_system(SimulatorEngine)
-def create_constraint_solver_system(scene: "Scene") -> ConstraintSolverSystem:
-    """Create the owner of the scene's rigid constraint data."""
-    return ConstraintSolverSystem(scene)
+def create_constraint_solver_system(scene: "Scene") -> ConstraintSolverSystem | None:
+    """Create the rigid constraint solver unless constraints are disabled."""
+    rigid = scene.sim.rigid_solver
+    return ConstraintSolverSystem(scene) if rigid.is_active and not rigid._disable_constraint else None
 
 
 @qd.func(requires_top_level=True)

@@ -866,7 +866,7 @@ def collider_clear(collider: "ColliderData", rigid: "RigidSolverSystem", envs_id
 def collider_detection(
     collider: "ColliderData",
     rigid: "RigidSolverSystem",
-    constraint_state: array_class.ConstraintState,
+    qd_n_equalities: qd.Tensor,
 ) -> None:
     # FIXME: quadrants#946 - a graph refuses the ndarrays that own a gradient, so a scene tracking gradients
     # launches the detection without a graph.
@@ -882,7 +882,7 @@ def collider_detection(
         collider.gjk.contact0_gjk_state,
         collider.mpr.multicontact_mpr_state,
         collider.gjk.multicontact_gjk_state,
-        constraint_state,
+        qd_n_equalities,
         rigid.dyn_info,
         rigid.rigid_info,
         collider.collider_info,
@@ -1153,11 +1153,11 @@ class Collider:
         self,
         rigid: "RigidSolverSystem",
         collider_data: ColliderData,
-        constraint_solver,
+        qd_n_equalities,
     ) -> None:
         self._rigid = rigid
         self._data = collider_data
-        self._constraint_solver = constraint_solver
+        self._qd_n_equalities = qd_n_equalities
 
     @property
     def data(self) -> Iterator[array_class.DataItem | array_class.ConfigItem]:
@@ -1171,7 +1171,7 @@ class Collider:
         collider_clear(self._data, self._rigid, envs_idx)
 
     def detection(self) -> None:
-        collider_detection(self._data, self._rigid, self._constraint_solver.constraint_state)
+        collider_detection(self._data, self._rigid, self._qd_n_equalities)
 
     def get_contacts(
         self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False, is_padded: bool = False
@@ -1201,7 +1201,7 @@ def func_detection(
     contact0_gjk_state: array_class.GJKState,
     multicontact_mpr_state: array_class.MPRState,
     multicontact_gjk_state: array_class.GJKState,
-    constraint_state: array_class.ConstraintState,
+    qd_n_equalities: qd.Tensor,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
@@ -1224,7 +1224,7 @@ def func_detection(
         func_broad_phase(
             dyn_state,
             collider_state,
-            constraint_state,
+            qd_n_equalities,
             dyn_info,
             rigid_info,
             collider_info,
@@ -1337,7 +1337,7 @@ def kernel_detection(
     contact0_gjk_state: array_class.GJKState,
     multicontact_mpr_state: array_class.MPRState,
     multicontact_gjk_state: array_class.GJKState,
-    constraint_state: array_class.ConstraintState,
+    qd_n_equalities: qd.Tensor,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
@@ -1361,7 +1361,7 @@ def kernel_detection(
         contact0_gjk_state=contact0_gjk_state,
         multicontact_mpr_state=multicontact_mpr_state,
         multicontact_gjk_state=multicontact_gjk_state,
-        constraint_state=constraint_state,
+        qd_n_equalities=qd_n_equalities,
         dyn_info=dyn_info,
         rigid_info=rigid_info,
         collider_info=collider_info,
@@ -1387,7 +1387,7 @@ def kernel_detection_without_graph(
     contact0_gjk_state: array_class.GJKState,
     multicontact_mpr_state: array_class.MPRState,
     multicontact_gjk_state: array_class.GJKState,
-    constraint_state: array_class.ConstraintState,
+    qd_n_equalities: qd.Tensor,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
@@ -1411,7 +1411,7 @@ def kernel_detection_without_graph(
         contact0_gjk_state=contact0_gjk_state,
         multicontact_mpr_state=multicontact_mpr_state,
         multicontact_gjk_state=multicontact_gjk_state,
-        constraint_state=constraint_state,
+        qd_n_equalities=qd_n_equalities,
         dyn_info=dyn_info,
         rigid_info=rigid_info,
         collider_info=collider_info,
