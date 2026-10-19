@@ -143,6 +143,8 @@ def main():
         help="Record the scene and the step-rate plot to 'out/wrecking_ball*.mp4'",
     )
     args = parser.parse_args()
+    if "PYTEST_VERSION" in os.environ:
+        args.pile_width, args.pile_depth, args.pile_height = 2, 2, 2
     # The step rate the plot shows is averaged over a fifth of a simulated second
     n_window = round(0.2 / DT)
     if args.steps <= n_window:

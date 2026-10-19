@@ -335,8 +335,6 @@ def test_aabb(undefined_inertia, show_viewer, tol):
     assert_allclose(het_obj.get_AABB(allow_fast_approx=True), het_obj.get_AABB(), tol=1e-3)
 
 
-# 30s
-@pytest.mark.slow  # ~250s
 @pytest.mark.parametrize("backend", [gs.gpu])  # Grasping physics requires GPU
 def test_pick_heterogenous_objects(show_viewer):
     scene = gs.Scene(show_viewer=show_viewer)
@@ -466,7 +464,6 @@ def test_invalid_variant_specification_raises():
         )
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_morph_property_raises():
     scene = gs.Scene(show_viewer=False)

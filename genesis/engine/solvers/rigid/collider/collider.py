@@ -85,7 +85,7 @@ def create_collider_data(rigid: "RigidSolver | RigidSolverSystem", sdf: SDF) -> 
     being embedded in its collider info."""
     collider = ColliderData()
 
-    collider._mc_perturbation = 1e-3 if rigid._enable_mujoco_compatibility else 3e-3
+    collider._mc_perturbation = 1e-3 if rigid._enable_mujoco_compatibility else 5e-3
     collider._mc_tolerance = 1e-3 if rigid._enable_mujoco_compatibility else 1.5e-2
     collider._box_MAXCONPAIR = 16
     collider._diff_pos_tolerance = 1e-2
@@ -277,7 +277,7 @@ def _init_collision_fields(collider: "ColliderData", rigid: "RigidSolverSystem")
         collider.collider_config,
         collider.mpr._mpr_info,
         collider.gjk._gjk_info,
-        collider._support_field._support_field_info,
+        collider._support_field.support_field_info,
         collider._sdf._sdf_info,
         mc_perturbation=collider._mc_perturbation,
         mc_tolerance=collider._mc_tolerance,
@@ -872,8 +872,11 @@ def collider_clear(collider: "ColliderData", rigid: "RigidSolverSystem", envs_id
     )
 
 
-def collider_detection(collider: "ColliderData", rigid: "RigidSolverSystem") -> None:
-    kernel_detection(
+def collider_detection(collider: "ColliderData", rigid: "RigidSolver | RigidSolverSystem") -> None:
+    # FIXME: quadrants#946 - a graph refuses the ndarrays that own a gradient, so a scene tracking gradients
+    # launches the detection without a graph.
+    kernel = kernel_detection_without_graph if rigid._requires_grad else kernel_detection
+    kernel(
         rigid.geoms_init_AABB,
         rigid.dyn_state,
         collider.collider_state,
@@ -1322,7 +1325,7 @@ def func_detection(
             func_fill_diff_contact_input_analytic(dyn_state, collider_state, dyn_info, rigid_config)
 
 
-@qd.kernel(fastcache=True)
+@qd.kernel(graph=True, fastcache=True)
 def kernel_detection(
     geoms_init_AABB: array_class.GeomsInitAABB,
     dyn_state: array_class.DynState,
@@ -1346,7 +1349,57 @@ def kernel_detection(
     coop_dedup: qd.template(),
     errno: qd.Tensor,
 ):
-    """Run func_detection on its own, outside the substep graph that captures it (see func_substep_detection)."""
+    """Detect the collisions of every environment, captured as one graph."""
+    func_detection(
+        geoms_init_AABB=geoms_init_AABB,
+        dyn_state=dyn_state,
+        collider_state=collider_state,
+        mpr_state=mpr_state,
+        gjk_state=gjk_state,
+        diff_contact_input=diff_contact_input,
+        contact0_mpr_state=contact0_mpr_state,
+        contact0_gjk_state=contact0_gjk_state,
+        multicontact_mpr_state=multicontact_mpr_state,
+        multicontact_gjk_state=multicontact_gjk_state,
+        constraint_state=constraint_state,
+        dyn_info=dyn_info,
+        rigid_info=rigid_info,
+        collider_info=collider_info,
+        rigid_config=rigid_config,
+        collider_static_config=collider_static_config,
+        gjk_static_config=gjk_static_config,
+        has_possible_pairs=has_possible_pairs,
+        split_narrowphase=split_narrowphase,
+        coop_dedup=coop_dedup,
+        errno=errno,
+    )
+
+
+@qd.kernel(fastcache=True)
+def kernel_detection_without_graph(
+    geoms_init_AABB: array_class.GeomsInitAABB,
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    mpr_state: array_class.MPRState,
+    gjk_state: array_class.GJKState,
+    diff_contact_input: array_class.DiffContactInput,
+    contact0_mpr_state: array_class.MPRState,
+    contact0_gjk_state: array_class.GJKState,
+    multicontact_mpr_state: array_class.MPRState,
+    multicontact_gjk_state: array_class.GJKState,
+    constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
+    rigid_config: qd.template(),
+    collider_static_config: qd.template(),
+    gjk_static_config: qd.template(),
+    has_possible_pairs: qd.template(),
+    split_narrowphase: qd.template(),
+    coop_dedup: qd.template(),
+    errno: qd.Tensor,
+):
+    """Detect the collisions of every environment without a graph (see collider_detection)."""
     func_detection(
         geoms_init_AABB=geoms_init_AABB,
         dyn_state=dyn_state,

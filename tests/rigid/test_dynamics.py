@@ -114,7 +114,7 @@ def test_all_fixed(show_viewer):
     assert_allclose(scene.rigid_solver.get_links_acc(), 0, tol=gs.EPS)
 
 
-@pytest.mark.required
+@pytest.mark.required("sparse")
 @pytest.mark.parametrize("model_name", ["box_box"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
@@ -151,12 +151,15 @@ def test_box_box_dynamics(gs_sim):
 )
 @pytest.mark.parametrize("backend", [gs.cpu])  # TODO: Cannot afford GPU test for this one
 def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_viewer):
+    N_SIDE = 5
+
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
         ),
         rigid_options=gs.options.RigidOptions(
-            max_collision_pairs=1000,
+            # Count unordered face, edge and corner neighbors, then add the bottom layer contacting the floor.
+            max_collision_pairs=((3 * N_SIDE - 2) ** 3 - N_SIDE**3) // 2 + N_SIDE**2,
             box_box_detection=box_box_detection,
             use_gjk_collision=gjk_collision,
         ),
@@ -169,8 +172,8 @@ def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_vi
     scene.add_entity(
         gs.morphs.Plane(),
     )
-    for n in range(5**3):
-        i, j, k = int(n / 25), int(n / 5) % 5, n % 5
+    for n in range(N_SIDE**3):
+        i, j, k = n // N_SIDE**2, (n // N_SIDE) % N_SIDE, n % N_SIDE
         scene.add_entity(
             gs.morphs.Box(
                 pos=(i * (1.0 - 1e-3), j * (1.0 - 1e-3), k * (1.0 - 1e-3) + 0.5),
@@ -194,7 +197,7 @@ def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_vi
             assert_allclose(torch.linalg.norm(qvel, dim=0).mean(), 0, atol=0.05)
 
     for n, entity in enumerate(scene.entities[1:]):
-        i, j, k = int(n / 25), int(n / 5) % 5, n % 5
+        i, j, k = n // N_SIDE**2, (n // N_SIDE) % N_SIDE, n % N_SIDE
         qpos = entity.get_dofs_position()
         if dynamics:
             assert qpos[:2].norm() < 20.0
@@ -205,7 +208,6 @@ def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_vi
             assert_allclose(qpos[3:], 0, atol=0.03)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["double_ball_pendulum"])
 def test_apply_external_wrench(xml_path, show_viewer, tol):

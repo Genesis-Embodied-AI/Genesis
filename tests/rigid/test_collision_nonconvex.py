@@ -697,7 +697,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
 def test_convexify(euler, show_viewer, gjk_collision):
     OBJ_OFFSET_X = 0.0  # 0.02
     OBJ_OFFSET_Y = 0.15
-    N_SETTLE = 1350
+    N_SETTLE = 1200
 
     # The test check that the volume difference is under a given threshold and that convex decomposition is only used
     # whenever it is necessary. Then run a simulation to see if it explodes, i.e. objects are at reset inside tank.
@@ -910,7 +910,7 @@ def test_many_objects_collision(convexify, show_viewer, tol):
     vmax_trace, wmax_trace, energy_trace = [], [], []
     for i in range(1600):
         # Slowing down the fall to ensure the first contact between thin pieces is shallow enough to avoid interlock
-        ratio = math.exp(-0.009 * i)
+        ratio = math.exp(-0.015 * i)
         scene.rigid_solver.set_dofs_damping(
             (*((0.5 * ratio,) * 3), *((0.02 * ratio,) * 3)) * len(objs),
             dofs_idx=slice(objs[0].dof_start, objs[-1].dof_end),

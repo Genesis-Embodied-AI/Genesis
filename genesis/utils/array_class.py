@@ -1363,12 +1363,9 @@ class NarrowphaseWorkQueues:
     mpr_contact0_status: qd.Tensor
     mpr_queue_size: qd.Tensor
     mpr_work_counter: qd.Tensor
-    # Rotation axis of each perturbed detection of the entry, aimed at a corner of the contact patch (see
-    # func_contact_overlap_axes)
-    aim_axes: qd.Tensor
 
 
-def get_narrowphase_work_queues(max_entries, n_slots, active, is_aimed):
+def get_narrowphase_work_queues(max_entries, n_slots, active):
     entries_shape = maybe_shape((max_entries,), active)
     slots_shape = maybe_shape((max_entries, n_slots), active)
     return NarrowphaseWorkQueues(
@@ -1383,7 +1380,6 @@ def get_narrowphase_work_queues(max_entries, n_slots, active, is_aimed):
         mpr_contact0_status=V(dtype=gs.qd_int, shape=entries_shape),
         mpr_queue_size=V(dtype=gs.qd_int, shape=maybe_shape((1,), active)),
         mpr_work_counter=V(dtype=gs.qd_int, shape=maybe_shape((1,), active)),
-        aim_axes=V_MAT(4, 3, dtype=gs.qd_float, shape=maybe_shape((max_entries,), active and is_aimed)),
     )
 
 
@@ -1481,13 +1477,11 @@ def get_collider_state(
         contact_data=get_contact_data(solver, max_candidate_contacts, requires_grad),
         diff_contact_input=get_diff_contact_input(_B, max(max_candidate_contacts, 1), True, requires_grad),
         # A pair holds its first contact and its four perturbed ones (see N_PERTURBATIONS in narrowphase.py), or its
-        # first contact alone under the contact patch (see NarrowphaseWorkQueues). Its perturbed detections are aimed
-        # outside of MuJoCo compatibility only.
+        # first contact alone under the contact patch (see NarrowphaseWorkQueues).
         narrowphase_work_queues=get_narrowphase_work_queues(
             max(max_collision_pairs_broad, 1) * _B,
             1 if solver._options.enable_contact_patch else 5,
             split_narrowphase,
-            solver._enable_multi_contact and not solver._enable_mujoco_compatibility,
         ),
         contact_sort_key=V(dtype=gs.qd_float, shape=(max(max_candidate_contacts, 1), _B)),
         contact_sort_idx=V(dtype=gs.qd_int, shape=(max(max_candidate_contacts, 1), _B)),
@@ -2043,12 +2037,13 @@ class GJKStaticConfig(metaclass=AutoInitMeta):
 class SupportFieldInfo:
     kind: ClassVar[DataKind] = DataKind.CONSTANT
 
-    # First cell of the table of each geom
+    # First cell of the table of each geom, the geoms of one trimesh sharing one table
     support_cell_start: qd.Tensor
     # First extra candidate of each cell, past those of its record, its extras ending where those of the next start
     support_list_start: qd.Tensor
-    # Mesh-frame position and index of each candidate vertex: the record of every cell at twice the index of the cell,
-    # holding the first two candidates of the cell (a single candidate twice), then the extra candidates of all cells
+    # Mesh-frame position and index of each candidate vertex, among the vertices of its geom: the record of every cell
+    # at twice the index of the cell, holding the first two candidates of the cell (a single candidate twice), then the
+    # extra candidates of all cells
     support_v: qd.Tensor
     support_vid: qd.Tensor
     support_res: qd.Tensor

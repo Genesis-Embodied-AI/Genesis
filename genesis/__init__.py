@@ -3,9 +3,11 @@ import io
 import logging as _logging
 import os
 import sys
+import tempfile
 import traceback
 import weakref
 from contextlib import redirect_stdout
+from functools import partial
 from typing import Callable
 from warnings import warn
 
@@ -233,6 +235,16 @@ def init(
             cpu_max_num_threads=1,
         )
 
+    # The kernels compiled for a couple of scenes outgrow the default size bound of the offline cache of Quadrants, past
+    # which a quarter of the cached kernels are evicted every time Quadrants shuts down, to be compiled again by the
+    # next session.
+    # FIXME: quadrants#980 - The bound is a 32-bit integer, which caps it at 2 GiB, so a working set larger than that
+    # still gets evicted.
+    if "QD_OFFLINE_CACHE_MAX_SIZE_OF_FILES" not in os.environ:
+        qd_init_kwargs.update(
+            offline_cache_max_size_of_files=2**31 - 1,
+        )
+
     if seed is not None:
         global SEED
         SEED = seed
@@ -241,50 +253,62 @@ def init(
             random_seed=seed,
         )
 
+    # Level of Genesis each level of the messages of Quadrants is logged at, one step below to unify logging management.
+    # Its native logger starts every message with the first letter of the level name, as in '[W 10/19/26 10:07:01 ...'.
+    qd_log_levels = {
+        "trace": _logging.DEBUG,
+        "debug": _logging.DEBUG,
+        "info": _logging.DEBUG,
+        "warn": _logging.INFO,
+        "error": _logging.WARNING,
+        "critical": _logging.ERROR,
+    }
+    qd_native_log_levels = {qd_name[0].upper(): level for qd_name, level in qd_log_levels.items()}
+
     # init quadrants
     qd_debug = debug and (os.environ.get("QD_DEBUG") != "0")
-    with redirect_stdout(_qd_outputs):
-        qd.init(
-            arch=getattr(qd, backend.name),
-            enable_fallback=False,
-            # Add a (hidden) mechanism to forcible disable Quadrants debug mode as it is still a bit experimental
-            debug=qd_debug and backend == _gs_backend.cpu,
-            check_out_of_bound=debug and backend != _gs_backend.metal,
-            # force_scalarize_matrix=True for speeding up kernel compilation
-            # FIXME: Turning off 'force_scalarize_matrix' is causing numerical instabilities ('nan') on MacOS
-            force_scalarize_matrix=True,
-            # FIXME: Turning off 'advanced_optimization' is causing issues on MacOS
-            advanced_optimization=True,
-            # This improves runtime speed by around 1%-5%, while it makes compilation up to 6x slower
-            cfg_optimization=False,
-            fast_math=not debug,
-            default_ip=qd_int,
-            default_fp=qd_float,
-            # This feature is necessary to support auto-diff with non-static for-loop:
-            # * Up to 500MiB static upper-bound mem alloc per kernel before switching to tight runtime-based bound
-            ad_stack_sparse_threshold_bytes=200_000_000,
-            ad_stack_experimental_enabled=True,
-            **qd_init_kwargs,
-        )
+    # The native logger of Quadrants writes to the stderr file descriptor directly, before its Python logger is
+    # redirected to ours below, so what it prints while initializing is collected there as well
+    with tempfile.TemporaryFile(mode="w+") as qd_errors:
+        with redirect_stdout(_qd_outputs), redirect_libc_stderr(qd_errors):
+            qd.init(
+                arch=getattr(qd, backend.name),
+                enable_fallback=False,
+                # Add a (hidden) mechanism to forcible disable Quadrants debug mode as it is still a bit experimental
+                debug=qd_debug and backend == _gs_backend.cpu,
+                check_out_of_bound=debug and backend != _gs_backend.metal,
+                # force_scalarize_matrix=True for speeding up kernel compilation
+                # FIXME: Turning off 'force_scalarize_matrix' is causing numerical instabilities ('nan') on MacOS
+                force_scalarize_matrix=True,
+                # FIXME: Turning off 'advanced_optimization' is causing issues on MacOS
+                advanced_optimization=True,
+                # This improves runtime speed by around 1%-5%, while it makes compilation up to 6x slower
+                cfg_optimization=False,
+                fast_math=not debug,
+                default_ip=qd_int,
+                default_fp=qd_float,
+                # This feature is necessary to support auto-diff with non-static for-loop:
+                # * Up to 500MiB static upper-bound mem alloc per kernel before switching to tight runtime-based bound
+                ad_stack_sparse_threshold_bytes=200_000_000,
+                ad_stack_experimental_enabled=True,
+                **qd_init_kwargs,
+            )
+        for qd_output in _qd_outputs.getvalue().splitlines():
+            logger.debug(qd_output)
+        # A line without the letter of a level is part of an error (see 'qd_native_log_levels')
+        qd_errors.seek(0)
+        for qd_error in qd_errors.read().splitlines():
+            level_letter = qd_error[1:2] if qd_error.startswith("[") else None
+            logger.log(qd_native_log_levels.get(level_letter, _logging.WARNING), qd_error)
+    _qd_outputs.truncate(0)
+    _qd_outputs.seek(0)
 
     # Disable debug checks for quadrants
     qd.lang._template_mapper.__builtins__["__debug__"] = qd_debug
 
-    for qd_output in _qd_outputs.getvalue().splitlines():
-        logger.debug(qd_output)
-    _qd_outputs.truncate(0)
-    _qd_outputs.seek(0)
-
-    # Redirect Quadrants logging messages to unify logging management
-    for qd_name, gs_name in (
-        ("debug", "debug"),
-        ("trace", "debug"),
-        ("info", "debug"),
-        ("warn", "info"),
-        ("error", "warning"),
-        ("critical", "error"),
-    ):
-        setattr(qd._logging, qd_name, getattr(logger, gs_name))
+    # Redirect Quadrants logging messages to unify logging management (see 'qd_log_levels')
+    for qd_name, level in qd_log_levels.items():
+        setattr(qd._logging, qd_name, partial(logger.log, level))
 
     # Dealing with default backend
     if use_ndarray:

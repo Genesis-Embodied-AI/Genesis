@@ -143,6 +143,7 @@ def test_urdf_scale(mesh_urdf, show_viewer):
 # ==================== Y-Up Coordinate Tests ====================
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_mesh_yup(show_viewer):
     scene = gs.Scene(show_viewer=show_viewer)
@@ -546,7 +547,6 @@ def test_glb_uv_set_and_unlit_albedo_resolution(material_variants_glb):
     # A single UV set is baked per mesh, following whichever texture actually samples it, and unlit imagery must not be
     # hidden by the white base that a missing color installs. parse_glb_material returns the chosen texCoord and surface.
     glb = pygltflib.GLTF2().load(material_variants_glb)
-    glb.convert_images(pygltflib.ImageFormat.DATAURI)
 
     # A base-color atlas owns the UV set; an emissive on a different texCoord does not replace it.
     _, base_atlas_uvs, _ = gltf_utils.parse_glb_material(glb, 0, gs.surfaces.Default())

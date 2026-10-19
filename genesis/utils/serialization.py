@@ -59,22 +59,10 @@ class Exported(NamedTuple):
 
 
 class Loading(NamedTuple):
-    """Gives a class loading itself back the arrays a file holds and the load of any value it holds.
-
-    'shared' holds what has already been built from a given part of a file, so a class handed the same bytes twice
-    can share with the first instance what deriving it again would cost.
-    """
+    """Gives a class loading itself back the arrays a file holds and the load of any value it holds."""
 
     array: Callable[[int], np.ndarray]
     value: Callable[..., object]
-    shared: dict
-
-
-class Loaded(NamedTuple):
-    """The arrays one load reads, and what the classes loading themselves have already built from them."""
-
-    values: list[np.ndarray]
-    shared: dict
 
 
 class SerializationMixin:
@@ -366,9 +354,9 @@ def _exporting_into(exported: "Exported") -> Exporting:
     return Exporting(array=partial(_store_array, exported=exported), value=partial(_export_value, exported=exported))
 
 
-def _loading_from(loaded: "Loaded") -> Loading:
-    """Builds the handle a class receives to load itself back out of this file."""
-    return Loading(array=loaded.values.__getitem__, value=partial(_load_value, loaded=loaded), shared=loaded.shared)
+def _loading_from(loaded: list[np.ndarray]) -> Loading:
+    """Builds the handle a class receives to load itself back out of this file, from the arrays the file holds."""
+    return Loading(array=loaded.__getitem__, value=partial(_load_value, loaded=loaded))
 
 
 def _export_value(value, expect, exported: "Exported"):
@@ -446,7 +434,7 @@ def _export_any(value, exported: "Exported"):
     gs.raise_exception(f"A Genesis file cannot hold {type(value).__name__} where 'Any' was declared.")
 
 
-def _load_any(raw, loaded: "Loaded"):
+def _load_any(raw, loaded: list[np.ndarray]):
     """Load back one value declared as 'Any', as what it was exported as."""
     if not isinstance(raw, dict):
         return raw
@@ -465,7 +453,7 @@ def _load_any(raw, loaded: "Loaded"):
     gs.raise_exception(f"A Genesis file holds a value this version cannot load where 'Any' stands: {sorted(raw)}.")
 
 
-def _load_value(raw, expect, loaded: "Loaded"):
+def _load_value(raw, expect, loaded: list[np.ndarray]):
     """Load back one value as the type it is declared to be, creating only what that declaration allows."""
     if raw is None:
         if typing.get_origin(expect) is typing.Annotated:
@@ -617,7 +605,7 @@ def load(path: str | os.PathLike, expect: dict) -> dict:
         with zipfile.ZipFile(path) as archive:
             manifest = json.loads(archive.read(MANIFEST_NAME))
             member = np.load(io.BytesIO(archive.read(ARRAY_MEMBER)))
-            loaded = Loaded(values=[member[str(index)] for index in range(len(member.files))], shared={})
+            loaded = [member[str(index)] for index in range(len(member.files))]
     except zipfile.BadZipFile as e:
         gs.raise_exception_from(f"'{path}' is not a Genesis file, or was truncated on its way here.", e)
     except KeyError as e:

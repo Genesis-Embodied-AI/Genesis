@@ -1243,7 +1243,6 @@ def test_context_isolation(renderer_type):
     )
 
 
-@pytest.mark.slow  # ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])

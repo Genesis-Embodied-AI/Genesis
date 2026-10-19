@@ -432,7 +432,6 @@ def test_getter_vs_state_post_step_consistency(enable_mujoco_compatibility):
         assert_allclose(dof_pos[:3], pos, atol=gs.EPS)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_extended_broadcasting():
     scene = gs.Scene(show_viewer=False)
@@ -461,8 +460,7 @@ def test_extended_broadcasting():
     assert_allclose(entity.get_dofs_velocity(), np.array([(1.0,) * 6, (2.0,) * 6]), tol=gs.EPS)
 
 
-@pytest.mark.slow  # ~250s
-@pytest.mark.required
+@pytest.mark.required("pairwise")
 @pytest.mark.parametrize("batch_links_info", [False, True])
 @pytest.mark.parametrize("batch_joints_info", [False, True])
 @pytest.mark.parametrize("batch_dofs_info", [False, True])
@@ -471,6 +469,7 @@ def test_batched_info(batch_links_info, batch_joints_info, batch_dofs_info, tol)
 
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
             batch_links_info=batch_links_info,
             batch_joints_info=batch_joints_info,
             batch_dofs_info=batch_dofs_info,
@@ -867,7 +866,6 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
     assert_allclose(links_quat_qpos, links_quat_expected, tol=tol)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_normalized_quat(show_viewer, tol):
     scene = gs.Scene(
@@ -1119,7 +1117,6 @@ def test_inertial_property_setters(
         assert_allclose(qd_to_numpy(buffer)[untouched], SENTINEL, tol=gs.EPS)
 
 
-@pytest.mark.slow  # ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 3])
 def test_axis_aligned_bounding_boxes(n_envs):

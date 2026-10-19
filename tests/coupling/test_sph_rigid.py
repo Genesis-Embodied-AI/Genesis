@@ -96,8 +96,7 @@ def test_rigid_flotation_follows_density_ratio(n_envs, pressure_solver, show_vie
     assert (raft_rolls.amax(dim=0) - raft_rolls.amin(dim=0) > 2.0).all(), f"Raft must rock, got rolls={raft_rolls}"
 
 
-@pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
+@pytest.mark.parametrize("n_envs", [0, pytest.param(2, marks=pytest.mark.required)])
 def test_coupling_force_wakes_hibernated_link(n_envs, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(

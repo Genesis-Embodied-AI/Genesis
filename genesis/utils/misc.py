@@ -9,6 +9,8 @@ import numbers
 import os
 import random
 import sys
+import types
+import weakref
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import field
@@ -275,7 +277,8 @@ def get_gpu_shared_tile_sizes(max_n_sizes: int) -> tuple[int, ...]:
 
     The shared memory of a block only bounds how many blocks a compute unit runs at once. Each candidate is the largest
     multiple of 8 (keeping the padded row stride odd) that runs a given count of resident one-warp blocks, as bounded by
-    the shared memory of a compute unit and of a block, the driver reservation per block and the warp slots.
+    the shared memory of a compute unit and of a block, the driver reservation and allocation granularity per block and
+    the warp slots.
 
     At most max_n_sizes candidates are kept, so that the static values of a kernel stay a small fixed set: those
     minimizing the mean drop in resident blocks that rounding a row count n up to the next kept size causes against its
@@ -287,16 +290,27 @@ def get_gpu_shared_tile_sizes(max_n_sizes: int) -> tuple[int, ...]:
     if gs.backend == gs.cpu:
         gs.raise_exception("CPU backend not supported by this method.")
     itemsize = 4 if gs.qd_float == qd.f32 else 8
+    # FIXME: quadrants#976 - the shared memory of a block is a 64 KiB lower bound on AMDGPU, which caps the tiles of
+    # CDNA4 (gfx950) below what its 160 KiB per block holds.
     block_bytes = qd.lang.impl.get_max_shared_memory_bytes(is_lowerbound_ok=True)
-    unit_bytes, reserved_bytes, max_blocks = block_bytes, 0, block_bytes // (8 * 9 * itemsize)
+    unit_bytes, reserved_bytes, granule_bytes, max_blocks = block_bytes, 0, 1, block_bytes // (8 * 9 * itemsize)
     if torch.cuda.is_available():
-        # CUDA and ROCm alike: a block of these tiles is one warp (wavefront), so the warp slots bound the resident
-        # blocks, and the driver reserves the shared memory of a compute unit beyond what one block may opt in to.
+        # CUDA and ROCm alike: a block of these tiles is one warp (wavefront), whose slots bound the resident blocks.
         device_property = torch.cuda.get_device_properties(torch.cuda.current_device())
         unit_bytes = device_property.shared_memory_per_multiprocessor
-        reserved_bytes = max(unit_bytes - device_property.shared_memory_per_block_optin, 0)
         max_blocks = device_property.max_threads_per_multi_processor // device_property.warp_size
-        if not torch.version.hip:
+        if torch.version.hip:
+            # FIXME: torch exposes no allocation granularity of the local data share (LDS), which AMD sets per
+            # instruction set (see the LLVM AMDGPU usage guide), a block taking its shared memory in whole granules.
+            if device_property.gcnArchName.startswith("gfx950"):
+                granule_bytes = 1280
+            elif device_property.gcnArchName.startswith("gfx125"):
+                granule_bytes = 2048
+            else:
+                granule_bytes = 512
+        else:
+            # The driver reserves the shared memory of a compute unit beyond what one block may opt in to.
+            reserved_bytes = max(unit_bytes - device_property.shared_memory_per_block_optin, 0)
             # FIXME: torch exposes no cap on the resident blocks of a streaming multiprocessor, which NVIDIA sets per
             # compute capability below the warp slots (see the CUDA C++ programming guide).
             compute_capability = (device_property.major, device_property.minor)
@@ -310,8 +324,8 @@ def get_gpu_shared_tile_sizes(max_n_sizes: int) -> tuple[int, ...]:
     # The largest count of resident blocks of each candidate size
     resident_blocks: dict[int, int] = {}
     for n_blocks in range(1, max_blocks + 1):
-        n_bytes = min(unit_bytes // n_blocks - reserved_bytes, block_bytes)
-        tile_size = int((math.sqrt(1.0 + 4.0 * n_bytes / itemsize) - 1.0) / 2.0) // 8 * 8
+        n_bytes = (min(unit_bytes // n_blocks - reserved_bytes, block_bytes) // granule_bytes) * granule_bytes
+        tile_size = (int((math.sqrt(1.0 + 4.0 * n_bytes / itemsize) - 1.0) / 2.0) // 8) * 8
         if tile_size >= 8:
             resident_blocks[tile_size] = max(resident_blocks.get(tile_size, 0), n_blocks)
     tile_sizes = sorted(resident_blocks)
@@ -439,15 +453,21 @@ def register_cache_clear(cache_clear: Callable[[], None]) -> None:
 
     Pass the cache's own clearing method, e.g. the cache_clear of a functools.lru_cache or the clear of a manual dict
     cache. This lets module-level asset caches (parsed meshes, baked textures, ...) release the large arrays they hold
-    for destroyed scenes without the teardown path having to know about each one.
+    for destroyed scenes without the teardown path having to know about each one. A bound method is held through a weak
+    reference, so that registering a cache never keeps it alive.
     """
-    _CLEARABLE_CACHES.append(cache_clear)
+    _CLEARABLE_CACHES.append(
+        weakref.WeakMethod(cache_clear) if isinstance(cache_clear, types.MethodType) else cache_clear
+    )
 
 
 def clear_caches() -> None:
-    """Drop every cache registered through register_cache_clear."""
+    """Drop every cache registered through register_cache_clear, the ones already collected aside."""
     for cache_clear in _CLEARABLE_CACHES:
-        cache_clear()
+        if isinstance(cache_clear, weakref.WeakMethod):
+            cache_clear = cache_clear()
+        if cache_clear is not None:
+            cache_clear()
 
 
 class SizeCappedCache:
@@ -492,6 +512,98 @@ class SizeCappedCache:
     def clear(self) -> None:
         self._store.clear()
         self._total_bytes = 0
+
+
+@dataclasses.dataclass
+class OwnedCacheEntry:
+    """Value of an entry of an 'OwnedCache', with the number of objects that own it."""
+
+    value: Any
+    n_owners: int
+
+
+class OwnedCache:
+    """Cache whose entries live as long as any of the objects that requested them.
+
+    The object requesting an entry becomes one of its owners, and the entry is dropped once the last of its owners is
+    garbage collected or gives it up. Objects of several scenes asking for one entry share it, whichever scene goes
+    first, and an entry never outlives the objects using it, which bounds the memory it holds without evicting anything
+    still in use. It registers itself with register_cache_clear so it is dropped together with the other caches on
+    genesis teardown.
+    """
+
+    def __init__(self) -> None:
+        self._entries: dict[Any, OwnedCacheEntry] = {}
+        # The entries each owner holds, by a weak reference to the owner, which compares equal to any other weak
+        # reference to it while it lives
+        self._owners_entries: dict[weakref.ReferenceType, dict[Any, OwnedCacheEntry]] = {}
+        register_cache_clear(self.clear)
+
+    def get(self, owner: Any, key: Any, compute: Callable[[], Any]) -> Any:
+        """Return the value of an entry, computed if no entry holds it yet, and make the object asking for it own it.
+
+        'key' identifies the entry, 'compute' computes its value, and 'owner' asks for it (see 'own').
+        """
+        value = self.find(key)
+        return self.own(owner, key, compute() if value is None else value)
+
+    def own(self, owner: Any, key: Any, value: Any) -> Any:
+        """Make an object own an entry, holding a given value if no entry holds one yet, and return its value.
+
+        'key' identifies the entry and 'owner' owns it, the entry holding 'value' unless it already holds another one.
+        'owner' must support weak references and must not be referenced by the value, which would keep it alive.
+        """
+        owner_ref = weakref.ref(owner)
+        owner_entries = self._owners_entries.get(owner_ref)
+        if owner_entries is None:
+            # The callback reaches the cache through a weak reference, so that a pending callback never keeps it alive
+            owner_ref = weakref.ref(owner, functools.partial(_release_collected_owner, weakref.ref(self)))
+            owner_entries = {}
+            self._owners_entries[owner_ref] = owner_entries
+        entry = owner_entries.get(key)
+        if entry is None:
+            entry = self._entries.get(key)
+            if entry is None:
+                entry = OwnedCacheEntry(value, 0)
+            entry.n_owners += 1
+            owner_entries[key] = entry
+            # A collection running since the lookup may have dropped the entry along with its last other owner
+            self._entries[key] = entry
+        return entry.value
+
+    def find(self, key: Any) -> Any:
+        """Return the value of an entry, or None if no entry holds it, without owning it."""
+        entry = self._entries.get(key)
+        return None if entry is None else entry.value
+
+    def release(self, owner: Any) -> None:
+        """Give up the entries an object owns, dropping those it was the last owner of.
+
+        'owner' may ask for entries again afterwards.
+        """
+        _release_owned_entries(self._entries, self._owners_entries.get(weakref.ref(owner), {}))
+
+    def clear(self) -> None:
+        """Drop every entry, whoever owns it."""
+        self._entries.clear()
+        self._owners_entries.clear()
+
+
+def _release_owned_entries(entries: dict[Any, OwnedCacheEntry], owner_entries: dict[Any, OwnedCacheEntry]) -> None:
+    """Give up the entries an owner of an 'OwnedCache' holds, dropping those it was the last owner of."""
+    for key, entry in owner_entries.items():
+        entry.n_owners -= 1
+        # The entry stored under the key may be another one, the cache having been cleared since
+        if entry.n_owners == 0 and entries.get(key) is entry:
+            del entries[key]
+    owner_entries.clear()
+
+
+def _release_collected_owner(cache_ref: weakref.ReferenceType[OwnedCache], owner_ref: weakref.ReferenceType) -> None:
+    """Give up the entries an owner of an 'OwnedCache' held, once it is garbage collected."""
+    cache = cache_ref()
+    if cache is not None:
+        _release_owned_entries(cache._entries, cache._owners_entries.pop(owner_ref, {}))
 
 
 def geometric_mean(a, b):

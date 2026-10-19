@@ -8,13 +8,14 @@ import OpenGL.error
 import pytest
 
 import genesis as gs
+import genesis.utils.geom as gu
 from genesis.options.sensors import RasterizerCameraOptions
 from genesis.utils.misc import tensor_to_array
 from genesis.vis.keybindings import Key, KeyAction, Keybind, KeyMod, MouseButton
 from genesis.vis.viewer_plugins.plugins.mouse_interaction import GRAB_ACC
 
 from ..conftest import IS_INTERACTIVE_VIEWER_AVAILABLE, SKIP_NO_IMGUI_BUNDLE, SKIP_NO_VIEWER, is_imgui_bundle_supported
-from ..utils.assertions import assert_allclose
+from ..utils.assertions import assert_allclose, assert_equal
 from .conftest import RENDERER_TYPE
 
 CAM_RES = (480, 320)
@@ -666,6 +667,12 @@ def test_add_camera_consistency(add_box, renderer, show_viewer):
         GUI=show_viewer,
     )
     scene.build()
+
+    # Both cameras compute the look-at pose in double precision, whatever the precision of the simulation, the camera
+    # handing it over in single precision
+    cam_pose = gu.pos_lookat_up_to_T(np.array(CAM_POS), np.array(CAM_LOOKAT), np.array((0.0, 0.0, 1.0)))
+    assert_equal(scene.viewer.camera_pose, cam_pose)
+    assert_equal(camera.transform, cam_pose.astype(np.float32))
 
     # Render from interactive viewer
     pyrender_viewer = scene.visualizer.viewer._pyrender_viewer

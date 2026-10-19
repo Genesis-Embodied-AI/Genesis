@@ -618,8 +618,10 @@ def func_contact_orthogonals(
         i_l = dyn_info.geoms.link_idx[i_g]
         rot = gu.qd_quat_to_R(dyn_state.links.i_quat[i_l, i_b], EPS)
         axis_0_local, axis_1_local = gu.qd_orthogonals(rot.transpose() @ normal)
-        axis_0 = rot @ axis_0_local
-        axis_1 = rot @ axis_1_local
+        # Tilting along a principal direction can leave an entire edge at equal depth, allowing repeated contacts.
+        # Diagonal directions break these ties on faces aligned with the inertial frame
+        axis_0 = qd.sqrt(0.5) * (rot @ (axis_0_local + axis_1_local))
+        axis_1 = qd.sqrt(0.5) * (rot @ (axis_1_local - axis_0_local))
 
     return axis_0, axis_1
 
@@ -955,6 +957,7 @@ def func_contact_support_hull(
     collider_state: array_class.ColliderState,
     tol: float,
     rounding: float,
+    eps: float,
     sort_positions: bool,
 ):
     """Find the support polygon of a bucket of coplanar contacts, as the vertices of their convex hull in the plane.
@@ -970,9 +973,11 @@ def func_contact_support_hull(
     but the sort, which is linearithmic.
 
     'rounding' is the length within which points of the bucket count as lying on one line, relative to the size of the
-    bucket so that the outcome does not depend on where it stands.
+    bucket so that the outcome does not depend on where it stands. 'eps' bounds the relative rounding error of the float
+    type (see gs.EPS).
 
-    Return the number of hull vertices, stored in 'contact_hull_stack' from 'i_cb_start' on.
+    Return the simplified hull size and the deepest original corner's bucket-logical index (-1 if absent). Hull
+    vertices are stored in 'contact_hull_stack' from 'i_cb_start' on.
     """
     if sort_positions:
         func_contact_heapsort(i_b, i_cb_start, i_cb_end, collider_state, CONTACT_ORDER.POSITION)
@@ -1000,7 +1005,12 @@ def func_contact_support_hull(
                     [collider_state.contact_sort_key[i_ht, i_b], collider_state.contact_proj_v[i_ht, i_b]]
                 )
                 dir_t, dir_p = pos_t - pos_s, pos_p - pos_s
-                if dir_t[0] * dir_p[1] - dir_t[1] * dir_p[0] <= 0.0:
+                # Under fused multiply-add contraction, the difference of two equal products evaluates to the rounding
+                # error of one of them, of either sign, so coincident and collinear points would turn either way
+                # depending on the compiler. A turn within the rounding error of its products counts as none.
+                cross_lhs = dir_t[0] * dir_p[1]
+                cross_rhs = dir_t[1] * dir_p[0]
+                if cross_lhs - cross_rhs <= 2.0 * eps * (qd.abs(cross_lhs) + qd.abs(cross_rhs)):
                     n_hull -= 1
                     i_ht = i_hs
                     if n_hull >= 2:
@@ -1026,11 +1036,25 @@ def func_contact_support_hull(
     # encoding its contact index as negative, since its neighbours read it afterwards.
     hull_area_2 = gs.qd_float(0.0)
     hull_perimeter = gs.qd_float(0.0)
+    # Collinear edge points follow the deep-interior rule. Preserve the deepest corner during area simplification
+    i_cb_deepest = -1
+    penetration_max = gs.qd_float(-1.0)
+    pos_prev = func_contact_hull_vertex_pos(i_b, i_cb_start, n_hull - 1, n_hull, collider_state)
     for i_h in range(n_hull):
         pos_p = func_contact_hull_vertex_pos(i_b, i_cb_start, i_h, n_hull, collider_state)
         pos_n = func_contact_hull_vertex_pos(i_b, i_cb_start, i_h + 1, n_hull, collider_state)
         hull_area_2 += pos_p[0] * pos_n[1] - pos_p[1] * pos_n[0]
         hull_perimeter += (pos_n - pos_p).norm()
+        dir_in, dir_out = pos_p - pos_prev, pos_n - pos_p
+        area_corner = qd.abs(dir_in[0] * dir_out[1] - dir_in[1] * dir_out[0])
+        if n_hull <= 2 or area_corner > rounding * (dir_in.norm() + dir_out.norm()):
+            i_cb = collider_state.contact_hull_stack[i_cb_start + i_h, i_b]
+            i_pc = collider_state.contact_sort_idx[i_cb, i_b]
+            penetration = collider_state.contact_data.penetration[i_pc, i_b]
+            if penetration > penetration_max:
+                penetration_max = penetration
+                i_cb_deepest = i_cb
+        pos_prev = pos_p
     area_tol = tol * qd.abs(hull_area_2)
 
     # A hull whose doubled area is within 'rounding' times its perimeter is a segment, every point within rounding of
@@ -1113,7 +1137,7 @@ def func_contact_support_hull(
                     n_left += 1
             is_converged = n_left == n_kept
             n_kept = n_left
-    return n_kept
+    return n_kept, i_cb_deepest
 
 
 @qd.func
@@ -1145,10 +1169,9 @@ def func_clamp_prune_contacts(
 
     The pruning logic groups contacts by canonical (min(link_a, link_b), max(link_a, link_b)), splits each bucket into
     patches of normals lying along one axis (see func_contact_group_by_normal) and, for each patch of >= 3 contacts
-    whose positions lie in a single plane (perpendicular to the patch's folded mean normal), keeps only the 2D convex
-    hull vertices of the projected positions. Patches whose positions are not single-plane are left untouched. The
-    normal direction of each surviving contact is preserved verbatim; the patch's mean normal is used only as the
-    projection direction.
+    whose positions lie in a single plane (perpendicular to the patch's folded mean normal), keeps the 2D convex hull
+    vertices and the deepest original corner beyond rounding tolerance. Patches whose positions span multiple planes are
+    left untouched. Surviving contacts retain their normals. The patch mean normal sets the projection direction.
 
     The ``tol`` parameter bounds the angle in radians between the normals of a patch, and the depth gate as a
     dimensionless slop fraction:
@@ -1345,13 +1368,14 @@ def func_clamp_prune_contacts(
 
                             for i_cb in range(i_cb_start, i_cb_end):
                                 collider_state.contact_lex_idx[i_cb, i_b] = i_cb
-                            n_hull = func_contact_support_hull(
+                            n_hull, i_cb_deepest = func_contact_support_hull(
                                 i_b,
                                 i_cb_start,
                                 i_cb_end,
                                 collider_state,
                                 tol,
-                                qd.sqrt(EPS * max_in_plane_r2),
+                                rounding=qd.sqrt(EPS * max_in_plane_r2),
+                                eps=EPS,
                                 sort_positions=True,
                             )
 
@@ -1380,6 +1404,18 @@ def func_clamp_prune_contacts(
                                 pen = collider_state.contact_data.penetration[i_pc, i_b]
                                 if pen > hull_pen_max:
                                     hull_pen_max = pen
+                            # Preserve the deepest corner when simplifying the hull. Estimate depth rounding from the
+                            # two surface witnesses and the patch radius.
+                            if i_cb_deepest >= 0:
+                                i_pc_deepest = collider_state.contact_sort_idx[i_cb_deepest, i_b]
+                                penetration_max = collider_state.contact_data.penetration[i_pc_deepest, i_b]
+                                depth_rounding = EPS * (
+                                    2.0 * collider_state.contact_data.pos[i_pc_deepest, i_b].norm()
+                                    + penetration_max
+                                    + 2.0 * qd.sqrt(max_in_plane_r2)
+                                )
+                                if penetration_max > hull_pen_max + depth_rounding:
+                                    collider_state.contact_keep[i_cb_deepest, i_b] = 1
                             deep_keep_threshold = prune_deep_penetration_ratio * hull_pen_max
                             for i_cb in range(i_cb_start, i_cb_end):
                                 if collider_state.contact_keep[i_cb, i_b] == 0:
@@ -1672,13 +1708,14 @@ def func_clamp_prune_contacts_coop(
                         qd.simt.subgroup.sync()
 
                     if tid == 0 and coplanar:
-                        n_hull = func_contact_support_hull(
+                        n_hull, i_cb_deepest = func_contact_support_hull(
                             i_b,
                             i_cb_start,
                             i_cb_end,
                             collider_state,
                             tol,
-                            qd.sqrt(EPS * max_in_plane_r2),
+                            rounding=qd.sqrt(EPS * max_in_plane_r2),
+                            eps=EPS,
                             sort_positions=False,
                         )
 
@@ -1697,6 +1734,17 @@ def func_clamp_prune_contacts_coop(
                             pen = collider_state.contact_data.penetration[i_pc, i_b]
                             if pen > hull_pen_max:
                                 hull_pen_max = pen
+                        # See the depth-preservation rounding estimate in func_clamp_prune_contacts
+                        if i_cb_deepest >= 0:
+                            i_pc_deepest = collider_state.contact_sort_idx[i_cb_deepest, i_b]
+                            penetration_max = collider_state.contact_data.penetration[i_pc_deepest, i_b]
+                            depth_rounding = EPS * (
+                                2.0 * collider_state.contact_data.pos[i_pc_deepest, i_b].norm()
+                                + penetration_max
+                                + 2.0 * qd.sqrt(max_in_plane_r2)
+                            )
+                            if penetration_max > hull_pen_max + depth_rounding:
+                                collider_state.contact_keep[i_pc_deepest, i_b] = 1
                         deep_keep_threshold = prune_deep_penetration_ratio * hull_pen_max
                         for i_cb in range(i_cb_start, i_cb_end):
                             i_pc = collider_state.contact_sort_idx[i_cb, i_b]
