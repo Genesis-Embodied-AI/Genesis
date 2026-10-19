@@ -1231,6 +1231,13 @@ class MPMSolver(GravityMixin, TimeBasedMixin, Solver):
         return sum(entity.n_particles for entity in self._entities)
 
     @property
+    def n_vvert_supports(self):
+        """
+        Number of particles supporting each visual vertex.
+        """
+        return self._n_vvert_supports
+
+    @property
     def n_vverts(self):
         if self.is_built:
             return self._n_vverts

@@ -1136,7 +1136,8 @@ def test_mesh_support_exactness(show_viewer, tol):
     # directions the table is laid on: across its cells, on their boundaries, along the normals of the hull faces, and
     # along the arcs between the normals of adjacent hull faces, where vertices tie. Meshes range from the eight corners
     # of a box, whose supports tie along the axes, to a couple of hundred vertices, at scales from 0.05 to 5. The table
-    # also counts the vertices tied for a support, every one of which the cell of the direction lists.
+    # also counts the vertices tied for a support, every one of which the cell of the direction lists. The last mesh is
+    # added twice, so that one geom reads its supports from the table of another geom of the same mesh.
     N_RANDOM_DIRECTIONS = 20000
     N_ARC_SAMPLES = 8
     MESHES_N_VERTS = (40, 200)
@@ -1166,7 +1167,7 @@ def test_mesh_support_exactness(show_viewer, tol):
             ),
             vis_mode="collision",
         )
-        for i_e, mesh in enumerate(meshes)
+        for i_e, mesh in enumerate((*meshes, meshes[-1]))
     ]
     scene.build()
 
@@ -1177,11 +1178,12 @@ def test_mesh_support_exactness(show_viewer, tol):
         supports: qd.types.ndarray(),
         supports_count: qd.types.ndarray(),
         supports_idx: qd.types.ndarray(),
+        dyn_info: array_class.DynInfo,
         collider_info: array_class.ColliderInfo,
     ):
         for i_d in range(directions.shape[0]):
             direction = qd.Vector([directions[i_d, 0], directions[i_d, 1], directions[i_d, 2]], dt=gs.qd_float)
-            support, i_v = support_field._func_support_mesh(i_g, direction, collider_info)
+            support, i_v = support_field._func_support_mesh(i_g, direction, dyn_info, collider_info)
             supports_idx[i_d] = i_v
             for k in qd.static(range(3)):
                 supports[i_d, k] = support[k]
@@ -1258,7 +1260,13 @@ def test_mesh_support_exactness(show_viewer, tol):
         supports_count = np.zeros(len(directions), dtype=gs.np_int)
         supports_idx = np.empty(len(directions), dtype=gs.np_int)
         query_supports(
-            geom.idx, directions, supports, supports_count, supports_idx, scene.rigid_solver.collider.collider_info
+            geom.idx,
+            directions,
+            supports,
+            supports_count,
+            supports_idx,
+            scene.rigid_solver.dyn_info,
+            scene.rigid_solver.collider.collider_info,
         )
         directions_local = directions[:8].copy()
         supports_world = np.empty_like(directions_local)
@@ -1295,6 +1303,7 @@ def test_mesh_support_exactness(show_viewer, tol):
         supports,
         supports_count,
         supports_idx,
+        scene.rigid_solver.dyn_info,
         scene.rigid_solver.collider.collider_info,
     )
     assert_equal(supports_count, np.repeat((2, 4), (N_RANDOM_DIRECTIONS, 6)))

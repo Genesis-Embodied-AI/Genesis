@@ -43,7 +43,8 @@ class SupportField:
         # The table is exact at any resolution, which only trades its memory against the length of the lists of its
         # cells. A multiple of four makes the band of rows of each chart span 45 to 135 degrees off its poles exactly.
         self._support_res = 120
-        self._support_field_info = array_class.get_support_field_info(0, 0, 0, self._support_res)
+        # Allocated once, when activated or else empty when first read (see 'support_field_info')
+        self._support_field_info: array_class.SupportFieldInfo | None = None
         self._is_active = False
 
     def activate(self) -> None:
@@ -81,20 +82,28 @@ class SupportField:
         # Corners of the closure of a cell around a direction, widened by a margin in cell units
         cells_corner_margin = 1e-6 * np.array(((-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)))
 
-        geoms_cell_start = []
-        cells_count = []
-        cells_vid = []
-        cells_v = []
-        extras_vid = []
-        extras_v = []
-        n_support_cells = 0
+        # The table of a geom depends on its trimesh alone, so the geoms of one trimesh share one table (see
+        # 'Mesh.tmesh_hash'), as the instances of an asset do.
+        geoms_table_idx = np.zeros((self.solver.n_geoms,), dtype=gs.np_int)
+        tables_idx_by_hash: dict[str, int] = {}
+        tables_geom = []
         for geom in self.solver.geoms:
-            geoms_cell_start.append(n_support_cells)
-
-            # The support of a terrain is read off the prism built from its height field, so its table would never
-            # be read. Its vertex count (one per height field sample) would make it the costliest table to build.
+            # The support of a terrain is read off the prism built from its height field, so its table would never be
+            # read. Its vertex count (one per height field sample) would make it the costliest table to build.
             if geom.type == gs.GEOM_TYPE.TERRAIN:
                 continue
+            i_t = tables_idx_by_hash.setdefault(geom.mesh.tmesh_hash, len(tables_geom))
+            if i_t == len(tables_geom):
+                tables_geom.append(geom)
+            geoms_table_idx[geom.idx] = i_t
+        n_support_cells = n_geom_cells * len(tables_geom)
+        # The records of the cells and the extra candidate counts are written in place as the tables are built, the
+        # extra candidates alone being collected per table, since their count is unknown beforehand
+        records_vid = np.empty((n_support_cells, 2), dtype=gs.np_int)
+        support_list_start = np.empty((n_support_cells + 1,), dtype=gs.np_int)
+        extras_vid = []
+        for i_t, geom in enumerate(tables_geom):
+            cell_start = i_t * n_geom_cells
 
             # Normal cones of the hull vertices, as the faces and edges of their union: the normals of the hull faces,
             # each supported by the vertices of its face, and the arcs between the normals of adjacent hull faces, along
@@ -239,28 +248,31 @@ class SupportField:
             slots_vid = np.repeat(verts_idx[is_first, None], repeats=2, axis=-1)
             is_slot = candidates_rank < 2
             slots_vid[cells_idx[is_slot], candidates_rank[is_slot]] = verts_idx[is_slot]
-            # Support vertex indices use the global numbering shared by simplex construction
-            cells_vid.append(slots_vid.reshape(-1) + geom.vert_start)
-            cells_v.append(verts[slots_vid.reshape(-1)])
-            extras_vid.append(verts_idx[~is_slot] + geom.vert_start)
-            extras_v.append(verts[verts_idx[~is_slot]])
-            cells_count.append(np.bincount(cells_idx[~is_slot], minlength=n_geom_cells))
-            n_support_cells += n_geom_cells
+            records_vid[cell_start : cell_start + n_geom_cells] = slots_vid
+            extras_vid.append(verts_idx[~is_slot])
+            support_list_start[cell_start + 1 : cell_start + n_geom_cells + 1] = np.bincount(
+                cells_idx[~is_slot], minlength=n_geom_cells
+            )
 
-        support_list_start = 2 * n_support_cells + np.cumsum(np.concatenate(((0,), *cells_count)), dtype=gs.np_int)
-        support_vid = np.concatenate((np.zeros((0,), dtype=gs.np_int), *cells_vid, *extras_vid), dtype=gs.np_int)
-        support_v = np.concatenate((np.zeros((0, 3)), *cells_v, *extras_v), dtype=gs.np_float)
+        # The extra candidates of every cell start past the records of all cells, in cell order
+        support_list_start[0] = 2 * n_support_cells
+        np.cumsum(support_list_start, out=support_list_start)
+        extras_vid = np.concatenate((np.zeros((0,), dtype=gs.np_int), *extras_vid), dtype=gs.np_int)
 
+        assert self._support_field_info is None
         self._support_field_info = array_class.get_support_field_info(
-            self.solver.n_geoms, n_support_cells, len(support_vid), self._support_res
+            self.solver.n_geoms, n_support_cells, 2 * n_support_cells + len(extras_vid), self._support_res
         )
         _kernel_init_support(
-            np.array(geoms_cell_start, dtype=gs.np_int),
+            n_geom_cells * geoms_table_idx,
             support_list_start,
-            support_v,
-            support_vid,
+            np.array([geom.vert_start for geom in tables_geom], dtype=gs.np_int),
+            records_vid,
+            extras_vid,
+            self.solver.dyn_info,
             self._support_field_info,
             self.solver.rigid_config,
+            n_geom_cells,
         )
 
         self._is_active = True
@@ -269,16 +281,34 @@ class SupportField:
     def is_active(self):
         return self._is_active
 
+    @property
+    def support_field_info(self) -> array_class.SupportFieldInfo:
+        """Support tables of the geoms, empty if the field was never activated."""
+        if self._support_field_info is None:
+            self._support_field_info = array_class.get_support_field_info(0, 0, 0, self._support_res)
+        return self._support_field_info
+
 
 @qd.kernel
 def _kernel_init_support(
     support_cell_start: qd.types.ndarray(),
     support_list_start: qd.types.ndarray(),
-    support_v: qd.types.ndarray(),
-    support_vid: qd.types.ndarray(),
+    tables_vert_start: qd.types.ndarray(),
+    records_vid: qd.types.ndarray(),
+    extras_vid: qd.types.ndarray(),
+    dyn_info: array_class.DynInfo,
     support_field_info: array_class.SupportFieldInfo,
     rigid_config: qd.template(),
+    n_geom_cells: int,
 ):
+    """Fill the support table from the vertex indices of its records and extra candidates, along with their positions.
+
+    The records of the cells come first, two per cell, then the extra candidates of all cells (see SupportFieldInfo).
+    Every table spans 'n_geom_cells' cells. Its vertex indices are local to its geoms, which all have the same
+    vertices, so their positions are read from the first of them, which starts at 'tables_vert_start'.
+    """
+    n_records = records_vid.shape[0]
+
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_g in range(support_cell_start.shape[0]):
         support_field_info.support_cell_start[i_g] = support_cell_start[i_g]
@@ -288,10 +318,22 @@ def _kernel_init_support(
         support_field_info.support_list_start[i_cell] = support_list_start[i_cell]
 
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
-    for i_s in range(support_v.shape[0]):
-        support_field_info.support_vid[i_s] = support_vid[i_s]
-        for k in qd.static(range(3)):
-            support_field_info.support_v[i_s][k] = support_v[i_s, k]
+    for i_cell in range(n_records):
+        i_v_start = tables_vert_start[i_cell // n_geom_cells]
+        for i_k in qd.static(range(2)):
+            i_v = records_vid[i_cell, i_k]
+            support_field_info.support_vid[2 * i_cell + i_k] = i_v
+            support_field_info.support_v[2 * i_cell + i_k] = dyn_info.verts.init_pos[i_v_start + i_v]
+
+    qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    for i_t in range(tables_vert_start.shape[0]):
+        i_v_start = tables_vert_start[i_t]
+        i_s_start = support_list_start[i_t * n_geom_cells]
+        i_s_end = support_list_start[(i_t + 1) * n_geom_cells]
+        for i_s in range(i_s_start, i_s_end):
+            i_v = extras_vid[i_s - 2 * n_records]
+            support_field_info.support_vid[i_s] = i_v
+            support_field_info.support_v[i_s] = dyn_info.verts.init_pos[i_v_start + i_v]
 
 
 @qd.func
@@ -319,7 +361,7 @@ def _func_support_world(
         v = gu.qd_transform_by_trans_quat(v_, pos, quat)
     else:
         d_mesh = gu.qd_transform_by_quat_fast(d, gu.qd_inv_quat(quat))
-        v_, vid = _func_support_mesh(i_g, d_mesh, collider_info)
+        v_, vid = _func_support_mesh(i_g, d_mesh, dyn_info, collider_info)
         v = gu.qd_transform_by_trans_quat_fast(v_, pos, quat)
     return v, v_, vid
 
@@ -355,8 +397,11 @@ def _func_direction_cell(i_g: int, d_mesh: qd.types.vector(3), collider_info: ar
 
 
 @qd.func
-def _func_support_mesh(i_g: int, d_mesh: qd.types.vector(3), collider_info: array_class.ColliderInfo):
+def _func_support_mesh(
+    i_g: int, d_mesh: qd.types.vector(3), dyn_info: array_class.DynInfo, collider_info: array_class.ColliderInfo
+):
     """Support vertex of a mesh-frame direction, the best of the candidates listed by the cell it falls in."""
+    i_v_start = dyn_info.geoms.vert_start[i_g]
     i_cell = _func_direction_cell(i_g, d_mesh, collider_info)
     # Record of the cell (see SupportField)
     v = collider_info.support_field.support_v[2 * i_cell]
@@ -382,7 +427,8 @@ def _func_support_mesh(i_g: int, d_mesh: qd.types.vector(3), collider_info: arra
                 dot_max = dot
                 vid = collider_info.support_field.support_vid[i_s]
 
-    return v, vid
+    # The table numbers the vertices of its geom from zero (see SupportFieldInfo)
+    return v, i_v_start + vid
 
 
 @qd.func
