@@ -376,7 +376,7 @@ def test_error_handling(tmp_path, caplog):
         scene.step()
     with pytest.raises(gs.GenesisException, match="Unsupported data type"):
         scene.step()
-    # A reset restarts the recorders that did not fail, the ones processing on a thread keeping theirs
+    # A reset leaves the recorders that failed out, and the others keep recording through it
     caplog.clear()
     with caplog.at_level("WARNING"):
         scene.reset()

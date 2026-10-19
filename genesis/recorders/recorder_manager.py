@@ -99,7 +99,6 @@ class RecorderManager:
         for recorder in self._recorders:
             if recorder.is_alive:
                 recorder.reset(envs_idx)
-                recorder.start()
 
     @gs.assert_built
     def step(self, global_step: int):
