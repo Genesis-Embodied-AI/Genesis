@@ -1,19 +1,16 @@
-"""System of the kinematic solver, which owns its data and its forward kinematics.
+"""Kinematic initialization helpers used by RigidSolverSystem.
 
-The initialization of the kinematic data is shared with RigidSolverSystem, whose rigid data extends it, through the
-functions of this module. Each takes the System that owns the data, which reads the model of the entities from its
-own attributes once adopt_model has taken it over from the solver.
+The standalone KinematicSolver keeps its legacy ownership and implementation. These free functions initialize the
+kinematic portion of rigid data after RigidSolverSystem has adopted the rigid model.
 """
 
 from dataclasses import asdict
-from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
 
 import genesis as gs
 import genesis.utils.array_class as array_class
-from genesis.engine.core import System, register_system
 from genesis.engine.solvers.kinematic_solver import _balanced_variant_mapping
 from genesis.engine.solvers.rigid.abd.forward_kinematics import (
     kernel_forward_kinematics,
@@ -30,12 +27,6 @@ from genesis.engine.solvers.rigid.abd.misc import (
     kernel_update_heterogeneous_links_vgeom,
 )
 from genesis.utils.misc import qd_to_numpy, qd_to_torch
-
-from .simulator_engine import SimulatorEngine
-
-if TYPE_CHECKING:
-    from genesis.engine.scene import Scene
-
 
 # The model of the entities a kinematic solver has built and the options it has resolved, which the user-facing solver
 # keeps resolving from its entities before the scene is built and which stay fixed once it is
@@ -104,79 +95,6 @@ def adopt_model(system, model: tuple[str, ...]) -> None:
     """Take over the given model from the solver of the System, the only reads of the solver past its own build."""
     for name in model:
         setattr(system, name, getattr(system.solver, name))
-
-
-class KinematicSolverSystem(System):
-    """System owning the data of the kinematic solver of the scene, which reaches it through forwarding attributes.
-
-    The Initializer has it allocate and initialize the data from the entities the solver has built. The data exists
-    whether or not the solver holds an entity, since other code reads it regardless.
-    """
-
-    def __init__(self, scene: "Scene") -> None:
-        super().__init__(scene)
-        self.solver = scene.sim.kinematic_solver
-        # Whether the solver holds an entity to advance, known once the scene has added its entities
-        self.is_active = self.solver.is_active
-
-    @System.action(kind="host")
-    def initialize(self):
-        return self.initialize_data
-
-    def initialize_data(self) -> None:
-        """Take over the model of the entities from the solver, then allocate and initialize the kinematic data, which
-        the solver forwards to from here on."""
-        adopt_model(self, KINEMATIC_MODEL)
-        self.solver._system = self
-        self._is_forward_pos_updated = False
-        self._is_forward_vel_updated = False
-        # A kinematic scene detects no collision and solves no constraint
-        self.collider_data = None
-        self.constraint_solver = None
-        build_kinematic_static_config(self)
-        create_kinematic_data_manager(self)
-        init_dof_fields(self)
-        init_vvert_fields(self)
-        init_vgeom_fields(self)
-        init_link_fields(self, dispatch_heterogeneous_vgeoms)
-        init_tree_fields(self)
-        init_entity_fields(self)
-        init_vfaces_raycast_mask(self)
-        init_vverts_state(self)
-
-    @System.action(kind="host")
-    def process_input(self):
-        return self.solver.process_input
-
-    @System.action(kind="host")
-    def pre_coupling(self):
-        return self.substep_pre_coupling
-
-    @System.action(kind="host")
-    def post_coupling(self):
-        return self.substep_post_coupling
-
-    def substep_pre_coupling(self, f: int) -> None:
-        """The kinematic solver integrates nothing ahead of the coupling."""
-
-    def substep_post_coupling(self, f: int) -> None:
-        """Update the forward kinematics of substep f unless the cartesian space and the velocities are up to date."""
-        if not self._is_forward_pos_updated or not self._is_forward_vel_updated:
-            kernel_forward_kinematics(
-                self.scene._envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
-            )
-            self._is_forward_pos_updated = True
-            self._is_forward_vel_updated = True
-
-    def sanitize_joint_sol_params(self, sol_params):
-        """Leave the solver parameters of the joints as they are, since a kinematic scene solves no constraint."""
-        return sol_params
-
-
-@register_system(SimulatorEngine)
-def create_kinematic_solver_system(scene: "Scene") -> KinematicSolverSystem:
-    """Create the System owning the data of the kinematic solver, which every scene has."""
-    return KinematicSolverSystem(scene)
 
 
 def build_kinematic_static_config(system):

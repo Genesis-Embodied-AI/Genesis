@@ -57,6 +57,7 @@ from .narrowphase import (
 )
 
 if TYPE_CHECKING:
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
     from genesis.engine.systems.rigid_solver_system import RigidSolverSystem
 
 
@@ -79,7 +80,7 @@ class ColliderData(Data):
     sub-components, and the host-side tables and caches derived from the rigid model."""
 
 
-def create_collider_data(rigid: "RigidSolverSystem", sdf: SDF) -> "ColliderData":
+def create_collider_data(rigid: "RigidSolver | RigidSolverSystem", sdf: SDF) -> "ColliderData":
     """Create the collision data of the rigid geoms from the rigid model, the signed distance fields of the geoms
     being embedded in its collider info."""
     collider = ColliderData()
@@ -1124,8 +1125,7 @@ def forward_to_collider_data(name: str) -> property:
 
 
 class Collider:
-    """User-facing access to the collision detection of the rigid geoms, whose data RigidSolverSystem owns (see
-    ColliderData)."""
+    """User-facing collision facade over data owned by either legacy RigidSolver or RigidSolverSystem."""
 
     collider_config = forward_to_collider_data("collider_config")
     collider_info = forward_to_collider_data("collider_info")
@@ -1151,7 +1151,7 @@ class Collider:
     _use_coop_dedup = forward_to_collider_data("_use_coop_dedup")
     _contact_data_cache = forward_to_collider_data("_contact_data_cache")
 
-    def __init__(self, rigid_solver_system: "RigidSolverSystem") -> None:
+    def __init__(self, rigid_solver_system: "RigidSolver | RigidSolverSystem") -> None:
         self._rigid = rigid_solver_system
 
     @property
@@ -1180,6 +1180,10 @@ class Collider:
 
     def backward_narrowphase(self) -> None:
         collider_backward_narrowphase(self._rigid.collider_data, self._rigid)
+
+    def activate_sdf(self) -> None:
+        """Activate the rigid SDF through the legacy Collider API."""
+        self._sdf.activate()
 
 
 @qd.func

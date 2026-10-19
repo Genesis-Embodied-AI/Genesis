@@ -1,7 +1,7 @@
 """Manager System of the rigid solver, which owns its data and runs one substep as three graphs of stage Actions around
 a host solve.
 
-The initialization of the rigid data extends that of the kinematic data (see kinematic_solver_system.py) through the
+The initialization of the rigid data extends that of the kinematic data (see rigid_kinematics.py) through the
 functions at the end of this module.
 """
 
@@ -45,7 +45,7 @@ from genesis.engine.solvers.rigid.rigid_solver import (
 )
 from genesis.utils.misc import get_gpu_core_count, get_gpu_shared_tile_sizes, qd_to_numpy
 
-from .kinematic_solver_system import (
+from .rigid_kinematics import (
     KINEMATIC_MODEL,
     adopt_model,
     init_dof_fields,
@@ -242,6 +242,7 @@ class RigidSolverSystem(System):
         init_vverts_state(self)
         rigid_init_dynamics(self)
         self.data = RigidSolverData(self)
+        self.solver._bind_system_data(self)
 
     @System.action_collection(kind="host")
     def preparations(self):

@@ -92,6 +92,7 @@ def _sort_relevant_dofs_descending(
 
 
 if TYPE_CHECKING:
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
     from genesis.engine.systems.rigid_solver_system import RigidSolverSystem
 
 
@@ -99,7 +100,7 @@ IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
 
 
 class ConstraintSolver:
-    def __init__(self, rigid_solver: "RigidSolverSystem"):
+    def __init__(self, rigid_solver: "RigidSolver | RigidSolverSystem"):
         self._solver = rigid_solver
         self._collider = rigid_solver.collider_data
         self._B = rigid_solver._B

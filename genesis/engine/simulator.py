@@ -109,11 +109,11 @@ class Simulator(RBC):
                 "LegacyCouplerOptions, or IPCCouplerOptions."
             )
 
-        # The engine running the substep phases of the solvers and of the coupler, built with them
+        # The compositional engine is intentionally confined to rigid-only scenes. Mixed and coupled scenes keep the
+        # legacy solver and coupler ownership and control flow.
         self._engine: SimulatorEngine | None = None
-        self._input_pipeline: Pipeline | None = None
-        self._substep_pipeline: Pipeline | None = None
         self._rigid_substep_pipeline: Pipeline | None = None
+        self._use_rigid_solver_system = False
 
         # states
         self._queried_states = QueriedStates()
@@ -218,26 +218,26 @@ class Simulator(RBC):
         # Counted per environment to support per-env reset, as steps rather than seconds to avoid drifting over time.
         self._steps = torch.zeros((self._B,), dtype=gs.tc_int, device=gs.device)
 
+        # The Rigid System path is selected before solver build because it decides who allocates and owns rigid data.
+        # Any other active solver, SAP, or IPC keeps every solver -- Rigid included -- on the legacy path.
+        self._use_rigid_solver_system = (
+            self.rigid_solver.is_active
+            and isinstance(self._coupler, LegacyCoupler)
+            and not any(solver.is_active for solver in self._solvers if solver is not self.rigid_solver)
+        )
+        self._rigid_only = self._use_rigid_solver_system
+        self.rigid_solver._use_system = self._use_rigid_solver_system
+
         # solvers
-        # IPCCoupler needs full substep flow for pre/post coupling phases
-        self._rigid_only = self.rigid_solver.is_active and not isinstance(self._coupler, (SAPCoupler, IPCCoupler))
         for solver in self._solvers:
             solver.build()
             if solver.is_active:
                 self._active_solvers.append(solver)
-                if not isinstance(solver, RigidSolver):
-                    self._rigid_only = False
 
-        # The engine owns the data of the rigid and kinematic solvers, which it initializes from the entities they have
-        # built, so it is built once they are and before the coupler reads that data. An IPC coupler steps the solvers
-        # through the legacy substep of this simulator instead of the Substepper.
-        self._engine = SimulatorEngine(self.scene)
-        self._engine.build()
-        self._engine.init_pipeline.run()
-        if not isinstance(self._coupler, IPCCoupler):
-            self._input_pipeline = self._engine.input_pipeline
-            self._substep_pipeline = self._engine.substep_pipeline
-        if self.rigid_solver.is_active:
+        if self._use_rigid_solver_system:
+            self._engine = SimulatorEngine(self.scene)
+            self._engine.build()
+            self._engine.init_pipeline.run()
             self._rigid_substep_pipeline = self._engine.rigid_substep_pipeline
 
         # A coupler exchanges state once per substep, so it is built once the rate that loop runs at is known.
@@ -411,9 +411,6 @@ class Simulator(RBC):
         setting _tgt state using external commands
         note that external inputs are given at step level, not substep
         """
-        if self._input_pipeline is not None:
-            self._input_pipeline.run(in_backward)
-            return
         for solver in self._active_solvers:
             solver.process_input(in_backward=in_backward)
 
@@ -422,9 +419,6 @@ class Simulator(RBC):
             solver.process_input_grad()
 
     def substep(self, f):
-        if self._substep_pipeline is not None:
-            self._substep_pipeline.run(f)
-            return
         self._coupler.preprocess(f)
         self.substep_pre_coupling(f)
         self._coupler.couple(f)
