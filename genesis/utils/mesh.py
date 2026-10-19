@@ -217,11 +217,9 @@ def get_asset_path(file):
 
 
 def get_gsd_path(verts, faces, sdf_res, sdf_cell_size):
-    # The grid is fully determined by the mesh plus the resolved per-axis resolution and cell size, so the key is
-    # built from those rather than the material defaults: the resolution now also depends on wall thickness, so the
-    # defaults no longer identify the grid. Schema tag bumped when the on-disk SDF layout changes (e.g. scalar ->
-    # per-axis cell size); forces a cache miss on stale entries without manually clearing the cache.
-    schema = "v3-res-keyed"
+    # The mesh, the resolution and the cell size determine the grid. The schema tag is bumped whenever the layout of a
+    # file changes, which forces a cache miss on stale entries.
+    schema = "v4-sdf-grid"
     hashkey = get_hashkey(verts, faces, sdf_res, sdf_cell_size, schema)
     return os.path.join(get_gsd_cache_dir(), f"{hashkey}.gsd")
 

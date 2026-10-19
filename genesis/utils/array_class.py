@@ -2094,7 +2094,6 @@ class SDFInfo:
     kind: ClassVar[DataKind] = DataKind.CONSTANT
 
     geoms_info: SDFGeomInfo
-    geoms_sdf_start: qd.Tensor
     geoms_sdf_val: qd.Tensor
     geoms_sdf_grad: qd.Tensor
     geoms_sdf_closest_vert: qd.Tensor
@@ -2104,13 +2103,12 @@ class SDFInfo:
 def get_sdf_info(n_geoms, n_cells, n_coarse_cells):
     if not _is_tensor_addressable((n_cells, 3), gs.np_float):
         gs.raise_exception(
-            f"SDF Gradient shape (n_cells={n_cells}, 3) is too large. Consider manually setting larger "
-            "'sdf_cell_size' in 'gs.materials.Rigid' options."
+            f"SDF Gradient shape (n_cells={n_cells}, 3) is too large. Consider setting a larger 'sdf_cell_size', or a "
+            "smaller 'sdf_max_res', in 'gs.materials.Rigid' options."
         )
 
     return SDFInfo(
         geoms_info=get_sdf_geom_info(max(n_geoms, 1)),
-        geoms_sdf_start=V(dtype=gs.qd_int, shape=(max(n_geoms, 1),)),
         geoms_sdf_val=V(dtype=gs.qd_float, shape=(max(n_cells, 1),)),
         geoms_sdf_grad=V_VEC(3, dtype=gs.qd_float, shape=(max(n_cells, 1),)),
         geoms_sdf_closest_vert=V(dtype=gs.qd_int, shape=(max(n_cells, 1),)),
@@ -2126,9 +2124,8 @@ class ColliderInfo:
     kind: ClassVar[DataKind] = DataKind.CONSTANT
 
     # Narrowphase sub-component descriptions, owned by their respective builders (MPR, GJK, SupportField, SDF) and
-    # embedded here so kernels receive the whole collider description as one argument. Each has a single instance,
-    # activated (which may reallocate it at its final size) before this struct is built; a reassignment after the
-    # embedding would leave the reference here stale.
+    # embedded here so kernels receive the whole collider description as one argument. They are built at their final
+    # size before this struct is.
     mpr: MPRInfo
     gjk: GJKInfo
     support_field: SupportFieldInfo

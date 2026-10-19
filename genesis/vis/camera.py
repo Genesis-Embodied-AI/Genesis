@@ -626,8 +626,12 @@ class Camera(RBC):
                 n_envs = len(self._visualizer._context.rendered_envs_idx)
             else:
                 envs_idx = tensor_to_array(self._visualizer._scene._sanitize_envs_idx(envs_idx))
-                if set(envs_idx).issubset(self._visualizer._context.rendered_envs_idx):
+                rendered_envs_idx = np.array(self._visualizer._context.rendered_envs_idx)
+                is_rendered = envs_idx[:, None] == rendered_envs_idx
+                if not is_rendered.any(axis=1).all():
                     gs.raise_exception("Environment index not in 'VisOptions.rendered_envs_idx'.")
+                # The pose of the camera is stored per rendered environment, in the order of 'rendered_envs_idx'
+                envs_idx = is_rendered.argmax(axis=1)
                 n_envs = len(envs_idx)
         else:
             envs_idx = ()

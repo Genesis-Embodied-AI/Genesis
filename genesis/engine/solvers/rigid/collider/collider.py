@@ -86,11 +86,9 @@ def create_collider_data(rigid: "RigidSolverSystem", sdf: SDF) -> "ColliderData"
     collider._prune_max_contacts_floor = 512
 
     # The narrowphase sub-components are built AND activated before the collision fields, whose collider info embeds
-    # their description structs: the activation of the SDF and of the support field reallocates theirs at their
-    # final size, so it has to run before the embedding (see ColliderInfo). Their constructors also resolve the
-    # options the static configuration reads, so they run first. The signed distance fields belong to the rigid
-    # geoms (see RigidSdfSystem), which other readers query too.
-    collider._sdf = sdf
+    # their description structs: support-field activation reallocates its data at the final size, so it has to run
+    # before embedding (see ColliderInfo). The SDF is precomputed once per geometry and owned by RigidSdfSystem.
+    collider.sdf = sdf
     collider.mpr = mpr.MPR(rigid)
     collider.gjk = gjk.GJK(rigid)
     collider._support_field = support_field.SupportField(rigid)
@@ -100,8 +98,6 @@ def create_collider_data(rigid: "RigidSolverSystem", sdf: SDF) -> "ColliderData"
         collider.collider_config.has_non_box_plane_convex_convex and gs.backend != gs.cpu and not rigid._requires_grad
     )
 
-    if collider.collider_config.has_nonconvex_nonterrain:
-        collider._sdf.activate()
     # The split narrowphase launches one thread per core, its contact0 pass rounding up to whole environments. An
     # upper-bound estimate of the core count sizes these launches (Genesis-Embodied-AI/Genesis#2616).
     if collider._use_split_narrowphase:
@@ -269,7 +265,7 @@ def _init_collision_fields(collider: "ColliderData", rigid: "RigidSolverSystem")
         collider.mpr._mpr_info,
         collider.gjk._gjk_info,
         collider._support_field.support_field_info,
-        collider._sdf._sdf_info,
+        collider.sdf.sdf_info,
         mc_perturbation=collider._mc_perturbation,
         mc_tolerance=collider._mc_tolerance,
         diff_pos_tolerance=collider._diff_pos_tolerance,
@@ -1138,7 +1134,7 @@ class Collider:
     _prune_deep_penetration_ratio = forward_to_collider_data("_prune_deep_penetration_ratio")
     _prune_max_contacts_per_link_pair = forward_to_collider_data("_prune_max_contacts_per_link_pair")
     _prune_max_contacts_floor = forward_to_collider_data("_prune_max_contacts_floor")
-    _sdf = forward_to_collider_data("_sdf")
+    sdf = forward_to_collider_data("sdf")
     _support_field = forward_to_collider_data("_support_field")
     _large_contact_pair_mask = forward_to_collider_data("_large_contact_pair_mask")
     _contact_data = forward_to_collider_data("_contact_data")
@@ -1183,10 +1179,6 @@ class Collider:
 
     def backward_narrowphase(self) -> None:
         collider_backward_narrowphase(self._data, self._rigid)
-
-    def activate_sdf(self) -> None:
-        """Activate the rigid SDF through the legacy Collider API."""
-        self._sdf.activate()
 
 
 @qd.func

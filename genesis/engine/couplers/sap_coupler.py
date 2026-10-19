@@ -346,9 +346,9 @@ class SAPCoupler(RBC):
             if geom.contype or geom.conaffinity:
                 if geom.type == gs.GEOM_TYPE.PLANE:
                     gs.raise_exception("Primitive plane not supported as user-specified collision geometries.")
-                volume = geom.get_trimesh().volume
+                volume = geom.trimesh.volume
                 tet_cfg = {"nobisect": False, "maxvolume": volume / 100}
-                mesh_verts, mesh_elems = eu.mesh_to_elements(geom.get_trimesh(), tet_cfg=tet_cfg)
+                mesh_verts, mesh_elems = eu.mesh_to_elements(geom.trimesh, tet_cfg=tet_cfg)
                 verts, elems = eu.split_all_surface_tets(mesh_verts, mesh_elems)
                 rigid_volume_verts.append(verts)
                 rigid_volume_elems.append(elems + offset)

@@ -68,9 +68,6 @@ RIGID_MODEL = (
     "n_geoms",
     "n_geoms_",
     "_n_geoms",
-    "n_cells",
-    "n_cells_",
-    "_n_cells",
     "n_verts",
     "n_verts_",
     "_n_verts",
@@ -222,11 +219,10 @@ class RigidSolverSystem(System):
         self._is_forward_pos_updated = False
         self._is_forward_vel_updated = False
         self._is_backward = False
+        rigid_build_static_config(self)
 
     def initialize_data(self) -> None:
         """Allocate and initialize the rigid data, which the solver forwards to from here on."""
-        # The static configuration every graph of the substep is compiled against
-        rigid_build_static_config(self)
         rigid_create_data_manager(self)
         init_dof_fields(self)
         init_vvert_fields(self)

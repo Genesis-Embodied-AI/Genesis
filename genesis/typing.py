@@ -105,6 +105,7 @@ if TYPE_CHECKING:
     PositiveVec3IType = IArrayType
     Vec2FType = FArrayType
     PositiveVec2FType = FArrayType
+    PositiveVec3FType = FArrayType
     Vec3FType = FArrayType
     LaxVec3FType = FArrayType | ValidFloat
     UnitVec3FType = FArrayType
@@ -152,6 +153,7 @@ else:
     PositiveVec3IType = Annotated[tuple[PositiveInt, PositiveInt, PositiveInt], Field(strict=False)]
     Vec2FType = Annotated[tuple[ValidFloat, ValidFloat], Field(strict=False)]
     PositiveVec2FType = Annotated[tuple[PositiveFloat, PositiveFloat], Field(strict=False)]
+    PositiveVec3FType = Annotated[tuple[PositiveFloat, PositiveFloat, PositiveFloat], Field(strict=False)]
     Vec3FType = Annotated[tuple[ValidFloat, ValidFloat, ValidFloat], Field(strict=False)]
     LaxVec3FType = Annotated[
         tuple[ValidFloat, ValidFloat, ValidFloat],

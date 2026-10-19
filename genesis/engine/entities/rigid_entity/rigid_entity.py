@@ -1751,7 +1751,6 @@ class RigidEntity(KinematicEntity):
 
     def __init__(self, scene: "Scene", solver: "RigidSolver", idx: int, desc: RigidEntityDescription):
         self._geom_start = solver.n_geoms
-        self._cell_start = solver.n_cells
         self._vert_start = solver.n_verts
         self._face_start = solver.n_faces
         self._edge_start = solver.n_edges
@@ -1783,7 +1782,6 @@ class RigidEntity(KinematicEntity):
         """Reassign collision and visual geom indices for multi-link heterogeneous entities."""
         # Reassign collision geom indices sequentially
         running_idx = self._geom_start
-        running_cell = self._cell_start
         running_vert = self._vert_start
         running_face = self._face_start
         running_edge = self._edge_start
@@ -1793,7 +1791,6 @@ class RigidEntity(KinematicEntity):
         for link in self._links:
             for geom in link.geoms:
                 geom._idx = running_idx
-                geom._cell_start = running_cell
                 geom._vert_start = running_vert
                 geom._face_start = running_face
                 geom._edge_start = running_edge
@@ -1804,7 +1801,6 @@ class RigidEntity(KinematicEntity):
                     geom._verts_state_start = running_free_vs
                     running_free_vs += geom.n_verts
                 running_idx += 1
-                running_cell += geom.n_cells
                 running_vert += geom.n_verts
                 running_face += geom.n_faces
                 running_edge += geom.n_edges
@@ -1906,7 +1902,6 @@ class RigidEntity(KinematicEntity):
             joint_start=joint_start,
             n_joints=len(l_desc.joints),
             geom_start=self.n_geoms + self._geom_start,
-            cell_start=self.n_cells + self._cell_start,
             vert_start=self.n_verts + self._vert_start,
             face_start=self.n_faces + self._face_start,
             edge_start=self.n_edges + self._edge_start,
@@ -3460,11 +3455,6 @@ class RigidEntity(KinematicEntity):
         return sum(link.n_geoms for link in self._links)
 
     @property
-    def n_cells(self):
-        """The number of sdf cells in the entity."""
-        return sum(link.n_cells for link in self._links)
-
-    @property
     def n_verts(self):
         """The number of vertices (from collision geom `RigidGeom`) in the entity."""
         return sum(link.n_verts for link in self._links)
@@ -3488,16 +3478,6 @@ class RigidEntity(KinematicEntity):
     def geom_end(self):
         """The index of the entity's last RigidGeom in the scene *plus one*."""
         return self._geom_start + self.n_geoms
-
-    @property
-    def cell_start(self):
-        """The start index the entity's sdf cells in the scene."""
-        return self._cell_start
-
-    @property
-    def cell_end(self):
-        """The end index the entity's sdf cells in the scene *plus one*."""
-        return self._cell_start + self.n_cells
 
     @property
     def gravity_compensation(self):

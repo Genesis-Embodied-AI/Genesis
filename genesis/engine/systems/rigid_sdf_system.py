@@ -18,9 +18,8 @@ class RigidSdfSystem(System):
     depend on what queries it.
 
     The rigid-rigid contact queries them for non-convex geoms, through the collider info that embeds them. The couplings
-    of particles with rigid geoms, the CPIC of the MPM solver and the tactile sensors query them too. The fields are
-    allocated with the rigid data whether or not anything queries them, and filled by activate, which every reader
-    calls from its own initialization once it knows it needs them.
+    of particles with rigid geoms, the CPIC of the MPM solver and the tactile sensors query them too. SDF values are
+    precomputed once per geometry and the System allocates their device representation.
     """
 
     @System.action(kind="host")
@@ -37,10 +36,6 @@ class RigidSdfSystem(System):
         """Allocate the fields from the model of the rigid geoms, ahead of the collision detection that embeds
         them."""
         self.sdf = SDF(self.rigid_solver_system)
-
-    def activate(self) -> None:
-        """Fill the fields, once a reader needs them. Idempotent."""
-        self.sdf.activate()
 
 
 @register_system(SimulatorEngine)

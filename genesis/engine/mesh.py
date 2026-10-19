@@ -1,11 +1,13 @@
 import functools
 import os
+import pickle
 from itertools import chain
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 
 import fast_simplification
+import igl
 import trimesh
 from scipy.spatial import QhullError
 
@@ -21,6 +23,9 @@ from genesis.typing import Matrix3x3Type, Vec3FType
 from genesis.utils import serialization
 from genesis.utils.misc import OwnedCache, redirect_libc_stderr
 
+if TYPE_CHECKING:
+    from genesis.engine.entities.rigid_entity.description import SignedDistanceFieldDescription
+
 
 class InertialProperties(NamedTuple):
     """A rigid body's intrinsic inertial: mass, center of mass 'com', and inertia tensor 'i' about that COM."""
@@ -30,6 +35,21 @@ class InertialProperties(NamedTuple):
     i: Matrix3x3Type
 
 
+class SDFGrid(NamedTuple):
+    """Signed distance field (SDF) of a geometry sampled at the nodes of a regular grid.
+
+    'value' and 'grad' hold the signed distance and its gradient at each node, 'closest_verts_idx' the index of the
+    vertex of the geometry closest to each node, 'max_value' the largest signed distance of the grid, and
+    'T_mesh_to_sdf' the transform from the mesh frame to the grid frame, in which the nodes sit at integer coordinates.
+    """
+
+    value: np.ndarray
+    grad: np.ndarray
+    closest_verts_idx: np.ndarray
+    max_value: float
+    T_mesh_to_sdf: np.ndarray
+
+
 # Data derived from the trimesh of a mesh alone, shared by the meshes of one trimesh (see 'Mesh.tmesh_hash')
 _TMESH_CACHE = OwnedCache()
 
@@ -37,13 +57,13 @@ _TMESH_CACHE = OwnedCache()
 def cached_by_tmesh(method):
     """Wrap a method of 'Mesh' computing data from its trimesh alone, so that the meshes of one trimesh share it.
 
-    The value is computed by the method on the first call, keyed on its name and the hash of the trimesh (see
-    'Mesh.tmesh_hash').
+    The value is computed by the method on the first call, keyed on its name, the hash of the trimesh (see
+    'Mesh.tmesh_hash') and its arguments, which must be hashable.
     """
 
     @functools.wraps(method)
-    def wrapper(self):
-        return _TMESH_CACHE.get(self, (method.__name__, self.tmesh_hash), functools.partial(method, self))
+    def wrapper(self, *args):
+        return _TMESH_CACHE.get(self, (method.__name__, self.tmesh_hash, *args), functools.partial(method, self, *args))
 
     return wrapper
 
@@ -336,6 +356,20 @@ class Mesh(RBC, serialization.SerializationMixin):
         if volume > 0.0:
             return InertialProperties(tmesh.mass, tmesh.center_mass, tmesh.moment_inertia)
         return InertialProperties(0.0, np.zeros(3), np.zeros((3, 3)))
+
+    @cached_by_tmesh
+    def get_sdf_grid(self, sdf: "SignedDistanceFieldDescription") -> SDFGrid:
+        """Return the signed distance field (SDF) of the geometry, sampled on a grid centered on its bounding box.
+
+        'sdf' describes the grid. It carries the gradient of the field if the description asks for it, and zeros
+        otherwise. The signed distance is measured against the mesh 'sdf_mesh' of the metadata when it holds one.
+
+        The grid is loaded from the preprocessing cache on disk when it holds it, and is computed and stored there
+        otherwise. It is shared by reference across the meshes of one trimesh (see 'tmesh_hash').
+        """
+        sdf_tmesh = self._metadata.get("sdf_mesh", self._mesh)
+        mesh_descr = f"({self._metadata['mesh_path']})" if "mesh_path" in self._metadata else ""
+        return _get_sdf_grid(self.verts, self.faces, sdf_tmesh, sdf, mesh_descr)
 
     @cached_by_tmesh
     def get_vert_adjacency(self):
@@ -732,6 +766,96 @@ class Mesh(RBC, serialization.SerializationMixin):
         if raw["geometry"]["colours"] is None:
             mesh._mesh.visual = mu.surface_uvs_to_trimesh_visual(mesh.surface, mesh.uvs, len(mesh.verts))
         return mesh
+
+
+def _get_sdf_grid(
+    verts: np.ndarray,
+    faces: np.ndarray,
+    sdf_tmesh: trimesh.Trimesh,
+    sdf: "SignedDistanceFieldDescription",
+    mesh_descr: str,
+) -> SDFGrid:
+    """Load the signed distance field (SDF) grid of a triangle mesh from the cache on disk, or compute and store it.
+
+    The grid is centered on the bounding box of 'verts', described by 'sdf', and measures the signed distance to
+    'sdf_tmesh' (see 'Mesh.get_sdf_grid'). 'mesh_descr' names the mesh in the warnings.
+    """
+    n_nodes, cell_size = np.array(sdf.n_nodes), np.array(sdf.cell_size)
+    gsd_path = mu.get_gsd_path(verts, faces, n_nodes, cell_size)
+    sdf_grid = None
+    if os.path.exists(gsd_path):
+        gs.logger.debug(f"Preprocessed file (`.gsd`) found in cache: {gsd_path}.")
+        try:
+            with open(gsd_path, "rb") as file:
+                sdf_grid = pickle.load(file)
+        except (EOFError, ModuleNotFoundError, pickle.UnpicklingError, TypeError, MemoryError):
+            gs.logger.info("Ignoring corrupted cache.")
+
+    if sdf_grid is None:
+        sdf_verts, sdf_faces = np.ascontiguousarray(sdf_tmesh.vertices), np.ascontiguousarray(sdf_tmesh.faces)
+        if len(sdf_faces) > 50000:
+            gs.logger.warning(
+                f"Beware that SDF pre-processing of mesh {mesh_descr} having more than 50000 faces may take a "
+                "very long time (>10min) and require large RAM allocation (>20Gb). Please either enable convexify "
+                "or decimation. (see FileMorph options)"
+            )
+        with gs.logger.timer(f"Preprocessing SDF of mesh ~<{gsd_path}>~."):
+            lower = verts.min(axis=0)
+            upper = verts.max(axis=0)
+            center = (upper + lower) / 2.0
+
+            # The grid spans 'res - 1' cells from the center of its lower node to the center of its upper one
+            grid_size = (n_nodes - 1) * cell_size
+            voxel_lower = center - grid_size / 2.0
+            voxel_upper = center + grid_size / 2.0
+            X, Y, Z = np.meshgrid(
+                *(np.linspace(voxel_lower[i], voxel_upper[i], n_nodes[i]) for i in range(3)), indexing="ij"
+            )
+            query_points = np.stack([X, Y, Z], axis=-1).reshape((-1, 3))
+
+            signed_distance, sdf_closest_faces, closest_points, _ = igl.signed_distance(
+                query_points, sdf_verts, sdf_faces
+            )
+            sdf_value = signed_distance.astype(gs.np_float, copy=False).reshape(n_nodes)
+
+            # The closest vertex belongs to the mesh itself, whose closest faces are those of the signed distance when
+            # it is measured against that mesh
+            closest_faces = sdf_closest_faces
+            if not (np.array_equal(sdf_verts, verts) and np.array_equal(sdf_faces, faces)):
+                _, closest_faces, *_ = igl.signed_distance(query_points, verts, faces)
+            verts_idx = faces[closest_faces]
+            verts_dist = np.linalg.norm(verts[verts_idx] - query_points[:, None, :], axis=-1)
+            sdf_closest_verts_idx = verts_idx[np.arange(len(query_points)), np.argmin(verts_dist, axis=-1)]
+
+            T_mesh_to_centered = np.eye(4)
+            T_mesh_to_centered[:3, 3] = -center
+            T_centered_to_sdf = np.eye(4)
+            T_centered_to_sdf[:3, :3] *= (n_nodes - 1) / grid_size
+            T_centered_to_sdf[:3, 3] = (n_nodes - 1) / 2
+            T_mesh_to_sdf = T_centered_to_sdf @ T_mesh_to_centered
+
+            # The gradient of a signed distance is the unit vector from the closest point of the surface, oriented by
+            # the side of the node, and the normal of the closest face on the surface itself. On the medial axis, where
+            # the field has a kink, it is the gradient on the side of the closest face found.
+            sdf_grad = np.zeros((*n_nodes, 3), dtype=gs.np_float)
+            if sdf.has_grad:
+                offset = query_points - closest_points
+                dist = np.linalg.norm(offset, axis=-1, keepdims=True)
+                grad = np.where(
+                    dist > gs.EPS,
+                    np.sign(signed_distance)[:, None] * offset / np.maximum(dist, gs.EPS),
+                    sdf_tmesh.face_normals[sdf_closest_faces],
+                )
+                sdf_grad[:] = grad.reshape((*n_nodes, 3))
+
+        sdf_grid = SDFGrid(
+            sdf_value, sdf_grad, sdf_closest_verts_idx.reshape(n_nodes), np.max(sdf_value), T_mesh_to_sdf
+        )
+        os.makedirs(os.path.dirname(gsd_path), exist_ok=True)
+        with open(gsd_path, "wb") as file:
+            pickle.dump(sdf_grid, file)
+
+    return sdf_grid
 
 
 def _exported_geometry(mesh: trimesh.Trimesh, exporting: serialization.Exporting) -> dict:
