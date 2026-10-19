@@ -1072,23 +1072,23 @@ def test_merge_matches_single_equivalent_entity(merged_arm_hand_models, box_posi
 @pytest.mark.parametrize("precision", ["32", "64"])
 @pytest.mark.parametrize("backend", [gs.gpu])
 def test_cholesky_tiling(monkeypatch, tol):
-    import genesis.engine.solvers
+    import genesis.engine.systems.rigid_solver_system as rigid_solver_system
 
-    rigid_solver_build_orig = genesis.engine.solvers.RigidSolver.build
+    rigid_build_static_config_orig = rigid_solver_system.rigid_build_static_config
 
     values = []
     for enable_tiled_cholesky in (True, False):
 
-        def rigid_solver_build(self):
+        def rigid_build_static_config(system):
             nonlocal enable_tiled_cholesky
 
-            rigid_solver_build_orig(self)
-            self.rigid_config.enable_tiled_cholesky_mass_matrix = enable_tiled_cholesky
-            self.rigid_config.enable_fused_smooth_acc_solve &= enable_tiled_cholesky
+            rigid_build_static_config_orig(system)
+            system.rigid_config.enable_tiled_cholesky_mass_matrix = enable_tiled_cholesky
+            system.rigid_config.enable_fused_smooth_acc_solve &= enable_tiled_cholesky
             if enable_tiled_cholesky:
-                self.rigid_config.tiled_n_dofs_per_entity = 32
+                system.rigid_config.tiled_n_dofs_per_entity = 32
 
-        monkeypatch.setattr("genesis.engine.solvers.RigidSolver.build", rigid_solver_build)
+        monkeypatch.setattr(rigid_solver_system, "rigid_build_static_config", rigid_build_static_config)
 
         scene = gs.Scene(
             rigid_options=gs.options.RigidOptions(

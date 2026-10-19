@@ -117,6 +117,10 @@ def gs_static_child(args: list[str]):
 
     scene.step()
     assert qd_to_numpy(scene.rigid_solver.collider.collider_state.n_contacts) == args.expected_num_contacts
+    # RigidSolverSystem captures detection inside its phase graph. Launch the public standalone entry too because the
+    # assertions below specifically cover kernel_detection's offline cache.
+    scene.rigid_solver.collider.detection()
+    qd.sync()
     assert kernel_detection._primal.src_ll_cache_observations.cache_key_generated == args.expected_use_src_ll_cache
     assert kernel_detection._primal.src_ll_cache_observations.cache_validated == args.expected_src_ll_cache_hit
     assert kernel_detection._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
