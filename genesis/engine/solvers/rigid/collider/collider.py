@@ -429,6 +429,10 @@ class Collider:
 
         # Lazily compute geom vertices only for geoms that need neutral overlap checks
         geoms_verts: dict[int, np.ndarray] = {}
+        # Voxel grid and filled-voxel centers of a geom, built the first time it enters a pair with overlapping bounds
+        # and shared by every other pair it enters, since voxelization dominates this check and a link usually overlaps
+        # several others in the neutral configuration
+        geoms_voxels: dict[int, tuple[trimesh.voxel.VoxelGrid, np.ndarray]] = {}
         if needs_neutral_check:
             self_root_indices = np.where(valid & same_root)[0]
             self_root_geom_idxs = np.unique(np.concatenate([row[self_root_indices], col[self_root_indices]]))
@@ -479,14 +483,14 @@ class Collider:
                     mesh_b = trimesh.Trimesh(vertices=verts_b, faces=geoms[i_gb].init_faces, process=False)
                     bounds_a, bounds_b = mesh_a.bounds, mesh_b.bounds
                     if not ((bounds_a[1] < bounds_b[0]).any() or (bounds_b[1] < bounds_a[0]).any()):
-                        voxels_a = mesh_a.voxelized(
-                            pitch=min(NEUTRAL_COLLISION_RES_ABS, NEUTRAL_COLLISION_RES_REL * max(mesh_a.extents))
-                        )
-                        voxels_b = mesh_b.voxelized(
-                            pitch=min(NEUTRAL_COLLISION_RES_ABS, NEUTRAL_COLLISION_RES_REL * max(mesh_b.extents))
-                        )
-                        coords_a = voxels_a.indices_to_points(np.argwhere(voxels_a.matrix))
-                        coords_b = voxels_b.indices_to_points(np.argwhere(voxels_b.matrix))
+                        for i_g, mesh in ((i_ga, mesh_a), (i_gb, mesh_b)):
+                            if i_g not in geoms_voxels:
+                                voxels = mesh.voxelized(
+                                    pitch=min(NEUTRAL_COLLISION_RES_ABS, NEUTRAL_COLLISION_RES_REL * max(mesh.extents))
+                                )
+                                geoms_voxels[i_g] = (voxels, voxels.indices_to_points(np.argwhere(voxels.matrix)))
+                        voxels_a, coords_a = geoms_voxels[i_ga]
+                        voxels_b, coords_b = geoms_voxels[i_gb]
                         if voxels_a.is_filled(coords_b).any() or voxels_b.is_filled(coords_a).any():
                             self_colliding_pairs.append((i_ga, i_gb))
                             valid[idx] = False
