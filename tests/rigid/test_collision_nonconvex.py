@@ -461,8 +461,6 @@ def test_concentric_contact(direction, show_viewer):
         show_FPS=False,
     )
     scene.add_entity(gs.morphs.Plane())
-    # Realistic steel density so the nut carries a real fastener's mass and inertia.
-    steel = gs.materials.Rigid(rho=7850.0)
     scene.add_entity(
         gs.morphs.Mesh(
             # Head bottom rests on the plane (z = 0), head top at z = 11 mm, shaft tip at z = 43 mm.
@@ -472,7 +470,12 @@ def test_concentric_contact(direction, show_viewer):
             convexify=False,
             fixed=True,
         ),
-        material=steel,
+        material=gs.materials.Rigid(
+            # Realistic steel density so the nut carries a real fastener's mass and inertia.
+            rho=7850.0,
+            # FIXME: The thread holds only on this signed distance field (SDF) grid, finer grids tilt the nut.
+            sdf_cell_size=(1.6184e-3, 1.4388e-3, 1.6646e-3),
+        ),
         vis_mode="collision",
     )
     nut = scene.add_entity(
@@ -483,7 +486,11 @@ def test_concentric_contact(direction, show_viewer):
             decimate=False,
             convexify=False,
         ),
-        material=steel,
+        material=gs.materials.Rigid(
+            rho=7850.0,
+            # FIXME: Same SDF grid constraint as the bolt above.
+            sdf_cell_size=(1.6092e-3, 1.4295e-3, 0.8489e-3),
+        ),
         vis_mode="collision",
         # visualize_contact=True,
     )

@@ -86,12 +86,14 @@ class SignedDistanceFieldDescription:
 
     @classmethod
     def from_geometry(cls, mesh: "gs.Mesh", geom_type: GEOM_TYPE, material: Material) -> Self:
-        """Resolve the grid sampling the signed distance field (SDF) of a geometry, at the resolution its material asks.
+        """Resolve the grid sampling the signed distance field (SDF) of a geometry, at the accuracy its material asks.
 
-        The grid extends past the bounding box of the geometry by a margin along each axis. Its cells have the size the
-        material asks, refined further for a closed non-convex geometry to fit 2 across its thinnest walls, and clipped
-        along each axis to the minimum and maximum resolutions of the material. A terrain carries no gradient, since it
-        derives its gradient from its height field instead.
+        The grid extends past the bounding box of the geometry by a margin along each axis. Its cells have the absolute
+        size the material asks, or else the coarsest size reproducing the surface of the geometry within the tolerance
+        of the material (see 'get_sdf_cell_size'). The cells of a closed non-convex geometry are refined further to
+        fit 2 across its thinnest walls. They are coarsened along an axis only where the grid would exceed the maximum
+        resolution of the material. A terrain carries no gradient, since it derives its gradient from its height field
+        instead.
         """
         # The vertices are a trimesh array subclass, which the grid parameters derived from them would carry into an
         # exported description
@@ -102,7 +104,6 @@ class SignedDistanceFieldDescription:
         # perpendicular to its surface without bloating the cell count along its long axes. A uniform cell size would
         # leave primitive-vs-mesh contacts noisy whenever the smallest dimension of the primitive is below it.
         cell_size_lower = grid_size / (material.sdf_max_res - 1)
-        cell_size_upper = grid_size / max(material.sdf_min_res - 1, 2)
         # A convex geom has no thin wall to tunnel through, so it keeps the target. A non-convex geom tunnels when the
         # cell is coarser than its thinnest wall (its area-weighted p25 thickness), on all three axes: the certified
         # penetration bounds that hold shell contacts apart need lattice points near the contact in every direction,
@@ -111,18 +112,29 @@ class SignedDistanceFieldDescription:
         # collision mesh, so both share their watertightness.
         sdf_tmesh = mesh.metadata.get("sdf_mesh", mesh.trimesh)
         cell_size_target = material.sdf_cell_size
+        if cell_size_target is None:
+            cell_size_target = mu.get_sdf_cell_size(
+                verts,
+                np.ascontiguousarray(mesh.faces),
+                np.ascontiguousarray(sdf_tmesh.vertices),
+                np.ascontiguousarray(sdf_tmesh.faces),
+                grid_size,
+                cell_size_lower,
+                material.sdf_max_res,
+                material.sdf_tolerance,
+            )
         if not mesh.is_convex:
             if mesh.is_watertight:
                 wall_thickness = mu.get_wall_thickness(
                     np.ascontiguousarray(sdf_tmesh.vertices), np.ascontiguousarray(sdf_tmesh.faces)
                 )
-                cell_size_target = min(cell_size_target, wall_thickness / 2.0)
+                cell_size_target = np.minimum(cell_size_target, wall_thickness / 2.0)
             else:
                 mesh_descr = f" ({mesh.metadata['mesh_path']})" if "mesh_path" in mesh.metadata else ""
                 gs.logger.warning(
                     f"Mesh{mesh_descr} is not watertight. Skipping the refinement of its SDF grid to its walls."
                 )
-        cell_size = gs.EPS + np.clip(cell_size_target, cell_size_lower, cell_size_upper)
+        cell_size = gs.EPS + np.maximum(cell_size_target, cell_size_lower)
         return cls(
             n_nodes=tuple((np.ceil(grid_size / cell_size).astype(gs.np_int) + 1).tolist()),
             cell_size=tuple(cell_size.tolist()),

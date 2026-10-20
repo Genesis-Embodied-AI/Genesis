@@ -22,6 +22,7 @@ from .cache import (
     get_cvx_cache,
     get_exr_path,
     get_hashkey,
+    get_sdc_cache,
     get_wt_cache,
     get_wth_cache,
     register_cache_clear,
@@ -39,6 +40,13 @@ DEFAULT_PLANE_TEXTURE_PATH = "textures/checker.png"  # use checkerboard texture 
 # The GPU interpolates the attributes of a triangle in low precision, so a triangle hundreds of meters wide makes the
 # edges of its texture flicker and shift under a rounding change of the camera pose. Cells of this size keep them still.
 PLANE_MAX_CELL_SIZE = 50.0
+
+# Ratio between two successive cell sizes tried by 'get_sdf_cell_size'. The cell size found is at most this much finer
+# than the coarsest one meeting the tolerance, along each axis.
+SDF_CELL_SIZE_RATIO = 2.0 ** (-1.0 / 3.0)
+# Number of points drawn over the surface of a mesh, besides its vertices, edges and faces, at which
+# 'get_sdf_cell_size' measures the error of its signed distance field grid
+SDF_ERROR_N_SAMPLES = 10000
 
 
 def color_f32_to_u8(color) -> np.ndarray:
@@ -129,6 +137,65 @@ def get_wall_thickness(verts: np.ndarray, faces: np.ndarray, quantile: float = 0
 
     cache.save(wall_thickness)
     return wall_thickness
+
+
+def get_sdf_cell_size(
+    verts: np.ndarray,
+    faces: np.ndarray,
+    sdf_verts: np.ndarray,
+    sdf_faces: np.ndarray,
+    grid_size: np.ndarray,
+    cell_size_lower: np.ndarray,
+    max_res: int,
+    tolerance: float,
+) -> float:
+    """Find the coarsest cell size at which the signed distance field (SDF) grid of a mesh reproduces its surface.
+
+    The grid is centered on the bounding box of the mesh 'verts' and 'faces', spans 'grid_size', and its cells are
+    never finer than 'cell_size_lower' along each axis, the grid extent divided by 'max_res' minus one. The signed
+    distance is measured against the mesh 'sdf_verts' and 'sdf_faces', as in 'Mesh.get_sdf_grid'.
+
+    The SDF interpolated from the grid nodes vanishes on the surface up to an error, which is measured at the vertices,
+    at the middle of the edges and at the center of the faces, where the interpolation is the least accurate, and at
+    points drawn uniformly over the surface, which cover the inside of large faces. The cell size shrinks geometrically
+    from the extent of the grid until the largest error is at most 'tolerance', or until it reaches 'cell_size_lower'
+    along every axis. The value returned may be finer than 'cell_size_lower' along some axes, which the grid clips.
+    """
+    # The cache is keyed on what is exactly reproducible, the grid being derived from the vertices and 'max_res'
+    cache = get_sdc_cache(verts, faces, max_res, tolerance)
+    cell_size_target = cache.load()
+    if cell_size_target is not None:
+        return cell_size_target
+
+    sdf_mesh = trimesh.Trimesh(sdf_verts, sdf_faces, process=False)
+    points_surface, _ = trimesh.sample.sample_surface(sdf_mesh, SDF_ERROR_N_SAMPLES, seed=0)
+    points = np.concatenate(
+        (sdf_verts, sdf_verts[sdf_mesh.edges_unique].mean(axis=1), sdf_mesh.triangles_center, points_surface)
+    )
+    grid_center = (verts.min(axis=0) + verts.max(axis=0)) / 2.0
+    corners_offset = np.stack(np.meshgrid((0, 1), (0, 1), (0, 1), indexing="ij"), axis=-1).reshape((8, 3))
+    cell_size_target = grid_size.max()
+    while True:
+        # The nodes are laid out exactly as the grid of 'Mesh.get_sdf_grid', and only those around the points are
+        # evaluated
+        cell_size = gs.EPS + np.maximum(cell_size_target, cell_size_lower)
+        res = np.ceil(grid_size / cell_size).astype(gs.np_int) + 1
+        grid_lower = grid_center - (res - 1) * cell_size / 2.0
+        points_grid = (points - grid_lower) / cell_size
+        cells_lower = np.clip(np.floor(points_grid).astype(gs.np_int), 0, res - 2)
+        weights_upper = points_grid - cells_lower
+        nodes_flat_idx = np.ravel_multi_index((cells_lower[:, None] + corners_offset).reshape((-1, 3)).T, res)
+        nodes_idx, points_nodes_idx = np.unique(nodes_flat_idx, return_inverse=True)
+        nodes_pos = grid_lower + np.stack(np.unravel_index(nodes_idx, res), axis=-1) * cell_size
+        nodes_sd, *_ = igl.signed_distance(nodes_pos, sdf_verts, sdf_faces)
+        weights = np.where(corners_offset, weights_upper[:, None], 1.0 - weights_upper[:, None]).prod(axis=-1)
+        error = np.abs((nodes_sd[points_nodes_idx].reshape((-1, 8)) * weights).sum(axis=-1)).max()
+        if error <= tolerance or (cell_size_target <= cell_size_lower).all():
+            break
+        cell_size_target *= SDF_CELL_SIZE_RATIO
+
+    cache.save(cell_size_target)
+    return cell_size_target
 
 
 class MeshInfo:

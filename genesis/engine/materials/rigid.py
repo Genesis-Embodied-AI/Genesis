@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal
 from pydantic import Field, StrictBool, model_validator
 
 import genesis as gs
-from genesis.typing import NonNegativeFloat, PositiveFloat, StrictInt, StrArrayType, ValidFloat
+from genesis.typing import NonNegativeFloat, PositiveFloat, PositiveVec3FType, StrictInt, StrArrayType, ValidFloat
 
 from .kinematic import Kinematic
 
@@ -51,12 +51,23 @@ class Rigid(Kinematic["RigidEntity"]):
         Softness of coupling interaction. Must be non-negative. Default is 0.002.
     coup_restitution : float, optional
         Restitution coefficient in collision coupling. Should be between 0 and 1. Default is 0.0.
-    sdf_cell_size : float, optional
-        Cell size in SDF grid in meters. Defines grid resolution. Default is 0.005.
-    sdf_min_res : int, optional
-        Minimum resolution of the SDF grid. Must be at least 16. Default is 32.
+    sdf_cell_size : float or (float, float, float) or None, optional
+        Size in meters of the cells of the signed distance field (SDF) grid of each collision geometry, which the
+        contacts of non-convex geometries and their interactions with other solvers rely on. If a 3-tuple, it sets
+        the size along each axis of the frame of the geometry. Smaller cells resolve thinner features and give more
+        accurate contacts, at the cost of memory and build time growing with the inverse of their volume. Closed
+        non-convex geometries get cells fine enough to fit 2 across their thinnest walls whatever this value. If None,
+        each geometry gets the coarsest cells meeting 'sdf_tolerance'. Cannot be set along with 'sdf_tolerance'.
+        Defaults to None.
+    sdf_tolerance : float or None, optional
+        Largest distance in meters between the surface of each collision geometry and the surface its SDF grid
+        describes. A smaller tolerance gives more accurate contacts on curved surfaces, sharp edges and fine details,
+        at the cost of memory and build time, while flat surfaces stay coarse whatever the tolerance. If None, resolved
+        based on 'sdf_cell_size': 0.001 if it is None, unused otherwise. Defaults to None.
     sdf_max_res : int, optional
-        Maximum resolution of the SDF grid. Must be >= sdf_min_res. Default is 128.
+        Maximum number of grid nodes along each axis of the SDF grid of a geometry. A geometry too large for its cells
+        gets coarser cells instead, which caps the memory it takes at the cost of contact accuracy. Must be at least
+        16. Default is 128.
     gravity_compensation : float, optional
         Compensation factor for gravity. 1.0 cancels gravity. Default is 0.
     coup_type : str or None, optional
@@ -98,8 +109,8 @@ class Rigid(Kinematic["RigidEntity"]):
     coup_friction: NonNegativeFloat = 0.1
     coup_softness: NonNegativeFloat = 0.002
     coup_restitution: Annotated[ValidFloat, Field(ge=0.0, le=1.0)] = 0.0
-    sdf_cell_size: PositiveFloat = 0.005
-    sdf_min_res: Annotated[StrictInt, Field(ge=16)] = 32
+    sdf_cell_size: PositiveVec3FType | PositiveFloat | None = None
+    sdf_tolerance: PositiveFloat | None = None
     sdf_max_res: Annotated[StrictInt, Field(ge=16)] = 128
     gravity_compensation: ValidFloat = 0.0
     coup_type: CoupType | None = None
@@ -121,6 +132,14 @@ class Rigid(Kinematic["RigidEntity"]):
                     "IPC controls gravity for ipc_only entities."
                 )
             data["gravity_compensation"] = 0.0
+        if data.pop("sdf_min_res", None) is not None:
+            gs.logger.warning("'sdf_min_res' is deprecated and ignored. It has been replaced by 'sdf_tolerance'.")
+        # The SDF grid of a geometry is sized either by its cell size or by its tolerance
+        if data.get("sdf_cell_size") is None:
+            if data.get("sdf_tolerance") is None:
+                data["sdf_tolerance"] = 1e-3
+        elif data.get("sdf_tolerance") is not None:
+            gs.raise_exception("`sdf_cell_size` and `sdf_tolerance` cannot be set together.")
         return data
 
     def model_post_init(self, context: Any) -> None:
@@ -144,9 +163,6 @@ class Rigid(Kinematic["RigidEntity"]):
                 "`coup_collision_links` is only effective when `enable_coup_collision=True`. "
                 "Set `enable_coup_collision=False` to disable collision for all links."
             )
-
-        if self.sdf_min_res > self.sdf_max_res:
-            gs.raise_exception("`sdf_min_res` must be smaller than or equal to `sdf_max_res`.")
 
         if self.coup_restitution != 0:
             gs.logger.warning("Non-zero `coup_restitution` could lead to instability. Use with caution.")
