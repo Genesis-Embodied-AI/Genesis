@@ -299,6 +299,7 @@ def swinging_spindle():
     ET.SubElement(nut, "joint", name="travel", type="slide", axis="0 0 1")
     ET.SubElement(nut, "joint", name="turn", type="hinge", axis="0 0 1")
     ET.SubElement(nut, "geom", type="box", size="0.05 0.05 0.01")
+    # The spindle passes through the solid free nut, which only stays on it because the screw stops their collision
     free_nut = ET.SubElement(worldbody, "body", name="free_nut", pos="0 0 0.5")
     ET.SubElement(free_nut, "freejoint")
     ET.SubElement(free_nut, "geom", type="box", size="0.05 0.05 0.01")

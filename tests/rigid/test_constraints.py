@@ -86,7 +86,8 @@ def test_equality_joint_scaling(show_viewer, scaled_mjcf_joint_equalities, n_env
 @pytest.mark.required
 def test_dynamic_weld(show_viewer, tol):
     CUBE_POS = (0.65, 0.0, 0.02)
-    HANGING_BOX_POS = (0.0, 1.0, 0.4)
+    # The hanging box is welded overlapping the fixed box, which only holds because the weld stops their collision
+    HANGING_BOX_POS = (0.0, 1.0, 0.48)
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
