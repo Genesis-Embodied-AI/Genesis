@@ -892,8 +892,6 @@ class Scene(RBC):
 
         with gs.logger.timer("Compiling simulation kernels..."):
             self._sim.step()
-            # An error of this step comes from the initial state, which the user can still overwrite after the build.
-            # The first steps of the user raise it if it persists.
             if self._sim.rigid_solver.is_active:
                 try:
                     self._sim.rigid_solver.check_errno()
