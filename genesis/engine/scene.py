@@ -892,17 +892,13 @@ class Scene(RBC):
 
         with gs.logger.timer("Compiling simulation kernels..."):
             self._sim.step()
-            # The state reached by this step is discarded, so its errors only warn: the user may still move the
-            # entities after the build, and the runtime check of each step raises whatever persists.
+            # The state reached by this step is discarded and the user may still adjust the scene after the build, so
+            # we print a warning instead of erroring at build. Persisting errors will still be raised by step.
             if self._sim.rigid_solver.is_active:
                 try:
                     self._sim.rigid_solver.check_errno()
                 except gs.GenesisException as e:
-                    gs.logger.warning(
-                        "The step taken by the build failed, typically because entities overlap at their initial "
-                        f"poses: {e} The simulation raises this error at runtime if it persists, so move the entities "
-                        "apart before stepping."
-                    )
+                    gs.logger.warning(e)
             self._reset()
 
         # visualizer
