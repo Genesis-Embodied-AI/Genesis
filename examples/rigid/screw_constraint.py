@@ -33,9 +33,6 @@ def main():
         sim_options=gs.options.SimOptions(
             dt=0.01,
         ),
-        rigid_options=gs.options.RigidOptions(
-            enable_screw_constraints=True,
-        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.12, -0.2, 0.12),
             camera_lookat=(0.02, 0.0, 0.04),

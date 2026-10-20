@@ -137,8 +137,7 @@ class ConstraintSolver:
         # * 1 constraint per 1DoF joint limit (upper and lower, if not inf)
         # * 1 constraint per dof frictionloss
         # * up to 6 constraints per equality (weld)
-        # * 1 more constraint per dynamic constraint, a screw adding a friction row and a limit row to its 5 equality
-        #   rows. Counted even with screws disabled, so that the buffers keep one layout across performance modes.
+        # * 1 more constraint per dynamic constraint (a screw adds a friction row and a limit row to its 5 equality rows)
         # When 'max_contacts' is set, it overrides the post-pruning contact budget enforced by the collider.
         # Resolve the max_contacts option in place: from the collider's post-pruning budget when unset, else clamped
         # to the candidate budget and written back so the collider honors the user's cap. Downstream reads the option.
@@ -1391,9 +1390,8 @@ def func_add_equality_constraints(
                 func_equality_weld(i_b, i_e, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
             elif dyn_info.equalities.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.JOINT:
                 func_equality_joint(i_b, i_e, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
-            if qd.static(rigid_config.enable_screw_constraints):
-                if dyn_info.equalities.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.SCREW:
-                    func_equality_screw(i_b, i_e, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
+            elif dyn_info.equalities.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.SCREW:
+                func_equality_screw(i_b, i_e, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
 
 
 @qd.kernel(fastcache=True)
@@ -1561,8 +1559,7 @@ def func_add_inequality_constraints(
         add_collision_constraints(dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config)
     if qd.static(rigid_config.enable_joint_limit):
         add_joint_limit_constraints(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
-    if qd.static(rigid_config.enable_screw_constraints):
-        add_screw_axis_constraints(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
+    add_screw_axis_constraints(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
 
 
 @qd.kernel(fastcache=True)
@@ -2279,12 +2276,11 @@ def add_frictionloss_constraints(
                         constraint_state.jac_n_dofs[i_con, i_b] = 1
 
         # The dry friction rows of the screw constraints close the block, written by add_screw_axis_constraints.
-        if qd.static(rigid_config.enable_screw_constraints):
-            for i_e in range(rigid_info.n_equalities[None], constraint_state.qd_n_equalities[i_b]):
-                if dyn_info.equalities.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.SCREW:
-                    if dyn_info.equalities.eq_data[i_e, i_b][17] > EPS:
-                        qd.atomic_add(constraint_state.n_constraints[i_b], 1)
-                        qd.atomic_add(constraint_state.n_constraints_frictionloss[i_b], 1)
+        for i_e in range(rigid_info.n_equalities[None], constraint_state.qd_n_equalities[i_b]):
+            if dyn_info.equalities.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.SCREW:
+                if dyn_info.equalities.eq_data[i_e, i_b][17] > EPS:
+                    qd.atomic_add(constraint_state.n_constraints[i_b], 1)
+                    qd.atomic_add(constraint_state.n_constraints_frictionloss[i_b], 1)
 
 
 # ==================================== Runtime User-Specified Dynamic Constraints =====================================

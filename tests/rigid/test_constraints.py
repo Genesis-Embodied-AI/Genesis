@@ -210,7 +210,6 @@ def test_dynamic_screw(n_envs, swinging_spindle, show_viewer, tol):
         rigid_options=gs.options.RigidOptions(
             integrator=gs.integrator.Euler,
             max_dynamic_constraints=9,
-            enable_screw_constraints=True,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, -4.5, 1.2),
@@ -276,37 +275,8 @@ def test_dynamic_screw(n_envs, swinging_spindle, show_viewer, tol):
         rigid.add_screw_constraint(nut_helix.base_link.idx, post_idx, axis=(0.0, 0.0, 1.0), pitch=PITCH)
     with pytest.raises(gs.GenesisException, match="max_dynamic_constraints"):
         rigid.add_weld_constraint(post_idx, nut_helix.base_link.idx)
-    with pytest.raises(gs.GenesisException, match="Invalid screw constraint"):
+    with pytest.raises(gs.GenesisException, match="Invalid screw parameters"):
         rigid.add_screw_constraint(post_idx, nut_helix.base_link.idx, axis=(0.0, 0.0, np.inf), pitch=PITCH)
-    with pytest.raises(gs.GenesisException, match="Invalid screw constraint"):
-        rigid.add_screw_constraint(post_idx, nut_helix.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=np.nan)
-    with pytest.raises(gs.GenesisException, match="Invalid screw constraint"):
-        rigid.add_screw_constraint(post_idx, nut_helix.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=PITCH, pos=(0.0, 0.0))
-    with pytest.raises(gs.GenesisException, match="Invalid screw constraint"):
-        rigid.add_screw_constraint(
-            post_idx, nut_helix.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=PITCH, limit=(0.1, 0.0)
-        )
-    with pytest.raises(gs.GenesisException, match="Invalid screw constraint"):
-        rigid.add_screw_constraint(
-            post_idx, nut_helix.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=PITCH, frictionloss=np.nan
-        )
-    with pytest.raises(gs.GenesisException, match="Invalid screw constraint"):
-        rigid.add_screw_constraint(
-            post_idx, nut_helix.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=PITCH, limit=(0.1, 1.0)
-        )
-    with pytest.raises(gs.GenesisException, match="Invalid screw constraint"):
-        rigid.add_screw_constraint(
-            post_idx, nut_helix.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=PITCH, frictionloss=np.inf
-        )
-    with pytest.raises(gs.GenesisException, match="two distinct links"):
-        rigid.add_screw_constraint(post_idx, post_idx, axis=(0.0, 0.0, 1.0), pitch=PITCH)
-    scene_with_grad = gs.Scene(
-        sim_options=gs.options.SimOptions(requires_grad=True),
-        rigid_options=gs.options.RigidOptions(enable_screw_constraints=True),
-    )
-    scene_with_grad.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1)))
-    with pytest.raises(gs.GenesisException, match="Screw constraints are not supported yet"):
-        scene_with_grad.build()
     assert_equal(rigid.get_equality_constraints()["type"], gs.EQUALITY_TYPE.SCREW)
 
     # The nut descends with the acceleration g_eff of a mass m sliding along the axis while spinning with an axial

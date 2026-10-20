@@ -3053,9 +3053,6 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # extra opposing pyramid pairs per contact with the pyramidal cone, two extra cone rows with the elliptic cone.
     # Requires enable_torsional_friction (the rolling rows sit after the spin row in the contact row layout).
     enable_rolling_friction: bool = False
-    # Whether the constraint assembly carries the rows of the screw constraints added at runtime (see their
-    # resolution in the rigid solver).
-    enable_screw_constraints: bool = False
     # Consecutive sub-tolerance steps a body's max DOF velocity must hold before it is ready to hibernate. Guards
     # against a body that is only momentarily slow (e.g. at the apex of a toss) sleeping prematurely.
     hibernation_min_steps: int = 10
