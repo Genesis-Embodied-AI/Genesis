@@ -586,6 +586,21 @@ def test_load_rejects_damaged_file(checkpoint_scene, tmp_path):
     with pytest.raises(gs.GenesisException, match="holds a str where a float was declared"):
         gs.Scene.load(exported)
 
+    # A class extending one of the same name (the rigid material of another solver) is named apart from it, so each
+    # loads back as the class it was written as.
+    namesakes_scene = gs.Scene()
+    for material in (gs.materials.Rigid(), gs.materials.Mochi.Rigid()):
+        namesakes_scene.add_entity(
+            morph=gs.morphs.Box(
+                size=(0.1, 0.1, 0.1),
+            ),
+            material=material,
+        )
+    namesakes = tmp_path / f"namesakes{SCENE_FORMAT}"
+    namesakes_scene.export(namesakes)
+    namesakes_materials = [type(entity.material) for entity in gs.Scene.load(namesakes).entities]
+    assert namesakes_materials == [gs.materials.Rigid, gs.materials.Mochi.Rigid]
+
 
 @pytest.mark.required
 def test_export_rejects_unsupported_physics(checkpoint_scene, tmp_path):

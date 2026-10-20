@@ -578,8 +578,9 @@ def kernel_update_geoms(
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_r, i_b_ in qd.ndrange(rigid_info.roots_link_idx.shape[0], envs_idx.shape[0]):
         i_b = qd.cast(envs_idx[i_b_], qd.i32)
+        i_l_root = rigid_info.roots_link_idx[i_r]
         func_update_geoms_root(
-            i_r, i_b, dyn_state, dyn_info, rigid_info, rigid_config, force_update_all_geoms, is_backward=False
+            i_l_root, i_b, dyn_state, dyn_info, rigid_info, rigid_config, force_update_all_geoms, is_backward=False
         )
 
 

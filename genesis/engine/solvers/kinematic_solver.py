@@ -64,6 +64,7 @@ from .rigid.abd.misc import (
     kernel_init_link_fields,
     kernel_init_vgeom_fields,
     kernel_init_vvert_fields,
+    kernel_set_zero,
     kernel_update_heterogeneous_links_vgeom,
 )
 
@@ -398,11 +399,16 @@ class KinematicSolver(Solver):
         self.update_vgeoms()
         self.update_vverts_for_vgeoms(opt_in_vgeoms_idx)
 
+    def _resolve_para_level(self):
+        # Parallelization level of this solver's kernels. Subclasses may raise it above the scene's level (the
+        # MochiSolver parallelizes its item loops on a multi-threaded CPU backend).
+        return self.sim._para_level
+
     def _build_static_config(self):
         # Static config with all physics disabled
         self.rigid_config = array_class.RigidSimStaticConfig(
             backend=gs.backend,
-            para_level=self.sim._para_level,
+            para_level=self._resolve_para_level(),
             requires_grad=False,
             use_hibernation=False,
             batch_links_info=self._options.batch_links_info,
@@ -968,6 +974,7 @@ class KinematicSolver(Solver):
 
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
 
+        kernel_set_zero(envs_idx, self.data_manager.errno)
         kernel_set_kinematic_state(
             envs_idx,
             state.qpos,
@@ -994,6 +1001,14 @@ class KinematicSolver(Solver):
             # next step recomputes the rest of the derived state.
             self._is_forward_pos_updated = self._is_forward_vel_updated = False
             self.update_forward_pos()
+
+    def get_error_envs_mask(self):
+        """Mask of the environments that raised an error since their state or configuration was last set.
+
+        Restoring the state (`set_state`) or setting the configuration (`set_qpos`, `set_dofs_position`) of an
+        environment clears its error, so that resetting the environments this mask names lets the others go on.
+        """
+        return qd_to_torch(self.data_manager.errno) > 0
 
     # ------------------------------------------------------------------------------------
     # -------------------------------- process_input -------------------------------------
@@ -1194,6 +1209,7 @@ class KinematicSolver(Solver):
     def set_qpos(self, qpos, qs_idx=None, envs_idx=None, *, skip_forward=False):
         if gs.use_zerocopy:
             data = qd_to_torch(self.rigid_info.qpos, transpose=True, copy=False)
+            errno = qd_to_torch(self.data_manager.errno, copy=False)
             qs_mask = indices_to_mask(qs_idx)
             if (
                 (not qs_mask or isinstance(qs_mask[0], slice))
@@ -1207,9 +1223,11 @@ class KinematicSolver(Solver):
                 else:
                     qpos = broadcast_tensor(qpos, gs.tc_float, qs_data.shape)
                     torch.where(envs_idx[:, None], qpos, qs_data, out=qs_data)
+                errno.masked_fill_(envs_idx, 0)
             else:
                 mask = (0, *qs_mask) if self.n_envs == 0 else indices_to_mask(envs_idx, *qs_mask, boolean_mask=False)
                 assign_indexed_tensor(data, mask, qpos)
+                errno[mask[:1]] = 0
                 if mask and isinstance(mask[0], torch.Tensor):
                     envs_idx = mask[0].reshape((-1,))
             if gs.backend == gs.metal:
@@ -1221,6 +1239,7 @@ class KinematicSolver(Solver):
             if self.n_envs == 0:
                 qpos = qpos[None]
             kernel_set_qpos(qs_idx, envs_idx, qpos, self.rigid_info, self.rigid_config)
+            kernel_set_zero(envs_idx, self.data_manager.errno)
 
         if not skip_forward:
             if not isinstance(envs_idx, torch.Tensor):
@@ -1323,6 +1342,7 @@ class KinematicSolver(Solver):
         kernel_set_dofs_position(
             dofs_idx, envs_idx, position, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
         )
+        kernel_set_zero(envs_idx, self.data_manager.errno)
 
         kernel_forward_kinematics(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
         self._is_forward_pos_updated = True
