@@ -1691,7 +1691,7 @@ def test_num_contact_overflow(
         scene.build()
     log_text = " ".join(record.getMessage() for record in caplog.records)
     if is_warned_by_build is not None:
-        assert ("step taken by the build" in log_text) is is_warned_by_build
+        assert ("Solver encountered error at build" in log_text) is is_warned_by_build
     if is_warned_by_build:
         assert error_pattern in log_text
     assert scene.rigid_solver.collider.collider_config.has_prunable_contacts

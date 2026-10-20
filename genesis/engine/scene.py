@@ -898,11 +898,7 @@ class Scene(RBC):
                 try:
                     self._sim.rigid_solver.check_errno()
                 except gs.GenesisException as e:
-                    gs.logger.warning(
-                        "The step taken by the build failed, typically because entities overlap at their initial "
-                        f"poses: {e} The simulation raises this error at runtime if it persists, so move the entities "
-                        "apart before stepping."
-                    )
+                    gs.logger.warning(f"Solver encountered error at build, reconfigure scene before stepping: {e}")
             self._reset()
 
         # visualizer
