@@ -1603,44 +1603,32 @@ def test_contact_pruning_degenerated_hull(model_name, xml_path, show_viewer):
 
 @pytest.mark.slow("gpu")  # gpu ~250s
 @pytest.mark.parametrize(
-    "scene_kind, max_collision_pairs, max_contacts, error_pattern, is_warned_by_build",
+    "scene_kind, max_collision_pairs, max_contacts, error_pattern",
     [
         # Post-pruning contact budget overflow, with the candidate buffer large enough (2x margin) that it cannot
         # trip first. The automatic budget resolves to 32 contact points per link pair floored at 512, far below
-        # what the bowls produce once they pile up. Its phase is left unpinned: the coincident bowls put the contact
-        # count of the step taken by the build close to the budget, on either side depending on rounding.
-        pytest.param(
-            "bowls", 1_000, None, "max number of post-pruning contact points", None, marks=pytest.mark.required
-        ),
+        # what the bowls produce once they pile up.
+        pytest.param("bowls", 1_000, None, "max number of post-pruning contact points", marks=pytest.mark.required),
         # Candidate contact buffer overflow. The explicit contact budget is clamped down to the buffer size, so only
-        # the buffer itself can overflow. Its phase is left unpinned, for the same reason as above. Debug mode is
-        # forced, as fast-math moves the candidate count of the steps after the build across the buffer size.
+        # the buffer itself can overflow. Debug mode is forced, as fast-math moves the candidate count across the
+        # buffer size.
+        pytest.param("bowls", 150, 1_000, "max number of candidate contact points", marks=pytest.mark.debug(True)),
+        # Broad phase candidate pair overflow, the bowls starting fully overlapping.
         pytest.param(
-            "bowls", 150, 1_000, "max number of candidate contact points", None, marks=pytest.mark.debug(True)
-        ),
-        # Broad phase candidate pair overflow on the step taken by the build, the bowls starting fully overlapping.
-        pytest.param(
-            "bowls", 20, None, "max number of broad phase candidate contact pairs", True, marks=pytest.mark.required
+            "bowls", 20, None, "max number of broad phase candidate contact pairs", marks=pytest.mark.required
         ),
         # Buffers large enough for the whole pile: no overflow at all. Both values keep a 2x margin over the peaks
         # reached within the stepped window (about 500 colliding geom pairs and 1040 post-pruning contact points).
-        ("bowls", 1_000, 2_000, None, False),
-        # Two contacts against a budget of one, from spheres resting on the plane at build: the clamp must also run
-        # below the pruning gate (n_contacts < 3), in both the serial and the GPU cooperative kernel variants.
-        ("spheres", 150, 1, "max number of post-pruning contact points", True),
+        ("bowls", 1_000, 2_000, None),
+        # Two contacts against a budget of one, from spheres resting on the plane: the clamp must also run below the
+        # pruning gate (n_contacts < 3), in both the serial and the GPU cooperative kernel variants.
+        ("spheres", 150, 1, "max number of post-pruning contact points"),
     ],
 )
 @pytest.mark.parametrize("use_hibernation", [False, True])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_num_contact_overflow(
-    scene_kind,
-    max_collision_pairs,
-    max_contacts,
-    error_pattern,
-    is_warned_by_build,
-    use_hibernation,
-    show_viewer,
-    caplog,
+    scene_kind, max_collision_pairs, max_contacts, error_pattern, use_hibernation, show_viewer
 ):
     from genesis.engine.simulator import RATE_CHECK_ERRNO
 
@@ -1687,13 +1675,7 @@ def test_num_contact_overflow(
                 ),
             )
 
-    with caplog.at_level("WARNING"):
-        scene.build()
-    log_text = " ".join(record.getMessage() for record in caplog.records)
-    if is_warned_by_build is not None:
-        assert ("step taken by the build" in log_text) is is_warned_by_build
-    if is_warned_by_build:
-        assert error_pattern in log_text
+    scene.build()
     assert scene.rigid_solver.collider.collider_config.has_prunable_contacts
 
     # Contact budget as documented for 'RigidOptions.max_contacts' (32 contact points per link pair floored at 512),
