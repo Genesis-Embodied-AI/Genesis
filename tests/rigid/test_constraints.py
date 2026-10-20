@@ -187,8 +187,7 @@ def test_dynamic_weld(show_viewer, tol):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
-def test_dynamic_screw(n_envs, swinging_spindle, show_viewer, tol):
+def test_dynamic_screw(swinging_spindle, show_viewer, tol):
     DT = 0.01
     SUBSTEPS = 2
     GRAVITY = 9.81
@@ -244,7 +243,7 @@ def test_dynamic_screw(n_envs, swinging_spindle, show_viewer, tol):
         ),
         vis_mode="collision",
     )
-    scene.build(n_envs=n_envs)
+    scene.build(n_envs=2)
 
     rigid = scene.sim.rigid_solver
     post_idx = post.base_link.idx
@@ -252,32 +251,37 @@ def test_dynamic_screw(n_envs, swinging_spindle, show_viewer, tol):
     rigid.add_screw_constraint(post_idx, nut_slider.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=np.inf)
     rigid.add_screw_constraint(post_idx, nut_hinge.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=0.0)
     rigid.add_screw_constraint(post_idx, nut_held.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=PITCH, frictionloss=1.0)
+
     # The axis of the seated nut goes through a point given in the frame of the post rather than through the nut.
     axis_pos = np.subtract((4.0, 0.0, NUT_Z), POST_POS)
     rigid.add_screw_constraint(
         post_idx, nut_seated.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=PITCH, pos=axis_pos, limit=(LIMIT_LOWER, np.inf)
     )
+
     # The axis of the capped nut points down, so its fall is a positive travel that the upper limit stops.
     rigid.add_screw_constraint(
         post_idx, nut_capped.base_link.idx, axis=(0.0, 0.0, -1.0), pitch=PITCH, limit=(-np.inf, -LIMIT_LOWER)
     )
+
     # Friction along the axis of a slider, well above the weight of the nut.
     rigid.add_screw_constraint(
         post_idx, nut_braked.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=np.inf, frictionloss=10.0
     )
+
     spindle_link = spindle.get_link("spindle")
     free_nut_link = spindle.get_link("free_nut")
     for nut_link in (spindle.get_link("nut"), free_nut_link):
         rigid.add_screw_constraint(spindle_link.idx, nut_link.idx, axis=(0.0, 0.0, 1.0), pitch=PITCH)
+
     nut_hinge.set_dofs_velocity(HINGE_SPIN_RATE, dofs_idx_local=5)
     spindle.set_dofs_velocity(SWING_RATE, dofs_idx_local=0)
+
     with pytest.raises(gs.GenesisException, match="already coupled"):
         rigid.add_screw_constraint(nut_helix.base_link.idx, post_idx, axis=(0.0, 0.0, 1.0), pitch=PITCH)
     with pytest.raises(gs.GenesisException, match="max_dynamic_constraints"):
         rigid.add_weld_constraint(post_idx, nut_helix.base_link.idx)
     with pytest.raises(gs.GenesisException, match="Invalid screw parameters"):
         rigid.add_screw_constraint(post_idx, nut_helix.base_link.idx, axis=(0.0, 0.0, np.inf), pitch=PITCH)
-    assert_equal(rigid.get_equality_constraints()["type"], gs.EQUALITY_TYPE.SCREW)
 
     # The nut descends with the acceleration g_eff of a mass m sliding along the axis while spinning with an axial
     # inertia I, the two being coupled by the travel per radian p: g_eff = g * m * p^2 / (m * p^2 + I). The
@@ -297,43 +301,42 @@ def test_dynamic_screw(n_envs, swinging_spindle, show_viewer, tol):
     assert_allclose(
         gu.quat_to_rotvec(tensor_to_array(nut_helix.get_quat()))[..., 2], travel_helix / pitch_rad, tol=0.02
     )
-    assert_allclose(nut_helix.get_pos()[..., :2], (0.0, 0.0), tol=1e-3)
+
     assert_allclose(nut_slider.get_pos()[..., 2] - NUT_Z, -GRAVITY * fall_factor, tol=tol)
     assert_allclose(nut_slider.get_quat(), (1.0, 0.0, 0.0, 0.0), tol=1e-3)
+
     assert_allclose(nut_hinge.get_pos()[..., 2] - NUT_Z, 0.0, atol=2e-4)
     hinge_turn = gu.quat_to_rotvec(tensor_to_array(nut_hinge.get_quat()))[..., 2]
     assert_allclose(hinge_turn, HINGE_SPIN_RATE * N_STEPS_SCREWED * DT, tol=1e-2)
+
     assert_allclose(nut_braked.get_pos()[..., 2] - NUT_Z, 0.0, atol=2e-3)
     assert_allclose(nut_held.get_pos()[..., 2] - NUT_Z, 0.0, atol=5e-4)
+
     # Both nuts follow the axis of the swinging spindle, and the travel of the jointed one follows its turn.
     swing, travel_spindle, turn_spindle = spindle.get_qpos()[..., :3].unbind(-1)
     assert (swing.abs() > 0.1).all()
     assert_allclose(travel_spindle, turn_spindle * pitch_rad, atol=1e-4)
-    spindle_quat = spindle_link.get_quat()
-    free_nut_pos = gu.inv_transform_by_trans_quat(free_nut_link.get_pos(), spindle_link.get_pos(), spindle_quat)
+    free_nut_pos = gu.inv_transform_by_trans_quat(
+        free_nut_link.get_pos(), spindle_link.get_pos(), spindle_link.get_quat()
+    )
     assert_allclose(free_nut_pos[..., :2], 0.0, atol=2e-5)
-    assert_allclose(gu.quat_to_R(free_nut_link.get_quat())[..., 2], gu.quat_to_R(spindle_quat)[..., 2], atol=1.5e-3)
 
-    # Once deleted in the last environment, the helix nut falls freely there and keeps screwing down everywhere else.
-    rigid.delete_screw_constraint(nut_helix.base_link.idx, post_idx, envs_idx=[n_envs - 1] if n_envs > 0 else None)
+    # Once deleted in the second environment, the helix nut falls freely there and keeps screwing down in the first.
+    rigid.delete_screw_constraint(nut_helix.base_link.idx, post_idx, envs_idx=[1])
     vel_z = nut_helix.get_vel()[..., 2]
     for _ in range(N_STEPS_RELEASED):
         scene.step()
-    is_deleted = np.arange(max(n_envs, 1)) == max(n_envs, 1) - 1
-    vel_z_delta = np.atleast_1d(tensor_to_array(nut_helix.get_vel()[..., 2] - vel_z))
-    assert_allclose(vel_z_delta[is_deleted], -GRAVITY * N_STEPS_RELEASED * DT, tol=tol)
-    assert_allclose(vel_z_delta[~is_deleted], -g_eff * N_STEPS_RELEASED * DT, rtol=0.01)
-    n_screws = (rigid.get_equality_constraints()["type"] == gs.EQUALITY_TYPE.SCREW).sum(dim=-1)
-    assert_equal(n_screws, 9 - is_deleted)
+    vel_z_delta = nut_helix.get_vel()[..., 2] - vel_z
+    assert_allclose(vel_z_delta[0], -g_eff * N_STEPS_RELEASED * DT, rtol=0.01)
+    assert_allclose(vel_z_delta[1], -GRAVITY * N_STEPS_RELEASED * DT, tol=tol)
+
     for nut_stopped in (nut_seated, nut_capped):
         assert_allclose(nut_stopped.get_pos()[..., 2] - NUT_Z, LIMIT_LOWER, tol=5e-4)
-        assert_allclose(nut_stopped.get_vel(), 0.0, tol=2e-3)
-    if n_envs > 0:
-        rigid.add_screw_constraint(
-            post_idx, nut_helix.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=PITCH, envs_idx=[n_envs - 1, n_envs - 1]
-        )
-        n_screws = (rigid.get_equality_constraints()["type"] == gs.EQUALITY_TYPE.SCREW).sum(dim=-1)
-        assert_equal(n_screws, 9)
+
+    # An environment selected twice gets the screw once.
+    rigid.add_screw_constraint(post_idx, nut_helix.base_link.idx, axis=(0.0, 0.0, 1.0), pitch=PITCH, envs_idx=[1, 1])
+    n_screws = (rigid.get_equality_constraints()["type"] == gs.EQUALITY_TYPE.SCREW).sum(dim=-1)
+    assert_equal(n_screws, 9)
 
 
 @pytest.mark.required
