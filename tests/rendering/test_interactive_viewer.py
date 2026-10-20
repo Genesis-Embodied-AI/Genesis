@@ -253,6 +253,9 @@ def test_key_press(renderer_type, tmp_path, monkeypatch, renderer, png_snapshot)
         gs.morphs.Box(
             size=(0.5, 0.5, 0.5),
             pos=(0.0, 0.0, 0.0),
+            # The viewer records whatever it last drew, which may lag a step behind the scene in contrast to cameras and
+            # camera sensors, so the box must not move by itself for the recorded frames to be deterministic
+            fixed=True,
         ),
     )
     scene.build()
