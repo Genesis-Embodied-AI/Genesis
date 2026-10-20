@@ -289,6 +289,20 @@ def mimic_hinges():
 
 
 @pytest.fixture(scope="session")
+def connected_boxes():
+    mjcf = ET.Element("mujoco", model="connected_boxes")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    box_fixed = ET.SubElement(worldbody, "body", name="box_fixed", pos="0 0 0.3")
+    ET.SubElement(box_fixed, "geom", type="box", size="0.02 0.02 0.02")
+    box_hung = ET.SubElement(worldbody, "body", name="box_hung", pos="0.045 0 0.3")
+    ET.SubElement(box_hung, "freejoint")
+    ET.SubElement(box_hung, "geom", type="box", size="0.02 0.02 0.02")
+    equality = ET.SubElement(mjcf, "equality")
+    ET.SubElement(equality, "connect", body1="box_fixed", body2="box_hung", anchor="0.0225 0 0.02")
+    return ET.tostring(mjcf, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
 def swinging_spindle():
     mjcf = ET.Element("mujoco", model="swinging_spindle")
     worldbody = ET.SubElement(mjcf, "worldbody")
