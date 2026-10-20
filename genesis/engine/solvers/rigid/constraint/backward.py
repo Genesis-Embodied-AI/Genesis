@@ -326,7 +326,7 @@ def kernel_manual_add_joint_limit_constraints_bw(
     rigid_config: qd.template(),
     enable_collision: qd.template(),
 ):
-    """Manual reverse of `add_joint_limit_constraints`. See the section header
+    """Manual reverse of the joint rows of `add_limit_constraints`. See the section header
     above for the shared `n_con` layout and upstream-grad conventions.
 
     Accumulates into rigid_info.qpos.grad[i_q] and dyn_state.dofs.vel.grad[i_d].
@@ -996,7 +996,7 @@ def kernel_manual_add_equality_constraints_bw(
                 # dyn_state.links.{pos,quat} only once per anchor.
                 g_ga1 = gs.qd_vec3(0.0, 0.0, 0.0)
                 g_ga2 = gs.qd_vec3(0.0, 0.0, 0.0)
-                # The stored rows are aref - jdotv[i_3] (see func_equality_connect in solver.py); collect the bias
+                # The stored rows are aref - jdotv[i_3] (see func_equality_links in solver.py); collect the bias
                 # gradient per row and reverse it through both chains after the row loop.
                 g_jdotv = gs.qd_vec3(0.0, 0.0, 0.0)
 
@@ -1199,7 +1199,7 @@ def kernel_manual_add_equality_constraints_bw(
                 # Per-row jac_qvel grad (for the orientation chain walk below).
                 dL_d_jac_qvel_orient = gs.qd_vec3(0.0, 0.0, 0.0)
                 # The stored position rows are aref - jdotv[i_3] and the rotation rows carry the rotational bias
-                # 0.5 * (t1 + t2 + t3)[i_3 + 1] * torquescale (see func_equality_weld in solver.py); collect both
+                # 0.5 * (t1 + t2 + t3)[i_3 + 1] * torquescale (see func_equality_links in solver.py); collect both
                 # bias gradients per row and reverse them after the row loops.
                 g_jdotv = gs.qd_vec3(0.0, 0.0, 0.0)
                 g_t_quat = qd.Vector([0.0, 0.0, 0.0, 0.0], dt=gs.qd_float)
@@ -1386,7 +1386,7 @@ def kernel_manual_add_equality_constraints_bw(
                 g_inv_q2 = g_inv_q2 + g_inv_q2_eq
                 g_q = g_q + g_q_eq
 
-                # ---- Rotational bias t1 + t2 + t3 (see func_equality_weld in solver.py) ----
+                # ---- Rotational bias t1 + t2 + t3 (see func_equality_links in solver.py) ----
                 # Replay the bias intermediates from the same state the forward read.
                 omega1 = dyn_state.links.cd_ang[link1_idx, i_b]
                 omega2 = dyn_state.links.cd_ang[link2_idx, i_b]
