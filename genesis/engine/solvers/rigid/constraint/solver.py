@@ -1820,7 +1820,9 @@ def func_add_relative_motion_rows(
 
 @qd.func
 def func_add_dynamic_constraint_rows_batch(
+    tid: int,
     i_b: int,
+    i_con_start: int,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
@@ -1829,28 +1831,71 @@ def func_add_dynamic_constraint_rows_batch(
 ):
     """Add the rows along the free motion of the dynamic constraints of an env: their dry friction and violated limits.
 
-    The rows belong to env i_b. A screw constraint has a friction row resisting the turn about its axis, or the travel
-    along it for an infinite pitch, and a limit row resisting the travel past a limit. The friction rows fill the end of
-    the frictionloss block, which add_frictionloss_constraints reserves for them, and the limit rows are appended to the
-    inequality rows. One walk of the kinematic chains serves every row (see func_add_relative_motion_rows).
+    The rows belong to env i_b, whose dynamic constraints are spread over the lanes of its block on the cooperative path
+    of add_limit_constraints, lane tid taking one constraint at a time, and are all taken by a single thread otherwise.
+    A screw constraint has a friction row resisting the turn about its axis, or the travel along it for an infinite
+    pitch, and a limit row resisting the travel past a limit. The friction rows fill the end of the frictionloss block,
+    which add_frictionloss_constraints reserves for them, and the limit rows follow row i_con_start - 1, both in the
+    order of the constraints. One walk of the kinematic chains serves every row (see func_add_relative_motion_rows).
+    Returns the row following the last limit row.
     """
+    BLOCK_DIM = qd.static(
+        32 if rigid_config.enable_cooperative_constraint_kernels and rigid_config.enable_joint_limit else 1
+    )
     EPS = rigid_info.EPS[None]
+    i_e_start = rigid_info.n_equalities[None]
+    i_e_end = constraint_state.qd_n_equalities[i_b]
+    n_chunks = (i_e_end - i_e_start + BLOCK_DIM - 1) // BLOCK_DIM
 
-    # The constraints are walked backward, so that their friction rows fill the reserved block from its end.
-    i_con_friction = constraint_state.n_constraints_equality[i_b] + constraint_state.n_constraints_frictionloss[i_b]
-    n_dynamic_equalities = constraint_state.qd_n_equalities[i_b] - rigid_info.n_equalities[None]
-    for i_e_ in range(n_dynamic_equalities):
-        i_e = constraint_state.qd_n_equalities[i_b] - 1 - i_e_
-        if dyn_info.equalities.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.SCREW:
-            eq_data = dyn_info.equalities.eq_data[i_e, i_b]
-            point1, point2, axis, travel = func_screw_frame(i_b, i_e, dyn_state, dyn_info)
-            pos_delta_min = travel - eq_data[15]
-            pos_delta_max = eq_data[16] - travel
+    # The number of reserved friction rows sets where they start
+    n_friction = 0
+    for i_chunk_ in range(n_chunks):
+        i_e = i_e_start + i_chunk_ * BLOCK_DIM + tid
+        has_friction = False
+        if i_e < i_e_end:
+            has_friction = (
+                dyn_info.equalities.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.SCREW
+                and dyn_info.equalities.eq_data[i_e, i_b][17] > EPS
+            )
+        n_friction_chunk = qd.cast(has_friction, gs.qd_int)
+        if qd.static(BLOCK_DIM > 1):
+            _n_friction_incl, n_friction_chunk = su.qd_block_scan(n_friction_chunk)
+        n_friction = n_friction + n_friction_chunk
+
+    i_con_friction = (
+        constraint_state.n_constraints_equality[i_b] + constraint_state.n_constraints_frictionloss[i_b] - n_friction
+    )
+    for i_chunk_ in range(n_chunks):
+        i_e = i_e_start + i_chunk_ * BLOCK_DIM + tid
+        has_friction = False
+        has_limit = False
+        point1 = qd.Vector.zero(gs.qd_float, 3)
+        point2 = qd.Vector.zero(gs.qd_float, 3)
+        axis = qd.Vector.zero(gs.qd_float, 3)
+        travel = gs.qd_float(0.0)
+        eq_data = qd.Vector.zero(gs.qd_float, 18)
+        if i_e < i_e_end:
+            if dyn_info.equalities.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.SCREW:
+                eq_data = dyn_info.equalities.eq_data[i_e, i_b]
+                point1, point2, axis, travel = func_screw_frame(i_b, i_e, dyn_state, dyn_info)
+                has_friction = eq_data[17] > EPS
+                has_limit = travel < eq_data[15] or travel > eq_data[16]
+        n_friction_incl = qd.cast(has_friction, gs.qd_int)
+        n_friction_chunk = n_friction_incl
+        n_limit_incl = qd.cast(has_limit, gs.qd_int)
+        n_limit_chunk = n_limit_incl
+        if qd.static(BLOCK_DIM > 1):
+            n_friction_incl, n_friction_chunk = su.qd_block_scan(n_friction_incl)
+            n_limit_incl, n_limit_chunk = su.qd_block_scan(n_limit_incl)
+
+        if has_friction or has_limit:
             i_l1 = dyn_info.equalities.eq_obj1id[i_e, i_b]
             i_l2 = dyn_info.equalities.eq_obj2id[i_e, i_b]
             I_l1 = [i_l1, i_b] if qd.static(rigid_config.batch_links_info) else i_l1
             I_l2 = [i_l2, i_b] if qd.static(rigid_config.batch_links_info) else i_l2
             invweight = dyn_info.links.invweight[I_l1] + dyn_info.links.invweight[I_l2]
+            pos_delta_min = travel - eq_data[15]
+            pos_delta_max = eq_data[16] - travel
 
             for i_row in range(2):
                 # The row measures the turn or the travel of link1 relative to link2, in the direction that the limit
@@ -1862,19 +1907,16 @@ def func_add_dynamic_constraint_rows_batch(
                 if is_turn:
                     lin_dir, ang_dir = ang_dir, lin_dir
                 pos_delta = gs.qd_float(0.0)
-                is_active = eq_data[17] > EPS
+                i_con = i_con_friction + n_friction_incl - 1
+                is_active = has_friction
                 if not is_friction:
                     pos_delta = qd.min(pos_delta_min, pos_delta_max)
                     if pos_delta_min < pos_delta_max:
                         lin_dir = -axis
-                    is_active = pos_delta < 0.0
+                    i_con = i_con_start + n_limit_incl - 1
+                    is_active = has_limit
 
                 if is_active:
-                    i_con = i_con_friction - 1
-                    if is_friction:
-                        i_con_friction = i_con
-                    else:
-                        i_con = qd.atomic_add(constraint_state.n_constraints[i_b], 1)
                     jac_qvel = func_add_relative_motion_rows(
                         i_con,
                         i_b,
@@ -1902,6 +1944,10 @@ def func_add_dynamic_constraint_rows_batch(
                     if is_friction:
                         constraint_state.efc_frictionloss[i_con, i_b] = eq_data[17]
 
+        i_con_friction = i_con_friction + n_friction_chunk
+        i_con_start = i_con_start + n_limit_chunk
+    return i_con_start
+
 
 @qd.func
 def add_limit_constraints(
@@ -1913,8 +1959,8 @@ def add_limit_constraints(
 ):
     """Add the rows of the joints past their limits, then the rows along the free motion of the dynamic constraints.
 
-    The dynamic constraints are handled in the same loop over the envs as the joints, sparing a launch of their own (see
-    func_add_dynamic_constraint_rows_batch).
+    The dynamic constraints are handled in the same loop over the envs as the joints, sparing a launch of their own, and
+    share its cooperative path (see func_add_dynamic_constraint_rows_batch).
     """
     _B = constraint_state.jac.shape[2]
     n_links = dyn_info.links.root_idx.shape[0]
@@ -1955,11 +2001,11 @@ def add_limit_constraints(
                         rigid_config,
                     )
                 i_con_start = i_con_start + n_rows_chunk
+            i_con_start = func_add_dynamic_constraint_rows_batch(
+                tid, i_b, i_con_start, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config
+            )
             if tid == 0:
                 constraint_state.n_constraints[i_b] = i_con_start
-                func_add_dynamic_constraint_rows_batch(
-                    i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config
-                )
     else:
         # TODO: sparse mode
         qd.loop_config(name="add_limit_constraints", serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
@@ -1986,7 +2032,16 @@ def add_limit_constraints(
                                 rigid_info,
                                 rigid_config,
                             )
-            func_add_dynamic_constraint_rows_batch(i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
+            constraint_state.n_constraints[i_b] = func_add_dynamic_constraint_rows_batch(
+                0,
+                i_b,
+                constraint_state.n_constraints[i_b],
+                dyn_state,
+                constraint_state,
+                dyn_info,
+                rigid_info,
+                rigid_config,
+            )
 
 
 @qd.func
