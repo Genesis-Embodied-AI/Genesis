@@ -429,7 +429,7 @@ def func_build_islands(
             for i_l in range(n_links):
                 i_island = constraint_state.island.links_island_idx[i_l, i_b]
                 if i_island >= 0 and constraint_state.island.is_hibernated[i_island, i_b] == 0:
-                    func_wakeup_link(i_l, i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
+                    func_wakeup_link(i_l, i_b, dyn_state, constraint_state.island, dyn_info, rigid_info, rigid_config)
             if rigid_info.n_awake_dofs[i_b] != n_awake_dofs_before:
                 func_promote_woken_contacts(i_b, dyn_state, collider_state)
         else:
@@ -726,7 +726,7 @@ def func_build_islands_coop(
             while i_l < n_links:
                 i_island = constraint_state.island.links_island_idx[i_l, i_b]
                 if i_island >= 0 and constraint_state.island.is_hibernated[i_island, i_b] == 0:
-                    func_wakeup_link(i_l, i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
+                    func_wakeup_link(i_l, i_b, dyn_state, constraint_state.island, dyn_info, rigid_info, rigid_config)
                 i_l = i_l + _K
             qd.simt.block.sync()
             if tid == 0 and rigid_info.n_awake_dofs[i_b] != n_awake_dofs_before:

@@ -662,7 +662,7 @@ class IslandState:
     ls_improvement: qd.Tensor
 
 
-def get_island_state(solver, collider, len_constraints_):
+def get_island_state(solver, max_contacts, len_constraints_):
     _B = solver._B
     n_links = max(solver.n_links, 1)
     n_dofs = max(solver.n_dofs, 1)
@@ -682,7 +682,7 @@ def get_island_state(solver, collider, len_constraints_):
     )
     # The island build lists the contacts left once collision detection clamped them to max_contacts, and the
     # constraints assembled, at most len_constraints_ (see ConstraintSolver)
-    max_contacts = max(collider.collider_info.max_contacts[None], 1)
+    max_contacts = max(max_contacts, 1)
     return IslandState(
         trees_parent_idx=V(dtype=gs.qd_int, shape=(n_trees, _B), layout=island_layout),
         trees_island_idx=V(dtype=gs.qd_int, shape=(n_trees, _B), layout=island_layout),
@@ -932,7 +932,8 @@ def get_ik_scratch(solver):
 class ConstraintState:
     kind: ClassVar[DataKind] = DataKind.SCRATCH
 
-    # Union-find partition of links into contact islands, read by the per-island Newton solve and hibernation.
+    # Borrowed references owned by RigidIslandSystem: the partition is shared with dynamics/hibernation, and the
+    # equality count is shared with collision filtering. They are not allocated by ConstraintSolverSystem.
     island: IslandState
     is_warmstart: qd.Tensor = of_kind(DataKind.STATE)
     n_constraints: qd.Tensor = of_kind(DataKind.DERIVED)
@@ -1038,7 +1039,7 @@ class ConstraintState:
     noslip_blocks_n_colors: qd.Tensor
 
 
-def get_constraint_state(constraint_solver, solver, collider):
+def get_constraint_state(constraint_solver, solver, collider, island_state, qd_n_equalities):
     _B = solver._B
     len_constraints_ = constraint_solver.len_constraints_
 
@@ -1115,7 +1116,7 @@ def get_constraint_state(constraint_solver, solver, collider):
     # /!\ Changing allocation order of these tensors may reduce runtime speed by >10%  /!\
     return ConstraintState(
         n_constraints=V(dtype=gs.qd_int, shape=(_B,)),
-        qd_n_equalities=V(dtype=gs.qd_int, shape=(_B,)),
+        qd_n_equalities=qd_n_equalities,
         n_constraints_equality=V(dtype=gs.qd_int, shape=(_B,)),
         n_constraints_frictionloss=V(dtype=gs.qd_int, shape=(_B,)),
         n_constraints_cone=V(dtype=gs.qd_int, shape=(_B,)),
@@ -1224,7 +1225,7 @@ def get_constraint_state(constraint_solver, solver, collider):
             layout=dof_vec_layout if is_noslip_cooperative else None,
         ),
         # Allocated last to preserve the allocation order of the tensors above (see the warning at the top).
-        island=get_island_state(solver, collider, len_constraints_),
+        island=island_state,
     )
 
 

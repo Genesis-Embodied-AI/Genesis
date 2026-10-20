@@ -20,7 +20,7 @@ def func_check_collision_valid(
     i_gb: int,
     i_b: int,
     dyn_state: array_class.DynState,
-    constraint_state: array_class.ConstraintState,
+    qd_n_equalities: qd.Tensor,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
@@ -33,7 +33,7 @@ def func_check_collision_valid(
         i_lb = dyn_info.geoms.link_idx[i_gb]
 
         # Filter out collision pairs that are involved in dynamically registered weld equality constraints
-        for i_eq in range(rigid_info.n_equalities[None], constraint_state.qd_n_equalities[i_b]):
+        for i_eq in range(rigid_info.n_equalities[None], qd_n_equalities[i_b]):
             if dyn_info.equalities.eq_type[i_eq, i_b] == gs.EQUALITY_TYPE.WELD:
                 i_leqa = dyn_info.equalities.eq_obj1id[i_eq, i_b]
                 i_leqb = dyn_info.equalities.eq_obj2id[i_eq, i_b]
@@ -76,7 +76,7 @@ def func_collision_clear(
 def _func_broad_phase_sap(
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
-    constraint_state: array_class.ConstraintState,
+    qd_n_equalities: qd.Tensor,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
@@ -181,7 +181,7 @@ def _func_broad_phase_sap(
                             i_gb,
                             i_b,
                             dyn_state,
-                            constraint_state,
+                            qd_n_equalities,
                             dyn_info,
                             rigid_info,
                             collider_info,
@@ -240,7 +240,7 @@ def _func_broad_phase_sap(
                                 i_gb,
                                 i_b,
                                 dyn_state,
-                                constraint_state,
+                                qd_n_equalities,
                                 dyn_info,
                                 rigid_info,
                                 collider_info,
@@ -279,7 +279,7 @@ def _func_broad_phase_sap(
                                     i_gb,
                                     i_b,
                                     dyn_state,
-                                    constraint_state,
+                                    qd_n_equalities,
                                     dyn_info,
                                     rigid_info,
                                     collider_info,
@@ -341,7 +341,7 @@ def _func_broad_phase_sap(
 def _func_broad_phase_all_vs_all(
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
-    constraint_state: array_class.ConstraintState,
+    qd_n_equalities: qd.Tensor,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
@@ -371,7 +371,7 @@ def _func_broad_phase_all_vs_all(
         i_gb = pair[1]
 
         if not func_check_collision_valid(
-            i_ga, i_gb, i_b, dyn_state, constraint_state, dyn_info, rigid_info, collider_info, rigid_config
+            i_ga, i_gb, i_b, dyn_state, qd_n_equalities, dyn_info, rigid_info, collider_info, rigid_config
         ):
             continue
 
@@ -396,7 +396,7 @@ def _func_broad_phase_all_vs_all(
 def func_broad_phase(
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
-    constraint_state: array_class.ConstraintState,
+    qd_n_equalities: qd.Tensor,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
@@ -409,7 +409,7 @@ def func_broad_phase(
         _func_broad_phase_all_vs_all(
             dyn_state,
             collider_state,
-            constraint_state,
+            qd_n_equalities,
             dyn_info,
             rigid_info,
             collider_info,
@@ -421,7 +421,7 @@ def func_broad_phase(
         _func_broad_phase_sap(
             dyn_state,
             collider_state,
-            constraint_state,
+            qd_n_equalities,
             dyn_info,
             rigid_info,
             collider_info,

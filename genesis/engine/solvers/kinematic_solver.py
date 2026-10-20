@@ -178,6 +178,7 @@ class KinematicSolver(Solver):
         self._enable_mujoco_compatibility = False
         self._requires_grad = False
         self._enable_heterogeneous = False  # Set to True when any entity has heterogeneous morphs
+        self._use_system = False
 
         self.collider = None
         self.constraint_solver = None
@@ -370,6 +371,11 @@ class KinematicSolver(Solver):
             self._options.batch_links_info = True
             self._options.batch_joints_info = True
             self._options.batch_dofs_info = True
+
+        # RigidSolverSystem allocates and owns the Rigid solver's kinematic data, including its padded inactive layout.
+        # The standalone KinematicSolver never sets this flag and keeps the legacy initialization below.
+        if self._use_system:
+            return
 
         self._build_static_config()
         self._create_data_manager()
