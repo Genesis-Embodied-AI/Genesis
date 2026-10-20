@@ -1249,7 +1249,6 @@ def func_equality_links(
         point1, point2, axis, travel = func_screw_frame(i_b, i_e, dyn_state, dyn_info)
         # Orientation link1 would have if rigidly attached to link2 at the reference pose.
         quat2_ref = gu.qd_quat_mul(dyn_state.links.quat[i_l2, i_b], gu.qd_inv_quat(relpose))
-        swing = axis.cross(gu.qd_transform_by_quat(axis_local, quat2_ref))
 
         # Rotation of link2 since the reference pose in link1's frame, real part non-negative for a turn in [-pi, pi].
         quat_delta = gu.qd_quat_mul(gu.qd_inv_quat(dyn_state.links.quat[i_l1, i_b]), quat2_ref)
@@ -1262,6 +1261,23 @@ def func_equality_links(
         if qd.abs(pitch_sin) > EPS:
             turn_travel = travel * pitch_cos / pitch_sin
             turn = turn_wrapped + 2.0 * qd.math.pi * qd.floor((turn_travel - turn_wrapped) / (2.0 * qd.math.pi) + 0.5)
+        # The swing is that rotation once its twist about the axis is removed, as twice the vector part of its
+        # quaternion, which keeps growing with the swing angle up to a half turn.
+        half_turn_wrapped = 0.5 * turn_wrapped
+        quat_twist = gs.qd_vec4(
+            [
+                qd.cos(half_turn_wrapped),
+                qd.sin(half_turn_wrapped) * axis_local[0],
+                qd.sin(half_turn_wrapped) * axis_local[1],
+                qd.sin(half_turn_wrapped) * axis_local[2],
+            ]
+        )
+        quat_swing = gu.qd_quat_mul(quat_delta, gu.qd_inv_quat(quat_twist))
+        if quat_swing[0] < 0.0:
+            quat_swing = -quat_swing
+        swing = gu.qd_transform_by_quat(
+            2.0 * gs.qd_vec3([quat_swing[1], quat_swing[2], quat_swing[3]]), dyn_state.links.quat[i_l1, i_b]
+        )
         dir_u, dir_v = gu.qd_orthogonals(axis)
 
         # Two rows keep link2 on the axis, two keep it from swinging off it, and the last one couples its travel and turn
