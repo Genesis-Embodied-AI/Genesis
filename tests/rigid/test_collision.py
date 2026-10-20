@@ -1645,12 +1645,13 @@ def test_num_contact_overflow(
     from genesis.engine.simulator import RATE_CHECK_ERRNO
 
     N_BOWLS = 4
+    rigid_options = gs.options.RigidOptions(
+        max_collision_pairs=max_collision_pairs,
+        max_contacts=max_contacts,
+        use_hibernation=use_hibernation,
+    )
     scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
-            max_collision_pairs=max_collision_pairs,
-            max_contacts=max_contacts,
-            use_hibernation=use_hibernation,
-        ),
+        rigid_options=rigid_options,
         renderer=gs.renderers.Rasterizer(),
         show_viewer=show_viewer,
     )
@@ -1691,7 +1692,7 @@ def test_num_contact_overflow(
         scene.build()
     log_text = " ".join(record.getMessage() for record in caplog.records)
     if is_warned_by_build is not None:
-        assert ("Solver encountered error at build" in log_text) is is_warned_by_build
+        assert ("The initial state is invalid" in log_text) is is_warned_by_build
     if is_warned_by_build:
         assert error_pattern in log_text
     assert scene.rigid_solver.collider.collider_config.has_prunable_contacts
@@ -1711,7 +1712,7 @@ def test_num_contact_overflow(
         4 * expected_max_contacts
         + solver.n_dofs
         + 6 * solver.n_candidate_equalities_
-        + solver._options.max_dynamic_constraints
+        + rigid_options.max_dynamic_constraints
     )
     assert solver.constraint_solver.len_constraints == expected_len_constraints
 
