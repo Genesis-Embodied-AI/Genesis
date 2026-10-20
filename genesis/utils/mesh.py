@@ -36,6 +36,9 @@ Y_UP_TRANSFORM = np.asarray(  # translation on the bottom row
     [[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, -1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]], dtype=np.float32
 )
 DEFAULT_PLANE_TEXTURE_PATH = "textures/checker.png"  # use checkerboard texture by default
+# The GPU interpolates the attributes of a triangle in low precision, so a triangle hundreds of meters wide makes the
+# edges of its texture flicker and shift under a rounding change of the camera pose. Cells of this size keep them still.
+PLANE_MAX_CELL_SIZE = 50.0
 
 
 def color_f32_to_u8(color) -> np.ndarray:
@@ -1231,19 +1234,16 @@ def create_plane(
     mesh.vertices[:, 2] -= thickness / 2
     mesh.vertices = gu.transform_by_R(mesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
 
-    half_x, half_y = (plane_size[0] * 0.5, plane_size[1] * 0.5)
-    verts = np.array(
-        [
-            [-half_x, -half_y, 0.0],
-            [half_x, -half_y, 0.0],
-            [half_x, half_y, 0.0],
-            [-half_x, -half_y, 0.0],
-            [half_x, half_y, 0.0],
-            [-half_x, half_y, 0.0],
-        ],
-        dtype=np.float32,
-    )
-    faces = np.arange(6, dtype=np.int32).reshape(-1, 3)
+    # Grid of vertices spanning the plane, split in cells no larger than PLANE_MAX_CELL_SIZE (see its definition)
+    n_cells_x, n_cells_y = (math.ceil(size / PLANE_MAX_CELL_SIZE) for size in plane_size)
+    verts_x = np.linspace(-0.5 * plane_size[0], 0.5 * plane_size[0], n_cells_x + 1)
+    verts_y = np.linspace(-0.5 * plane_size[1], 0.5 * plane_size[1], n_cells_y + 1)
+    verts = np.zeros((n_cells_x + 1, n_cells_y + 1, 3), dtype=np.float32)
+    verts[..., 0], verts[..., 1] = np.meshgrid(verts_x, verts_y, indexing="ij")
+    verts = verts.reshape((-1, 3))
+    verts_idx = np.arange(len(verts), dtype=np.int32).reshape((n_cells_x + 1, n_cells_y + 1))
+    v00, v10, v11, v01 = verts_idx[:-1, :-1], verts_idx[1:, :-1], verts_idx[1:, 1:], verts_idx[:-1, 1:]
+    faces = np.stack((np.stack((v00, v10, v11), axis=-1), np.stack((v00, v11, v01), axis=-1)), axis=-2).reshape((-1, 3))
 
     if double_sided:
         # Add reversed faces for back-facing visibility
@@ -1255,22 +1255,8 @@ def create_plane(
     vmesh.vertices = gu.transform_by_R(vmesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
 
     if texture_path is not None:
-        n_tile_x, n_tile_y = plane_size[0] / tile_size[0], plane_size[1] / tile_size[1]
-        uv_coords = np.array(
-            [
-                [0, 0],
-                [n_tile_x, 0],
-                [n_tile_x, n_tile_y],
-                [0, 0],
-                [n_tile_x, n_tile_y],
-                [0, n_tile_y],
-            ],
-            dtype=np.float32,
-        )
-        if double_sided:
-            # Duplicate UV coords for back faces
-            uv_coords = np.vstack([uv_coords, uv_coords])
-
+        # One texture tile per 'tile_size', counted from the corner of the plane. The back faces share the vertices.
+        uv_coords = (verts[:, :2] - verts[0, :2]) / tile_size
         vmesh.visual = trimesh.visual.TextureVisuals(
             uv=uv_coords,
             material=trimesh.visual.material.SimpleMaterial(
