@@ -6,6 +6,7 @@ import pytest
 import trimesh
 from PIL import Image
 
+import genesis.utils.geom as gu
 from genesis.utils.misc import get_assets_dir
 
 
@@ -290,15 +291,25 @@ def mimic_hinges():
 
 @pytest.fixture(scope="session")
 def connected_boxes():
+    # The hung box starts lifted away from the fixed box by a rotation about its pivot, the top edge of the 5 mm gap
+    # between their facing sides
+    fixed_pos = np.array((0.0, 0.0, 0.3))
+    pivot_pos = np.array((0.0225, 0.0, 0.02))
+    hung_angle = -1.2
+    hung_quat = gu.xyz_to_quat(np.array((0.0, hung_angle, 0.0)))
+    hung_pos = fixed_pos + pivot_pos - gu.transform_by_quat(np.array((-0.0225, 0.0, 0.02)), hung_quat)
     mjcf = ET.Element("mujoco", model="connected_boxes")
+    ET.SubElement(mjcf, "compiler", angle="radian")
     worldbody = ET.SubElement(mjcf, "worldbody")
-    box_fixed = ET.SubElement(worldbody, "body", name="box_fixed", pos="0 0 0.3")
+    box_fixed = ET.SubElement(worldbody, "body", name="box_fixed", pos=" ".join(map(str, fixed_pos)))
     ET.SubElement(box_fixed, "geom", type="box", size="0.02 0.02 0.02")
-    box_hung = ET.SubElement(worldbody, "body", name="box_hung", pos="0.045 0 0.3")
+    box_hung = ET.SubElement(
+        worldbody, "body", name="box_hung", pos=" ".join(map(str, hung_pos)), axisangle=f"0 1 0 {hung_angle}"
+    )
     ET.SubElement(box_hung, "freejoint")
     ET.SubElement(box_hung, "geom", type="box", size="0.02 0.02 0.02")
     equality = ET.SubElement(mjcf, "equality")
-    ET.SubElement(equality, "connect", body1="box_fixed", body2="box_hung", anchor="0.0225 0 0.02")
+    ET.SubElement(equality, "connect", body1="box_fixed", body2="box_hung", anchor=" ".join(map(str, pivot_pos)))
     return ET.tostring(mjcf, encoding="unicode")
 
 

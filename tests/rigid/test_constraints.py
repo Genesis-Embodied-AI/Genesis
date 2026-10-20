@@ -128,7 +128,7 @@ def test_weld_and_connect(connected_boxes, show_viewer, tol):
         ),
     )
     # The hung box swings on a connect pivot at the top of the gap between the two boxes into the fixed box, which stops
-    # it since connected links keep colliding, where it would otherwise swing about 48 degrees to hang under the pivot.
+    # it since connected links keep colliding, where it would otherwise swing on to hang under the pivot.
     boxes = scene.add_entity(
         gs.morphs.MJCF(
             file=connected_boxes,
@@ -141,7 +141,8 @@ def test_weld_and_connect(connected_boxes, show_viewer, tol):
     # angle phi such that gap / 2 * cos(phi) - 2 * h * sin(phi) = -gap / 2, h being the half size of the boxes.
     BOX_HALF_SIZE = 0.02
     box_hung = boxes.get_link("box_hung")
-    gap = tensor_to_array(box_hung.get_pos() - boxes.get_link("box_fixed").get_pos())[0, 0] - 2.0 * BOX_HALF_SIZE
+    (connect,) = boxes.equalities
+    gap = 2.0 * (connect.eq_data[0] - BOX_HALF_SIZE)
     rest_angle = np.arctan2(-2.0 * BOX_HALF_SIZE, 0.5 * gap) + np.arccos(
         -0.5 * gap / np.hypot(0.5 * gap, 2.0 * BOX_HALF_SIZE)
     )
