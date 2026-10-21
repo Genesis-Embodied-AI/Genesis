@@ -37,8 +37,7 @@ class LINK_SWEEP_PASS(IntEnum):
     FORWARD_KINEMATICS = 0
     FORWARD_VELOCITY = 1
     ACCELERATION = 2
-    CRB_FOLD = 3
-    FORCE_FOLD = 4
+    INERTIA_FORCE_FOLD = 3
 
 
 @qd.kernel(fastcache=True)
@@ -999,8 +998,8 @@ def func_sweep_links_by_level(
 
     The pass sweep_pass (see LINK_SWEEP_PASS) runs from the root down for the forward kinematics and velocities, on the
     links of the awake trees, and for the accelerations, on the awake links of every root. It runs from the leaves up
-    for the folds of the composite inertia and of the link forces, on the links of the awake roots, each link adding its
-    children (see links_child_start in array_class.py). update_cacc applies to the accelerations alone.
+    for the fold of the composite inertia and of the link forces together, on the links of the awake roots, each link
+    adding its children (see links_child_start in array_class.py). update_cacc applies to the accelerations alone.
 
     A block of 32 lanes holds 4 envs of one tree or root, 8 lanes per env. The lanes of an env split the links of a
     level among them, and the block syncs before the next level, whose links read their parent, or their children,
@@ -1010,7 +1009,7 @@ def func_sweep_links_by_level(
     N_LANES_PER_ENV = qd.static(rigid_config.level_sweep_n_lanes_per_env)
     N_ENVS_PER_BLOCK = qd.static(BLOCK_DIM // N_LANES_PER_ENV)
     IS_PER_ROOT = qd.static(sweep_pass not in (LINK_SWEEP_PASS.FORWARD_KINEMATICS, LINK_SWEEP_PASS.FORWARD_VELOCITY))
-    IS_LEAF_TO_ROOT = qd.static(sweep_pass in (LINK_SWEEP_PASS.CRB_FOLD, LINK_SWEEP_PASS.FORCE_FOLD))
+    IS_LEAF_TO_ROOT = qd.static(sweep_pass == LINK_SWEEP_PASS.INERTIA_FORCE_FOLD)
     # A static tuple index picks the tree or root tables, which a conditional expression cannot do on fields
     groups_level_start = qd.static((rigid_info.trees_level_start, rigid_info.roots_level_start)[IS_PER_ROOT])
     groups_n_levels = qd.static((rigid_info.trees_n_levels, rigid_info.roots_n_levels)[IS_PER_ROOT])
@@ -1099,26 +1098,24 @@ def func_sweep_links_by_level(
                             i_child_start = rigid_info.links_child_start[i_l]
                             for j_l_ in range(rigid_info.links_child_start[i_l + 1] - i_child_start):
                                 j_l = rigid_info.links_child_idx[i_child_start + j_l_]
-                                if qd.static(sweep_pass == LINK_SWEEP_PASS.CRB_FOLD):
-                                    dyn_state.links.crb_inertial[i_l, i_b] = (
-                                        dyn_state.links.crb_inertial[i_l, i_b] + dyn_state.links.crb_inertial[j_l, i_b]
-                                    )
-                                    dyn_state.links.crb_mass[i_l, i_b] = (
-                                        dyn_state.links.crb_mass[i_l, i_b] + dyn_state.links.crb_mass[j_l, i_b]
-                                    )
-                                    dyn_state.links.crb_pos[i_l, i_b] = (
-                                        dyn_state.links.crb_pos[i_l, i_b] + dyn_state.links.crb_pos[j_l, i_b]
-                                    )
-                                    dyn_state.links.crb_quat[i_l, i_b] = (
-                                        dyn_state.links.crb_quat[i_l, i_b] + dyn_state.links.crb_quat[j_l, i_b]
-                                    )
-                                else:
-                                    dyn_state.links.cfrc_vel[i_l, i_b] = (
-                                        dyn_state.links.cfrc_vel[i_l, i_b] + dyn_state.links.cfrc_vel[j_l, i_b]
-                                    )
-                                    dyn_state.links.cfrc_ang[i_l, i_b] = (
-                                        dyn_state.links.cfrc_ang[i_l, i_b] + dyn_state.links.cfrc_ang[j_l, i_b]
-                                    )
+                                dyn_state.links.crb_inertial[i_l, i_b] = (
+                                    dyn_state.links.crb_inertial[i_l, i_b] + dyn_state.links.crb_inertial[j_l, i_b]
+                                )
+                                dyn_state.links.crb_mass[i_l, i_b] = (
+                                    dyn_state.links.crb_mass[i_l, i_b] + dyn_state.links.crb_mass[j_l, i_b]
+                                )
+                                dyn_state.links.crb_pos[i_l, i_b] = (
+                                    dyn_state.links.crb_pos[i_l, i_b] + dyn_state.links.crb_pos[j_l, i_b]
+                                )
+                                dyn_state.links.crb_quat[i_l, i_b] = (
+                                    dyn_state.links.crb_quat[i_l, i_b] + dyn_state.links.crb_quat[j_l, i_b]
+                                )
+                                dyn_state.links.cfrc_vel[i_l, i_b] = (
+                                    dyn_state.links.cfrc_vel[i_l, i_b] + dyn_state.links.cfrc_vel[j_l, i_b]
+                                )
+                                dyn_state.links.cfrc_ang[i_l, i_b] = (
+                                    dyn_state.links.cfrc_ang[i_l, i_b] + dyn_state.links.cfrc_ang[j_l, i_b]
+                                )
             if qd.static(IS_LEAF_TO_ROOT):
                 i_k_end = i_k_start
                 i_k_start = i_k_next

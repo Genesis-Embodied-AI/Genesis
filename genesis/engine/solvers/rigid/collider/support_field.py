@@ -18,11 +18,12 @@ class SupportField:
     """
     Support table of the geoms: for every cell of a grid of directions, the vertices supporting a direction of the cell.
 
-    A lookup scans the list of the cell its direction falls in, which makes it exact. The normal cone of a vertex (the
-    directions it supports) meets a cell only by holding one of its corners, by holding the normal of one of its faces
-    inside the cell, or by crossing the cell with one of its edges, which are the arcs between the normals of two
-    adjacent hull faces. A cell therefore lists the supports of its four corners, the vertices of the hull faces whose
-    normal it holds, and the two vertices of every hull edge whose arc crosses it.
+    A lookup scans the list of the cell its direction falls in, which makes it exact up to the angle error of the
+    binning in single precision (see _func_direction_cell). The normal cone of a vertex (the directions it supports)
+    meets a cell only by holding one of its corners, by holding the normal of one of its faces inside the cell, or by
+    crossing the cell with one of its edges, which are the arcs between the normals of two adjacent hull faces. A cell
+    therefore lists the supports of its four corners, the vertices of the hull faces whose normal it holds, and the two
+    vertices of every hull edge whose arc crosses it.
 
     The grid is made of two spherical charts, each one answering for the band of directions 45 to 135 degrees off its
     own poles (see _func_direction_cell), so only the cells of that band are stored.
@@ -171,8 +172,9 @@ def _func_support_world(
     """Support position for a world direction.
 
     The vertex comes from the precomputed support table, or from an exhaustive scan of the mesh vertices when
-    'exhaustive' is set. Both are exact, but the scan returns the first of tied vertices at a cost linear in the
-    vertex count, while the table returns any of them.
+    'exhaustive' is set. The scan is exact and returns the first of tied vertices at a cost linear in the vertex count,
+    while the table is exact up to the angle error of its binning in single precision (see _func_direction_cell) and
+    returns any of them.
     """
     v = qd.Vector.zero(gs.qd_float, 3)
     v_ = qd.Vector.zero(gs.qd_float, 3)
@@ -211,9 +213,22 @@ def _func_direction_cell(i_g: int, d_mesh: qd.types.vector(3), collider_info: ar
         i_chart = 1
         d_chart = qd.Vector([d_mesh[0], -d_mesh[2], d_mesh[1]], dt=gs.qd_float)
 
-    theta = qd.atan2(d_chart[1], d_chart[0])  # [-pi, pi]
-    phi = qd.acos(d_chart[2])  # [0, pi]
-    i = gs.qd_int(qd.math.floor((theta + math.pi) / math.pi / 2 * support_res)) % support_res
+    # Azimuth theta in [-pi, pi] and polar angle phi in [0, pi]. In single precision, polynomials spare the libm calls.
+    # A direction within their error of a cell boundary may then fall in the neighbouring cell, whose best candidate
+    # falls short of the support by that error times the extent of the geom, which stays near the rounding of the dtype
+    # in single precision alone.
+    theta = 0.0
+    phi = 0.0
+    if qd.static(qd.lang.impl.get_runtime().default_fp == qd.f32):
+        theta = gu.qd_atan2_fast(d_chart[1], d_chart[0])
+        phi = gu.qd_acos_fast(d_chart[2])
+    else:
+        theta = qd.atan2(d_chart[1], d_chart[0])
+        phi = qd.acos(d_chart[2])
+    # The azimuth wraps around once at most, which a subtraction undoes at the cost of a comparison
+    i = gs.qd_int(qd.math.floor((theta + math.pi) / math.pi / 2 * support_res))
+    if i >= support_res:
+        i = i - support_res
     j = gs.qd_int(qd.math.clamp(qd.math.floor(phi / math.pi * support_res) - band_start, 0, band_rows - 1))
     return collider_info.support_field.support_cell_start[i_g] + (i_chart * support_res + i) * band_rows + j
 

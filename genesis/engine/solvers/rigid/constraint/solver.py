@@ -5923,6 +5923,54 @@ def func_solve_body_monolith(dyn_state, constraint_state, dyn_info, rigid_info, 
 
 
 @qd.func
+def func_contact_constraint_force(
+    i_c: int,
+    i_b: int,
+    n_first_contact: int,
+    collider_state: array_class.ColliderState,
+    constraint_state: array_class.ConstraintState,
+    rigid_config: qd.template(),
+):
+    """Compute the linear force of an awake contact from the solved forces of its constraint rows.
+
+    The contact sits at position i_c of the contacts of env i_b. The rows of the awake contacts follow the equality and
+    frictionloss constraints in contact order, past the first n_first_contact contacts, which belong to sleepers and
+    own no row.
+    """
+    const_start = constraint_state.n_constraints_equality[i_b] + constraint_state.n_constraints_frictionloss[i_b]
+    i_col = collider_state.contact_sort_idx[i_c, i_b]
+    contact_data_normal = collider_state.contact_data.normal[i_col, i_b]
+    contact_data_friction = collider_state.contact_data.friction[i_col, i_b]
+
+    rows_per_contact = qd.static(rigid_config.rows_per_contact)
+    i_row_group = i_c - n_first_contact
+    force = qd.Vector.zero(gs.qd_float, 3)
+    d1, d2 = gu.qd_orthogonals(contact_data_normal)
+    if qd.static(rigid_config.enable_elliptic_friction):
+        # The cone rows [normal, t1, t2(, spin)(, roll1, roll2)] are contiguous in the collision segment.
+        # The spin and rolling rows carry torque only, so the linear contact force sums the first three.
+        base = i_row_group * rows_per_contact + const_start
+        force = -contact_data_normal * constraint_state.efc_force[base, i_b]
+        force = force + d1 * constraint_state.efc_force[base + 1, i_b]
+        force = force + d2 * constraint_state.efc_force[base + 2, i_b]
+    else:
+        for i_dir in qd.static(range(4)):
+            d = (2 * (i_dir % 2) - 1) * (d1 if i_dir < 2 else d2)
+            n = d * contact_data_friction - contact_data_normal
+            force = force + n * constraint_state.efc_force[i_row_group * rows_per_contact + i_dir + const_start, i_b]
+        # The torsional and rolling pyramid pairs mix the spin and tangent axes through the angular Jacobian. Their
+        # linear part is the shared normal opposition.
+        if qd.static(rigid_config.enable_torsional_friction):
+            for i_dir in qd.static(range(4, rows_per_contact)):
+                force = (
+                    force
+                    - contact_data_normal
+                    * constraint_state.efc_force[i_row_group * rows_per_contact + i_dir + const_start, i_b]
+                )
+    return force
+
+
+@qd.func
 def func_update_contact_force(
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
@@ -5938,53 +5986,36 @@ def func_update_contact_force(
     for i_l, i_b in qd.ndrange(n_links, _B):
         dyn_state.links.contact_force[i_l, i_b] = qd.Vector.zero(gs.qd_float, 3)
 
+    # A kept contact of a sleeper (see n_contacts_hibernated in array_class.py) has no row and keeps the force of the
+    # last solve it took part in, so a resting sleeper keeps reporting the support force it is at rest under. Each awake
+    # contact takes its own thread where loops run in parallel, and the serial path visits the existing contacts only.
+    if qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL):
+        qd.loop_config(serialize=True)
+        for i_b in range(_B):
+            n_first_contact = collider_state.n_contacts_hibernated[i_b]
+            for i_c in range(n_first_contact, collider_state.n_contacts[i_b]):
+                i_col = collider_state.contact_sort_idx[i_c, i_b]
+                collider_state.contact_data.force[i_col, i_b] = func_contact_constraint_force(
+                    i_c, i_b, n_first_contact, collider_state, constraint_state, rigid_config
+                )
+    else:
+        qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_c, i_b in qd.ndrange(collider_state.contact_sort_idx.shape[0], _B):
+            n_first_contact = collider_state.n_contacts_hibernated[i_b]
+            if i_c >= n_first_contact and i_c < collider_state.n_contacts[i_b]:
+                i_col = collider_state.contact_sort_idx[i_c, i_b]
+                collider_state.contact_data.force[i_col, i_b] = func_contact_constraint_force(
+                    i_c, i_b, n_first_contact, collider_state, constraint_state, rigid_config
+                )
+
+    # The forces of the contacts of a link are summed in contact order, which keeps the rounding of the sum fixed
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
-        const_start = constraint_state.n_constraints_equality[i_b] + constraint_state.n_constraints_frictionloss[i_b]
-
-        # contact constraints should be after equality and frictionloss constraints and before joint limit constraints.
-        # A kept contact of a sleeper (see n_contacts_hibernated in array_class.py) has no row and keeps the force of
-        # the last solve it took part in, so a resting sleeper keeps reporting the support force it is at rest under.
-        n_first_contact = collider_state.n_contacts_hibernated[i_b]
         for i_c in range(collider_state.n_contacts[i_b]):
             i_col = collider_state.contact_sort_idx[i_c, i_b]
-            contact_data_normal = collider_state.contact_data.normal[i_col, i_b]
-            contact_data_friction = collider_state.contact_data.friction[i_col, i_b]
             contact_data_link_a = collider_state.contact_data.link_a[i_col, i_b]
             contact_data_link_b = collider_state.contact_data.link_b[i_col, i_b]
-
-            rows_per_contact = qd.static(rigid_config.rows_per_contact)
             force = collider_state.contact_data.force[i_col, i_b]
-            if i_c >= n_first_contact:
-                i_row_group = i_c - n_first_contact
-                force = qd.Vector.zero(gs.qd_float, 3)
-                d1, d2 = gu.qd_orthogonals(contact_data_normal)
-                if qd.static(rigid_config.enable_elliptic_friction):
-                    # The cone rows [normal, t1, t2(, spin)(, roll1, roll2)] are contiguous in the collision segment.
-                    # The spin and rolling rows carry torque only, so the linear contact force sums the first three.
-                    base = i_row_group * rows_per_contact + const_start
-                    force = -contact_data_normal * constraint_state.efc_force[base, i_b]
-                    force = force + d1 * constraint_state.efc_force[base + 1, i_b]
-                    force = force + d2 * constraint_state.efc_force[base + 2, i_b]
-                else:
-                    for i_dir in qd.static(range(4)):
-                        d = (2 * (i_dir % 2) - 1) * (d1 if i_dir < 2 else d2)
-                        n = d * contact_data_friction - contact_data_normal
-                        force = (
-                            force
-                            + n * constraint_state.efc_force[i_row_group * rows_per_contact + i_dir + const_start, i_b]
-                        )
-                    # The torsional and rolling pyramid pairs mix the spin and tangent axes through the angular
-                    # jacobian; their linear part is the shared normal opposition.
-                    if qd.static(rigid_config.enable_torsional_friction):
-                        for i_dir in qd.static(range(4, rows_per_contact)):
-                            force = (
-                                force
-                                - contact_data_normal
-                                * constraint_state.efc_force[i_row_group * rows_per_contact + i_dir + const_start, i_b]
-                            )
-                collider_state.contact_data.force[i_col, i_b] = force
-
             dyn_state.links.contact_force[contact_data_link_a, i_b] = (
                 dyn_state.links.contact_force[contact_data_link_a, i_b] - force
             )
