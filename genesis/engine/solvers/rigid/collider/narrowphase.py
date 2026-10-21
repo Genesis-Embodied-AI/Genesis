@@ -3771,19 +3771,25 @@ def func_narrowphase_multicontact(
             if N_PERTURBATIONS * n_queue <= collider_static_config.gpu_cores:
                 n_units = N_PERTURBATIONS
         n_works_per_claim = BLOCK_DIM // n_units
-        for _claim in range(n_queue + 1):
-            # FIXME: quadrants#925 - every lane of the block issues the claim atomic, the other lanes adding 0, instead
-            # of one atomic per block.
-            i_claim = qd.atomic_add(
-                collider_state.narrowphase_work_queues.mpr_work_counter[0], n_works_per_claim if i_lane == 0 else 0
-            )
-            if i_lane == 0:
-                sh_work_start[0] = i_claim
-            qd.simt.block.sync()
-            i_work = sh_work_start[0] + i_lane // n_units
-            is_exhausted = sh_work_start[0] >= n_queue
-            qd.simt.block.sync()
-            if is_exhausted:
+        for i_claim_ in range(n_queue + 1):
+            # A block takes its first works by its rank and the next ones from the shared counter, offset past the
+            # works taken by rank, so that the blocks a short queue leaves idle exit without an atomic on the counter,
+            # which every block of the launch would otherwise hit at once.
+            i_work_start = (i_tid // BLOCK_DIM) * n_works_per_claim
+            if i_claim_ > 0:
+                # FIXME: quadrants#925 - every lane of the block issues the claim atomic, the other lanes adding 0,
+                # instead of one atomic per block.
+                i_claim = qd.atomic_add(
+                    collider_state.narrowphase_work_queues.mpr_work_counter[0], n_works_per_claim if i_lane == 0 else 0
+                )
+                if i_lane == 0:
+                    n_blocks = (collider_static_config.gpu_cores + BLOCK_DIM - 1) // BLOCK_DIM
+                    sh_work_start[0] = n_blocks * n_works_per_claim + i_claim
+                qd.simt.block.sync()
+                i_work_start = sh_work_start[0]
+                qd.simt.block.sync()
+            i_work = i_work_start + i_lane // n_units
+            if i_work_start >= n_queue:
                 break
             i_unit = i_lane % n_units
             if i_work < n_queue and i_unit == 0:
