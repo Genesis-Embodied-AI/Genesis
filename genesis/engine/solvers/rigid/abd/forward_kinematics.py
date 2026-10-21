@@ -1079,15 +1079,6 @@ def func_sweep_links_by_level(
                                 rigid_config=rigid_config,
                                 is_backward=False,
                             )
-                            func_update_geoms_link(
-                                i_l,
-                                i_b,
-                                dyn_state,
-                                dyn_info,
-                                rigid_config,
-                                force_update_all_geoms=False,
-                                is_backward=False,
-                            )
                         elif qd.static(sweep_pass == LINK_SWEEP_PASS.FORWARD_VELOCITY):
                             func_forward_velocity_link(
                                 i_l, i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False
@@ -1148,9 +1139,10 @@ def func_update_cartesian_space(
 ):
     """Update the Cartesian space of every env: the link poses and geoms, then the centers of mass.
 
-    The link poses and the geom placement run per awake kinematic tree, or per root under force_update_all_geoms and in
-    backward mode. A tree takes one thread, or a few lanes of a block of the level sweep under enable_level_sweep (see
-    func_sweep_links_by_level). The centers of mass take one thread per link and one per root.
+    The link poses run per awake kinematic tree, or per root under force_update_all_geoms and in backward mode, where
+    the geoms are placed along with their link. A tree takes one thread, or a few lanes of a block of the level sweep
+    under enable_level_sweep (see func_sweep_links_by_level). The geoms of the step take one thread each, and the
+    centers of mass one thread per link and one per root.
 
     A static link moves only when a setter writes the pose of its fixed root, so the step sweep walks the awake trees
     alone (see trees_root_idx in array_class.py), whose static parents hold still, and a tree sleeps as a unit, so a
@@ -1197,9 +1189,30 @@ def func_update_cartesian_space(
                         func_forward_kinematics_link(
                             i_l, i_b, rigid_info.qpos, dyn_state, dyn_info, rigid_info, rigid_config, is_backward
                         )
-                        func_update_geoms_link(
-                            i_l, i_b, dyn_state, dyn_info, rigid_config, force_update_all_geoms, is_backward
+
+    if qd.static(not (force_update_all_geoms or is_backward)):
+        # The geoms take one thread each rather than following their link, so that a link carrying many geoms does not
+        # serialize their placement. The movable geoms of the variant a link carries in an env are placed alone.
+        qd.loop_config(
+            name="update_cartesian_space_geoms", serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
+        )
+        for i_g, i_b in qd.ndrange(dyn_state.geoms.pos.shape[0], dyn_state.geoms.pos.shape[1]):
+            if not dyn_info.geoms.is_fixed[i_g]:
+                i_l = dyn_info.geoms.link_idx[i_g]
+                is_carried = True
+                if qd.static(rigid_config.batch_links_info):
+                    is_carried = dyn_info.links.geom_start[i_l, i_b] <= i_g < dyn_info.links.geom_end[i_l, i_b]
+                if is_carried and func_is_awake_link(i_l, i_b, dyn_state, rigid_config):
+                    dyn_state.geoms.pos[i_g, i_b], dyn_state.geoms.quat[i_g, i_b] = (
+                        gu.qd_transform_pos_quat_by_trans_quat(
+                            dyn_info.geoms.pos[i_g],
+                            dyn_info.geoms.quat[i_g],
+                            dyn_state.links.pos[i_l, i_b],
+                            dyn_state.links.quat[i_l, i_b],
                         )
+                    )
+                    dyn_state.geoms.verts_updated[i_g, i_b] = False
+
     # The center of mass runs in three sweeps so that only its mass-weighted sum walks the links of a root serially: one
     # thread per link for the inertial frames, one per root for the sum, one per link for what follows from it. A link
     # follows the sleep state of its root (see func_COM_root).
