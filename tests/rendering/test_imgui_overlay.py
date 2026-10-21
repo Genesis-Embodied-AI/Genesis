@@ -41,15 +41,17 @@ def _apply_deterministic_imgui_overrides(monkeypatch):
 
     monkeypatch.setattr(ImGuiOverlayPlugin, "on_draw", _on_draw_deterministic)
 
-    # Discard the plugin's 18 px ``ImFontConfig`` so ProggyClean loads at its native 13 px. ProggyClean is a bitmap
-    # font, so glyph rasterization is a memcpy on every renderer (stb_truetype is not byte-identical across software
-    # vs hardware OpenGL). The patch must run before the plugin's lazy ``_init_imgui`` so the renderer uploads the
-    # font texture at the correct size from the start.
-    original_add_font_default = imgui.ImFontAtlas.add_font_default
-    monkeypatch.setattr(imgui.ImFontAtlas, "add_font_default", lambda atlas, _=None: original_add_font_default(atlas))
+    # Discard the plugin's 18 px ``ImFontConfig`` and load ProggyClean, the bitmap font, at its native 13 px, so glyph
+    # rasterization is a memcpy on every renderer. It is named explicitly since ``add_font_default`` picks the vector
+    # font. The patch must run before the plugin's lazy ``_init_imgui`` so the renderer uploads the font texture at the
+    # correct size from the start.
+    original_add_font_default_bitmap = imgui.ImFontAtlas.add_font_default_bitmap
+    monkeypatch.setattr(
+        imgui.ImFontAtlas, "add_font_default", lambda atlas, _=None: original_add_font_default_bitmap(atlas)
+    )
 
-    # Disable shape anti-aliasing (lines, fills, textured-line shortcut) and baked thick-line atlas entries so window
-    # borders and button rounding do not drift between renderers either.
+    # Disable shape anti-aliasing (lines and fills) and baked thick-line atlas entries so window borders and button
+    # rounding do not drift between renderers either.
     original_init_imgui = ImGuiOverlayPlugin._init_imgui
 
     def _init_imgui_deterministic(self):
@@ -59,7 +61,6 @@ def _apply_deterministic_imgui_overrides(monkeypatch):
         style = self._imgui.get_style()
         style.anti_aliased_lines = False
         style.anti_aliased_fill = False
-        style.anti_aliased_lines_use_tex = False
         # Pyglet's backend sets ``display_framebuffer_scale`` from the window's pixel ratio (2.0 on Retina macOS,
         # 1.0 on most Linux runners); ImGui scales vertex positions by that factor, so the same layout produces
         # different pixel grids across platforms. Pin to 1.0 so vertex positions are byte-identical everywhere.

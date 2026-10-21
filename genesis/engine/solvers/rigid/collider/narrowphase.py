@@ -11,6 +11,7 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 import genesis.utils.sdf as sdf
+import genesis.utils.simt as su
 
 from . import capsule_contact, diff_gjk, gjk, mpr
 from .box_contact import func_box_box_contact, func_plane_box_contact, func_sphere_box_contact
@@ -72,6 +73,7 @@ def func_add_polytope_vertex_contacts_sdf(
     i_gb: int,
     i_b: int,
     i_pair: int,
+    tid: int,
     ga_pos: qd.types.vector(3),
     ga_quat: qd.types.vector(4),
     gb_pos: qd.types.vector(3),
@@ -87,6 +89,7 @@ def func_add_polytope_vertex_contacts_sdf(
     collider_info: array_class.ColliderInfo,
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
+    block_dim: qd.template(),
     seeded: bool,
     errno: qd.Tensor,
 ):
@@ -100,7 +103,8 @@ def func_add_polytope_vertex_contacts_sdf(
     # B's smallest SDF cell so verts within one cell of the surface still register a contact even when the kernel pen
     # reads <= 0; the synthetic pen tapers smoothly across the band to avoid a discontinuity that would drive a settled
     # body into a limit-cycle oscillation. The pair's first n_prev contacts sit at the buffer slots contacts_slot lists,
-    # and the count and slots of its contacts once this scan emitted its own are returned.
+    # and the count and slots of its contacts once this scan emitted its own are returned. The block_dim lanes of a
+    # block detect the pair together, lane tid of the block being this thread, every lane returning the same result.
     n_max = qd.static(collider_static_config.n_contacts_per_nonconvex_pair if rigid_config.enable_multi_contact else 1)
     EPS = rigid_info.EPS[None]
     gb_cell = collider_info.sdf.geoms_info.sdf_cell_size[i_gb]
@@ -285,48 +289,91 @@ def func_add_polytope_vertex_contacts_sdf(
                     # The leading index of the range selects the minimum itself, the others its 1-ring.
                     i_c_start = collider_info.vert_neighbor_start[i_v_min] - 1
                     i_c_end = collider_info.vert_neighbor_start[i_v_min] + collider_info.vert_n_neighbors[i_v_min]
-            for i_c in range(i_c_start, i_c_end):
+            # The lanes split the vert range in batches of block_dim verts, each lane running the gate and the SDF query
+            # of one vert of the batch. The verts kept for insertion are then inserted one at a time in vert order,
+            # every lane updating its own copy of the buffer alike, so the buffer is the one the serial scan selects.
+            for i_batch in range((i_c_end - i_c_start + block_dim - 1) // block_dim):
+                i_c = i_c_start + i_batch * block_dim + tid
                 i_v = i_v_min
-                vertex_local = qd.Vector.zero(gs.qd_float, 3)
-                if not seeded:
-                    i_v = collider_info.verts_spatial_grid.verts_idx[i_c]
-                    vertex_local = collider_info.verts_spatial_grid.verts_pos[i_c]
-                else:
-                    if i_c > i_c_start:
-                        i_v = collider_info.vert_neighbors[i_c]
-                    vertex_local = dyn_info.verts.init_pos[i_v]
-                vertex_pos = gu.qd_transform_by_trans_quat(vertex_local, ga_pos, ga_quat)
-                is_candidate = True
-                if not seeded:
-                    is_candidate = func_point_in_geom_aabb(i_gb, i_b, vertex_pos, 0.0, dyn_state)
-                if is_candidate:
-                    is_in_band, sd_v = sdf.sdf_func_world_local_banded(
-                        i_gb, vertex_pos, gb_pos, gb_quat, band, dyn_info, collider_info
-                    )
-                    pen_v = -sd_v
-                    # A vert no deeper than the shallowest kept one (at weakest_idx, the first of minimal pen, an
-                    # empty slot being the shallowest) can neither replace a close kept vert nor displace the weakest,
-                    # which spares the closeness test for most verts of a dense mesh once the buffer is full.
-                    if is_in_band and pen_v > top_pen[weakest_idx]:
+                vertex_pos = qd.Vector.zero(gs.qd_float, 3)
+                pen_v = gs.qd_float(0.0)
+                is_inserted = False
+                if i_c < i_c_end:
+                    vertex_local = qd.Vector.zero(gs.qd_float, 3)
+                    if not seeded:
+                        i_v = collider_info.verts_spatial_grid.verts_idx[i_c]
+                        vertex_local = collider_info.verts_spatial_grid.verts_pos[i_c]
+                    else:
+                        if i_c > i_c_start:
+                            i_v = collider_info.vert_neighbors[i_c]
+                        vertex_local = dyn_info.verts.init_pos[i_v]
+                    vertex_pos = gu.qd_transform_by_trans_quat(vertex_local, ga_pos, ga_quat)
+                    is_candidate = True
+                    if not seeded:
+                        is_candidate = func_point_in_geom_aabb(i_gb, i_b, vertex_pos, 0.0, dyn_state)
+                    if is_candidate:
+                        is_in_band, sd_v = sdf.sdf_func_world_local_banded(
+                            i_gb, vertex_pos, gb_pos, gb_quat, band, dyn_info, collider_info
+                        )
+                        pen_v = -sd_v
+                        # A vert no deeper than the shallowest kept one (at weakest_idx, the first of minimal pen, an
+                        # empty slot being the shallowest) can neither replace a close kept vert nor displace the
+                        # weakest, which spares the insertion for most verts of a dense mesh once the buffer is full.
+                        # Insertions only ever deepen the buffer, so a vert failing this test at the start of its batch
+                        # fails it at its turn as well.
+                        is_inserted = is_in_band and pen_v > top_pen[weakest_idx]
+                n_inserted = qd.cast(is_inserted, gs.qd_int)
+                i_inserted = n_inserted
+                if qd.static(block_dim > 1):
+                    i_inserted, n_inserted = su.qd_block_scan(n_inserted)
+                for i_rank in range(n_inserted):
+                    i_v_new = i_v
+                    pos_new = vertex_pos
+                    pen_new = pen_v
+                    if qd.static(block_dim > 1):
+                        i_lane = su.qd_block_min(tid if is_inserted and i_inserted == i_rank + 1 else block_dim)
+                        i_v_new = su.qd_block_shuffle(i_v, i_lane)
+                        pen_new = su.qd_block_shuffle(pen_v, i_lane)
+                        for j in qd.static(range(3)):
+                            pos_new[j] = su.qd_block_shuffle(vertex_pos[j], i_lane)
+                    if pen_new > top_pen[weakest_idx]:
+                        # Each lane tests every block_dim-th kept vert, the block keeping the first one closer than the
+                        # diversity radius.
+                        i_close = n_max
+                        for i_k in range((n_max + block_dim - 1) // block_dim):
+                            k = i_k * block_dim + tid
+                            if k < n_max:
+                                i_v_kept = top_iv[k]
+                                if i_v_kept >= 0:
+                                    other_pos = gu.qd_transform_by_trans_quat(
+                                        dyn_info.verts.init_pos[i_v_kept], ga_pos, ga_quat
+                                    )
+                                    if (pos_new - other_pos).norm() < diversity_radius:
+                                        i_close = k
+                                        break
+                        if qd.static(block_dim > 1):
+                            i_close = su.qd_block_min(i_close)
                         i_put = weakest_idx
-                        for k in range(n_max):
-                            i_v_kept = top_iv[k]
-                            if i_v_kept >= 0:
-                                other_pos = gu.qd_transform_by_trans_quat(
-                                    dyn_info.verts.init_pos[i_v_kept], ga_pos, ga_quat
-                                )
-                                if (vertex_pos - other_pos).norm() < diversity_radius:
-                                    i_put = -1
-                                    if pen_v > top_pen[k]:
-                                        i_put = k
-                                    break
+                        if i_close < n_max:
+                            i_put = -1
+                            if pen_new > top_pen[i_close]:
+                                i_put = i_close
                         if i_put >= 0:
-                            top_pen[i_put] = pen_v
-                            top_iv[i_put] = i_v
-                            weakest_idx = 0
-                            for k in range(1, n_max):
-                                if top_pen[k] < top_pen[weakest_idx]:
-                                    weakest_idx = k
+                            top_pen[i_put] = pen_new
+                            top_iv[i_put] = i_v_new
+                            # Each lane finds the first slot of minimal pen among every block_dim-th slot, the block
+                            # keeping the lowest slot holding the minimum.
+                            pen_min = top_pen[weakest_idx]
+                            weakest_idx = n_max
+                            for i_k in range((n_max + block_dim - 1) // block_dim):
+                                k = i_k * block_dim + tid
+                                if k < n_max:
+                                    if weakest_idx == n_max or top_pen[k] < pen_min:
+                                        pen_min = top_pen[k]
+                                        weakest_idx = k
+                            if qd.static(block_dim > 1):
+                                pen_min_block = su.qd_block_min(pen_min)
+                                weakest_idx = su.qd_block_min(weakest_idx if pen_min <= pen_min_block else n_max)
 
         # Pass 2: emit contacts at the selected vertices. Reference normal is the grid SDF gradient sampled at A's
         # center, which gives a stable per-patch normal whenever A is small relative to B's features. Per-vertex
@@ -537,43 +584,48 @@ def func_add_polytope_vertex_contacts_sdf(
                         dyn_info,
                         rigid_config,
                     )
+                    # The first lane writes the contacts of the block, whose slots every lane reads back.
                     if n_added < n_max:
-                        i_c = func_add_contact(
-                            i_ga,
-                            i_gb,
-                            i_b,
-                            i_pair,
-                            normal_v,
-                            contact_pos_v,
-                            pen_emit,
-                            dyn_state,
-                            collider_state,
-                            dyn_info,
-                            rigid_info,
-                            collider_info,
-                            use_atomic=qd.static(rigid_config.para_level >= gs.PARA_LEVEL.PARTIAL),
-                            errno=errno,
-                        )
+                        i_c = -1
+                        if tid == 0:
+                            i_c = func_add_contact(
+                                i_ga,
+                                i_gb,
+                                i_b,
+                                i_pair,
+                                normal_v,
+                                contact_pos_v,
+                                pen_emit,
+                                dyn_state,
+                                collider_state,
+                                dyn_info,
+                                rigid_info,
+                                collider_info,
+                                use_atomic=qd.static(rigid_config.para_level >= gs.PARA_LEVEL.PARTIAL),
+                                errno=errno,
+                            )
+                        if qd.static(block_dim > 1):
+                            i_c = su.qd_block_shuffle(i_c, 0)
                         if i_c >= 0:
                             contacts_slot[n_added] = i_c
                             n_added = n_added + 1
                     else:
                         # The pair budget is shared between the two scans: at the cap, a new contact may only
                         # displace the pair's least-penetrating one, keeping the n_max deepest.
-                        weakest_idx = -1
+                        i_c_weakest = -1
                         weakest_pen = pen_emit
                         for j in range(n_max):
                             if j < n_added:
                                 idx_prev = contacts_slot[n_added - 1 - j]
                                 if collider_state.contact_data.penetration[idx_prev, i_b] < weakest_pen:
                                     weakest_pen = collider_state.contact_data.penetration[idx_prev, i_b]
-                                    weakest_idx = idx_prev
-                        if weakest_idx >= 0:
+                                    i_c_weakest = idx_prev
+                        if i_c_weakest >= 0 and tid == 0:
                             func_set_contact(
                                 i_ga,
                                 i_gb,
                                 i_b,
-                                weakest_idx,
+                                i_c_weakest,
                                 i_pair,
                                 normal_v,
                                 contact_pos_v,
@@ -585,6 +637,9 @@ def func_add_polytope_vertex_contacts_sdf(
                                 collider_info,
                                 errno,
                             )
+                    # Every lane reads the contact back, for the repeated-contact check and the seeds.
+                    if qd.static(block_dim > 1):
+                        qd.simt.block.sync()
     return n_added, contacts_slot
 
 
@@ -4550,12 +4605,21 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
             collider_static_config.n_contacts_per_nonconvex_pair if rigid_config.enable_multi_contact else 1
         )
         # The pairs of an env are split over chunks so that the GPU cores are kept busy whatever the env count, as in
-        # func_narrowphase_contact0. Every pair is detected by one thread, its contacts appended atomically.
+        # func_narrowphase_contact0. Every pair is detected by one block, its contacts appended atomically. Where the
+        # loop runs in parallel on GPU, the block spans the lanes of a subgroup, which split the vert scan of the pair.
+        is_coop = qd.static(rigid_config.backend != gs.cpu and rigid_config.para_level >= gs.PARA_LEVEL.PARTIAL)
+        BLOCK_DIM = qd.static(32 if is_coop else 1)
         _B = collider_state.active_buffer.shape[1]
-        n_chunks = qd.max((collider_static_config.gpu_cores + _B - 1) // _B, 1)
+        n_chunks = qd.max((collider_static_config.gpu_cores // BLOCK_DIM + _B - 1) // _B, 1)
         max_broad_pairs = collider_state.broad_collision_pairs.shape[0]
-        qd.loop_config(name="narrowphase_nonconvex", serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_b_chunk in range(_B * n_chunks):
+        qd.loop_config(
+            name="narrowphase_nonconvex",
+            serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL,
+            block_dim=qd.static(BLOCK_DIM if is_coop else None),
+        )
+        for i_flat in range(_B * n_chunks * BLOCK_DIM):
+            tid = i_flat % BLOCK_DIM
+            i_b_chunk = i_flat // BLOCK_DIM
             i_b = i_b_chunk // n_chunks
             i_chunk = i_b_chunk % n_chunks
             n_pairs = qd.min(collider_state.n_broad_pairs[i_b], max_broad_pairs)
@@ -4635,7 +4699,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                         and sd_center_ab >= 0.0
                     ):
                         is_shell_pair = True
-                    if is_shell_pair:
+                    if is_shell_pair and tid == 0:
                         func_add_polytope_vertex_contacts_sdf_shell(
                             i_ga,
                             i_gb,
@@ -4656,7 +4720,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                             collider_static_config,
                             errno,
                         )
-                    else:
+                    elif not is_shell_pair:
                         # Swapped-role verification: A's vertex scan cannot see a feature of B crossing one of A's
                         # faces BETWEEN A's verts, so B's verts are checked against A's SDF as well - as a seeded
                         # local search rather than a full scan. Skipped only for PLANE (its handful of far-flung
@@ -4675,6 +4739,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                 i_g2,
                                 i_b,
                                 i_pair,
+                                tid,
                                 g1_pos,
                                 g1_quat,
                                 g2_pos,
@@ -4690,6 +4755,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                 collider_info,
                                 rigid_config,
                                 collider_static_config,
+                                block_dim=BLOCK_DIM,
                                 seeded=i_scan > 0,
                                 errno=errno,
                             )
