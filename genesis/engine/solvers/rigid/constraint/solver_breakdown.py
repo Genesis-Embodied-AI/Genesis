@@ -310,22 +310,6 @@ def _func_check_early_exit(
 # ============================================== Solve body dispatch ================================================
 
 
-@qd.kernel(fastcache=True)
-def _kernel_solve_seed(
-    dyn_state: array_class.DynState,
-    constraint_state: array_class.ConstraintState,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    rigid_config: qd.template(),
-):
-    """Seed the solve of every env holding constraints, one env per thread (see func_solve_seed_batch)."""
-    _B = constraint_state.grad.shape[1]
-    qd.loop_config(name="solve_seed", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
-    for i_b in range(_B):
-        if constraint_state.n_constraints[i_b] > 0:
-            solver.func_solve_seed_batch(i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
-
-
 @qd.kernel(graph=True, fastcache=True)
 def _kernel_solve_graph(
     graph_counter: qd.types.ndarray(qd.i32, ndim=0),
@@ -381,8 +365,6 @@ def func_solve_decomposed(dyn_state, constraint_state, dyn_info, rigid_info, rig
     """
     # The graph maintains the assembled Hessian in nt_H, so the seed leaves it there (write_L=False).
     solver.func_solve_init(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config, write_L=False)
-    if rigid_config.has_per_env_solve_seed:
-        _kernel_solve_seed(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
     if _n_iterations <= 0:
         return
     if gs.use_zerocopy:

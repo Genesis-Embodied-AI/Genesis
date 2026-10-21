@@ -5682,8 +5682,8 @@ def func_solve_init(
             func_island_tiled_factor_solve_all(constraint_state, dyn_info, rigid_info, rigid_config, write_L)
             func_wrap_cone_hessian(constraint_state, rigid_config, is_removal=True, is_enabled=not write_L)
     else:
-        # Where the arms seed the factor, the gradient and the convergence certificate in their own kernels (see
-        # has_per_env_solve_seed in array_class.py), this kernel leaves them out.
+        # Where the solve is seeded one env per thread (see has_per_env_solve_seed in array_class.py), the factor, the
+        # gradient and the convergence certificate are left to the per-env seed at the end of this kernel.
         if qd.static(
             rigid_config.solver_type == gs.constraint_solver.Newton and not rigid_config.has_per_env_solve_seed
         ):
@@ -5710,8 +5710,8 @@ def func_solve_init(
         and not rigid_config.enable_mujoco_compatibility
         and not rigid_config.has_per_env_solve_seed
     ):
-        # The certificate consumes the seed gradient, so the arms that seed it in their own kernels certify there
-        # instead (see func_solve_seed_batch). The differentiable path keeps its full iteration trace.
+        # The certificate consumes the seed gradient, so the per-env seed certifies on its own (see
+        # func_solve_seed_batch). The differentiable path keeps its full iteration trace.
         # TODO: Remove the MuJoCo compatibility gate once on MuJoCo 3.11, which carries this criterion natively.
         if qd.static(rigid_config.enable_cooperative_constraint_kernels):
             _K = qd.static(32)
@@ -5749,6 +5749,18 @@ def func_solve_init(
                     constraint_state.improved[i_b] = linesearch.func_exit_islands_serial(
                         i_b, constraint_state, rigid_info, rigid_config, certify=True
                     )
+
+    if qd.static(rigid_config.has_per_env_solve_seed):
+        # A fully-asleep env has no awake DOF to move, so its solve is a no-op that neither arm iterates.
+        qd.loop_config(name="solve_seed", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+        for i_b in range(_B):
+            has_awake_work = constraint_state.n_constraints[i_b] > 0
+            if qd.static(rigid_config.use_hibernation):
+                has_awake_work = has_awake_work and rigid_info.n_awake_dofs[i_b] > 0
+            if has_awake_work:
+                func_solve_seed_batch(i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
+            else:
+                constraint_state.improved[i_b] = False
 
 
 @qd.func
@@ -5830,9 +5842,9 @@ def func_solve_seed_batch(
     """Seed the Newton solve of one env with its Hessian factor, its gradient, its first search direction and its
     convergence certificate.
 
-    The solve arms run it one env per thread where func_solve_init leaves the seed to them (see has_per_env_solve_seed
-    in array_class.py). The Hessian block of the env is already assembled into nt_H where the tiled seed is on (see
-    has_scalar_seed_factor), so only its factor remains to compute there.
+    func_solve_init runs it one env per thread, for both solve arms, where the solve is seeded per env (see
+    has_per_env_solve_seed in array_class.py). The Hessian block of the env is already assembled into nt_H where the
+    tiled seed is on (see has_scalar_seed_factor), so only its factor remains to compute there.
     """
     n_dofs = constraint_state.qacc.shape[0]
 
@@ -5897,8 +5909,6 @@ def _kernel_solve_monolith(
         if qd.static(rigid_config.use_hibernation):
             has_awake_work = has_awake_work and rigid_info.n_awake_dofs[i_b] > 0
         if has_awake_work:
-            if qd.static(rigid_config.has_per_env_solve_seed):
-                func_solve_seed_batch(i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
             for it in range(rigid_info.iterations[None]):
                 # Checked at the top so a solve certified converged on its seed runs zero iterations.
                 if not constraint_state.improved[i_b]:
