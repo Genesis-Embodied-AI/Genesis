@@ -130,9 +130,9 @@ def func_color_rows_batch(
     """
     _K = qd.static(32)
     n_dofs = constraint_state.island.dof_slices.n[i_island, i_b]
-    n_rows = constraint_state.island.constraint_slices.n[i_island, i_b]
+    n_rows = constraint_state.island_solve.constraint_slices.n[i_island, i_b]
     dof_start = constraint_state.island.dof_slices.start[i_island, i_b]
-    row_start = constraint_state.island.constraint_slices.start[i_island, i_b]
+    row_start = constraint_state.island_solve.constraint_slices.start[i_island, i_b]
 
     for i_chunk in range((n_dofs + _K - 1) // _K):
         i_d_ = i_chunk * _K + tid
@@ -144,7 +144,7 @@ def func_color_rows_batch(
     if tid == 0:
         n_colors = 0
         for i_c_ in range(n_rows):
-            i_c = constraint_state.island.constraint_id[row_start + i_c_, i_b]
+            i_c = constraint_state.island_solve.constraint_id[row_start + i_c_, i_b]
             color = 0
             for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
                 i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
@@ -181,9 +181,9 @@ def func_refresh_qacc_batch(
     """
     _K = qd.static(32 if rigid_config.enable_cooperative_noslip else 1)
     n_dofs = constraint_state.island.dof_slices.n[i_island, i_b]
-    n_rows = constraint_state.island.constraint_slices.n[i_island, i_b]
+    n_rows = constraint_state.island_solve.constraint_slices.n[i_island, i_b]
     dof_start = constraint_state.island.dof_slices.start[i_island, i_b]
-    row_start = constraint_state.island.constraint_slices.start[i_island, i_b]
+    row_start = constraint_state.island_solve.constraint_slices.start[i_island, i_b]
 
     for i_chunk in range((n_dofs + _K - 1) // _K):
         i_d_ = i_chunk * _K + tid
@@ -198,7 +198,7 @@ def func_refresh_qacc_batch(
         for i_chunk in range((n_rows + _K - 1) // _K):
             i_c_ = i_chunk * _K + tid
             if i_c_ < n_rows:
-                i_c = constraint_state.island.constraint_id[row_start + i_c_, i_b]
+                i_c = constraint_state.island_solve.constraint_id[row_start + i_c_, i_b]
                 is_own_row = True
                 if qd.static(rigid_config.enable_cooperative_noslip):
                     is_own_row = constraint_state.noslip_rows_color[i_c, i_b] == i_color
@@ -472,8 +472,8 @@ def func_noslip_batch(
     )
 
     n_dofs = constraint_state.island.dof_slices.n[i_island, i_b]
-    n_rows = constraint_state.island.constraint_slices.n[i_island, i_b]
-    row_start = constraint_state.island.constraint_slices.start[i_island, i_b]
+    n_rows = constraint_state.island_solve.constraint_slices.n[i_island, i_b]
+    row_start = constraint_state.island_solve.constraint_slices.start[i_island, i_b]
 
     scale = 1.0 / (rigid_info.meaninertia[i_b] * qd.max(1.0, n_dofs))
 
@@ -487,7 +487,7 @@ def func_noslip_batch(
             for i_chunk in range((n_rows + _K - 1) // _K):
                 i_c_ = i_chunk * _K + tid
                 if i_c_ < n_rows:
-                    i_c = constraint_state.island.constraint_id[row_start + i_c_, i_b]
+                    i_c = constraint_state.island_solve.constraint_id[row_start + i_c_, i_b]
                     is_own_row = True
                     if qd.static(rigid_config.enable_cooperative_noslip):
                         is_own_row = constraint_state.noslip_rows_color[i_c, i_b] == i_color

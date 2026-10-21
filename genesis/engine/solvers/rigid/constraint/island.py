@@ -146,38 +146,38 @@ def func_group_constraints_by_island(
     if n_islands == 1:
         # A single island spans the whole env, so every constraint belongs to island 0 in index order and the grouping
         # is the identity. A constraint touching no dof carries jac == 0, so listing it in island 0 is harmless.
-        constraint_state.island.constraint_slices.start[0, i_b] = 0
-        constraint_state.island.constraint_slices.n[0, i_b] = n_con
-        constraint_state.island.constraint_slices.curr[0, i_b] = n_con
+        constraint_state.island_solve.constraint_slices.start[0, i_b] = 0
+        constraint_state.island_solve.constraint_slices.n[0, i_b] = n_con
+        constraint_state.island_solve.constraint_slices.curr[0, i_b] = n_con
         for i_c in range(n_con):
-            constraint_state.island.constraint_id[i_c, i_b] = i_c
-            constraint_state.island.constraint_island_idx[i_c, i_b] = 0
+            constraint_state.island_solve.constraint_id[i_c, i_b] = i_c
+            constraint_state.island_solve.constraint_island_idx[i_c, i_b] = 0
     else:
         for i_island in range(n_islands):
-            constraint_state.island.constraint_slices.n[i_island, i_b] = 0
+            constraint_state.island_solve.constraint_slices.n[i_island, i_b] = 0
 
         for i_c in range(n_con):
             i_island = func_constraint_island(i_c, i_b, constraint_state)
-            constraint_state.island.constraint_island_idx[i_c, i_b] = i_island
+            constraint_state.island_solve.constraint_island_idx[i_c, i_b] = i_island
             if i_island >= 0:
-                constraint_state.island.constraint_slices.n[i_island, i_b] = (
-                    constraint_state.island.constraint_slices.n[i_island, i_b] + 1
+                constraint_state.island_solve.constraint_slices.n[i_island, i_b] = (
+                    constraint_state.island_solve.constraint_slices.n[i_island, i_b] + 1
                 )
 
         con_list_start = 0
         for i_island in range(n_islands):
-            constraint_state.island.constraint_slices.start[i_island, i_b] = con_list_start
-            constraint_state.island.constraint_slices.curr[i_island, i_b] = con_list_start
-            con_list_start = con_list_start + constraint_state.island.constraint_slices.n[i_island, i_b]
+            constraint_state.island_solve.constraint_slices.start[i_island, i_b] = con_list_start
+            constraint_state.island_solve.constraint_slices.curr[i_island, i_b] = con_list_start
+            con_list_start = con_list_start + constraint_state.island_solve.constraint_slices.n[i_island, i_b]
 
         for i_c in range(n_con):
-            i_island = constraint_state.island.constraint_island_idx[i_c, i_b]
+            i_island = constraint_state.island_solve.constraint_island_idx[i_c, i_b]
             if i_island >= 0:
-                constraint_state.island.constraint_id[
-                    constraint_state.island.constraint_slices.curr[i_island, i_b], i_b
+                constraint_state.island_solve.constraint_id[
+                    constraint_state.island_solve.constraint_slices.curr[i_island, i_b], i_b
                 ] = i_c
-                constraint_state.island.constraint_slices.curr[i_island, i_b] = (
-                    constraint_state.island.constraint_slices.curr[i_island, i_b] + 1
+                constraint_state.island_solve.constraint_slices.curr[i_island, i_b] = (
+                    constraint_state.island_solve.constraint_slices.curr[i_island, i_b] + 1
                 )
 
     # Every awake island starts iterating, a constraint-free one included: a warm start leaves its acceleration at the
@@ -186,7 +186,7 @@ def func_group_constraints_by_island(
         is_awake = n_con > 0
         if qd.static(rigid_config.use_hibernation):
             is_awake = is_awake and constraint_state.island.is_hibernated[i_island, i_b] == 0
-        constraint_state.island.improved[i_island, i_b] = is_awake
+        constraint_state.island_solve.improved[i_island, i_b] = is_awake
 
 
 @qd.func
@@ -216,26 +216,26 @@ def func_group_constraints_by_island_coop(
     n_con = constraint_state.n_constraints[i_b]
     if n_islands == 1:
         if tid == 0:
-            constraint_state.island.constraint_slices.start[0, i_b] = 0
-            constraint_state.island.constraint_slices.n[0, i_b] = n_con
-            constraint_state.island.constraint_slices.curr[0, i_b] = n_con
+            constraint_state.island_solve.constraint_slices.start[0, i_b] = 0
+            constraint_state.island_solve.constraint_slices.n[0, i_b] = n_con
+            constraint_state.island_solve.constraint_slices.curr[0, i_b] = n_con
         i_c = tid
         while i_c < n_con:
-            constraint_state.island.constraint_id[i_c, i_b] = i_c
-            constraint_state.island.constraint_island_idx[i_c, i_b] = 0
+            constraint_state.island_solve.constraint_id[i_c, i_b] = i_c
+            constraint_state.island_solve.constraint_island_idx[i_c, i_b] = 0
             i_c = i_c + _K
     else:
         i_island = tid
         while i_island < n_islands:
-            constraint_state.island.constraint_slices.n[i_island, i_b] = 0
+            constraint_state.island_solve.constraint_slices.n[i_island, i_b] = 0
             i_island = i_island + _K
         qd.simt.block.sync()
         i_c = tid
         while i_c < n_con:
             i_island = func_constraint_island(i_c, i_b, constraint_state)
-            constraint_state.island.constraint_island_idx[i_c, i_b] = i_island
+            constraint_state.island_solve.constraint_island_idx[i_c, i_b] = i_island
             if i_island >= 0:
-                qd.atomic_add(constraint_state.island.constraint_slices.n[i_island, i_b], 1)
+                qd.atomic_add(constraint_state.island_solve.constraint_slices.n[i_island, i_b], 1)
             i_c = i_c + _K
         qd.simt.block.sync()
         carry = 0
@@ -243,27 +243,27 @@ def func_group_constraints_by_island_coop(
             i_island = i_chunk * _K + tid
             count = 0
             if i_island < n_islands:
-                count = constraint_state.island.constraint_slices.n[i_island, i_b]
+                count = constraint_state.island_solve.constraint_slices.n[i_island, i_b]
             count_incl, count_total = su.qd_block_scan(count)
             if i_island < n_islands:
-                constraint_state.island.constraint_slices.start[i_island, i_b] = carry + count_incl - count
-                constraint_state.island.constraint_slices.curr[i_island, i_b] = carry + count_incl - count
+                constraint_state.island_solve.constraint_slices.start[i_island, i_b] = carry + count_incl - count
+                constraint_state.island_solve.constraint_slices.curr[i_island, i_b] = carry + count_incl - count
             carry = carry + count_total
         qd.simt.block.sync()
         for i_chunk in range((n_con + _K - 1) // _K):
             i_c = i_chunk * _K + tid
             i_island = -1
             if i_c < n_con:
-                i_island = constraint_state.island.constraint_island_idx[i_c, i_b]
+                i_island = constraint_state.island_solve.constraint_island_idx[i_c, i_b]
             sh_chunk[tid] = i_island
             qd.simt.block.sync()
             if i_island >= 0:
-                i_pos = constraint_state.island.constraint_slices.curr[i_island, i_b]
+                i_pos = constraint_state.island_solve.constraint_slices.curr[i_island, i_b]
                 i_pos = i_pos + func_chunk_island_rank(tid, i_island, sh_chunk)
-                constraint_state.island.constraint_id[i_pos, i_b] = i_c
+                constraint_state.island_solve.constraint_id[i_pos, i_b] = i_c
             qd.simt.block.sync()
             if i_island >= 0:
-                qd.atomic_add(constraint_state.island.constraint_slices.curr[i_island, i_b], 1)
+                qd.atomic_add(constraint_state.island_solve.constraint_slices.curr[i_island, i_b], 1)
             qd.simt.block.sync()
 
     # Every awake island starts iterating, a constraint-free one included, see func_group_constraints_by_island
@@ -272,7 +272,7 @@ def func_group_constraints_by_island_coop(
         is_awake = n_con > 0
         if qd.static(rigid_config.use_hibernation):
             is_awake = is_awake and constraint_state.island.is_hibernated[i_island, i_b] == 0
-        constraint_state.island.improved[i_island, i_b] = is_awake
+        constraint_state.island_solve.improved[i_island, i_b] = is_awake
         i_island = i_island + _K
 
 
@@ -1010,15 +1010,14 @@ def func_sort_contacts_coop(
     tid: int,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
-    constraint_state: array_class.ConstraintState,
 ):
     """Sort the contacts of one env in the order of func_sort_contacts with the _K lanes of its block.
 
     Every contact takes the rank of its key among all of them, equal keys ranking by input position, which is the
     stable order the serial insertion sort yields.
 
-    The input order moves to contact_id and the position keys to contact_sort_key first, so the ranks scatter straight
-    into contact_sort_idx.
+    The input order moves to contact_sort_input and the position keys to contact_sort_key first, so the ranks scatter
+    straight into contact_sort_idx.
     """
     _K = qd.static(32)
     n = collider_state.n_contacts[i_b]
@@ -1031,19 +1030,19 @@ def func_sort_contacts_coop(
             collider_state.contact_data.pos[i_col, i_b] - dyn_state.geoms.pos[geom_b, i_b],
             dyn_state.geoms.quat[geom_b, i_b],
         )
-        constraint_state.island.contact_id[i_c, i_b] = i_col
+        collider_state.contact_sort_input[i_c, i_b] = i_col
         collider_state.contact_sort_key[i_c, i_b] = func_contact_order_key(pos)
         i_c = i_c + _K
     qd.simt.block.sync()
     i_c = n_first + tid
     while i_c < n:
-        i_col = constraint_state.island.contact_id[i_c, i_b]
+        i_col = collider_state.contact_sort_input[i_c, i_b]
         geom_a = collider_state.contact_data.geom_a[i_col, i_b]
         geom_b = collider_state.contact_data.geom_b[i_col, i_b]
         key = collider_state.contact_sort_key[i_c, i_b]
         rank = n_first
         for j_c in range(n_first, n):
-            j_col = constraint_state.island.contact_id[j_c, i_b]
+            j_col = collider_state.contact_sort_input[j_c, i_b]
             geom_a_j = collider_state.contact_data.geom_a[j_col, i_b]
             precedes = geom_a_j < geom_a
             if not precedes and geom_a_j == geom_a:

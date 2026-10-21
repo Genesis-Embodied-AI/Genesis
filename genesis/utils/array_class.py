@@ -631,34 +631,14 @@ class IslandState:
     # First dof of an island whose dof list holds consecutive dofs in ascending order, -1 otherwise (see func_list_item
     # in linesearch.py).
     dof_range_start: qd.Tensor
-    # Skyline envelope of the CPU per-island path: dof_env_start_local[dof_slices.start[i] + ld] is the smallest
-    # island-local column structurally nonzero in local row ld of island i's Hessian block, 0 (dense) when uncomputed.
-    # dof_env_col_end is its transpose, the largest local row whose envelope reaches column ld, which bounds the
-    # column-oriented factor and solve sweeps to the band: a tall island of a few hundred dofs otherwise tests every
-    # row below the diagonal against its envelope, an O(n^2) scan per sweep. It has no safe uncomputed default (0
-    # truncates), so only the CPU per-island path reads it.
-    dof_env_start_local: qd.Tensor
-    dof_env_col_end: qd.Tensor
     # Per-island contact lists of the CPU per-island skyline reorder (see rcm_tree_pos below, empty otherwise).
-    # contact_id also carries the input order of the cooperative contact sort (see func_sort_contacts_coop in
-    # island.py).
     contact_slices: IslandSlices
     contact_id: qd.Tensor
-    constraint_slices: IslandSlices
-    constraint_id: qd.Tensor
-    # Island of each constraint, -1 for one touching no island
-    constraint_island_idx: qd.Tensor
     # Hibernation (empty unless use_hibernation): is_hibernated marks an island whose every link is asleep, and
     # hibernated_next_link is the per-link daisy chain the partition build re-unions before labeling, which keeps a
     # sleeping component, whose bodies generate no live contacts, one island across steps.
     is_hibernated: qd.Tensor = of_kind(DataKind.STATE)
     hibernated_next_link: qd.Tensor = of_kind(DataKind.STATE)
-    # (env, island) work-lists of the cooperative per-island factor+solve, one per island size class (see
-    # island_tile_caps): class c holds its factor_worklist_size[c] awake islands in its own region of the two index
-    # lists, of n_trees * _B slots each, in the order of the atomic reservation of the partition pass.
-    factor_worklist_i_b: qd.Tensor
-    factor_worklist_i_island: qd.Tensor
-    factor_worklist_size: qd.Tensor
     # Scratch of the reverse Cuthill-McKee tree reorder of the CPU per-island skyline path: a tree's island-local slot,
     # contact degree and ordered flag, and the resulting visit order. Distinct buffers, since quadrants assumes
     # distinct kernel arguments never alias.
@@ -666,35 +646,25 @@ class IslandState:
     rcm_tree_degree: qd.Tensor
     rcm_tree_is_ordered: qd.Tensor
     rcm_tree_order: qd.Tensor
-    # Per-island Newton / CG iteration state (see linesearch.py), indexed [i_island, i_b]: inertia is the trace of the
-    # mass matrix over the island's dofs, the scale of its convergence tests, and improved says whether the island
-    # still iterates, every pass of an iteration being confined to the islands that do. ls_improvement carries
-    # -cost(alpha_accepted) in shifted form, cost(alpha) - cost(0), which stays resolvable in float32 near convergence.
+    # Trace of the mass matrix over the dofs of each island, indexed [i_island, i_b]: the scale of the convergence tests
+    # of its solve (see linesearch.py).
     inertia: qd.Tensor
-    improved: qd.Tensor
-    ls_improvement: qd.Tensor
 
 
 def get_island_state(
-    *, batch_size, n_trees, n_links_actual, n_dofs_actual, rigid_config, use_hibernation, max_contacts, len_constraints_
+    *, batch_size, n_trees, n_links_actual, n_dofs_actual, rigid_config, use_hibernation, max_contacts
 ):
     _B = batch_size
     n_links = max(n_links_actual, 1)
     n_dofs = max(n_dofs_actual, 1)
     n_trees = n_trees
-    # The per-island Hessian is assembled and factored in place in constraint_state.nt_H (block-diagonal), so
-    # island_state itself holds only the partition maps and the per-island iteration state.
+    # The per-island Hessian is assembled and factored in place in constraint_state.nt_H (block-diagonal), and the
+    # per-island solve state lives in constraint_state.island_solve, so island_state holds only the partition maps.
     rcm_active = rigid_config.sparse_solve
-    coop_active = rigid_config.enable_cooperative_constraint_kernels
-    # The (env, island) work-lists of the tiled seed are read where an env can hold several islands (see
-    # func_island_tiled_factor_solve_all in solver.py)
-    worklist_active = rigid_config.enable_tiled_island_seed and not rigid_config.is_single_island
     # Batch-first under the cooperative kernels, whose block serves one env: the lanes then read consecutive items of
     # their env from consecutive addresses (see the constraint-state layouts in get_constraint_state).
     island_layout = (1, 0) if rigid_config.constraint_layout_batch_first else None
-    n_classes = len(island_tile_caps(rigid_config.island_tile_cap_first, rigid_config.island_tile_cap_last))
-    # The island build lists the contacts left once collision detection clamped them to max_contacts, and the
-    # constraints assembled, at most len_constraints_ (see ConstraintSolver)
+    # The skyline reorder lists the contacts left once collision detection clamped them to max_contacts
     max_contacts = max(max_contacts, 1)
     return IslandState(
         trees_parent_idx=V(dtype=gs.qd_int, shape=(n_trees, _B), layout=island_layout),
@@ -717,8 +687,6 @@ def get_island_state(
         dof_local_pos=V(dtype=gs.qd_int, shape=(n_dofs, _B), layout=island_layout),
         dofs_island_idx=V(dtype=gs.qd_int, shape=(n_dofs, _B), layout=island_layout),
         dof_range_start=V(dtype=gs.qd_int, shape=(n_trees, _B), layout=island_layout),
-        dof_env_start_local=V(dtype=gs.qd_int, shape=(n_dofs, _B), layout=island_layout),
-        dof_env_col_end=V(dtype=gs.qd_int, shape=(n_dofs, _B), layout=island_layout),
         contact_slices=get_slices(
             batch_size=batch_size,
             n_trees=n_trees,
@@ -727,17 +695,11 @@ def get_island_state(
         ),
         contact_id=V(
             dtype=gs.qd_int,
-            shape=maybe_shape((max_contacts, _B), rcm_active or coop_active),
-            layout=island_layout if rcm_active or coop_active else None,
+            shape=maybe_shape((max_contacts, _B), rcm_active),
+            layout=island_layout if rcm_active else None,
         ),
-        constraint_slices=get_slices(batch_size=batch_size, n_trees=n_trees, layout=island_layout),
-        constraint_id=V(dtype=gs.qd_int, shape=(len_constraints_, _B), layout=island_layout),
-        constraint_island_idx=V(dtype=gs.qd_int, shape=(len_constraints_, _B), layout=island_layout),
         is_hibernated=V(dtype=gs.qd_int, shape=maybe_shape((n_trees, _B), use_hibernation)),
         hibernated_next_link=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), use_hibernation)),
-        factor_worklist_i_b=V(dtype=gs.qd_int, shape=maybe_shape((n_classes * n_trees * _B,), worklist_active)),
-        factor_worklist_i_island=V(dtype=gs.qd_int, shape=maybe_shape((n_classes * n_trees * _B,), worklist_active)),
-        factor_worklist_size=V(dtype=gs.qd_int, shape=maybe_shape((n_classes,), worklist_active)),
         rcm_tree_pos=V(
             dtype=gs.qd_int, shape=maybe_shape((n_trees, _B), rcm_active), layout=island_layout if rcm_active else None
         ),
@@ -751,6 +713,57 @@ def get_island_state(
             dtype=gs.qd_int, shape=maybe_shape((n_trees, _B), rcm_active), layout=island_layout if rcm_active else None
         ),
         inertia=V(dtype=gs.qd_float, shape=(n_trees, _B), layout=island_layout),
+    )
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class IslandSolveState:
+    kind: ClassVar[DataKind] = DataKind.SCRATCH
+
+    # Skyline envelope of the CPU per-island path: dof_env_start_local[dof_slices.start[i] + ld] is the smallest
+    # island-local column structurally nonzero in local row ld of island i's Hessian block, 0 (dense) when uncomputed.
+    # dof_env_col_end is its transpose, the largest local row whose envelope reaches column ld, which bounds the
+    # column-oriented factor and solve sweeps to the band: a tall island of a few hundred dofs otherwise tests every
+    # row below the diagonal against its envelope, an O(n^2) scan per sweep. It has no safe uncomputed default (0
+    # truncates), so only the CPU per-island path reads it.
+    dof_env_start_local: qd.Tensor
+    dof_env_col_end: qd.Tensor
+    # The constraints of each island, grouped by the solve init (see func_group_constraints_by_island in island.py):
+    # constraint_slices maps an island to its slice of constraint_id.
+    constraint_slices: IslandSlices
+    constraint_id: qd.Tensor
+    # Island of each constraint, -1 for one touching no island
+    constraint_island_idx: qd.Tensor
+    # (env, island) work-lists of the cooperative per-island factor+solve, one per island size class (see
+    # island_tile_caps): class c holds its factor_worklist_size[c] awake islands in its own region of the two index
+    # lists, of n_trees * _B slots each, in the order of the atomic reservation of the partition pass.
+    factor_worklist_i_b: qd.Tensor
+    factor_worklist_i_island: qd.Tensor
+    factor_worklist_size: qd.Tensor
+    # Per-island Newton / CG iteration state (see linesearch.py), indexed [i_island, i_b]: improved says whether the
+    # island still iterates, every pass of an iteration being confined to the islands that do. ls_improvement carries
+    # -cost(alpha_accepted) in shifted form, cost(alpha) - cost(0), which stays resolvable in float32 near convergence.
+    improved: qd.Tensor
+    ls_improvement: qd.Tensor
+
+
+def get_island_solve_state(*, batch_size, n_trees, n_dofs, rigid_config, len_constraints_):
+    _B = batch_size
+    # The (env, island) work-lists of the tiled seed are read where an env can hold several islands (see
+    # func_island_tiled_factor_solve_all in solver.py)
+    worklist_active = rigid_config.enable_tiled_island_seed and not rigid_config.is_single_island
+    # Same layout as the partition it is indexed by (see get_island_state)
+    island_layout = (1, 0) if rigid_config.constraint_layout_batch_first else None
+    n_classes = len(island_tile_caps(rigid_config.island_tile_cap_first, rigid_config.island_tile_cap_last))
+    return IslandSolveState(
+        dof_env_start_local=V(dtype=gs.qd_int, shape=(n_dofs, _B), layout=island_layout),
+        dof_env_col_end=V(dtype=gs.qd_int, shape=(n_dofs, _B), layout=island_layout),
+        constraint_slices=get_slices(batch_size=batch_size, n_trees=n_trees, layout=island_layout),
+        constraint_id=V(dtype=gs.qd_int, shape=(len_constraints_, _B), layout=island_layout),
+        constraint_island_idx=V(dtype=gs.qd_int, shape=(len_constraints_, _B), layout=island_layout),
+        factor_worklist_i_b=V(dtype=gs.qd_int, shape=maybe_shape((n_classes * n_trees * _B,), worklist_active)),
+        factor_worklist_i_island=V(dtype=gs.qd_int, shape=maybe_shape((n_classes * n_trees * _B,), worklist_active)),
+        factor_worklist_size=V(dtype=gs.qd_int, shape=maybe_shape((n_classes,), worklist_active)),
         improved=V(dtype=gs.qd_bool, shape=(n_trees, _B), layout=island_layout),
         ls_improvement=V(dtype=gs.qd_float, shape=(n_trees, _B), layout=island_layout),
     )
@@ -958,6 +971,8 @@ class ConstraintState:
     # Borrowed references owned by RigidIslandSystem: the partition is shared with dynamics/hibernation, and the
     # equality count is shared with collision filtering. They are not allocated by ConstraintSolverSystem.
     island: IslandState
+    # Per-island state of the solve over that partition, allocated with the rest of this state.
+    island_solve: IslandSolveState
     is_warmstart: qd.Tensor = of_kind(DataKind.STATE)
     n_constraints: qd.Tensor = of_kind(DataKind.DERIVED)
     qd_n_equalities: qd.Tensor = of_kind(DataKind.STATE)
@@ -1286,6 +1301,13 @@ def get_constraint_state(
         ),
         # Allocated last to preserve the allocation order of the tensors above (see the warning at the top).
         island=island_state,
+        island_solve=get_island_solve_state(
+            batch_size=_B,
+            n_trees=n_trees,
+            n_dofs=n_dofs,
+            rigid_config=rigid_config,
+            len_constraints_=len_constraints_,
+        ),
     )
 
 
@@ -1493,6 +1515,8 @@ class ColliderState:
     narrowphase_work_queues: NarrowphaseWorkQueues
     contact_sort_key: qd.Tensor
     contact_sort_idx: qd.Tensor = of_kind(DataKind.DERIVED)
+    # Input order of the cooperative contact sort (see func_sort_contacts_coop in island.py), empty where it does not run
+    contact_sort_input: qd.Tensor
     contact_proj_v: qd.Tensor
     contact_keep: qd.Tensor
     contact_hull_stack: qd.Tensor
@@ -1534,6 +1558,9 @@ def get_collider_state(
     prune_shape = maybe_shape(
         (max(max_candidate_contacts, 1), batch_size), collider_static_config.has_prunable_contacts
     )
+    # The cooperative sort orders the contacts left once detection clamped them to max_contacts
+    is_sort_cooperative = rigid_config.enable_cooperative_constraint_kernels
+    sort_input_shape = maybe_shape((max(collider_info.max_contacts[None], 1), batch_size), is_sort_cooperative)
 
     return ColliderState(
         sort_buffer=get_sort_buffer(batch_size, n_geoms),
@@ -1569,6 +1596,11 @@ def get_collider_state(
         ),
         contact_sort_key=V(dtype=gs.qd_float, shape=(max(max_candidate_contacts, 1), batch_size)),
         contact_sort_idx=V(dtype=gs.qd_int, shape=(max(max_candidate_contacts, 1), batch_size)),
+        contact_sort_input=V(
+            dtype=gs.qd_int,
+            shape=sort_input_shape,
+            layout=(1, 0) if is_sort_cooperative and rigid_config.constraint_layout_batch_first else None,
+        ),
         contact_proj_v=V(dtype=gs.qd_float, shape=prune_shape),
         contact_keep=V(dtype=gs.qd_int, shape=prune_shape),
         contact_hull_stack=V(dtype=gs.qd_int, shape=prune_shape),

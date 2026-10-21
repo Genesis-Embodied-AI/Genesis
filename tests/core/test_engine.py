@@ -613,6 +613,111 @@ def test_recursive_action_schedule_forwards_inputs_and_rejects_cycles():
         compile_action_schedule({"cycle": action_left}).expand()
 
 
+# An inline collection runs inside the device loop of the stage invoking it, with the loop indices as call arguments:
+# once per environment from a single thread, or once per lane of the block serving an environment. Graph and plain
+# context-first kernels run the same schedule, and an empty collection unrolls to nothing.
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize("cooperative", [False, True])
+def test_inline_collection_runs_inside_the_device_loop(backend, cooperative):
+    if cooperative and backend == gs.cpu:
+        pytest.skip("Block-cooperative loops require a GPU backend.")
+    N_ENVS = 3
+    N_LANES = 32
+
+    @qd.data_oriented
+    class Counts(Data):
+        def __init__(self):
+            self.value = V(dtype=gs.qd_int, shape=(N_ENVS,))
+
+    @qd.data_oriented
+    class Edges(Data):
+        def __init__(self, n_edges, weight):
+            self.n_edges = n_edges
+            self.weight = weight
+
+    @qd.func(requires_top_level=True)
+    def func_partition(counts: qd.template(), edges: qd.template()):
+        if qd.static(cooperative):
+            qd.loop_config(block_dim=N_LANES)
+            for i_flat in range(N_ENVS * N_LANES):
+                tid = i_flat % N_LANES
+                i_b = i_flat // N_LANES
+                edges.invoke((i_b, tid))
+                qd.simt.block.sync()
+        else:
+            for i_b in range(N_ENVS):
+                edges.invoke((i_b, 0))
+
+    @qd.func
+    def func_count_edges(edges: qd.template(), counts: qd.template(), i_b: int, tid: int):
+        i_e = tid
+        while i_e < edges.n_edges:
+            qd.atomic_add(counts.value[i_b], (i_b + 1) * edges.weight)
+            i_e = i_e + qd.static(N_LANES if cooperative else 1)
+
+    class Partition(System):
+        def __init__(self):
+            super().__init__()
+            self.data = Counts()
+
+        @System.action_collection(kind="inline", call_args=("i_b", "tid"))
+        def edges(self):
+            """Inline Actions counting the edges of env i_b from lane tid of the partition loop."""
+
+        @System.protocol
+        def on_edges(self, edges: InlineAction):
+            self.edges += edges
+
+        @System.action(kind="stage")
+        def partition(self):
+            return func_partition, self.data, self.edges
+
+    def make_source(n_edges, weight):
+        class Source(System):
+            partition_system = Require(Partition)
+
+            def __init__(self):
+                super().__init__()
+                self.data = Edges(n_edges, weight)
+
+            @System.action(kind="inline")
+            def edges(self):
+                return func_count_edges, self.data, self.partition_system.data
+
+            def build(self):
+                self.partition_system.on_edges(self.edges)
+
+        return Source
+
+    @qd.kernel(graph=True)
+    def run_graph(context: qd.template(), schedule: qd.template()):
+        for action in qd.static(schedule.partition):
+            action.invoke()
+
+    @qd.kernel
+    def run_plain(context: qd.template(), schedule: qd.template()):
+        for action in qd.static(schedule.partition):
+            action.invoke()
+
+    class PartitionEngine(Engine):
+        pass
+
+    for sources, edges_per_env in (((make_source(40, 1)(), make_source(5, 3)()), 55), ((), 0)):
+        engine = PartitionEngine()
+        for source in sources:
+            engine.add_system(source)
+        if not sources:
+            engine.add_system(Partition())
+        engine.build()
+        partition = engine.require(Partition)
+        context = engine.create_context()
+        for kernel in (run_graph, run_plain):
+            partition.data.value.fill(0)
+            Pipeline(kernel, context, engine.action_schedule(partition=partition.partition)).run()
+            qd.sync()
+            assert qd_to_numpy(partition.data.value).tolist() == [(i_b + 1) * edges_per_env for i_b in range(N_ENVS)]
+
+
 @pytest.mark.parametrize("backend", [None])
 def test_action_schedule_explicit_action_and_collection_aliases():
     @qd.func(requires_top_level=True)

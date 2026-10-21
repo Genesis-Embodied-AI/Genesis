@@ -64,16 +64,8 @@ class RigidIslandSystem(System):
     def initialize_data(self) -> None:
         rigid = self.rigid_solver_system
         max_contacts = 0
-        len_constraints = 1
-        if self.constraint_system is not None:
-            if self.contact_system is not None:
-                max_contacts = self.contact_system.data.collider_info.max_contacts[None]
-            len_constraints = (
-                rigid.rigid_config.rows_per_contact * max_contacts
-                + sum(joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC) for joint in rigid.joints)
-                + rigid.n_dofs
-                + rigid.n_candidate_equalities_ * 6
-            )
+        if self.constraint_system is not None and self.contact_system is not None:
+            max_contacts = self.contact_system.data.collider_info.max_contacts[None]
         island_state = array_class.get_island_state(
             batch_size=rigid._B,
             n_trees=rigid.n_trees_,
@@ -82,7 +74,6 @@ class RigidIslandSystem(System):
             rigid_config=rigid.rigid_config,
             use_hibernation=rigid._use_hibernation,
             max_contacts=max_contacts,
-            len_constraints_=max(1, len_constraints),
         )
         qd_n_equalities = array_class.V(dtype=gs.qd_int, shape=(rigid._B,))
         qd_n_equalities.from_numpy(np.full((rigid._B,), rigid.n_equalities, dtype=gs.np_int))

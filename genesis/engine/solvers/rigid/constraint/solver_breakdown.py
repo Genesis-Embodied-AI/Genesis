@@ -144,15 +144,15 @@ def _func_update_qfrc_constraint_per_dof(constraint_state: array_class.Constrain
             con_n = constraint_state.n_constraints[i_b]
             if qd.static(not rigid_config.is_single_island):
                 i_island = constraint_state.island.dofs_island_idx[i_d, i_b]
-                is_island_moving = constraint_state.island.improved[i_island, i_b]
-                con_base = constraint_state.island.constraint_slices.start[i_island, i_b]
-                con_n = constraint_state.island.constraint_slices.n[i_island, i_b]
+                is_island_moving = constraint_state.island_solve.improved[i_island, i_b]
+                con_base = constraint_state.island_solve.constraint_slices.start[i_island, i_b]
+                con_n = constraint_state.island_solve.constraint_slices.n[i_island, i_b]
             if is_island_moving:
                 qfrc = gs.qd_float(0.0)
                 for i_lcon in range(con_n):
                     i_c = con_base + i_lcon
                     if qd.static(not rigid_config.is_single_island):
-                        i_c = constraint_state.island.constraint_id[con_base + i_lcon, i_b]
+                        i_c = constraint_state.island_solve.constraint_id[con_base + i_lcon, i_b]
                     qfrc += constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
                 constraint_state.qfrc_constraint[i_d, i_b] = qfrc
 

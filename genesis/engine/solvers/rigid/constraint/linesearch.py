@@ -643,7 +643,7 @@ def func_mv_jv_islands(i_b: int, constraint_state: array_class.ConstraintState, 
     """mv and jv of the islands of one env still iterating, each row read over its sparse support, so the cost follows
     the islands' sizes."""
     for i_island in range(constraint_state.island.n_islands[i_b]):
-        if constraint_state.island.improved[i_island, i_b]:
+        if constraint_state.island_solve.improved[i_island, i_b]:
             dof_lo = constraint_state.island.dof_slices.start[i_island, i_b]
             dof_hi = dof_lo + constraint_state.island.dof_slices.n[i_island, i_b]
             for i_pos in range(dof_lo, dof_hi):
@@ -652,10 +652,10 @@ def func_mv_jv_islands(i_b: int, constraint_state: array_class.ConstraintState, 
                 for i_d2 in range(rigid_info.dofs_mass_block_start[i_d1], rigid_info.dofs_mass_block_end[i_d1]):
                     mv = mv + rigid_info.mass_mat[i_d1, i_d2, i_b] * constraint_state.search[i_d2, i_b]
                 constraint_state.mv[i_d1, i_b] = mv
-            row_lo = constraint_state.island.constraint_slices.start[i_island, i_b]
-            row_hi = row_lo + constraint_state.island.constraint_slices.n[i_island, i_b]
+            row_lo = constraint_state.island_solve.constraint_slices.start[i_island, i_b]
+            row_hi = row_lo + constraint_state.island_solve.constraint_slices.n[i_island, i_b]
             for i_pos in range(row_lo, row_hi):
-                i_c = constraint_state.island.constraint_id[i_pos, i_b]
+                i_c = constraint_state.island_solve.constraint_id[i_pos, i_b]
                 jv = gs.qd_float(0.0)
                 for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
                     i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
@@ -789,7 +789,7 @@ def func_search_single_island(
     n_con = constraint_state.n_constraints[i_b]
 
     is_moved = False
-    if constraint_state.island.improved[0, i_b]:
+    if constraint_state.island_solve.improved[0, i_b]:
         sums_dofs = qd.Vector.zero(gs.qd_float, 5)
         i_pos = tid
         while i_pos < n_dofs:
@@ -868,7 +868,7 @@ def func_search_single_island(
         # A null step converges the island; otherwise its dofs and rows take the step
         if qd.abs(res_alpha) < rigid_info.EPS[None]:
             if tid == 0:
-                constraint_state.island.improved[0, i_b] = False
+                constraint_state.island_solve.improved[0, i_b] = False
         else:
             is_moved = True
             i_pos = tid
@@ -893,7 +893,7 @@ def func_search_single_island(
                 )
                 i_c = i_c + stride
         if tid == 0:
-            constraint_state.island.ls_improvement[0, i_b] = improvement
+            constraint_state.island_solve.ls_improvement[0, i_b] = improvement
     return is_moved
 
 
@@ -918,7 +918,7 @@ def func_exit_single_island(
     """
     n_dofs = constraint_state.search.shape[0]
     improved = False
-    if constraint_state.island.improved[0, i_b]:
+    if constraint_state.island_solve.improved[0, i_b]:
         terms = qd.Vector.zero(gs.qd_float, 7)
         i_pos = tid
         while i_pos < n_dofs:
@@ -937,10 +937,10 @@ def func_exit_single_island(
             improved = not func_certify_decision(terms, inertia, rigid_info, rigid_config)
         else:
             improved, cg_beta = func_exit_decision(
-                terms, constraint_state.island.ls_improvement[0, i_b], inertia, rigid_info, rigid_config
+                terms, constraint_state.island_solve.ls_improvement[0, i_b], inertia, rigid_info, rigid_config
             )
         if tid == 0:
-            constraint_state.island.improved[0, i_b] = improved
+            constraint_state.island_solve.improved[0, i_b] = improved
         if improved:
             if qd.static(not certify):
                 i_pos = tid
@@ -996,13 +996,13 @@ def func_linesearch_islands_serial(
         else:
             func_mv_jv_islands(i_b, constraint_state, rigid_info)
         for i_island in range(n_islands):
-            if constraint_state.island.improved[i_island, i_b]:
+            if constraint_state.island_solve.improved[i_island, i_b]:
                 dof_lo = constraint_state.island.dof_slices.start[i_island, i_b]
                 dof_hi = dof_lo + constraint_state.island.dof_slices.n[i_island, i_b]
-                row_lo = constraint_state.island.constraint_slices.start[i_island, i_b]
-                row_hi = row_lo + constraint_state.island.constraint_slices.n[i_island, i_b]
+                row_lo = constraint_state.island_solve.constraint_slices.start[i_island, i_b]
+                row_hi = row_lo + constraint_state.island_solve.constraint_slices.n[i_island, i_b]
                 dof_base = constraint_state.island.dof_range_start[i_island, i_b]
-                row_base = func_list_range_start(constraint_state.island.constraint_id, row_lo, row_hi, i_b)
+                row_base = func_list_range_start(constraint_state.island_solve.constraint_id, row_lo, row_hi, i_b)
                 sums_dofs = qd.Vector.zero(gs.qd_float, 5)
                 for i_pos in range(dof_lo, dof_hi):
                     i_d = func_list_item(constraint_state.island.dof_id, i_pos, dof_lo, dof_base, i_b)
@@ -1010,7 +1010,7 @@ def func_linesearch_islands_serial(
                 sums_rows = qd.Vector.zero(gs.qd_float, 5)
                 kink_0 = gs.qd_float(qd.math.inf)
                 for i_pos in range(row_lo, row_hi):
-                    i_c = func_list_item(constraint_state.island.constraint_id, i_pos, row_lo, row_base, i_b)
+                    i_c = func_list_item(constraint_state.island_solve.constraint_id, i_pos, row_lo, row_base, i_b)
                     terms, kink = func_row_p0_terms(
                         i_c, i_b, ne, nef, ncone, constraint_state, rigid_config, row_kind=0
                     )
@@ -1038,7 +1038,7 @@ def func_linesearch_islands_serial(
                     acc = qd.Vector.zero(gs.qd_float, 9)
                     kinks = qd.Vector([qd.math.inf, qd.math.inf, qd.math.inf], dt=gs.qd_float)
                     for i_pos in range(row_lo, row_hi):
-                        i_c = func_list_item(constraint_state.island.constraint_id, i_pos, row_lo, row_base, i_b)
+                        i_c = func_list_item(constraint_state.island_solve.constraint_id, i_pos, row_lo, row_base, i_b)
                         terms, kinks_row = func_row_alpha_terms(
                             i_c, i_b, n_alphas, ne, nef, ncone, alphas, constraint_state, rigid_config, row_kind=0
                         )
@@ -1078,7 +1078,7 @@ def func_linesearch_islands_serial(
                 # A null step converges the island; otherwise its dofs and rows take the step
                 if qd.abs(res_alpha) < rigid_info.EPS[None]:
                     res_alpha = 0.0
-                    constraint_state.island.improved[i_island, i_b] = False
+                    constraint_state.island_solve.improved[i_island, i_b] = False
                 else:
                     is_moved = True
                     for i_pos in range(dof_lo, dof_hi):
@@ -1093,11 +1093,11 @@ def func_linesearch_islands_serial(
                             constraint_state.cg_prev_grad[i_d, i_b] = constraint_state.grad[i_d, i_b]
                             constraint_state.cg_prev_Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b]
                     for i_pos in range(row_lo, row_hi):
-                        i_c = func_list_item(constraint_state.island.constraint_id, i_pos, row_lo, row_base, i_b)
+                        i_c = func_list_item(constraint_state.island_solve.constraint_id, i_pos, row_lo, row_base, i_b)
                         constraint_state.Jaref[i_c, i_b] = (
                             constraint_state.Jaref[i_c, i_b] + constraint_state.jv[i_c, i_b] * res_alpha
                         )
-                constraint_state.island.ls_improvement[i_island, i_b] = improvement
+                constraint_state.island_solve.ls_improvement[i_island, i_b] = improvement
     return is_moved
 
 
@@ -1124,7 +1124,7 @@ def func_exit_islands_serial(
         )
     else:
         for i_island in range(n_islands):
-            if constraint_state.island.improved[i_island, i_b]:
+            if constraint_state.island_solve.improved[i_island, i_b]:
                 dof_lo = constraint_state.island.dof_slices.start[i_island, i_b]
                 dof_hi = dof_lo + constraint_state.island.dof_slices.n[i_island, i_b]
                 dof_base = constraint_state.island.dof_range_start[i_island, i_b]
@@ -1139,9 +1139,13 @@ def func_exit_islands_serial(
                     improved = not func_certify_decision(terms, inertia, rigid_info, rigid_config)
                 else:
                     improved, cg_beta = func_exit_decision(
-                        terms, constraint_state.island.ls_improvement[i_island, i_b], inertia, rigid_info, rigid_config
+                        terms,
+                        constraint_state.island_solve.ls_improvement[i_island, i_b],
+                        inertia,
+                        rigid_info,
+                        rigid_config,
                     )
-                constraint_state.island.improved[i_island, i_b] = improved
+                constraint_state.island_solve.improved[i_island, i_b] = improved
                 if improved:
                     improved_any = True
                     if qd.static(not certify):
@@ -1235,10 +1239,10 @@ def func_linesearch_islands_coop(
         dof_hi = (
             constraint_state.island.dof_slices.start[i_last, i_b] + constraint_state.island.dof_slices.n[i_last, i_b]
         )
-        row_lo = constraint_state.island.constraint_slices.start[base, i_b]
+        row_lo = constraint_state.island_solve.constraint_slices.start[base, i_b]
         row_hi = (
-            constraint_state.island.constraint_slices.start[i_last, i_b]
-            + constraint_state.island.constraint_slices.n[i_last, i_b]
+            constraint_state.island_solve.constraint_slices.start[i_last, i_b]
+            + constraint_state.island_solve.constraint_slices.n[i_last, i_b]
         )
         dof_base = func_group_dof_range_start(i_b, tid, base, n_group, dof_lo, dof_hi, constraint_state)
         # The rows of several islands interleave in constraint order, so a sweep in that order would spread one island's
@@ -1246,7 +1250,7 @@ def func_linesearch_islands_coop(
         # utils/simt.py). A group of several islands sweeps its rows in list order, one segment per island per chunk.
         row_base = -1
         if n_group == 1:
-            row_base = func_list_range_start(constraint_state.island.constraint_id, row_lo, row_hi, i_b)
+            row_base = func_list_range_start(constraint_state.island_solve.constraint_id, row_lo, row_hi, i_b)
         # A group of few islands sums each island by every lane over the island's own items and one plain subgroup
         # reduction per sum, whose count follows the islands; a group of many small islands takes the segmented sums
         # per chunk of the group's lists (qd_segment_add in utils/simt.py), whose count follows the rows swept.
@@ -1255,7 +1259,7 @@ def func_linesearch_islands_coop(
         is_owner = tid < n_group
         is_active = False
         if is_owner:
-            is_active = constraint_state.island.improved[i_island, i_b]
+            is_active = constraint_state.island_solve.improved[i_island, i_b]
         for k in qd.static(range(10)):
             sh_acc[k * _K + tid] = 0.0
         if qd.static(rigid_config.enable_signorini_contact):
@@ -1269,7 +1273,7 @@ def func_linesearch_islands_coop(
         if is_per_island:
             for i_g in range(n_group):
                 j_island = base + i_g
-                if constraint_state.island.improved[j_island, i_b]:
+                if constraint_state.island_solve.improved[j_island, i_b]:
                     sums_dofs_i = qd.Vector.zero(gs.qd_float, 5)
                     dof_lo_i = constraint_state.island.dof_slices.start[j_island, i_b]
                     dof_hi_i = dof_lo_i + constraint_state.island.dof_slices.n[j_island, i_b]
@@ -1283,12 +1287,16 @@ def func_linesearch_islands_coop(
                         i_pos = i_pos + _K
                     sums_rows_i = qd.Vector.zero(gs.qd_float, 5)
                     kink_0_i = gs.qd_float(qd.math.inf)
-                    row_lo_i = constraint_state.island.constraint_slices.start[j_island, i_b]
-                    row_hi_i = row_lo_i + constraint_state.island.constraint_slices.n[j_island, i_b]
-                    row_base_i = func_list_range_start(constraint_state.island.constraint_id, row_lo_i, row_hi_i, i_b)
+                    row_lo_i = constraint_state.island_solve.constraint_slices.start[j_island, i_b]
+                    row_hi_i = row_lo_i + constraint_state.island_solve.constraint_slices.n[j_island, i_b]
+                    row_base_i = func_list_range_start(
+                        constraint_state.island_solve.constraint_id, row_lo_i, row_hi_i, i_b
+                    )
                     i_pos = row_lo_i + tid
                     while i_pos < row_hi_i:
-                        i_c = func_list_item(constraint_state.island.constraint_id, i_pos, row_lo_i, row_base_i, i_b)
+                        i_c = func_list_item(
+                            constraint_state.island_solve.constraint_id, i_pos, row_lo_i, row_base_i, i_b
+                        )
                         terms, kink = func_row_p0_terms(
                             i_c, i_b, ne, nef, ncone, constraint_state, rigid_config, row_kind=0
                         )
@@ -1316,7 +1324,7 @@ def func_linesearch_islands_coop(
                     i_slot = 0
                     if n_group > 1:
                         i_slot = constraint_state.island.dofs_island_idx[i_d, i_b] - base
-                    if constraint_state.island.improved[base + i_slot, i_b]:
+                    if constraint_state.island_solve.improved[base + i_slot, i_b]:
                         terms_dofs = func_dof_p0_terms(i_d, i_b, dyn_state, constraint_state, rigid_config)
                 i_slot_prev, i_slot_next = su.qd_slot_neighbors(tid, i_slot)
                 for k in qd.static(range(5)):
@@ -1328,11 +1336,11 @@ def func_linesearch_islands_coop(
                 terms_rows = qd.Vector.zero(gs.qd_float, 5)
                 kink_0_row = gs.qd_float(qd.math.inf)
                 if i_pos < row_hi:
-                    i_c = func_list_item(constraint_state.island.constraint_id, i_pos, row_lo, row_base, i_b)
+                    i_c = func_list_item(constraint_state.island_solve.constraint_id, i_pos, row_lo, row_base, i_b)
                     i_slot = 0
                     if n_group > 1:
-                        i_slot = constraint_state.island.constraint_island_idx[i_c, i_b] - base
-                    if constraint_state.island.improved[base + i_slot, i_b]:
+                        i_slot = constraint_state.island_solve.constraint_island_idx[i_c, i_b] - base
+                    if constraint_state.island_solve.improved[base + i_slot, i_b]:
                         terms_rows, kink_0_row = func_row_p0_terms(
                             i_c, i_b, ne, nef, ncone, constraint_state, rigid_config, row_kind=0
                         )
@@ -1397,15 +1405,15 @@ def func_linesearch_islands_coop(
                         kinks_i = qd.Vector([qd.math.inf, qd.math.inf, qd.math.inf], dt=gs.qd_float)
                         row_alphas = qd.Vector([sh_alphas[i_g], sh_alphas[_K + i_g], sh_alphas[2 * _K + i_g]])
                         n_alphas_i = sh_n_alphas[i_g]
-                        row_lo_i = constraint_state.island.constraint_slices.start[j_island, i_b]
-                        row_hi_i = row_lo_i + constraint_state.island.constraint_slices.n[j_island, i_b]
+                        row_lo_i = constraint_state.island_solve.constraint_slices.start[j_island, i_b]
+                        row_hi_i = row_lo_i + constraint_state.island_solve.constraint_slices.n[j_island, i_b]
                         row_base_i = func_list_range_start(
-                            constraint_state.island.constraint_id, row_lo_i, row_hi_i, i_b
+                            constraint_state.island_solve.constraint_id, row_lo_i, row_hi_i, i_b
                         )
                         i_pos = row_lo_i + tid
                         while i_pos < row_hi_i:
                             i_c = func_list_item(
-                                constraint_state.island.constraint_id, i_pos, row_lo_i, row_base_i, i_b
+                                constraint_state.island_solve.constraint_id, i_pos, row_lo_i, row_base_i, i_b
                             )
                             terms, kinks_row = func_row_alpha_terms(
                                 i_c,
@@ -1439,10 +1447,10 @@ def func_linesearch_islands_coop(
                     terms = qd.Vector.zero(gs.qd_float, 9)
                     kinks_row = qd.Vector([qd.math.inf, qd.math.inf, qd.math.inf], dt=gs.qd_float)
                     if i_pos < row_hi:
-                        i_c = func_list_item(constraint_state.island.constraint_id, i_pos, row_lo, row_base, i_b)
+                        i_c = func_list_item(constraint_state.island_solve.constraint_id, i_pos, row_lo, row_base, i_b)
                         i_slot = 0
                         if n_group > 1:
-                            i_slot = constraint_state.island.constraint_island_idx[i_c, i_b] - base
+                            i_slot = constraint_state.island_solve.constraint_island_idx[i_c, i_b] - base
                         if sh_pending[i_slot] != 0:
                             row_alphas = qd.Vector(
                                 [sh_alphas[i_slot], sh_alphas[_K + i_slot], sh_alphas[2 * _K + i_slot]]
@@ -1522,8 +1530,8 @@ def func_linesearch_islands_coop(
         if phase == 3:
             if qd.abs(res_alpha) < rigid_info.EPS[None]:
                 res_alpha = 0.0
-                constraint_state.island.improved[i_island, i_b] = False
-            constraint_state.island.ls_improvement[i_island, i_b] = improvement
+                constraint_state.island_solve.improved[i_island, i_b] = False
+            constraint_state.island_solve.ls_improvement[i_island, i_b] = improvement
         sh_alpha[tid] = res_alpha
         qd.simt.block.sync()
         if qd.simt.subgroup.any_true(res_alpha != 0.0) != 0:
@@ -1545,10 +1553,10 @@ def func_linesearch_islands_coop(
                 i_pos = i_pos + _K
             i_pos = row_lo + tid
             while i_pos < row_hi:
-                i_c = func_list_item(constraint_state.island.constraint_id, i_pos, row_lo, row_base, i_b)
+                i_c = func_list_item(constraint_state.island_solve.constraint_id, i_pos, row_lo, row_base, i_b)
                 i_slot = 0
                 if n_group > 1:
-                    i_slot = constraint_state.island.constraint_island_idx[i_c, i_b] - base
+                    i_slot = constraint_state.island_solve.constraint_island_idx[i_c, i_b] - base
                 alpha = sh_alpha[i_slot]
                 constraint_state.Jaref[i_c, i_b] = (
                     constraint_state.Jaref[i_c, i_b] + constraint_state.jv[i_c, i_b] * alpha
@@ -1593,7 +1601,7 @@ def func_exit_islands_coop(
         i_island = base + tid
         is_active = False
         if tid < n_group:
-            is_active = constraint_state.island.improved[i_island, i_b]
+            is_active = constraint_state.island_solve.improved[i_island, i_b]
         for k in qd.static(range(7)):
             sh_acc[k * _K + tid] = 0.0
         qd.simt.block.sync()
@@ -1606,7 +1614,7 @@ def func_exit_islands_coop(
                 i_slot = 0
                 if n_group > 1:
                     i_slot = constraint_state.island.dofs_island_idx[i_d, i_b] - base
-                if constraint_state.island.improved[base + i_slot, i_b]:
+                if constraint_state.island_solve.improved[base + i_slot, i_b]:
                     terms = func_dof_exit_terms(i_d, i_b, constraint_state, rigid_config)
             i_slot_prev, i_slot_next = su.qd_slot_neighbors(tid, i_slot)
             for k in qd.static(range(7)):
@@ -1623,9 +1631,13 @@ def func_exit_islands_coop(
                 improved = not func_certify_decision(terms, inertia, rigid_info, rigid_config)
             else:
                 improved, cg_beta = func_exit_decision(
-                    terms, constraint_state.island.ls_improvement[i_island, i_b], inertia, rigid_info, rigid_config
+                    terms,
+                    constraint_state.island_solve.ls_improvement[i_island, i_b],
+                    inertia,
+                    rigid_info,
+                    rigid_config,
                 )
-            constraint_state.island.improved[i_island, i_b] = improved
+            constraint_state.island_solve.improved[i_island, i_b] = improved
         qd.simt.block.sync()
         sh_pending[tid] = improved
         sh_alpha[tid] = cg_beta

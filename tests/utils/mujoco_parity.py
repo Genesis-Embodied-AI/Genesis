@@ -664,12 +664,15 @@ def check_mujoco_data_consistency(
         # MuJoCo counterpart (its dofs sit outside every MuJoCo island) and is skipped.
         gs_constraint_solver = gs_sim.rigid_solver.constraint_solver
         gs_island_state = gs_constraint_solver.constraint_state.island
+        gs_island_solve_state = gs_constraint_solver.constraint_state.island_solve
         gs_grad = qd_to_numpy(gs_constraint_solver.grad, transpose=True)[0, : gs_sim.rigid_solver.n_dofs]
         gs_islands_inertia = qd_to_numpy(gs_island_state.inertia, transpose=True)[0]
-        gs_islands_ls_improvement = qd_to_numpy(gs_island_state.ls_improvement, transpose=True)[0]
+        gs_islands_ls_improvement = qd_to_numpy(gs_island_solve_state.ls_improvement, transpose=True)[0]
         gs_n_islands = qd_to_numpy(gs_island_state.n_islands)[0]
         gs_dofs_island = qd_to_numpy(gs_island_state.dofs_island_idx, transpose=True)[0]
-        gs_constraints_island = qd_to_numpy(gs_island_state.constraint_island_idx, transpose=True)[0, :gs_n_constraints]
+        gs_constraints_island = qd_to_numpy(gs_island_solve_state.constraint_island_idx, transpose=True)[
+            0, :gs_n_constraints
+        ]
         gs_to_mj_dof = dict(zip(gs_dofs_idx, mj_dofs_idx))
         for gs_island in range(gs_n_islands):
             gs_island_dofs = np.flatnonzero(gs_dofs_island == gs_island)

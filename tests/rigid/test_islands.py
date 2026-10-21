@@ -61,7 +61,7 @@ def test_constraint_capacity_covers_friction_rows(show_viewer):
         )
     scene.build()
     constraint_solver = scene.sim.rigid_solver.constraint_solver
-    assert constraint_solver.constraint_state.island.constraint_id.shape[0] >= constraint_solver.len_constraints
+    assert constraint_solver.constraint_state.island_solve.constraint_id.shape[0] >= constraint_solver.len_constraints
 
 
 @pytest.mark.required
@@ -173,7 +173,7 @@ def test_partition_logics(show_viewer, n_envs, multi_free_body_path):
     island_dof_n = qd_to_numpy(island_state.dof_slices.n)
     island_dof_start = qd_to_numpy(island_state.dof_slices.start)
     dof_id = qd_to_numpy(island_state.dof_id)
-    island_constraint_n = qd_to_numpy(island_state.constraint_slices.n)
+    island_constraint_n = qd_to_numpy(solver.constraint_solver.constraint_state.island_solve.constraint_slices.n)
     n_constraints = qd_to_numpy(solver.constraint_solver.constraint_state.n_constraints)
     alone_dofs = list(range(box_alone.dof_start, box_alone.dof_start + box_alone.n_dofs))
     for i_env in range(island_idx.shape[1]):
