@@ -229,8 +229,6 @@ def test_inner_corner_multi_contact(obj_shape, show_viewer, tmp_path):
     # put) but does not match the clean 2-floor + 2-wall configuration the sphere case enforces.
 
 
-# Force CPU because nonconvex SDF is slow on GPU
-@pytest.mark.parametrize("backend", [gs.cpu])
 def test_tunneling(show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -271,8 +269,6 @@ def test_tunneling(show_viewer):
     assert_allclose(rod.get_dofs_velocity(dofs_idx_local=slice(None, 3)), 0, atol=0.08)
 
 
-# Force CPU because nonconvex SDF is slow on GPU
-@pytest.mark.parametrize("backend", [gs.cpu])
 def test_overlap(show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(

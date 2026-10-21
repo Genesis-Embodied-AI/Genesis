@@ -48,6 +48,15 @@ def qd_block_max(value):
 
 
 @qd.func
+def qd_block_shuffle(value, i_lane):
+    """Read a value from lane i_lane of the 32 lanes of a block, every lane of the block receiving it.
+
+    See qd_block_sum for the blocks and the source lane.
+    """
+    return qd.simt.subgroup.shuffle(value, qd.u32((qd.simt.subgroup.invocation_id() >> 5 << 5) + i_lane))
+
+
+@qd.func
 def qd_block_all(predicate):
     """Whether a predicate holds on every one of the 32 lanes of a block, every lane of the block receiving the answer.
 
