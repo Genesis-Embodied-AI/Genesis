@@ -1046,6 +1046,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 links_inertial_quat,
                 links_inertial_i,
                 self.dyn_info,
+                self.rigid_config,
             )
 
             # Set active_envs on geoms — indicates which environments each geom is active in

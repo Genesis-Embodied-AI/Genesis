@@ -782,7 +782,9 @@ class KinematicSolver(Solver):
             vgeom_starts = np.array([link._variant_vgeom_ranges[v][0] for v in variant_idx], dtype=gs.np_int)
             vgeom_ends = np.array([link._variant_vgeom_ranges[v][1] for v in variant_idx], dtype=gs.np_int)
 
-            kernel_update_heterogeneous_links_vgeom(link.idx, vgeom_starts, vgeom_ends, self.dyn_info)
+            kernel_update_heterogeneous_links_vgeom(
+                link.idx, vgeom_starts, vgeom_ends, self.dyn_info, self.rigid_config
+            )
 
             for vgeom in link.vgeoms:
                 active_envs_mask = (vgeom_starts <= vgeom.idx) & (vgeom.idx < vgeom_ends)
