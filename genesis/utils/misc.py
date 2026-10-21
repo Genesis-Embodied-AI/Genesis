@@ -10,6 +10,7 @@ import os
 import random
 import sys
 from collections.abc import Callable, Mapping
+from contextlib import contextmanager
 from dataclasses import field
 from importlib import import_module
 from itertools import combinations
@@ -113,6 +114,25 @@ class redirect_libc_stderr:
         os.close(self.original_stderr_fileno)
         self.stderr_fileno = None
         self.original_stderr_fileno = None
+
+
+@contextmanager
+def set_environ(environ: Mapping[str, str]):
+    """Set environment variables for the duration of the context, then restore them to their previous state.
+
+    Only the variables in 'environ' are touched: those previously unset are removed on exit, the others get back their
+    previous value.
+    """
+    environ_prev = {name: os.environ.get(name) for name in environ}
+    os.environ.update(environ)
+    try:
+        yield
+    finally:
+        for name, value in environ_prev.items():
+            if value is None:
+                del os.environ[name]
+            else:
+                os.environ[name] = value
 
 
 def assert_initialized(cls):

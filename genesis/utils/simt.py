@@ -48,6 +48,25 @@ def qd_block_max(value):
 
 
 @qd.func
+def qd_block_all(predicate):
+    """Whether a predicate holds on every one of the 32 lanes of a block, every lane of the block receiving the answer.
+
+    See qd_block_sum for the blocks. A vote over the whole subgroup would also read the lanes beyond a block that no
+    thread runs (the upper half of a 64-lane AMDGPU wavefront running a 32-lane block), whose values are undefined.
+    """
+    return qd.simt.subgroup.all_true_tiled(predicate, 5) != 0
+
+
+@qd.func
+def qd_block_any(predicate):
+    """Whether a predicate holds on any of the 32 lanes of a block, every lane of the block receiving the answer.
+
+    See qd_block_all for the lanes taking part in the vote.
+    """
+    return qd.simt.subgroup.any_true_tiled(predicate, 5) != 0
+
+
+@qd.func
 def qd_lane_vector_get(v, i, block_dim: qd.template()):
     """Read entry i of a vector spread over the lanes of a block, every lane receiving it.
 
