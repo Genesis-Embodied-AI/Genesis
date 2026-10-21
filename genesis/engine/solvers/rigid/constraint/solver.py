@@ -1,9 +1,5 @@
 from collections.abc import Iterator
-from typing import TYPE_CHECKING
-
-import numpy as np
 import quadrants as qd
-import torch
 from frozendict import frozendict
 
 import genesis as gs
@@ -18,11 +14,11 @@ from genesis.engine.solvers.rigid.abd.misc import (
     func_list_range_start,
     linear_to_lower_tri,
 )
-from genesis.utils.misc import assign_indexed_tensor, indices_to_mask, qd_to_numpy, qd_to_torch
 
 from .island import (
     func_build_islands,
     func_build_islands_coop,
+    func_build_islands_no_contact,
     func_build_single_island,
     func_build_single_island_coop,
     func_group_constraints_by_island,
@@ -31,7 +27,6 @@ from .island import (
     func_sort_contacts,
     func_sort_contacts_coop,
 )
-from . import backward as backward_constraint_solver
 from . import linesearch
 from . import noslip as constraint_noslip
 
@@ -91,364 +86,78 @@ def _sort_relevant_dofs_descending(
             constraint_state.jac_dofs_idx[i_con, j + 1, i_b] = key
 
 
-if TYPE_CHECKING:
-    from genesis.engine.systems.rigid_solver_system import RigidSolverSystem
-
-
-IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
+def _constraint_state_property(name):
+    return property(lambda facade: getattr(facade._system.data.constraint_state, name))
 
 
 class ConstraintSolver:
-    def __init__(self, rigid_solver: "RigidSolverSystem", collider_data, island_data):
-        self._solver = rigid_solver
-        self._collider = collider_data
-        self._B = rigid_solver._B
-        self._para_level = rigid_solver._para_level
+    """External compatibility facade over ConstraintSolverSystem-owned state."""
 
-        self._solver_type = rigid_solver._options.constraint_solver
-        self._n_iterations = int(rigid_solver._options.iterations)
-        self.tolerance = rigid_solver._options.tolerance
-        self.ls_iterations = rigid_solver._options.ls_iterations
-        self.ls_tolerance = rigid_solver._options.ls_tolerance
-        # Effective (CPU-gated) sparsity flag, resolved in the static config; the raw option may differ on GPU.
-        self.sparse_solve = rigid_solver.rigid_config.sparse_solve
+    def __init__(self, system) -> None:
+        self._system = system
 
-        # Note that it must be over-estimated because friction parameters and joint limits may be updated dynamically.
-        # * rows_per_contact constraints per contact, bounded by the post-pruning contact budget enforced by the
-        #   collider
-        # * 1 constraint per 1DoF joint limit (upper and lower, if not inf)
-        # * 1 constraint per dof frictionloss
-        # * up to 6 constraints per equality (weld)
-        # When 'max_contacts' is set, it overrides the post-pruning contact budget enforced by the collider.
-        # Resolve the max_contacts option in place: from the collider's post-pruning budget when unset, else clamped
-        # to the candidate budget and written back so the collider honors the user's cap. Downstream reads the option.
-        collider_info = None if self._collider is None else self._collider.collider_info
-        if collider_info is None:
-            rigid_solver._options.max_contacts = 0
-        elif rigid_solver._options.max_contacts is None:
-            rigid_solver._options.max_contacts = collider_info.max_contacts[None]
-        else:
-            rigid_solver._options.max_contacts = min(
-                rigid_solver._options.max_contacts, collider_info.max_candidate_contacts[None]
-            )
-            collider_info.max_contacts[None] = rigid_solver._options.max_contacts
-        rows_per_contact = rigid_solver.rigid_config.rows_per_contact
-        self.len_constraints = (
-            rows_per_contact * rigid_solver._options.max_contacts
-            + sum(joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC) for joint in self._solver.joints)
-            + self._solver.n_dofs
-            + self._solver.n_candidate_equalities_ * 6
-        )
-        self.len_constraints_ = max(1, self.len_constraints)
-        # Max cone rows (rows_per_contact per contact); sizes the elliptic-only previous-residual buffer to exactly
-        # the contact rows, below the full constraint count that also covers equalities, joint limits, and
-        # frictionloss.
-        self.n_cone_constraints_ = max(1, rows_per_contact * rigid_solver._options.max_contacts)
+    @property
+    def constraint_state(self):
+        return self._system.data.constraint_state
 
-        self.constraint_state = array_class.get_constraint_state(
-            self,
-            self._solver,
-            self._collider,
-            island_data.island,
-            island_data.qd_n_equalities,
-        )
+    @property
+    def len_constraints(self) -> int:
+        return self._system.get_len_constraints()
 
-        self._eq_const_info_cache = {}
-
-        cs = self.constraint_state
-        self.qd_n_equalities = cs.qd_n_equalities
-        self.jac = cs.jac
-        self.diag = cs.diag
-        self.aref = cs.aref
-        self.jac_n_dofs = cs.jac_n_dofs
-        self.jac_dofs_idx = cs.jac_dofs_idx
-        self.n_constraints = cs.n_constraints
-        self.n_constraints_equality = cs.n_constraints_equality
-        self.n_constraints_frictionloss = cs.n_constraints_frictionloss
-        self.n_constraints_cone = cs.n_constraints_cone
-        self.improved = cs.improved
-        self.Jaref = cs.Jaref
-        self.Ma = cs.Ma
-        self.Ma_ws = cs.Ma_ws
-        self.grad = cs.grad
-        self.Mgrad = cs.Mgrad
-        self.search = cs.search
-        self.efc_D = cs.efc_D
-        self.efc_force = cs.efc_force
-        self.active = cs.active
-        self.prev_active = cs.prev_active
-        self.qfrc_constraint = cs.qfrc_constraint
-        self.qacc = cs.qacc
-        self.qacc_ws = cs.qacc_ws
-        self.cost_ws = cs.cost_ws
-        self.cost = cs.cost
-        self.mv = cs.mv
-        self.jv = cs.jv
-        if self._solver_type == gs.constraint_solver.CG:
-            self.cg_prev_grad = cs.cg_prev_grad
-            self.cg_prev_Mgrad = cs.cg_prev_Mgrad
-        if self._solver_type == gs.constraint_solver.Newton:
-            self.nt_H = cs.nt_H
-            self.nt_vec = cs.nt_vec
-
-        self.reset()
+    @property
+    def _n_iterations(self) -> int:
+        return self._system.get_n_iterations()
 
     @property
     def data(self) -> Iterator[array_class.DataItem]:
-        """Yield every array of the constraint solver, tagged by kind (see 'Solver.data')."""
-        for item in array_class.iter_data(self, "constraint_state"):
+        for item in array_class.iter_data(self._system.data, "constraint_state"):
             if not item.name.startswith(("constraint_state.island.", "constraint_state.qd_n_equalities")):
                 yield item
 
+    qd_n_equalities = _constraint_state_property("qd_n_equalities")
+    n_constraints = _constraint_state_property("n_constraints")
+    n_constraints_equality = _constraint_state_property("n_constraints_equality")
+    n_constraints_frictionloss = _constraint_state_property("n_constraints_frictionloss")
+    n_constraints_cone = _constraint_state_property("n_constraints_cone")
+    active = _constraint_state_property("active")
+    jac = _constraint_state_property("jac")
+    efc_D = _constraint_state_property("efc_D")
+    aref = _constraint_state_property("aref")
+    qacc = _constraint_state_property("qacc")
+    qacc_ws = _constraint_state_property("qacc_ws")
+    qfrc_constraint = _constraint_state_property("qfrc_constraint")
+    efc_force = _constraint_state_property("efc_force")
+    grad = _constraint_state_property("grad")
+
     def reset(self, envs_idx=None):
-        self._eq_const_info_cache.clear()
-
-        if gs.use_zerocopy:
-            envs_mask = indices_to_mask(envs_idx)
-            dofs_mask = (slice(None), *envs_mask)
-            is_warmstart = qd_to_torch(self.constraint_state.is_warmstart, copy=False)
-            qacc_ws = qd_to_torch(self.constraint_state.qacc_ws, copy=False)
-            assign_indexed_tensor(is_warmstart, envs_mask, False)
-            assign_indexed_tensor(qacc_ws, dofs_mask, 0.0)
-            if gs.backend == gs.metal:
-                torch.mps.synchronize()
-            return
-
-        envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
-        constraint_solver_kernel_reset(envs_idx, self.constraint_state, self._solver.rigid_config)
+        return self._system.reset(envs_idx)
 
     def clear(self, envs_idx=None):
-        self.reset(envs_idx)
-
-        if gs.use_zerocopy and (
-            not isinstance(envs_idx, torch.Tensor) or (not IS_OLD_TORCH or envs_idx.dtype == torch.bool)
-        ):
-            n_constraints = qd_to_torch(self.constraint_state.n_constraints, copy=False)
-            n_constraints_equality = qd_to_torch(self.constraint_state.n_constraints_equality, copy=False)
-            n_constraints_frictionloss = qd_to_torch(self.constraint_state.n_constraints_frictionloss, copy=False)
-            n_constraints_cone = qd_to_torch(self.constraint_state.n_constraints_cone, copy=False)
-            qd_n_equalities = qd_to_torch(self.constraint_state.qd_n_equalities, copy=False)
-            n_eq = self._solver._n_equalities
-            if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
-                n_constraints.masked_fill_(envs_idx, 0)
-                n_constraints_equality.masked_fill_(envs_idx, 0)
-                n_constraints_frictionloss.masked_fill_(envs_idx, 0)
-                n_constraints_cone.masked_fill_(envs_idx, 0)
-                qd_n_equalities.masked_fill_(envs_idx, n_eq)
-            elif isinstance(envs_idx, torch.Tensor):
-                n_constraints.scatter_(0, envs_idx, 0)
-                n_constraints_equality.scatter_(0, envs_idx, 0)
-                n_constraints_frictionloss.scatter_(0, envs_idx, 0)
-                n_constraints_cone.scatter_(0, envs_idx, 0)
-                qd_n_equalities.scatter_(0, envs_idx, n_eq)
-            else:
-                env_mask = indices_to_mask(envs_idx)
-                assign_indexed_tensor(n_constraints, env_mask, 0)
-                assign_indexed_tensor(n_constraints_equality, env_mask, 0)
-                assign_indexed_tensor(n_constraints_frictionloss, env_mask, 0)
-                assign_indexed_tensor(n_constraints_cone, env_mask, 0)
-                assign_indexed_tensor(qd_n_equalities, env_mask, n_eq)
-            if gs.backend == gs.metal:
-                torch.mps.synchronize()
-            return
-
-        if not isinstance(envs_idx, torch.Tensor):
-            envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
-        if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
-            fn = constraint_solver_kernel_masked_clear
-        else:
-            fn = constraint_solver_kernel_clear
-        fn(envs_idx, self.constraint_state, self._solver.rigid_info, self._solver.rigid_config)
+        return self._system.clear(envs_idx)
 
     def add_equality_constraints(self):
-        self._eq_const_info_cache.clear()
-
-        kernel_add_equality_constraints(
-            self._solver.dyn_state,
-            self._collider.collider_state,
-            self.constraint_state,
-            self._solver.dyn_info,
-            self._solver.rigid_info,
-            self._solver.rigid_config,
-        )
+        return self._system.add_equality_constraints()
 
     def add_inequality_constraints(self):
-        kernel_add_inequality_constraints(
-            self._solver.dyn_state,
-            self._collider.collider_state,
-            self.constraint_state,
-            self._solver.dyn_info,
-            self._solver.rigid_info,
-            self._solver.rigid_config,
-            self._collider.collider_config,
-        )
+        return self._system.add_inequality_constraints()
 
     def resolve(self):
-        """Solve the constraint forces, then update the accelerations and the contact forces from them."""
-        # func_solve_init is launched by each dispatch entrypoint (func_solve_body_monolith / func_solve_decomposed),
-        # not here: only the entrypoint statically knows its arm, which determines whether the init factor/gradient is
-        # done (monolith) or skipped (decomposed re-factors in-loop).
-        func_solve_body(
-            self._solver.dyn_state,
-            self.constraint_state,
-            self._solver.dyn_info,
-            self._solver.rigid_info,
-            self._solver.rigid_config,
-            self._n_iterations,
-        )
-        kernel_resolve_post(
-            self._solver.dyn_state,
-            self._collider.collider_state,
-            self.constraint_state,
-            self._solver.dyn_info,
-            self._solver.rigid_info,
-            self._solver.rigid_config,
-            self._solver._options.noslip_iterations > 0,
-            self._solver._errno,
-        )
+        return self._system.resolve()
 
-    def get_equality_constraints(self, as_tensor: bool = True, to_torch: bool = True):
-        # Early return if already pre-computed
-        eq_const_info = self._eq_const_info_cache.get((as_tensor, to_torch))
-        if eq_const_info is not None:
-            return eq_const_info.copy()
+    def get_equality_constraints(self, as_tensor=True, to_torch=True):
+        return self._system.get_equality_constraints(as_tensor, to_torch)
 
-        n_eqs = tuple(self.constraint_state.qd_n_equalities.to_numpy())
-        n_envs = len(n_eqs)
-        n_eqs_max = max(n_eqs)
-
-        if as_tensor:
-            out_size = n_envs * n_eqs_max
-        else:
-            *n_eqs_starts, out_size = np.cumsum(n_eqs)
-
-        if to_torch:
-            iout = torch.full((out_size, 3), -1, dtype=gs.tc_int, device=gs.device)
-            fout = torch.zeros((out_size, 6), dtype=gs.tc_float, device=gs.device)
-        else:
-            iout = np.full((out_size, 3), -1, dtype=gs.np_int)
-            fout = np.zeros((out_size, 6), dtype=gs.np_float)
-
-        if n_eqs_max > 0:
-            kernel_get_equality_constraints(
-                iout, fout, self.constraint_state, self._solver.dyn_info, self._solver.rigid_config, as_tensor
-            )
-
-        if as_tensor:
-            iout = iout.reshape((n_envs, n_eqs_max, 3))
-            eq_type, obj_a, obj_b = (iout[..., i] for i in range(3))
-            efc_force = fout.reshape((n_envs, n_eqs_max, 6))
-            values = (eq_type, obj_a, obj_b, fout)
-        else:
-            if to_torch:
-                iout_chunks = torch.split(iout, n_eqs)
-                efc_force = torch.split(fout, n_eqs)
-            else:
-                iout_chunks = np.split(iout, n_eqs_starts)
-                efc_force = np.split(fout, n_eqs_starts)
-            eq_type, obj_a, obj_b = tuple(zip(*([data[..., i] for i in range(3)] for data in iout_chunks)))
-
-        values = (eq_type, obj_a, obj_b, efc_force)
-        eq_const_info = dict(zip(("type", "obj_a", "obj_b", "force"), values))
-
-        # Cache equality constraint information before returning
-        self._eq_const_info_cache[(as_tensor, to_torch)] = eq_const_info
-
-        return eq_const_info.copy()
-
-    def get_weld_constraints(self, as_tensor: bool = True, to_torch: bool = True):
-        eq_const_info = self.get_equality_constraints(as_tensor, to_torch)
-        eq_type = eq_const_info.pop("type")
-
-        weld_const_info = {}
-        if as_tensor:
-            weld_mask = eq_type == gs.EQUALITY_TYPE.WELD
-            n_envs = len(weld_mask)
-            n_welds = weld_mask.sum(dim=-1) if to_torch else np.sum(weld_mask, axis=-1)
-            n_welds_max = max(n_welds)
-            for key, value in eq_const_info.items():
-                shape = (n_envs, n_welds_max, *value.shape[2:])
-                if to_torch:
-                    if torch.is_floating_point(value):
-                        weld_const_info[key] = torch.zeros(shape, dtype=value.dtype, device=value.device)
-                    else:
-                        weld_const_info[key] = torch.full(shape, -1, dtype=value.dtype, device=value.device)
-                else:
-                    if np.issubdtype(value.dtype, np.floating):
-                        weld_const_info[key] = np.zeros(shape, dtype=value.dtype)
-                    else:
-                        weld_const_info[key] = np.full(shape, -1, dtype=value.dtype)
-            for i_b, (n_welds_i, weld_mask_i) in enumerate(zip(n_welds, weld_mask)):
-                for eq_value, weld_value in zip(eq_const_info.values(), weld_const_info.values()):
-                    weld_value[i_b, :n_welds_i] = eq_value[i_b, weld_mask_i]
-        else:
-            weld_mask_chunks = tuple(eq_type_i == gs.EQUALITY_TYPE.WELD for eq_type_i in eq_type)
-            for key, value in eq_const_info.items():
-                weld_const_info[key] = tuple(data[weld_mask] for weld_mask, data in zip(weld_mask_chunks, value))
-
-        weld_const_info["link_a"] = weld_const_info.pop("obj_a")
-        weld_const_info["link_b"] = weld_const_info.pop("obj_b")
-
-        return weld_const_info
+    def get_weld_constraints(self, as_tensor=True, to_torch=True):
+        return self._system.get_weld_constraints(as_tensor, to_torch)
 
     def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None):
-        envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
-        link1_idx, link2_idx = int(link1_idx), int(link2_idx)
-
-        assert link1_idx >= 0 and link2_idx >= 0
-        weld_const_info = self.get_weld_constraints(as_tensor=True, to_torch=True)
-        link_a = weld_const_info["link_a"]
-        link_b = weld_const_info["link_b"]
-        assert not (
-            ((link_a == link1_idx) | (link_b == link1_idx)) & ((link_a == link2_idx) | (link_b == link2_idx))
-        ).any()
-
-        self._eq_const_info_cache.clear()
-        overflow = kernel_add_weld_constraint(
-            link1_idx,
-            link2_idx,
-            envs_idx,
-            self._solver.dyn_state,
-            self.constraint_state,
-            self._solver.dyn_info,
-            self._solver.rigid_info,
-            self._solver.rigid_config,
-        )
-        if overflow:
-            gs.logger.warning(
-                "Ignoring dynamically registered weld constraint to avoid exceeding max number of equality constraints"
-                f"({self.rigid_info.n_candidate_equalities.to_numpy()}). Please increase the value of "
-                "RigidSolver's option 'max_dynamic_constraints'."
-            )
+        return self._system.add_weld_constraint(link1_idx, link2_idx, envs_idx)
 
     def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx=None):
-        envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
-        self._eq_const_info_cache.clear()
-        kernel_delete_weld_constraint(
-            int(link1_idx),
-            int(link2_idx),
-            envs_idx,
-            self.constraint_state,
-            self._solver.dyn_info,
-            self._solver.rigid_info,
-            self._solver.rigid_config,
-        )
+        return self._system.delete_weld_constraint(link1_idx, link2_idx, envs_idx)
 
     def backward(self):
-        """Adjoint solve of the constraint force computation.
-
-        The caller must pre-populate the upstream gradient constraint_state.dL_dqacc (see
-        RigidSolver._constraint_force_grad)."""
-        if not self._solver._requires_grad:
-            gs.raise_exception("Please set `requires_grad` to True in SimOptions to enable differentiable mode.")
-
-        # 1. We first need to find a solution to A^T * u = g system.
-        backward_constraint_solver.kernel_solve_adjoint_u(
-            self.constraint_state, self._solver.dyn_info, self._solver.rigid_info, self._solver.rigid_config
-        )
-
-        # 2. Using the solution u, we can compute the gradients of the input variables.
-        backward_constraint_solver.kernel_compute_gradients(self.constraint_state, self._solver.rigid_info)
+        return self._system.backward()
 
 
 # =====================================================================================================================
@@ -1337,7 +1046,6 @@ def func_equality_joint(
 @qd.func
 def func_add_equality_constraints(
     dyn_state: array_class.DynState,
-    collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -1366,19 +1074,6 @@ def func_add_equality_constraints(
                 func_equality_weld(i_b, i_e, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
             elif dyn_info.equalities.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.JOINT:
                 func_equality_joint(i_b, i_e, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
-
-
-@qd.kernel(fastcache=True)
-def kernel_add_equality_constraints(
-    dyn_state: array_class.DynState,
-    collider_state: array_class.ColliderState,
-    constraint_state: array_class.ConstraintState,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    rigid_config: qd.template(),
-):
-    """Run func_add_equality_constraints on its own, outside the substep graph that captures it."""
-    func_add_equality_constraints(dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config)
 
 
 @qd.func
@@ -1432,10 +1127,11 @@ def _sort_contacts_and_build_islands(
                 func_build_islands_coop(
                     i_b, tid, dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config
                 )
-            if qd.static(collider_static_config.has_non_box_plane_convex_convex):
-                qd.simt.block.sync()
-                func_sort_contacts_coop(i_b, tid, dyn_state, collider_state, constraint_state)
-                qd.simt.block.sync()
+            if qd.static(rigid_config.enable_collision):
+                if qd.static(collider_static_config.has_non_box_plane_convex_convex):
+                    qd.simt.block.sync()
+                    func_sort_contacts_coop(i_b, tid, dyn_state, collider_state, constraint_state)
+                    qd.simt.block.sync()
             if qd.static(not rigid_config.is_single_island):
                 i_island = tid
                 while i_island < constraint_state.island.n_islands[i_b]:
@@ -1459,23 +1155,116 @@ def _sort_contacts_and_build_islands(
                         )
             else:
                 func_build_islands(i_b, dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config)
-            if qd.static(collider_static_config.has_non_box_plane_convex_convex):
-                func_sort_contacts(
-                    i_b,
-                    collider_state.n_contacts_hibernated[i_b],
-                    collider_state.n_contacts[i_b],
-                    collider_state.contact_sort_idx,
-                    collider_state.contact_data.pos,
-                    collider_state.contact_data.geom_a,
-                    collider_state.contact_data.geom_b,
-                    dyn_state.geoms.pos,
-                    dyn_state.geoms.quat,
-                )
-            if qd.static(rigid_config.sparse_solve and not has_trivial_partition):
+            if qd.static(rigid_config.enable_collision):
+                if qd.static(collider_static_config.has_non_box_plane_convex_convex):
+                    func_sort_contacts(
+                        i_b,
+                        collider_state.n_contacts_hibernated[i_b],
+                        collider_state.n_contacts[i_b],
+                        collider_state.contact_sort_idx,
+                        collider_state.contact_data.pos,
+                        collider_state.contact_data.geom_a,
+                        collider_state.contact_data.geom_b,
+                        dyn_state.geoms.pos,
+                        dyn_state.geoms.quat,
+                    )
+            if qd.static(
+                rigid_config.enable_collision and rigid_config.sparse_solve and not has_trivial_partition
+            ):
                 func_reorder_island_dofs(i_b, collider_state, constraint_state, rigid_info)
             if qd.static(rigid_config.enable_tiled_island_seed and not rigid_config.is_single_island):
                 for i_island in range(constraint_state.island.n_islands[i_b]):
                     func_append_factor_worklist(i_b, i_island, constraint_state, rigid_config)
+
+
+@qd.func
+def _build_islands_no_contact(
+    dyn_state: array_class.DynState,
+    constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+):
+    """Build the same partition without Contact-owned inputs."""
+    _B = constraint_state.jac.shape[2]
+    has_trivial_partition = qd.static(rigid_config.is_single_island and not rigid_config.sparse_solve)
+    if qd.static(rigid_config.enable_tiled_island_seed and not rigid_config.is_single_island):
+        n_classes = qd.static(
+            len(array_class.island_tile_caps(rigid_config.island_tile_cap_first, rigid_config.island_tile_cap_last))
+        )
+        qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
+        for i_class in range(n_classes):
+            constraint_state.island.factor_worklist_size[i_class] = 0
+
+    qd.loop_config(name="build_islands_no_contact", serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
+    for i_b in range(_B):
+        if qd.static(has_trivial_partition):
+            is_partition_trivial = True
+            if qd.static(rigid_config.use_hibernation):
+                is_partition_trivial = rigid_info.n_awake_dofs[i_b] >= dyn_state.dofs.is_hibernated.shape[0]
+            if is_partition_trivial:
+                func_build_single_island(i_b, constraint_state, rigid_info, rigid_config)
+            else:
+                func_build_islands_no_contact(
+                    i_b,
+                    dyn_state,
+                    constraint_state,
+                    dyn_info,
+                    rigid_info,
+                    rigid_config,
+                )
+        else:
+            func_build_islands_no_contact(
+                i_b,
+                dyn_state,
+                constraint_state,
+                dyn_info,
+                rigid_info,
+                rigid_config,
+            )
+        if qd.static(rigid_config.enable_tiled_island_seed and not rigid_config.is_single_island):
+            for i_island in range(constraint_state.island.n_islands[i_b]):
+                func_append_factor_worklist(i_b, i_island, constraint_state, rigid_config)
+
+
+@qd.func
+def func_add_inequality_constraints(
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+    collider_static_config: qd.template(),
+):
+    _sort_contacts_and_build_islands(
+        dyn_state,
+        collider_state,
+        constraint_state,
+        dyn_info,
+        rigid_info,
+        rigid_config,
+        collider_static_config,
+    )
+    add_frictionloss_constraints(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
+    if qd.static(rigid_config.enable_collision):
+        add_collision_constraints(dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config)
+    if qd.static(rigid_config.enable_joint_limit):
+        add_joint_limit_constraints(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
+
+
+@qd.func
+def func_add_inequality_constraints_no_contact(
+    dyn_state: array_class.DynState,
+    constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+):
+    _build_islands_no_contact(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
+    add_frictionloss_constraints(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
+    if qd.static(rigid_config.enable_joint_limit):
+        add_joint_limit_constraints(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
 
 
 @qd.func
@@ -1505,50 +1294,6 @@ def func_append_factor_worklist(
         i_slot = i_class * region + qd.atomic_add(constraint_state.island.factor_worklist_size[i_class], 1)
         constraint_state.island.factor_worklist_i_b[i_slot] = i_b
         constraint_state.island.factor_worklist_i_island[i_slot] = i_island
-
-
-@qd.func
-def func_add_inequality_constraints(
-    dyn_state: array_class.DynState,
-    collider_state: array_class.ColliderState,
-    constraint_state: array_class.ConstraintState,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    rigid_config: qd.template(),
-    collider_static_config: qd.template(),
-):
-    # Order the contacts deterministically BEFORE assembling the contact constraints below: the contact-constraint
-    # index i_c follows the logical contact order (contact_sort_idx), so fixing that order here makes both the solve
-    # order and get_contacts deterministic despite the racy atomic_add narrowphase layout. Done here rather than in the
-    # collider (which has no notion of constraints) or in func_solve_init (too late - contacts are consumed just below).
-    # The collider's compacted contact_sort_idx is sorted in place. The island partition of the env rides the same
-    # launch (see _sort_contacts_and_build_islands); the constraint grouping it feeds waits for the assembled
-    # constraints, in func_solve_init.
-    _sort_contacts_and_build_islands(
-        dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config, collider_static_config
-    )
-
-    add_frictionloss_constraints(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
-    if qd.static(rigid_config.enable_collision):
-        add_collision_constraints(dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config)
-    if qd.static(rigid_config.enable_joint_limit):
-        add_joint_limit_constraints(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
-
-
-@qd.kernel(fastcache=True)
-def kernel_add_inequality_constraints(
-    dyn_state: array_class.DynState,
-    collider_state: array_class.ColliderState,
-    constraint_state: array_class.ConstraintState,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    rigid_config: qd.template(),
-    collider_static_config: qd.template(),
-):
-    """Run func_add_inequality_constraints on its own, outside the substep graph that captures it."""
-    func_add_inequality_constraints(
-        dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config, collider_static_config
-    )
 
 
 @qd.func
@@ -5853,29 +5598,92 @@ def func_resolve_post(
     noslip: qd.template(),
     errno: qd.Tensor,
 ):
-    """Update the accelerations from the solved constraint forces, then the contact forces.
-
-    noslip runs the noslip iterations on the friction forces in between.
-    """
+    """Update the accelerations from the solved constraint forces, then the contact forces."""
     func_update_qacc(dyn_state, constraint_state, rigid_config, errno)
     if qd.static(noslip):
         constraint_noslip.func_noslip(dyn_state, collider_state, constraint_state, rigid_info, rigid_config)
     func_update_contact_force(dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config)
 
 
-@qd.kernel(fastcache=True)
-def kernel_resolve_post(
-    dyn_state: array_class.DynState,
-    collider_state: array_class.ColliderState,
-    constraint_state: array_class.ConstraintState,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
+@qd.func(requires_top_level=True)
+def func_substep_add_equality_constraints(
+    rigid_data: qd.template(),
     rigid_config: qd.template(),
-    noslip: qd.template(),
-    errno: qd.Tensor,
+    constraint_data: qd.template(),
 ):
-    """Run func_resolve_post on its own, outside the substep graph that captures it (see func_substep_resolve_post)."""
-    func_resolve_post(dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config, noslip, errno)
+    func_add_equality_constraints(
+        rigid_data.dyn_state,
+        constraint_data.constraint_state,
+        rigid_data.dyn_info,
+        rigid_data.rigid_info,
+        rigid_config,
+    )
+
+
+@qd.func(requires_top_level=True)
+def func_substep_add_inequality_constraints(
+    rigid_data: qd.template(),
+    rigid_config: qd.template(),
+    contact_data: qd.template(),
+    constraint_data: qd.template(),
+):
+    func_add_inequality_constraints(
+        rigid_data.dyn_state,
+        contact_data.collider_state,
+        constraint_data.constraint_state,
+        rigid_data.dyn_info,
+        rigid_data.rigid_info,
+        rigid_config,
+        contact_data.collider_config,
+    )
+
+
+@qd.func(requires_top_level=True)
+def func_substep_add_inequality_constraints_no_contact(
+    rigid_data: qd.template(),
+    rigid_config: qd.template(),
+    constraint_data: qd.template(),
+):
+    func_add_inequality_constraints_no_contact(
+        rigid_data.dyn_state,
+        constraint_data.constraint_state,
+        rigid_data.dyn_info,
+        rigid_data.rigid_info,
+        rigid_config,
+    )
+
+
+@qd.func(requires_top_level=True)
+def func_substep_resolve_post(
+    rigid_data: qd.template(),
+    rigid_config: qd.template(),
+    contact_data: qd.template(),
+    constraint_data: qd.template(),
+):
+    func_resolve_post(
+        rigid_data.dyn_state,
+        contact_data.collider_state,
+        constraint_data.constraint_state,
+        rigid_data.dyn_info,
+        rigid_data.rigid_info,
+        rigid_config,
+        constraint_data.noslip,
+        rigid_data.errno,
+    )
+
+
+@qd.func(requires_top_level=True)
+def func_substep_resolve_post_no_contact(
+    rigid_data: qd.template(),
+    rigid_config: qd.template(),
+    constraint_data: qd.template(),
+):
+    func_update_qacc(
+        rigid_data.dyn_state,
+        constraint_data.constraint_state,
+        rigid_config,
+        rigid_data.errno,
+    )
 
 
 @qd.func
@@ -5890,7 +5698,6 @@ def func_update_qacc(
 
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_d, i_b in qd.ndrange(n_dofs, _B):
-        # A hibernated dof is left out of the solve, so its zero acceleration and last awake forces stand.
         if qd.static(rigid_config.use_hibernation):
             if dyn_state.dofs.is_hibernated[i_d, i_b]:
                 continue

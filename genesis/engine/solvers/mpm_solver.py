@@ -354,11 +354,11 @@ class MPMSolver(GravityMixin, TimeBasedMixin, Solver):
     def p2g(
         self,
         f: qd.i32,
-        geoms_state: array_class.GeomsState,
-        geoms_info: array_class.GeomsInfo,
-        links_state: array_class.LinksState,
-        rigid_info: array_class.RigidInfo,
-        sdf_info: array_class.SDFInfo,
+        geoms_state: qd.template(),
+        geoms_info: qd.template(),
+        links_state: qd.template(),
+        rigid_info: qd.template(),
+        sdf_info: qd.template(),
         collider_static_config: qd.template(),
     ):
         for i_p, i_b in qd.ndrange(self._n_particles, self._B):
@@ -425,11 +425,11 @@ class MPMSolver(GravityMixin, TimeBasedMixin, Solver):
                         weight *= w[offset[d]][d]
 
                     sep_geom_idx = -1
-                    if qd.static(self._enable_CPIC and self.sim.rigid_solver.is_active):
+                    if qd.static(self._enable_CPIC and self._coupler._rigid_active):
                         # check if particle and cell center are at different side of any thin object
                         cell_pos = (base + offset) * self._dx
 
-                        for i_g in range(self.sim.rigid_solver.n_geoms):
+                        for i_g in range(self._coupler._n_rigid_geoms):
                             if geoms_info.needs_coup[i_g]:
                                 sdf_normal_particle = self._coupler.mpm_rigid_normal[i_p, i_g, i_b]
                                 sdf_normal_cell = sdf.sdf_func_normal_world(
@@ -476,9 +476,9 @@ class MPMSolver(GravityMixin, TimeBasedMixin, Solver):
     def g2p(
         self,
         f: qd.i32,
-        geoms_info: array_class.GeomsInfo,
-        links_state: array_class.LinksState,
-        rigid_info: array_class.RigidInfo,
+        geoms_info: qd.template(),
+        links_state: qd.template(),
+        rigid_info: qd.template(),
     ):
         for i_p, i_b in qd.ndrange(self._n_particles, self._B):
             if self.particles_ng[f, i_p, i_b].active:
@@ -494,7 +494,7 @@ class MPMSolver(GravityMixin, TimeBasedMixin, Solver):
                     for d in qd.static(range(3)):
                         weight *= w[offset[d]][d]
 
-                    if qd.static(self._enable_CPIC and self.sim.rigid_solver.is_active):
+                    if qd.static(self._enable_CPIC and self._coupler._rigid_active):
                         sep_geom_idx = self._coupler.cpic_flag[i_p, offset[0], offset[1], offset[2], i_b]
                         if sep_geom_idx != -1:
                             grid_vel = self.sim.coupler._func_collide_in_rigid_geom(
@@ -552,7 +552,7 @@ class MPMSolver(GravityMixin, TimeBasedMixin, Solver):
         for entity in self._entities[::-1]:
             entity.process_input_grad()
 
-    def substep_pre_coupling(self, f):
+    def substep_pre_coupling(self, f, rigid_data, collider_config, rigid_sdf):
         if self._sim.requires_grad:
             self.reset_grid_and_grad(f)
             # Keep F_tmp and svd as separate kernels so their backward passes (compute_F_tmp.grad and svd_grad) remain
@@ -570,38 +570,42 @@ class MPMSolver(GravityMixin, TimeBasedMixin, Solver):
                 self.compute_F_tmp_only(f)
         self.p2g(
             f,
-            self.sim.coupler.rigid_solver.dyn_state.geoms,
-            self.sim.coupler.rigid_solver.dyn_info.geoms,
-            self.sim.coupler.rigid_solver.dyn_state.links,
-            self.sim.coupler.rigid_solver.rigid_info,
-            self.sim.coupler.rigid_solver.collider.sdf.sdf_info,
-            self.sim.coupler.rigid_solver.collider.collider_config,
+            None if rigid_data is None else rigid_data.dyn_state.geoms,
+            None if rigid_data is None else rigid_data.dyn_info.geoms,
+            None if rigid_data is None else rigid_data.dyn_state.links,
+            None if rigid_data is None else rigid_data.rigid_info,
+            None if rigid_sdf is None else rigid_sdf.sdf_info,
+            collider_config,
         )
 
-    def substep_pre_coupling_grad(self, f):
+    def substep_pre_coupling_grad(self, f, rigid_data, collider_config, rigid_sdf):
         self.p2g.grad(
             f,
-            self.sim.coupler.rigid_solver.dyn_state.geoms,
-            self.sim.coupler.rigid_solver.dyn_info.geoms,
-            self.sim.coupler.rigid_solver.dyn_state.links,
-            self.sim.coupler.rigid_solver.rigid_info,
-            self.sim.coupler.rigid_solver.collider.sdf.sdf_info,
-            self.sim.coupler.rigid_solver.collider.collider_config,
+            None if rigid_data is None else rigid_data.dyn_state.geoms,
+            None if rigid_data is None else rigid_data.dyn_info.geoms,
+            None if rigid_data is None else rigid_data.dyn_state.links,
+            None if rigid_data is None else rigid_data.rigid_info,
+            None if rigid_sdf is None else rigid_sdf.sdf_info,
+            collider_config,
         )
         self.svd_grad(f)
         self.compute_F_tmp.grad(f)
 
-    def substep_post_coupling(self, f):
+    def substep_post_coupling(self, f, rigid_data):
         self.g2p(
             f,
-            self.sim.coupler.rigid_solver.dyn_info.geoms,
-            self.sim.coupler.rigid_solver.dyn_state.links,
-            self.sim.coupler.rigid_solver.rigid_info,
+            None if rigid_data is None else rigid_data.dyn_info.geoms,
+            None if rigid_data is None else rigid_data.dyn_state.links,
+            None if rigid_data is None else rigid_data.rigid_info,
         )
 
         # Apply particle constraints after g2p
         if self._constraints_initialized:
-            self.apply_particle_constraints(f, self.sim.coupler.rigid_solver.dyn_state.links)
+            self.apply_particle_constraints(
+                f,
+                None if rigid_data is None else rigid_data.dyn_state.links,
+                rigid_data is not None,
+            )
 
         # Eager sparse reset: zero only the cells p2g touched this substep, across all envs, then clear the global
         # dirty count so the next substep starts fresh. The grid is no longer read after g2p / constraints, so it is
@@ -624,12 +628,12 @@ class MPMSolver(GravityMixin, TimeBasedMixin, Solver):
                     "NaN detected in MPM states. Try reducing the time step size or adjusting simulation parameters."
                 )
 
-    def substep_post_coupling_grad(self, f):
+    def substep_post_coupling_grad(self, f, rigid_data):
         self.g2p.grad(
             f,
-            self.sim.coupler.rigid_solver.dyn_info.geoms,
-            self.sim.coupler.rigid_solver.dyn_state.links,
-            self.sim.coupler.rigid_solver.rigid_info,
+            None if rigid_data is None else rigid_data.dyn_info.geoms,
+            None if rigid_data is None else rigid_data.dyn_state.links,
+            None if rigid_data is None else rigid_data.rigid_info,
         )
 
     @qd.kernel
@@ -1190,12 +1194,16 @@ class MPMSolver(GravityMixin, TimeBasedMixin, Solver):
                 self.particle_constraints[i_p, i_b].link_idx = -1
 
     @qd.kernel
-    def apply_particle_constraints(self, f: qd.i32, links_state: array_class.LinksState):
+    def apply_particle_constraints(
+        self,
+        f: qd.i32,
+        links_state: qd.template(),
+        update_link_targets: qd.template(),
+    ):
         for i_p, i_b in qd.ndrange(self._n_particles, self._B):
             if self.particle_constraints[i_p, i_b].is_constrained:
-                # Update target position from link pose
                 i_l = self.particle_constraints[i_p, i_b].link_idx
-                if i_l >= 0:
+                if qd.static(update_link_targets) and i_l >= 0:
                     link_pos = links_state.pos[i_l, i_b]
                     link_quat = links_state.quat[i_l, i_b]
                     local_pos = self.particle_constraints[i_p, i_b].link_local_pos

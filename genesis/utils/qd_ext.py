@@ -38,20 +38,6 @@ class GlobalDataContext:
                 )
             setattr(self, f"data_{index}", value)
 
-
-@qd.func(requires_top_level=True)
-def invoke_stage_actions(actions: qd.template(), call_args: qd.template()):
-    """Invoke frozen StageActions without losing graph-stage boundaries.
-
-    Quadrants does not natively lower an Action collection. A runtime loop would demote the top-level loops of each
-    ``requires_top_level`` function, so the Action tuple must be unrolled with ``qd.static``. Parallel Action
-    collections cannot use this helper: ``qd.graph.parallel_context`` is legal only syntactically inside a graph kernel,
-    so their static unrolling must remain at that kernel call site.
-    """
-    for action in qd.static(actions):
-        action.invoke(call_args)
-
-
 def expose_data_sequence(owner: object, name: str, values: Iterable[object]) -> None:
     """Expose composite-held data through named attributes Quadrants can traverse.
 

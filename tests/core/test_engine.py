@@ -23,7 +23,7 @@ from genesis.engine.core import (
 )
 from genesis.utils.array_class import V
 from genesis.utils.misc import qd_to_numpy
-from genesis.utils.qd_ext import GlobalDataContext, invoke_stage_actions
+from genesis.utils.qd_ext import GlobalDataContext
 
 from ..utils.assertions import assert_allclose
 
@@ -58,22 +58,30 @@ def test_registered_manual_and_required_systems():
     class TestEngine(Engine):
         manager = Require(Manager)
 
+        def __init__(self, context):
+            super().__init__()
+            self.context = context
+
     class OtherEngine(Engine):
         manager = Require(Manager)
 
-    def create_registered(factory_scene):
-        assert factory_scene is scene
-        return Registered(factory_scene)
+        def __init__(self, context):
+            super().__init__()
+            self.context = context
 
-    def create_nothing(factory_scene):
-        assert factory_scene is scene
+    def create_registered(engine):
+        assert engine.context is scene
+        return Registered()
+
+    def create_nothing(engine):
+        assert engine.context is scene
         return None
 
     register_system(TestEngine)(create_registered)
     register_system(TestEngine)(create_nothing)
     try:
         engine = TestEngine(scene)
-        manual = engine.add_system(Manual(scene))
+        manual = engine.add_system(Manual())
 
         with pytest.raises(gs.GenesisException):
             _ = manual.manager
@@ -90,11 +98,11 @@ def test_registered_manual_and_required_systems():
         assert Manual.deps["optional"].label == "optional"
 
         with pytest.raises(gs.GenesisException):
-            engine.add_system(Manual(scene))
+            engine.add_system(Manual())
 
         engine_with_optional = TestEngine(scene)
-        optional = engine_with_optional.add_system(Optional(scene))
-        manual_with_optional = engine_with_optional.add_system(Manual(scene))
+        optional = engine_with_optional.add_system(Optional())
+        manual_with_optional = engine_with_optional.add_system(Manual())
         engine_with_optional.build()
         assert manual_with_optional.optional is optional
 
@@ -116,10 +124,13 @@ def test_registration_and_admission_are_idempotent():
         pass
 
     class IdempotentEngine(Engine):
-        pass
+        def __init__(self, context):
+            super().__init__()
+            self.context = context
 
-    def create_registered(factory_scene):
-        return Registered(factory_scene)
+    def create_registered(engine):
+        assert engine.context is scene
+        return Registered()
 
     register_system(IdempotentEngine)(create_registered)
     register_system(IdempotentEngine)(create_registered)
@@ -129,7 +140,7 @@ def test_registration_and_admission_are_idempotent():
         assert list(registered_engine.systems) == [Registered]
 
         manual_engine = IdempotentEngine(scene)
-        manual = manual_engine.add_system(Registered(scene))
+        manual = manual_engine.add_system(Registered())
         manual_engine.build()
         assert list(manual_engine.systems) == [Registered]
         assert manual_engine.systems[Registered] is manual
@@ -141,10 +152,8 @@ def test_registration_and_admission_are_idempotent():
     assert list(unregistered_engine.systems) == []
 
 
-# Engine creates every declared Action before closing the build window, so a manager invokes one its participant never
-# accessed during build() directly afterwards.
 @pytest.mark.parametrize("backend", [None])
-def test_every_declared_action_is_created_by_build():
+def test_action_closure_is_stable_and_invocable():
     def add(left, right):
         return left + right
 
@@ -156,21 +165,20 @@ def test_every_declared_action_is_created_by_build():
     class ParticipantEngine(Engine):
         pass
 
-    participant = Participant(object())
-    engine = ParticipantEngine(object())
+    participant = Participant()
+    engine = ParticipantEngine()
     engine.add_system(participant)
     engine.build()
 
     assert participant.host.invoke((5,)) == 7
     assert participant.host is participant.host
+    assert participant.host.invoke((6,)) == 8
 
 
 # A dependency that a class-level Require / Find would turn into an import cycle is looked up during build() instead.
 # The lookup observes the fixed System set: it returns what the Engine holds and adds nothing.
 @pytest.mark.parametrize("backend", [None])
 def test_build_time_find_and_require():
-    scene = object()
-
     class Held(System):
         pass
 
@@ -191,9 +199,9 @@ def test_build_time_find_and_require():
             super().build()
             self.looker = self.require(Looker)
 
-    engine = LookupEngine(scene)
-    held = engine.add_system(Held(scene))
-    looker = engine.add_system(Looker(scene))
+    engine = LookupEngine()
+    held = engine.add_system(Held())
+    looker = engine.add_system(Looker())
     with pytest.raises(gs.GenesisException):
         engine.find(Held)
     engine.build()
@@ -205,10 +213,10 @@ def test_build_time_find_and_require():
     with pytest.raises(gs.GenesisException):
         looker.find(Held)
 
-    demanding_engine = LookupEngine(scene)
-    demanding_engine.add_system(Looker(scene))
-    demanding_engine.add_system(Held(scene))
-    demanding_engine.add_system(Demanding(scene))
+    demanding_engine = LookupEngine()
+    demanding_engine.add_system(Looker())
+    demanding_engine.add_system(Held())
+    demanding_engine.add_system(Demanding())
     with pytest.raises(gs.GenesisException):
         demanding_engine.build()
 
@@ -249,10 +257,9 @@ def test_inheritance_and_action_kinds():
         register_system(DirectEngine)(DirectSystem)
 
 
-# @System.action is a build-time declaration whose first access creates and caches one partial application. The declared
-# kind matches the wrapped Quadrants callable, and a kernel is a Pipeline entry rather than an Action.
+# @System.action defines one callable closure, validates its kind on first use and caches its persistent arguments.
 @pytest.mark.parametrize("backend", [None])
-def test_action_binds_arguments_and_is_created_once_during_build():
+def test_action_closure_binds_arguments_once():
     def add(left, right):
         return left + right
 
@@ -289,21 +296,23 @@ def test_action_binds_arguments_and_is_created_once_during_build():
     class ProducerEngine(Engine):
         pass
 
-    producer = Producer(object())
-    with pytest.raises(gs.GenesisException):
-        _ = producer.host
+    producer = Producer()
+    host_action = producer.host
 
-    engine = ProducerEngine(object())
+    engine = ProducerEngine()
     engine.add_system(producer)
     engine.build()
 
     assert producer.host.invoke((5,)) == 7
+    assert producer.host is host_action
     assert producer.host is producer.host_built
     assert producer.inline is producer.inline_built
     assert producer.stage is producer.stage_built
     assert producer.host.kind == "host"
     assert producer.inline.kind == "inline"
     assert producer.stage.kind == "stage"
+    producer.inline._bind()
+    producer.stage._bind()
 
     class Mislabeled(System):
         @System.action(kind="stage")
@@ -316,12 +325,13 @@ def test_action_binds_arguments_and_is_created_once_during_build():
     class MislabeledEngine(Engine):
         pass
 
-    mislabeled_engine = MislabeledEngine(object())
-    mislabeled_engine.add_system(Mislabeled(object()))
+    mislabeled_engine = MislabeledEngine()
+    mislabeled = mislabeled_engine.add_system(Mislabeled())
+    mislabeled_engine.build()
     with pytest.raises(gs.GenesisException):
-        mislabeled_engine.build()
+        mislabeled.action._bind()
 
-    class KernelAction(System):
+    class StageKernelAction(System):
         @System.action(kind="stage")
         def action(self):
             return kernel_entry
@@ -332,10 +342,21 @@ def test_action_binds_arguments_and_is_created_once_during_build():
     class KernelActionEngine(Engine):
         pass
 
-    kernel_action_engine = KernelActionEngine(object())
-    kernel_action_engine.add_system(KernelAction(object()))
+    kernel_action_engine = KernelActionEngine()
+    stage_kernel_action = kernel_action_engine.add_system(StageKernelAction())
+    kernel_action_engine.build()
     with pytest.raises(gs.GenesisException):
-        kernel_action_engine.build()
+        stage_kernel_action.action._bind()
+
+    class HostKernelAction(System):
+        @System.action(kind="host")
+        def action(self):
+            return kernel_entry
+
+    host_kernel_action_engine = KernelActionEngine()
+    host_kernel_action = host_kernel_action_engine.add_system(HostKernelAction())
+    host_kernel_action_engine.build()
+    assert host_kernel_action.action._bind()._function is kernel_entry
 
 
 # A collection freezes in deterministic ranked-then-unranked order. Call argument names and Action kind annotations are
@@ -374,12 +395,14 @@ def test_protocol_and_action_collection_enforce_the_schedule_contract():
         def stages(self):
             pass
 
-    manager = Manager(object())
-    host_manager = HostManager(object())
+    manager = Manager()
+    host_manager = HostManager()
+    # These explicit partial Actions exercise the exceptional low-level adapter API itself: each marker object stands
+    # in for a stable external callable argument so the collection can validate kind, signature and rank failures.
     actions = [StageAction(stage, (object(),)) for _ in range(4)]
 
     with pytest.raises(gs.GenesisException):
-        _ = manager.stages.actions
+        manager.stages.invoke()
     with pytest.raises(gs.GenesisException):
         manager.on_stage(actions[0])
 
@@ -389,16 +412,29 @@ def test_protocol_and_action_collection_enforce_the_schedule_contract():
         manager.on_stage(InlineAction(inline, (object(),)))
     with pytest.raises(gs.GenesisException):
         manager.stages.add(stage)
-    with pytest.raises(gs.GenesisException):
-        manager.stages.add(HostAction(lambda segment: None, ()))
-    with pytest.raises(gs.GenesisException):
-        manager.stages.add(StageAction(variadic, ()))
-    with pytest.raises(gs.GenesisException):
-        manager.stages.add(StageAction(stage_with_wrong_name, (object(),)))
-    with pytest.raises(gs.GenesisException):
-        host_manager.stages.add(HostAction(host_with_keyword_only, (object(),)))
-    with pytest.raises(gs.GenesisException):
-        manager.stages.add(StageAction(stage, (object(), object(), object())))
+
+    def assert_invalid_closure_rejected(collection, action):
+        collection.add(action)
+        collection.freeze()
+        with pytest.raises(gs.GenesisException):
+            collection._bind()
+
+    assert_invalid_closure_rejected(
+        ActionCollection(manager, "variadic", "stage", ("segment",)),
+        StageAction(variadic, ()),
+    )
+    assert_invalid_closure_rejected(
+        ActionCollection(manager, "wrong_name", "stage", ("segment",)),
+        StageAction(stage_with_wrong_name, (object(),)),
+    )
+    assert_invalid_closure_rejected(
+        ActionCollection(host_manager, "keyword_only", "host", ("segment",)),
+        HostAction(host_with_keyword_only, (object(),)),
+    )
+    assert_invalid_closure_rejected(
+        ActionCollection(manager, "overbound", "stage", ("segment",)),
+        StageAction(stage, (object(), object(), object())),
+    )
     with pytest.raises(gs.GenesisException):
         manager.stages.add(actions[0], rank=-1)
     with pytest.raises(gs.GenesisException):
@@ -414,7 +450,8 @@ def test_protocol_and_action_collection_enforce_the_schedule_contract():
     manager.is_building = False
     manager.stages.freeze()
 
-    assert manager.stages.actions == (actions[2], actions[1], actions[0], actions[3])
+    assert manager.stages._frozen_actions() == (actions[2], actions[1], actions[0], actions[3])
+    assert len(manager.stages._bind()._actions) == 4
     with pytest.raises(gs.GenesisException):
         manager.stages.add(StageAction(stage, (object(),)))
     assert manager.on_stage.__doc__.endswith("Guide: protocol.md\nReference: paper")
@@ -433,14 +470,18 @@ def test_global_data_context_collects_inherited_and_declared_data_for_actions():
             self.value = qd.ndarray(qd.i32, shape=(1,))
 
     class Participant(System):
-        def __init__(self, scene):
-            super().__init__(scene)
+        def __init__(self):
+            super().__init__()
             self.automatic = AutomaticData()
             self.custom = CustomData()
 
         @System.data
         def custom_parameter(self):
             return self.custom
+
+        @System.action(kind="stage")
+        def write(self):
+            return write_action, self.automatic, self.custom
 
     class InvalidParticipant(System):
         @System.data
@@ -457,32 +498,32 @@ def test_global_data_context_collects_inherited_and_declared_data_for_actions():
             return CustomDataclass
 
     @qd.func(requires_top_level=True)
-    def write(system: qd.template(), automatic: int, custom: int):
+    def write_action(automatic_data: qd.template(), custom_data: qd.template(), automatic: int, custom: int):
         for _ in range(1):
-            system.automatic.value[0] = automatic
-            system.custom.value[0] = custom
+            automatic_data.value[0] = automatic
+            custom_data.value[0] = custom
 
     @qd.kernel(graph=True)
     def run(context: qd.template(), action: qd.template()):
-        action.invoke()
+        action.invoke((3, 5))
 
-    participant = Participant(object())
-    context_engine = Engine(object())
+    participant = Participant()
+    context_engine = Engine()
     context_engine.add_system(participant)
+    context_engine.build()
     context = context_engine.create_context()
-    action = StageAction(write, (participant, 3, 5))
-    run(context, action)
+    run(context, participant.write._bind())
     qd.sync()
 
     assert participant.automatic.value.to_numpy().tolist() == [3]
     assert participant.custom.value.to_numpy().tolist() == [5]
     with pytest.raises(gs.GenesisException):
-        invalid_engine = Engine(object())
-        invalid_engine.add_system(InvalidParticipant(object()))
+        invalid_engine = Engine()
+        invalid_engine.add_system(InvalidParticipant())
         invalid_engine.create_context()
     with pytest.raises(gs.GenesisException):
-        invalid_engine = Engine(object())
-        invalid_engine.add_system(InvalidClassParticipant(object()))
+        invalid_engine = Engine()
+        invalid_engine.add_system(InvalidClassParticipant())
         invalid_engine.create_context()
 
 
@@ -505,38 +546,41 @@ def test_recursive_action_schedule_forwards_inputs_and_rejects_cycles():
 
     @qd.func(requires_top_level=True)
     def parent(children: qd.template(), frame: int, multiplier: int):
-        invoke_stage_actions(children.actions, (frame, multiplier))
+        children.invoke((frame, multiplier))
 
     @qd.func(requires_top_level=True)
     def recursive(children: qd.template(), frame: int, multiplier: int):
-        invoke_stage_actions(children.actions, (frame, multiplier))
+        children.invoke((frame, multiplier))
+
+    @qd.func(requires_top_level=True)
+    def parent_action(child_action: qd.template(), frame: int, multiplier: int):
+        child_action.invoke((frame, multiplier))
 
     @qd.kernel(graph=True)
     def run(context: qd.template(), schedule: qd.template(), frame: qd.i32, multiplier: qd.i32):
-        invoke_stage_actions(schedule.collections.roots, (frame, multiplier))
+        for action in qd.static(schedule.step):
+            action.invoke((frame, multiplier))
 
-    manager = Manager(object())
+    manager = Manager()
     output = Output()
+    # This synthetic schedule intentionally uses explicit partial Actions: binding the child collection is the edge the
+    # recursive schedule compiler must discover, and binding Output keeps the test independent of a concrete System.
     children = ActionCollection(manager, "children", "stage", ("frame", "multiplier"))
     children.add(StageAction(child, (output,)))
     children.freeze()
     manager.roots.add(StageAction(parent, (children,)))
     manager.roots.freeze()
 
-    schedule = manager.action_schedule()
-    assert schedule.nested[0] is manager.roots.actions
-    assert schedule.nested[1] is children.actions
-    run(GlobalDataContext((output,)), schedule, 7, 6)
+    schedule = compile_action_schedule({"step": manager.roots})
+    pipeline = Pipeline(run, GlobalDataContext((output,)), schedule)
+    pipeline.run(7, 6)
     qd.sync()
     assert output.value.to_numpy().tolist() == [42]
 
     reserved_name_schedule = compile_action_schedule({"nested_0": manager.roots})
-    assert reserved_name_schedule.collections.nested_0 is manager.roots.actions
-    assert reserved_name_schedule.nested[0] is manager.roots.actions
+    expanded_reserved_name_schedule = reserved_name_schedule.expand()
     with pytest.raises(dataclasses.FrozenInstanceError):
-        reserved_name_schedule.actions = ()
-    with pytest.raises(dataclasses.FrozenInstanceError):
-        reserved_name_schedule.collections.nested_0 = ()
+        expanded_reserved_name_schedule.nested_0 = ()
 
     left = ActionCollection(manager, "left", "stage", ("frame", "multiplier"))
     right = ActionCollection(manager, "right", "stage", ("frame", "multiplier"))
@@ -545,7 +589,86 @@ def test_recursive_action_schedule_forwards_inputs_and_rejects_cycles():
     left.freeze()
     right.freeze()
     with pytest.raises(gs.GenesisException, match="left -> right -> left"):
-        compile_action_schedule({"left": left})
+        compile_action_schedule({"left": left}).expand()
+
+    direct_child = StageAction(child, (output,))
+    direct_parent = StageAction(parent_action, (direct_child,))
+    direct_schedule = compile_action_schedule({"direct": direct_parent})
+
+    @qd.kernel(graph=True)
+    def run_direct(context: qd.template(), schedule: qd.template(), frame: qd.i32, multiplier: qd.i32):
+        for action in qd.static(schedule.direct):
+            action.invoke((frame, multiplier))
+
+    output.value.fill(0)
+    direct_pipeline = Pipeline(run_direct, GlobalDataContext((output,)), direct_schedule)
+    direct_pipeline.run(6, 7)
+    qd.sync()
+    assert output.value.to_numpy().tolist() == [42]
+
+    action_left = StageAction(parent_action, ())
+    action_right = StageAction(parent_action, (action_left,))
+    action_left._bound_args = (action_right,)
+    with pytest.raises(gs.GenesisException, match="recursive Action cycle"):
+        compile_action_schedule({"cycle": action_left}).expand()
+
+
+@pytest.mark.parametrize("backend", [None])
+def test_action_schedule_explicit_action_and_collection_aliases():
+    @qd.func(requires_top_level=True)
+    def stage(marker: qd.template()):
+        pass
+
+    class Manager(System):
+        @System.action_collection(kind="stage")
+        def stages(self):
+            pass
+
+        @System.action(kind="stage")
+        def direct(self):
+            return stage, object()
+
+        def build(self):
+            self.stages += self.direct
+
+    class ManagerEngine(Engine):
+        pass
+
+    class Other(System):
+        @System.action(kind="stage")
+        def direct(self):
+            return stage, object()
+
+    manager = Manager()
+    engine = ManagerEngine()
+    engine.add_system(manager)
+    other = engine.add_system(Other())
+    engine.build()
+
+    schedule = engine.action_schedule(
+        single=manager.direct,
+        other_system=other.direct,
+        renamed_group=manager.stages,
+        omitted=None,
+    )
+    assert not hasattr(schedule, "single")
+    expanded = schedule.expand()
+    assert expanded.single == (manager.direct._bind(),)
+    assert expanded.other_system == (other.direct._bind(),)
+    assert expanded.renamed_group == manager.stages._bind()._actions
+    assert expanded.omitted == ()
+    assert not hasattr(expanded, "stages")
+
+    local_expanded = manager.action_schedule(group=manager.stages, omitted=None).expand()
+    assert local_expanded.group == manager.stages._bind()._actions
+    assert local_expanded.omitted == ()
+
+    with pytest.raises(gs.GenesisException, match="valid identifier"):
+        engine.action_schedule(**{"not-valid": manager.direct})
+    with pytest.raises(gs.GenesisException, match="private compiler state"):
+        engine.action_schedule(_reserved=manager.direct)
+    with pytest.raises(gs.GenesisException, match="same root"):
+        engine.action_schedule(first=manager.stages, second=manager.stages)
 
 
 # A Pipeline has one entry point and accepts either a host function or a device kernel. Checkpoint callbacks resume a
@@ -618,15 +741,15 @@ def test_registered_system_actions_integrate_global_dofs():
         value: qd.Tensor
 
     class Total(System):
-        def __init__(self, scene):
-            super().__init__(scene)
+        def __init__(self):
+            super().__init__()
             self.state = TotalState()
 
         @System.action_collection(kind="host")
         def inits(self):
             """Host Actions that fill the Data of each participant."""
 
-        @System.action_collection(kind="stage", call_args=("total",))
+        @System.action_collection(kind="stage")
         def contributions(self):
             """Stage Actions that add the share of each participant to `total`."""
 
@@ -639,24 +762,23 @@ def test_registered_system_actions_integrate_global_dofs():
         def init(self):
             self.state.value = V(dtype=gs.qd_float, shape=())
             self.state.value.fill(0.0)
-            for action in self.inits.actions:
-                action.invoke()
+            self.inits.invoke()
 
     @qd.data_oriented
     class ShareState(Data):
         value: qd.Tensor
 
     @qd.func(requires_top_level=True)
-    def func_contribute(share_state: qd.template(), total: qd.template()):
+    def func_contribute(share: qd.template(), total: qd.template()):
         for _ in range(1):
-            total.value[()] += share_state.value[()]
+            total.value[()] += share.value[()]
 
     def make_share_system(share):
         class Share(System):
             total = Require(Total)
 
-            def __init__(self, scene):
-                super().__init__(scene)
+            def __init__(self):
+                super().__init__()
                 self.state = ShareState()
 
             @System.action(kind="host")
@@ -665,7 +787,7 @@ def test_registered_system_actions_integrate_global_dofs():
 
             @System.action(kind="stage")
             def contribute(self):
-                return func_contribute, self.state
+                return func_contribute, self.state, self.total.state
 
             def build(self):
                 self.total.on_total(init=self.init, contribute=self.contribute)
@@ -682,31 +804,39 @@ def test_registered_system_actions_integrate_global_dofs():
     class TotalEngine(Engine):
         total = Require(Total)
 
+        def __init__(self, scene):
+            super().__init__()
+            self.scene = scene
+
         def build(self):
             super().build()
             self.init_pipeline = Pipeline(self.total.init)
 
     @qd.kernel(graph=True)
-    def kernel_step(context: qd.template(), engine: qd.template()):
-        invoke_stage_actions(engine.total.contributions.actions, (engine.total.state,))
+    def kernel_step(context: qd.template(), schedule: qd.template()):
+        for action in qd.static(schedule.contributions):
+            action.invoke()
 
-    def create_registered(scene):
-        return Registered(scene) if scene.sim.rigid_solver.is_active else None
+    def create_registered(engine):
+        return Registered() if engine.scene.sim.rigid_solver.is_active else None
 
     register_system(TotalEngine)(create_registered)
     try:
         scene = gs.Scene(show_viewer=False)
         scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1)))
         engine = TotalEngine(scene)
-        manual = engine.add_system(Manual(scene))
+        manual = engine.add_system(Manual())
         engine.build()
         engine.init_pipeline.run()
+        assert_allclose(qd_to_numpy(engine.total.state.value), 0.0, tol=gs.EPS)
+        schedule = engine.action_schedule(contributions=engine.total.contributions)
         engine.step_pipeline = Pipeline(
             kernel_step,
             engine.create_context(),
-            engine,
+            schedule,
         )
         engine.step_pipeline.run()
+        assert_allclose(qd_to_numpy(engine.total.state.value), 3.0, tol=gs.EPS)
         engine.step_pipeline.run()
 
         assert list(engine.systems) == [Manual, Registered, Total]

@@ -484,15 +484,15 @@ def test_batched_info(batch_links_info, batch_joints_info, batch_dofs_info, tol)
     scene.build(n_envs=2)
     gs_s = scene.rigid_solver
 
-    links_info = gs_s.data_manager.dyn_info.links
+    links_info = gs_s.dyn_info.links
     entity_idx = links_info.entity_idx.to_numpy()
     assert entity_idx.shape == ((12, 2) if batch_links_info else (12,))
 
-    joints_info = gs_s.data_manager.dyn_info.joints
+    joints_info = gs_s.dyn_info.joints
     pos = joints_info.pos.to_numpy()
     assert pos.shape == ((10, 2, 3) if batch_joints_info else (10, 3))
 
-    dofs_info = gs_s.data_manager.dyn_info.dofs
+    dofs_info = gs_s.dyn_info.dofs
     act_gain = dofs_info.act_gain.to_numpy()
     assert act_gain.shape == ((9, 2) if batch_dofs_info else (9,))
 
@@ -1105,7 +1105,7 @@ def test_inertial_property_setters(
     # entity be weighed side by side through one pair of buffers. Sentinels are written over every row first: those of
     # the tree that is not weighed must come back untouched.
     SENTINEL = -7.0
-    scratch = solver.data_manager.weight_scratch
+    scratch = solver.weight_scratch
     dofs_idx = slice(free_bodies.dof_start, free_bodies.dof_start + free_bodies.n_dofs)
     untouched = slice(free_bodies.dof_start + 6, free_bodies.dof_start + free_bodies.n_dofs)
     for buffer in (scratch.jac_row, scratch.solve_out):

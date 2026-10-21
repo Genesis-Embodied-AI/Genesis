@@ -97,7 +97,7 @@ def kernel_compute_mass_matrix(
 
 # @@@@@@@@@ Composer starts here
 # decomposed kernels should happen in the block below. This block will be handled by composer and composed into a single kernel
-@qd.func
+@qd.func(requires_top_level=True)
 def func_forward_dynamics(
     dyn_state: array_class.DynState,
     island_state: array_class.IslandState,
@@ -127,17 +127,6 @@ def func_forward_dynamics(
 
 
 @qd.kernel(fastcache=True)
-def kernel_forward_dynamics(
-    dyn_state: array_class.DynState,
-    island_state: array_class.IslandState,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    rigid_config: qd.template(),
-):
-    func_forward_dynamics(dyn_state, island_state, dyn_info, rigid_info, rigid_config, is_backward=False)
-
-
-@qd.kernel(fastcache=True)
 def kernel_update_acc(
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
@@ -145,16 +134,6 @@ def kernel_update_acc(
     rigid_config: qd.template(),
 ):
     func_update_acc(dyn_state, dyn_info, rigid_info, rigid_config, update_cacc=True, is_backward=False)
-
-
-@qd.func
-def func_vel_at_point(link_idx: int, i_b: int, pos_world: qd.types.vector(3), links_state: array_class.LinksState):
-    """
-    Velocity of a certain point on a rigid link.
-    """
-    vel_rot = links_state.cd_ang[link_idx, i_b].cross(pos_world - links_state.root_COM[link_idx, i_b])
-    vel_lin = links_state.cd_vel[link_idx, i_b]
-    return vel_rot + vel_lin
 
 
 @qd.func
@@ -331,7 +310,7 @@ def func_mass_mat_assemble_tree(
                 rigid_info.mass_mat[i_d, j_d, i_b] = rigid_info.mass_mat[j_d, i_d, i_b]
 
 
-@qd.func
+@qd.func(requires_top_level=True)
 def func_compute_mass_matrix(
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
@@ -403,7 +382,7 @@ def func_compute_mass_matrix(
                 )
 
 
-@qd.func
+@qd.func(requires_top_level=True)
 def func_compute_mass_matrix_masked(
     envs_idx: qd.Tensor,
     dyn_state: array_class.DynState,
@@ -627,7 +606,7 @@ def func_factor_mass_tree_tiled(
                 qd.simt.block.sync()
 
 
-@qd.func
+@qd.func(requires_top_level=True)
 def func_factor_mass_tiled(
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
@@ -675,7 +654,7 @@ def func_factor_mass_tiled(
         )
 
 
-@qd.func
+@qd.func(requires_top_level=True)
 def func_factor_mass_tiled_masked(
     envs_idx: qd.Tensor,
     dyn_state: array_class.DynState,
@@ -993,7 +972,7 @@ def func_factor_mass_tree_shared(
                     qd.simt.block.sync()
 
 
-@qd.func
+@qd.func(requires_top_level=True)
 def func_factor_mass(
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
@@ -1058,7 +1037,7 @@ def func_factor_mass(
             )
 
 
-@qd.func
+@qd.func(requires_top_level=True)
 def func_factor_mass_masked(
     envs_idx: qd.Tensor,
     dyn_state: array_class.DynState,
@@ -1176,7 +1155,7 @@ def func_solve_mass_batch(
             func_solve_mass_block(i_b, i_d, block_end, vec, out, rigid_info, rigid_config)
 
 
-@qd.func
+@qd.func(requires_top_level=True)
 def func_enter_neutral_configuration(
     envs_idx: qd.types.ndarray(),
     dyn_state: array_class.DynState,
@@ -1213,7 +1192,7 @@ def func_enter_neutral_configuration(
     func_factor_mass_masked(envs_idx, dyn_state, dyn_info, rigid_info, rigid_config, implicit_damping=False)
 
 
-@qd.func
+@qd.func(requires_top_level=True)
 def func_exit_neutral_configuration(
     envs_idx: qd.types.ndarray(),
     dyn_state: array_class.DynState,
@@ -1239,7 +1218,7 @@ def func_exit_neutral_configuration(
         )
 
 
-@qd.func
+@qd.func(requires_top_level=True)
 def func_init_meaninertia(envs_idx: qd.types.ndarray(), rigid_info: array_class.RigidInfo, rigid_config: qd.template()):
     """Compute the mean diagonal entry of the joint-space mass matrix, which scales the solver tolerances."""
     n_dofs = rigid_info.mass_mat.shape[0]
@@ -1389,7 +1368,7 @@ def func_init_dofs_invweight(
                             dyn_info.dofs.invweight[I_d] = weight
 
 
-@qd.func
+@qd.func(requires_top_level=True)
 def func_refresh_links_invweight_and_meaninertia(
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
@@ -1534,7 +1513,7 @@ def kernel_refresh_invweight_and_meaninertia(
             )
 
 
-@qd.func
+@qd.func(requires_top_level=True)
 def func_torque_and_passive_force(
     dyn_state: array_class.DynState,
     island_state: array_class.IslandState,
@@ -1680,7 +1659,7 @@ def func_torque_and_passive_force(
                         )
 
 
-@qd.func
+@qd.func(requires_top_level=True)
 def func_update_acc(
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
@@ -1720,7 +1699,7 @@ def func_update_acc(
                     )
 
 
-@qd.func
+@qd.func(requires_top_level=True)
 def func_update_force(
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
@@ -1798,7 +1777,7 @@ def func_update_force(
                         func_add_safe_backward(I_p, dyn_state.links.cfrc_ang[i_l, i_b], dyn_state.links.cfrc_ang, BW)
 
 
-@qd.func
+@qd.func(requires_top_level=True)
 def func_bias_force(
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
@@ -1830,7 +1809,7 @@ def func_bias_force(
                 dyn_state.dofs.qf_smooth[i_d, i_b] = dyn_state.dofs.force[i_d, i_b]
 
 
-@qd.func
+@qd.func(requires_top_level=True)
 def func_compute_qacc(
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
@@ -2159,7 +2138,7 @@ def func_midpoint_free_body(
             dyn_state.dofs.vel_next[dof_start + j, i_b] = 0.5 * (v_new_world[j] + v_world[j])
 
 
-@qd.func
+@qd.func(requires_top_level=True)
 def func_integrate(
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
@@ -2356,7 +2335,7 @@ def kernel_forward_dynamics_without_qacc(
     func_bias_force(dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
 
 
-@qd.func
+@qd.func(requires_top_level=True)
 def func_implicit_damping(
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,

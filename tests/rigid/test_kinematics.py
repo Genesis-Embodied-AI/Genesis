@@ -121,7 +121,7 @@ def test_link_velocity(gs_sim, tol):
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
 def test_pendulum_links_acc(gs_sim, tol):
     pendulum = gs_sim.entities[0]
-    g = gs_sim.rigid_solver._gravity[0][2]
+    g = gs_sim.rigid_solver.get_gravity()[2].item()
 
     # Make sure that the linear and angular acceleration matches expectation
     theta = np.random.rand()

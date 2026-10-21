@@ -12,7 +12,6 @@ import genesis.utils.element as eu
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 from genesis.engine.entities.rigid_entity import RigidLink
-from genesis.engine.couplers import SAPCoupler
 from genesis.engine.states.cache import QueriedStates
 from genesis.engine.states.entities import FEMEntityState
 from genesis.repr_base import RBC
@@ -212,6 +211,8 @@ class FEMEntity(Entity):
             tri2el = np.repeat(np.arange(self.elems.shape[0], dtype=gs.np_int)[:, np.newaxis], 4, axis=1)
             unique_el = tri2el.flat[unique_idcs]
             self._surface_el_np = unique_el[cnt == 1]
+
+        from genesis.engine.couplers import SAPCoupler
 
         if isinstance(self.sim.coupler, SAPCoupler):
             self.compute_pressure_field()

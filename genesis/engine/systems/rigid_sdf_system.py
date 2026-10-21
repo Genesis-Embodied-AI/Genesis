@@ -1,16 +1,15 @@
 """System of the signed distance fields of the rigid geoms."""
 
-from typing import TYPE_CHECKING
+import quadrants as qd
 
-from genesis.engine.core import System, register_system
+import genesis as gs
+import genesis.utils.array_class as array_class
+from genesis.engine.core import Data, Require, System, register_system
+from genesis.engine.entities import RigidEntity
 from genesis.utils.sdf import SDF
 
-from .simulator_engine import SimulatorEngine
-
-if TYPE_CHECKING:
-    from genesis.engine.scene import Scene
-
-    from .rigid_solver_system import RigidSolverSystem
+from .rigid_solver_system import RigidSolverSystem
+from ..simulator_engine import SimulatorEngine
 
 
 class RigidSdfSystem(System):
@@ -22,23 +21,47 @@ class RigidSdfSystem(System):
     precomputed once per geometry and the System allocates their device representation.
     """
 
+    # -------------------------------- Data --------------------------------
+
+    @qd.data_oriented
+    class Data(Data):
+        sdf_config: array_class.SDFStaticConfig
+        sdf_info: array_class.SDFInfo
+
+    data: Data
+
+    # -------------------------------- Dependencies --------------------------------
+
+    rigid_solver_system = Require(RigidSolverSystem)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.data = self.Data()
+
+    # -------------------------------- Actions --------------------------------
+
     @System.action(kind="host")
     def initialize(self):
         return self.allocate
 
-    def build(self):
-        # The rigid data embeds these fields in its collision detection, so its module imports this one
-        from .rigid_solver_system import RigidSolverSystem
-
-        self.rigid_solver_system: "RigidSolverSystem" = self.require(RigidSolverSystem)
+    # -------------------------------- Implementation --------------------------------
 
     def allocate(self) -> None:
         """Allocate the fields from the model of the rigid geoms, ahead of the collision detection that embeds
         them."""
-        self.sdf = SDF(self.rigid_solver_system)
+        rigid = self.rigid_solver_system
+        geoms = tuple(rigid.geoms)
+        self.data.sdf_config = array_class.SDFStaticConfig(
+            has_terrain=any(geom.type == gs.GEOM_TYPE.TERRAIN for geom in geoms)
+        )
+        self.data.sdf_info = SDF(geoms, rigid._para_level).sdf_info
 
 
 @register_system(SimulatorEngine)
-def create_rigid_sdf_system(scene: "Scene") -> RigidSdfSystem:
-    """Create the System owning the signed distance fields of the rigid geoms, which every scene has."""
-    return RigidSdfSystem(scene)
+def create_rigid_sdf_system(engine: SimulatorEngine) -> RigidSdfSystem | None:
+    """Admit SDF ownership only for a Scene with Rigid geometry."""
+    return (
+        RigidSdfSystem()
+        if any(isinstance(entity, RigidEntity) for entity in engine.scene.entities)
+        else None
+    )

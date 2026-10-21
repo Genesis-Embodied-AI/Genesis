@@ -292,6 +292,99 @@ def func_dof_range_start(i_island: int, i_b: int, constraint_state: array_class.
 
 
 @qd.func
+def func_finish_island_partition(
+    i_b: int,
+    has_sleepers: bool,
+    dyn_state: array_class.DynState,
+    constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+):
+    """Label a union-find forest and materialize its shared island lists."""
+    n_trees = rigid_info.trees_root_idx.shape[0]
+    n_links = rigid_info.links_tree_idx.shape[0]
+    n_islands = 0
+    for i_t in range(n_trees):
+        constraint_state.island.trees_island_idx[i_t, i_b] = -1
+        if constraint_state.island.trees_parent_idx[i_t, i_b] == i_t and rigid_info.trees_n_dofs[i_t] > 0:
+            constraint_state.island.trees_island_idx[i_t, i_b] = n_islands
+            n_islands = n_islands + 1
+    for i_t in range(n_trees):
+        constraint_state.island.trees_island_idx[i_t, i_b] = constraint_state.island.trees_island_idx[
+            func_find_tree_root(i_t, i_b, constraint_state), i_b
+        ]
+    constraint_state.island.n_islands[i_b] = n_islands
+
+    for i_island in range(n_islands):
+        constraint_state.island.dof_slices.n[i_island, i_b] = 0
+        if qd.static(rigid_config.use_hibernation):
+            constraint_state.island.link_slices.n[i_island, i_b] = 0
+        constraint_state.island.inertia[i_island, i_b] = 0.0
+        if qd.static(rigid_config.use_hibernation):
+            constraint_state.island.is_hibernated[i_island, i_b] = 1
+    for i_t in range(n_trees):
+        i_island = constraint_state.island.trees_island_idx[i_t, i_b]
+        if i_island >= 0:
+            if qd.static(rigid_config.use_hibernation):
+                constraint_state.island.link_slices.n[i_island, i_b] += rigid_info.trees_n_links[i_t]
+            constraint_state.island.dof_slices.n[i_island, i_b] += rigid_info.trees_n_dofs[i_t]
+
+    link_list_start = 0
+    dof_list_start = 0
+    for i_island in range(n_islands):
+        if qd.static(rigid_config.use_hibernation):
+            constraint_state.island.link_slices.start[i_island, i_b] = link_list_start
+            constraint_state.island.link_slices.curr[i_island, i_b] = link_list_start
+            link_list_start += constraint_state.island.link_slices.n[i_island, i_b]
+        constraint_state.island.dof_slices.start[i_island, i_b] = dof_list_start
+        constraint_state.island.dof_slices.curr[i_island, i_b] = dof_list_start
+        dof_list_start += constraint_state.island.dof_slices.n[i_island, i_b]
+
+    for i_t in range(n_trees):
+        i_island = constraint_state.island.trees_island_idx[i_t, i_b]
+        for i_l in range(rigid_info.trees_root_idx[i_t], rigid_info.trees_link_end[i_t]):
+            if rigid_info.links_tree_idx[i_l] == i_t:
+                constraint_state.island.links_island_idx[i_l, i_b] = i_island
+                if qd.static(rigid_config.use_hibernation):
+                    if i_island >= 0:
+                        i_pos = constraint_state.island.link_slices.curr[i_island, i_b]
+                        constraint_state.island.link_id[i_pos, i_b] = i_l
+                        constraint_state.island.link_slices.curr[i_island, i_b] = i_pos + 1
+        if i_island >= 0:
+            dof_start_tree = rigid_info.trees_dof_start[i_t]
+            for i_d in range(dof_start_tree, dof_start_tree + rigid_info.trees_n_dofs[i_t]):
+                i_pos = constraint_state.island.dof_slices.curr[i_island, i_b]
+                constraint_state.island.dof_id[i_pos, i_b] = i_d
+                constraint_state.island.dof_local_pos[i_d, i_b] = (
+                    i_pos - constraint_state.island.dof_slices.start[i_island, i_b]
+                )
+                constraint_state.island.dofs_island_idx[i_d, i_b] = i_island
+                constraint_state.island.dof_slices.curr[i_island, i_b] = i_pos + 1
+                constraint_state.island.inertia[i_island, i_b] += rigid_info.mass_mat[i_d, i_d, i_b]
+    for i_island in range(n_islands):
+        constraint_state.island.dof_range_start[i_island, i_b] = func_dof_range_start(i_island, i_b, constraint_state)
+
+    woke_sleepers = False
+    if qd.static(rigid_config.use_hibernation):
+        if has_sleepers:
+            for i_l in range(n_links):
+                i_island = constraint_state.island.links_island_idx[i_l, i_b]
+                if i_island >= 0 and not dyn_state.links.is_hibernated[i_l, i_b]:
+                    constraint_state.island.is_hibernated[i_island, i_b] = 0
+            n_awake_dofs_before = rigid_info.n_awake_dofs[i_b]
+            for i_l in range(n_links):
+                i_island = constraint_state.island.links_island_idx[i_l, i_b]
+                if i_island >= 0 and constraint_state.island.is_hibernated[i_island, i_b] == 0:
+                    func_wakeup_link(i_l, i_b, dyn_state, constraint_state.island, dyn_info, rigid_info, rigid_config)
+            woke_sleepers = rigid_info.n_awake_dofs[i_b] != n_awake_dofs_before
+        else:
+            for i_island in range(n_islands):
+                constraint_state.island.is_hibernated[i_island, i_b] = 0
+    return woke_sleepers
+
+
+@qd.func
 def func_build_islands(
     i_b: int,
     dyn_state: array_class.DynState,
@@ -344,97 +437,66 @@ def func_build_islands(
         if i_ta >= 0 and i_tb >= 0:
             func_union_trees(i_ta, i_tb, i_b, constraint_state)
 
-    # The tree arrays hold one padding slot in a scene without a tree (see n_trees_), which carries no dof and labels
-    # no island
-    n_islands = 0
-    for i_t in range(n_trees):
-        constraint_state.island.trees_island_idx[i_t, i_b] = -1
-        if constraint_state.island.trees_parent_idx[i_t, i_b] == i_t and rigid_info.trees_n_dofs[i_t] > 0:
-            constraint_state.island.trees_island_idx[i_t, i_b] = n_islands
-            n_islands = n_islands + 1
-    for i_t in range(n_trees):
-        constraint_state.island.trees_island_idx[i_t, i_b] = constraint_state.island.trees_island_idx[
-            func_find_tree_root(i_t, i_b, constraint_state), i_b
-        ]
-    constraint_state.island.n_islands[i_b] = n_islands
+    if func_finish_island_partition(
+        i_b,
+        has_sleepers,
+        dyn_state,
+        constraint_state,
+        dyn_info,
+        rigid_info,
+        rigid_config,
+    ):
+        func_promote_woken_contacts(i_b, dyn_state, collider_state)
 
-    for i_island in range(n_islands):
-        constraint_state.island.dof_slices.n[i_island, i_b] = 0
-        if qd.static(rigid_config.use_hibernation):
-            constraint_state.island.link_slices.n[i_island, i_b] = 0
-        constraint_state.island.inertia[i_island, i_b] = 0.0
-        if qd.static(rigid_config.use_hibernation):
-            constraint_state.island.is_hibernated[i_island, i_b] = 1
-    for i_t in range(n_trees):
-        i_island = constraint_state.island.trees_island_idx[i_t, i_b]
-        if i_island >= 0:
-            if qd.static(rigid_config.use_hibernation):
-                constraint_state.island.link_slices.n[i_island, i_b] = (
-                    constraint_state.island.link_slices.n[i_island, i_b] + rigid_info.trees_n_links[i_t]
-                )
-            constraint_state.island.dof_slices.n[i_island, i_b] = (
-                constraint_state.island.dof_slices.n[i_island, i_b] + rigid_info.trees_n_dofs[i_t]
-            )
-    link_list_start = 0
-    dof_list_start = 0
-    for i_island in range(n_islands):
-        if qd.static(rigid_config.use_hibernation):
-            constraint_state.island.link_slices.start[i_island, i_b] = link_list_start
-            constraint_state.island.link_slices.curr[i_island, i_b] = link_list_start
-            link_list_start = link_list_start + constraint_state.island.link_slices.n[i_island, i_b]
-        constraint_state.island.dof_slices.start[i_island, i_b] = dof_list_start
-        constraint_state.island.dof_slices.curr[i_island, i_b] = dof_list_start
-        dof_list_start = dof_list_start + constraint_state.island.dof_slices.n[i_island, i_b]
 
-    for i_t in range(n_trees):
-        i_island = constraint_state.island.trees_island_idx[i_t, i_b]
-        for i_l in range(rigid_info.trees_root_idx[i_t], rigid_info.trees_link_end[i_t]):
-            if rigid_info.links_tree_idx[i_l] == i_t:
-                constraint_state.island.links_island_idx[i_l, i_b] = i_island
-                if qd.static(rigid_config.use_hibernation):
-                    if i_island >= 0:
-                        i_pos = constraint_state.island.link_slices.curr[i_island, i_b]
-                        constraint_state.island.link_id[i_pos, i_b] = i_l
-                        constraint_state.island.link_slices.curr[i_island, i_b] = i_pos + 1
-        # FIXME: quadrants debug builds check a loop-invariant access before the loop runs, so the empty dof loop of a
-        # dof-less tree trips on its island of -1. The guard skips that loop, which iterates over no dof anyway.
-        if i_island >= 0:
-            dof_start_tree = rigid_info.trees_dof_start[i_t]
-            for i_d in range(dof_start_tree, dof_start_tree + rigid_info.trees_n_dofs[i_t]):
-                i_pos = constraint_state.island.dof_slices.curr[i_island, i_b]
-                constraint_state.island.dof_id[i_pos, i_b] = i_d
-                constraint_state.island.dof_local_pos[i_d, i_b] = (
-                    i_pos - constraint_state.island.dof_slices.start[i_island, i_b]
-                )
-                constraint_state.island.dofs_island_idx[i_d, i_b] = i_island
-                constraint_state.island.dof_slices.curr[i_island, i_b] = i_pos + 1
-                constraint_state.island.inertia[i_island, i_b] = (
-                    constraint_state.island.inertia[i_island, i_b] + rigid_info.mass_mat[i_d, i_d, i_b]
-                )
-    for i_island in range(n_islands):
-        constraint_state.island.dof_range_start[i_island, i_b] = func_dof_range_start(i_island, i_b, constraint_state)
-
-    # An island is hibernated unless one of its links is awake. The sleeping links of an awake island then wake, so an
-    # island is solved whole or sleeps whole: a sleeper an awake dynamic body reaches, by a contact or an equality
-    # constraint, joins that body's island through the edge together with the rest of its chain, and waking it here
-    # solves it this step, so it responds to the blow in place of standing as an immovable obstacle. A sleeper resting
-    # on fixed bodies or on other sleepers alone has no awake link in its island and sleeps on.
+@qd.func
+def func_build_islands_no_contact(
+    i_b: int,
+    dyn_state: array_class.DynState,
+    constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+):
+    """Build one environment's island partition from equalities and hibernation edges only."""
+    n_trees = rigid_info.trees_root_idx.shape[0]
+    n_links = rigid_info.links_tree_idx.shape[0]
+    n_equalities = constraint_state.qd_n_equalities[i_b]
+    n_edges = n_equalities
+    has_sleepers = False
     if qd.static(rigid_config.use_hibernation):
+        has_sleepers = rigid_info.n_awake_dofs[i_b] < dyn_state.dofs.is_hibernated.shape[0]
         if has_sleepers:
-            for i_l in range(n_links):
-                i_island = constraint_state.island.links_island_idx[i_l, i_b]
-                if i_island >= 0 and not dyn_state.links.is_hibernated[i_l, i_b]:
-                    constraint_state.island.is_hibernated[i_island, i_b] = 0
-            n_awake_dofs_before = rigid_info.n_awake_dofs[i_b]
-            for i_l in range(n_links):
-                i_island = constraint_state.island.links_island_idx[i_l, i_b]
-                if i_island >= 0 and constraint_state.island.is_hibernated[i_island, i_b] == 0:
-                    func_wakeup_link(i_l, i_b, dyn_state, constraint_state.island, dyn_info, rigid_info, rigid_config)
-            if rigid_info.n_awake_dofs[i_b] != n_awake_dofs_before:
-                func_promote_woken_contacts(i_b, dyn_state, collider_state)
+            n_edges = n_edges + n_links
+
+    for i_t in range(n_trees):
+        constraint_state.island.trees_parent_idx[i_t, i_b] = i_t
+    for i_e in range(n_edges):
+        link_a = -1
+        link_b = -1
+        if i_e < n_equalities:
+            link_a, link_b = func_equality_links(i_e, i_b, n_links, dyn_info, rigid_config)
         else:
-            for i_island in range(n_islands):
-                constraint_state.island.is_hibernated[i_island, i_b] = 0
+            if qd.static(rigid_config.use_hibernation):
+                link_a = i_e - n_equalities
+                link_b = constraint_state.island.hibernated_next_link[link_a, i_b]
+                if link_b >= n_links or link_b == link_a:
+                    link_b = -1
+        if link_a >= 0 and link_b >= 0:
+            tree_a = rigid_info.links_tree_idx[link_a]
+            tree_b = rigid_info.links_tree_idx[link_b]
+            if tree_a >= 0 and tree_b >= 0:
+                func_union_trees(tree_a, tree_b, i_b, constraint_state)
+
+    func_finish_island_partition(
+        i_b,
+        has_sleepers,
+        dyn_state,
+        constraint_state,
+        dyn_info,
+        rigid_info,
+        rigid_config,
+    )
 
 
 @qd.func

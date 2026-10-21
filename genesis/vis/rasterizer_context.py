@@ -10,7 +10,7 @@ import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
 from genesis.ext import pyrender
 from genesis.ext.pyrender.jit_render import JITRenderer
-from genesis.utils.misc import tensor_to_array, qd_to_numpy
+from genesis.utils.misc import qd_to_numpy, tensor_to_array
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.kinematic_solver import KinematicSolver

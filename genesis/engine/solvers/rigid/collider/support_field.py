@@ -1,5 +1,4 @@
 import math
-from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -8,11 +7,6 @@ import quadrants as qd
 import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
-
-
-if TYPE_CHECKING:
-    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
-    from genesis.engine.systems.rigid_solver_system import RigidSolverSystem
 
 
 class SupportField:
@@ -33,8 +27,10 @@ class SupportField:
     their list. A lookup runs on the critical path of collision detection, where that wait costs more than the reads.
     """
 
-    def __init__(self, rigid_solver: "RigidSolver | RigidSolverSystem") -> None:
-        self.solver = rigid_solver
+    def __init__(self, *, geoms, dyn_info, rigid_config) -> None:
+        self._geoms = geoms
+        self._dyn_info = dyn_info
+        self._rigid_config = rigid_config
         # The table is exact at any resolution, which only trades its memory against the length of the lists of its
         # cells. A multiple of four makes the band of rows of each chart span 45 to 135 degrees off its poles exactly.
         self._support_res = 120
@@ -51,10 +47,11 @@ class SupportField:
 
         # The table of a geom depends on its trimesh alone, so the geoms of one trimesh share one table (see
         # 'Mesh.tmesh_hash'), as the instances of an asset do.
-        geoms_table_idx = np.zeros((self.solver.n_geoms,), dtype=gs.np_int)
+        n_geoms = len(self._geoms)
+        geoms_table_idx = np.zeros((n_geoms,), dtype=gs.np_int)
         tables_idx_by_hash: dict[str, int] = {}
         tables_geom = []
-        for geom in self.solver.geoms:
+        for geom in self._geoms:
             # The support of a terrain is read off the prism built from its height field, so its table would never be
             # read. Its vertex count (one per height field sample) would make it the costliest table to build.
             if geom.type == gs.GEOM_TYPE.TERRAIN:
@@ -84,7 +81,7 @@ class SupportField:
 
         assert self._support_field_info is None
         self._support_field_info = array_class.get_support_field_info(
-            self.solver.n_geoms, n_support_cells, 2 * n_support_cells + len(extras_vid), self._support_res
+            n_geoms, n_support_cells, 2 * n_support_cells + len(extras_vid), self._support_res
         )
         _kernel_init_support(
             n_geom_cells * geoms_table_idx,
@@ -92,9 +89,9 @@ class SupportField:
             np.array([geom.vert_start for geom in tables_geom], dtype=gs.np_int),
             records_vid,
             extras_vid,
-            self.solver.dyn_info,
+            self._dyn_info,
             self._support_field_info,
-            self.solver.rigid_config,
+            self._rigid_config,
             n_geom_cells,
         )
 

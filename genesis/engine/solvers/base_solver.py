@@ -194,6 +194,15 @@ class Subscriber:
         self._pending.clear()
 
 
+def register_subscriber(subscribers: set[Subscriber], subscriber: Subscriber, n_links: int) -> None:
+    """Normalize one subscription against an owner's link range and register it."""
+    if subscriber.links_filter is not None:
+        subscriber.links_filter = tensor_to_array(
+            sanitize_index(subscriber.links_filter, -1, n_links, 0, "links_filter")
+        )
+    subscribers.add(subscriber)
+
+
 class TimeBasedMixin:
     """Integration interval of one solver, and the number of substeps it implies per scene step.
 
@@ -352,11 +361,7 @@ class Solver(RBC):
 
     def subscribe(self, subscriber: Subscriber):
         """Register a Subscriber to be notified after any @mutates-tagged method whose change is in its filter."""
-        if subscriber.links_filter is not None:
-            subscriber.links_filter = tensor_to_array(
-                sanitize_index(subscriber.links_filter, -1, self.n_links, 0, "links_filter")
-            )
-        self._subscribers.add(subscriber)
+        register_subscriber(self._subscribers, subscriber, self.n_links)
 
     def build(self):
         self._B = self._sim._B

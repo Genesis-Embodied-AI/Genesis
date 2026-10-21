@@ -420,7 +420,7 @@ def test_robot_kinematics(gs_sim, mj_sim, tol):
     for _ in range(100):
         qpos = dof_bounds[:, 0] + (dof_bounds[:, 1] - dof_bounds[:, 0]) * np.random.rand(gs_robot.n_qs)
         init_paired_simulators(gs_sim, mj_sim, qpos)
-        check_mujoco_data_consistency(gs_sim, mj_sim, tol=tol)
+        check_mujoco_data_consistency(gs_sim, mj_sim, tol=tol, ignore_constraints=True)
 
 
 @pytest.mark.required

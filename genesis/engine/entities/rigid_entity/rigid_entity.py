@@ -11,7 +11,7 @@ from genesis.constants import link_ref_frame
 from genesis.engine.states.entities import RigidEntityState
 from genesis.typing import UnitVec4FType, Vec3FType
 from genesis.utils import geom as gu
-from genesis.utils.misc import DeprecationError, broadcast_tensor, qd_to_torch, tensor_to_array
+from genesis.utils.misc import DeprecationError, broadcast_tensor, tensor_to_array
 
 from ..base_entity import Entity
 from .description import (
@@ -1366,9 +1366,7 @@ class KinematicEntity(Entity):
         if self._morph.enable_custom_vverts:
             return self._solver.get_vverts(self._custom_vvert_start, self._custom_vvert_start + self.n_vverts, envs_idx)
 
-        self._solver.update_vgeoms()
-        vgeoms_pos = qd_to_torch(self._solver.dyn_state.vgeoms.pos, envs_idx, transpose=True, copy=None)
-        vgeoms_quat = qd_to_torch(self._solver.dyn_state.vgeoms.quat, envs_idx, transpose=True, copy=None)
+        vgeoms_pos, vgeoms_quat = self._solver.get_vgeom_transforms_batched(envs_idx)
         parts = []
         for vgeom in self.vgeoms:
             init = torch.as_tensor(vgeom.init_vverts, dtype=gs.tc_float, device=gs.device)
@@ -2514,11 +2512,11 @@ class RigidEntity(KinematicEntity):
 
         if n_fixed_verts > 0:
             verts_idx = slice(self._fixed_verts_state_start, self._fixed_verts_state_start + n_fixed_verts)
-            fixed_verts_state = qd_to_torch(self._solver.dyn_state.fixed_verts.pos, verts_idx)
+            fixed_verts_state = self._solver.get_fixed_collision_verts(verts_idx)
             tensor[:, self._fixed_verts_idx_local] = fixed_verts_state
         if n_free_vertices > 0:
             verts_idx = slice(self._free_verts_state_start, self._free_verts_state_start + n_free_vertices)
-            free_verts_state = qd_to_torch(self._solver.dyn_state.free_verts.pos, None, verts_idx, transpose=True)
+            free_verts_state = self._solver.get_free_collision_verts(verts_idx)
             tensor[:, self._free_verts_idx_local] = free_verts_state
 
         if self._solver.n_envs == 0:
@@ -3221,8 +3219,7 @@ class RigidEntity(KinematicEntity):
             The net force applied on each links due to direct external contacts.
         """
         links_idx = slice(self.link_start, self.link_end)
-        tensor = qd_to_torch(self._solver.dyn_state.links.contact_force, envs_idx, links_idx, transpose=True, copy=True)
-        return tensor[0] if self._solver.n_envs == 0 else tensor
+        return self._solver.get_links_net_contact_force(links_idx, envs_idx)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- friction ---------------------------------------

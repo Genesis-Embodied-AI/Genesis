@@ -11,7 +11,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.engine.mesh import Mesh
 from genesis.repr_base import RBC
-from genesis.utils.misc import DeprecationError, qd_to_torch, tensor_to_array
+from genesis.utils.misc import DeprecationError, tensor_to_array
 
 from .description import RigidGeomDescription, RigidVisGeomDescription
 
@@ -275,11 +275,9 @@ class RigidGeom(RBC):
 
         verts_idx = slice(self.verts_state_start, self.verts_state_end)
         if self.is_fixed and not self._entity._batch_fixed_verts:
-            tensor = qd_to_torch(self._solver.dyn_state.fixed_verts.pos, verts_idx, copy=True)
+            tensor = self._solver.get_fixed_collision_verts(verts_idx)
         else:
-            tensor = qd_to_torch(self._solver.dyn_state.free_verts.pos, None, verts_idx, transpose=True, copy=True)
-            if self._solver.n_envs == 0:
-                tensor = tensor[0]
+            tensor = self._solver.get_free_collision_verts(verts_idx)
         return tensor
 
     @gs.assert_built
@@ -718,9 +716,7 @@ class RigidVisGeom(RBC):
                 self.vvert_start + custom_offset, self.vvert_end + custom_offset, envs_idx
             )
 
-        self._solver.update_vgeoms()
-        vgeoms_pos = qd_to_torch(self._solver.dyn_state.vgeoms.pos, envs_idx, transpose=True, copy=None)
-        vgeoms_quat = qd_to_torch(self._solver.dyn_state.vgeoms.quat, envs_idx, transpose=True, copy=None)
+        vgeoms_pos, vgeoms_quat = self._solver.get_vgeom_transforms_batched(envs_idx)
         init = torch.as_tensor(self.init_vverts, dtype=gs.tc_float, device=gs.device)
         pos = vgeoms_pos[..., self.idx, :].unsqueeze(-2)
         quat = vgeoms_quat[..., self.idx, :].unsqueeze(-2)

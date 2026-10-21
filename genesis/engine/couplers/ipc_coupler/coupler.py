@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from genesis.engine.entities import FEMEntity, RigidEntity
     from genesis.engine.entities.rigid_entity import RigidJoint, RigidLink
     from genesis.engine.simulator import Simulator
-    from genesis.engine.solvers import FEMSolver, RigidSolver
+    from genesis.engine.solvers import FEMSolver
 
 # Check if libuipc is available
 try:
@@ -45,7 +45,7 @@ if TYPE_CHECKING or UIPC_AVAILABLE:
         StableNeoHookean,
         StrainLimitingBaraffWitkinShell,
     )
-    from uipc.core import Engine, World, Scene, AffineBodyStateAccessorFeature, ContactElement, SubsceneElement
+    from uipc.core import AffineBodyStateAccessorFeature, ContactElement, Engine, Scene, SubsceneElement, World
     from uipc.geometry import GeometrySlot, SimplicialComplex, SimplicialComplexSlot
     from uipc.gui import SceneGUI
 
@@ -119,7 +119,6 @@ class IPCCoupler(RBC):
         self.options = options
 
         # Define some proxies for convenience
-        self.rigid_solver: "RigidSolver" = self.sim.rigid_solver
         self.fem_solver: "FEMSolver" = self.sim.fem_solver
 
         # ==== IPC System Infrastructure ====
@@ -181,13 +180,23 @@ class IPCCoupler(RBC):
     # Section 1: Configuration API
     # ============================================================
 
-    def build(self) -> None:
+    def build(
+        self,
+        *,
+        rigid_active,
+        rigid_options,
+        rigid_entities,
+        rigid_links,
+        rigid_data,
+        rigid_config,
+    ) -> None:
         """Build IPC system"""
         # IPC coupler builds a single IPC scene shared across all envs, so it requires
         # identical geometry topology (links, joints, geoms) across environments.
         # Batched info options allow per-env topology which is incompatible.
-        if self.rigid_solver.is_active:
-            rigid_options = cast(RigidOptions, self.rigid_solver._options)
+        self._rigid_active = rigid_active
+        if rigid_active:
+            rigid_options = cast(RigidOptions, rigid_options)
             if rigid_options.batch_links_info or rigid_options.batch_dofs_info or rigid_options.batch_joints_info:
                 gs.raise_exception(
                     "IPC coupler does not support batched rigid info (batch_links_info, batch_dofs_info, "
@@ -200,29 +209,32 @@ class IPCCoupler(RBC):
         # FIXME: 'Solver.set_gravity' is not honored either, and goes through: it writes a solver buffer the IPC world
         # never reads, and there is nothing to detect it by, the world being built long before the write.
         gravity_scene = self.sim.options.gravity
-        for solver in (self.rigid_solver, self.fem_solver):
-            gravity_solver = solver._options.gravity
-            if solver.is_active and not np.allclose(gravity_solver, gravity_scene, atol=gs.EPS):
+        for solver_name, solver_active, solver_options in (
+            ("RigidSolver", rigid_active, rigid_options),
+            (type(self.fem_solver).__name__, self.fem_solver.is_active, self.fem_solver._options),
+        ):
+            gravity_solver = solver_options.gravity
+            if solver_active and not np.allclose(gravity_solver, gravity_scene, atol=gs.EPS):
                 gs.raise_exception(
-                    f"{type(solver).__name__} specifies a gravity of {tuple(gravity_solver)}, which the IPC coupler "
+                    f"{solver_name} specifies a gravity of {tuple(gravity_solver)}, which the IPC coupler "
                     f"cannot honor: every body it couples falls under the {tuple(gravity_scene)} of 'SimOptions'."
                 )
 
         self._init_ipc()
-        self._setup_coupling_config()
-        self._add_objects_to_ipc()
+        self._setup_coupling_config(rigid_entities)
+        self._add_objects_to_ipc(rigid_active, rigid_entities, rigid_links, rigid_data, rigid_config)
         self._finalize_ipc()
         self._init_accessors()
 
         if self.options._show_ipc_gui:
             self._init_ipc_gui()
 
-    def _setup_coupling_config(self):
+    def _setup_coupling_config(self, rigid_entities):
         """Read coup_type, coup_links, and collision settings from entity materials."""
         assert gs.logger is not None
 
         entity: "RigidEntity"
-        for i_e, entity in enumerate(cast(list["RigidEntity"], self.rigid_solver.entities)):
+        for i_e, entity in enumerate(cast(list["RigidEntity"], rigid_entities)):
             if not entity.material.needs_coup:
                 continue
             coup_type = entity.material.coup_type
@@ -304,16 +316,16 @@ class IPCCoupler(RBC):
                 self._ipc_subscene_tabular.insert(other_ipc_subscene, ipc_subscene, False)
             self._ipc_subscenes.append(ipc_subscene)
 
-    def _add_objects_to_ipc(self) -> None:
+    def _add_objects_to_ipc(self, rigid_active, rigid_entities, rigid_links, rigid_data, rigid_config) -> None:
         """Add objects from solvers to IPC system"""
         # Add FEM entities to IPC
         if self.fem_solver.is_active:
             self._add_fem_entities_to_ipc()
 
         # Add rigid geoms and articulated entities to IPC based on per-entity coupling types
-        if self.rigid_solver.is_active:
-            self._add_rigid_geoms_to_ipc()
-            self._add_articulation_entities_to_ipc()
+        if rigid_active:
+            self._add_rigid_geoms_to_ipc(rigid_links, rigid_data, rigid_config)
+            self._add_articulation_entities_to_ipc(rigid_entities, rigid_data)
 
         # Register all per-entity contact pair models with per-material friction
         self._register_contact_pairs()
@@ -393,7 +405,7 @@ class IPCCoupler(RBC):
                 # ---- Create IPC object and geometry slot ----
                 fem_obj.geometries().create(mesh)
 
-    def _add_rigid_geoms_to_ipc(self) -> None:
+    def _add_rigid_geoms_to_ipc(self, rigid_links, rigid_data, rigid_config) -> None:
         """Add rigid geoms to the IPC scene as ABD objects, merging geoms by link."""
         assert gs.logger is not None
 
@@ -406,7 +418,7 @@ class IPCCoupler(RBC):
         merge_transforms: dict["RigidLink", tuple[np.ndarray, np.ndarray]] = {
             # source_link_idx -> (R, t) relative to target frame
         }
-        for link in self.rigid_solver.links:
+        for link in rigid_links:
             entity = link.entity
 
             coup_type = self._coup_type_by_entity.get(entity)
@@ -427,8 +439,8 @@ class IPCCoupler(RBC):
                 gs.logger.debug(f"Fixed-merge: link {link.idx} ({link.name}) -> {target_link.idx} ({target_link.name})")
 
         # ========== Process each environment ==========
-        links_pos = qd_to_numpy(self.rigid_solver.dyn_state.links.pos, transpose=True)
-        links_quat = qd_to_numpy(self.rigid_solver.dyn_state.links.quat, transpose=True)
+        links_pos = qd_to_numpy(rigid_data.dyn_state.links.pos, transpose=True)
+        links_quat = qd_to_numpy(rigid_data.dyn_state.links.quat, transpose=True)
 
         for env_idx in range(self.sim._B):
             for target_link, source_links in target_groups.items():
@@ -527,7 +539,7 @@ class IPCCoupler(RBC):
 
                 rho = entity.material.rho
                 if rho is None:
-                    if entity.solver._enable_mujoco_compatibility:
+                    if rigid_config.enable_mujoco_compatibility:
                         rho = RHO_MUJOCO
                     else:
                         rho = RHO_ROBOT if target_link.desc.is_robot else RHO_OBJECT
@@ -573,7 +585,7 @@ class IPCCoupler(RBC):
                 # ---- Store slot mappings ----
                 self._abd_slots_by_link.setdefault(target_link, []).append(abd_geom_slot)
 
-    def _add_articulation_entities_to_ipc(self) -> None:
+    def _add_articulation_entities_to_ipc(self, rigid_entities, rigid_data) -> None:
         """
         Add articulated robot entities to IPC using ExternalArticulationConstraint.
 
@@ -587,11 +599,11 @@ class IPCCoupler(RBC):
         self._ipc_eac = ExternalArticulationConstraint()
         self._ipc_constitution_tabular.insert(self._ipc_eac)
 
-        joints_xaxis = qd_to_numpy(self.rigid_solver.dyn_state.joints.xaxis, transpose=True)
-        joints_xanchor = qd_to_numpy(self.rigid_solver.dyn_state.joints.xanchor, transpose=True)
+        joints_xaxis = qd_to_numpy(rigid_data.dyn_state.joints.xaxis, transpose=True)
+        joints_xanchor = qd_to_numpy(rigid_data.dyn_state.joints.xanchor, transpose=True)
 
         # Process each rigid entity with external_articulation coupling type
-        for i_e, entity in enumerate(cast(list["RigidEntity"], self.rigid_solver.entities)):
+        for i_e, entity in enumerate(cast(list["RigidEntity"], rigid_entities)):
             # Only process entities with external_articulation coupling type
             if self._coup_type_by_entity.get(entity) != COUPLING_TYPE.EXTERNAL_ARTICULATION:
                 continue
@@ -809,7 +821,14 @@ class IPCCoupler(RBC):
         """Preprocessing step before coupling"""
         pass
 
-    def couple(self, f):
+    def couple(
+        self,
+        f,
+        rigid_data,
+        coupling_set_qpos,
+        coupling_set_dofs_velocity,
+        coupling_apply_wrench,
+    ):
         """
         Execute IPC coupling step with per-entity coupling types.
 
@@ -831,10 +850,10 @@ class IPCCoupler(RBC):
             return
 
         # Step 1: Store Genesis rigid states (common)
-        self._store_gs_rigid_states()
+        self._store_gs_rigid_states(rigid_data)
 
         # Step 2: Pre-advance processing (per entity type)
-        self._pre_advance_external_articulation()
+        self._pre_advance_external_articulation(rigid_data)
 
         # Step 3: IPC advance + retrieve (common)
         self._ipc_world.advance()
@@ -845,9 +864,9 @@ class IPCCoupler(RBC):
         self._retrieve_rigid_states()
 
         # Step 5: Post-advance processing (per entity type)
-        self._apply_abd_coupling_forces()
-        self._post_advance_external_articulation()
-        self._post_advance_ipc_only()
+        self._apply_abd_coupling_forces(coupling_apply_wrench)
+        self._post_advance_external_articulation(coupling_set_qpos, coupling_set_dofs_velocity)
+        self._post_advance_ipc_only(coupling_set_qpos, coupling_set_dofs_velocity)
 
         # Step 6: Update GUI if enabled
         if self._ipc_gui is not None:
@@ -887,11 +906,35 @@ class IPCCoupler(RBC):
         """
         return bool(self._coup_type_by_entity)
 
+    def rigid_collision_exclusions(self, entities):
+        """Return rigid links whose collision detection is delegated to IPC.
+
+        The first set is excluded only when both links of a pair are delegated; the second is excluded from every
+        rigid-rigid pair because IPC is its sole dynamics/collision backend.
+        """
+        delegated_link_idxs = set()
+        exclusive_link_idxs = set()
+        for entity in entities:
+            if not entity.material.needs_coup:
+                continue
+            mode = entity.material.coup_type
+            if mode is None:
+                continue
+            if mode == "ipc_only":
+                exclusive_link_idxs.update(link.idx for link in entity.links)
+            link_filter_names = entity.material.coup_links
+            if mode == "two_way_soft_constraint" and link_filter_names is not None:
+                for name in link_filter_names:
+                    delegated_link_idxs.add(entity.get_link(name=name).idx)
+            else:
+                delegated_link_idxs.update(link.idx for link in entity.links)
+        return frozenset(delegated_link_idxs), frozenset(exclusive_link_idxs)
+
     # ============================================================
     # Section 3: Helpers
     # ============================================================
 
-    def _apply_base_link_velocity_from_ipc(self, entity):
+    def _apply_base_link_velocity_from_ipc(self, entity, coupling_set_dofs_velocity):
         envs_vel = np.empty((self.sim._B, 6), dtype=gs.np_float)
         for env_idx in range(self.sim._B):
             abd_entry = self._abd_data_by_link[entity.base_link][env_idx]
@@ -905,13 +948,15 @@ class IPCCoupler(RBC):
                 (omega_skew[1, 0] - omega_skew[0, 1]) / 2.0,
             )
 
-        self.rigid_solver.set_dofs_velocity(
-            envs_vel if self.sim.n_envs > 0 else envs_vel[0],
-            dofs_idx=slice(entity.dof_start, entity.dof_start + 6),
-            skip_forward=True,
+        coupling_set_dofs_velocity.invoke(
+            (
+                envs_vel if self.sim.n_envs > 0 else envs_vel[0],
+                slice(entity.dof_start, entity.dof_start + 6),
+                True,
+            )
         )
 
-    def _pre_advance_external_articulation(self):
+    def _pre_advance_external_articulation(self, rigid_data):
         """
         Pre-advance processing for external_articulation entities.
         Prepares articulation data and updates IPC geometry before advance().
@@ -919,7 +964,7 @@ class IPCCoupler(RBC):
         if COUPLING_TYPE.EXTERNAL_ARTICULATION not in self._entities_by_coup_type:
             return
 
-        mass_matrix = qd_to_numpy(self.rigid_solver.mass_mat, transpose=True)
+        mass_matrix = qd_to_numpy(rigid_data.rigid_info.mass_mat, transpose=True)
 
         for entity, ad in self._articulation_data_by_entity.items():
             # Copy stored qpos to articulation_data.qpos_current
@@ -956,7 +1001,7 @@ class IPCCoupler(RBC):
                 mass_matrix_attr = articulation_geom["joint_joint"].find("mass")
                 uipc.view(mass_matrix_attr).flat[:] = mass_matrix[env_idx, dofs_idx, dofs_idx]
 
-    def _post_advance_external_articulation(self):
+    def _post_advance_external_articulation(self, coupling_set_qpos, coupling_set_dofs_velocity):
         """
         Post-advance processing for external_articulation entities.
         Reads delta_theta from IPC and updates Genesis qpos.
@@ -983,15 +1028,17 @@ class IPCCoupler(RBC):
                 for env_idx in range(self.sim._B):
                     qpos_new[env_idx, :3], qpos_new[env_idx, 3:7] = gu.T_to_trans_quat(abd_entry[env_idx].transform)
 
-            self.rigid_solver.set_qpos(
-                qpos_new if self.sim.n_envs > 0 else qpos_new[0],
-                qs_idx=slice(entity.q_start, entity.q_end),
-                skip_forward=False,
+            coupling_set_qpos.invoke(
+                (
+                    qpos_new if self.sim.n_envs > 0 else qpos_new[0],
+                    slice(entity.q_start, entity.q_end),
+                    False,
+                )
             )
 
             # Set base link velocities from IPC if available
             if not entity.base_link.is_fixed:
-                self._apply_base_link_velocity_from_ipc(entity)
+                self._apply_base_link_velocity_from_ipc(entity, coupling_set_dofs_velocity)
 
             # Update ref_dof_prev for next timestep
             ad.ref_dof_prev[:] = ad.qpos_new
@@ -1002,7 +1049,7 @@ class IPCCoupler(RBC):
                     link_transform = self._abd_transforms_by_link[child_link][env_idx]
                     prev_link_transform[env_idx] = link_transform.copy()
 
-    def _post_advance_ipc_only(self):
+    def _post_advance_ipc_only(self, coupling_set_qpos, coupling_set_dofs_velocity):
         """
         Post-advance processing for 'ipc_only' entities.
 
@@ -1020,16 +1067,22 @@ class IPCCoupler(RBC):
                 abd_entry = self._abd_data_by_link[entity.base_link][env_idx]
                 envs_qpos[env_idx, :3], envs_qpos[env_idx, 3:7] = gu.T_to_trans_quat(abd_entry.transform)
 
-            self.rigid_solver.set_qpos(
-                envs_qpos if self.sim.n_envs > 0 else envs_qpos[0],
-                qs_idx=slice(entity.q_start, entity.q_start + 7),
-                skip_forward=True,
+            coupling_set_qpos.invoke(
+                (
+                    envs_qpos if self.sim.n_envs > 0 else envs_qpos[0],
+                    slice(entity.q_start, entity.q_start + 7),
+                    True,
+                )
             )
 
             # FIXME: It is currently necessary to enforce zero velocity to avoid double time integration by Rigid solver
             # self._apply_base_link_velocity_from_ipc(entity)
-            self.rigid_solver.set_dofs_velocity(
-                velocity=None, dofs_idx=slice(entity.dof_start, entity.dof_start + 6), skip_forward=True
+            coupling_set_dofs_velocity.invoke(
+                (
+                    None,
+                    slice(entity.dof_start, entity.dof_start + 6),
+                    True,
+                )
             )
 
     def _retrieve_fem_states(self):
@@ -1100,7 +1153,7 @@ class IPCCoupler(RBC):
                 self._coupling_data.ipc_transforms[env_idx, i_link] = transforms[abd_body_idx]
                 self._coupling_data.aim_transforms[env_idx, i_link] = self._abd_transforms_by_link[link][env_idx]
 
-    def _store_gs_rigid_states(self):
+    def _store_gs_rigid_states(self, rigid_data):
         """
         Store current Genesis rigid body states before IPC advance.
 
@@ -1109,24 +1162,23 @@ class IPCCoupler(RBC):
         2. Force computation: to ensure action-reaction force consistency
         3. User modification detection: to detect if user called set_qpos
         """
-        if not self.rigid_solver.is_active:
+        if not self._rigid_active:
             return
 
         # Store qpos for all entities. It will be used by 'external_articulation' coupling mode
-        assert self.rigid_solver.qpos is not None
-        entities_qpos = qd_to_numpy(self.rigid_solver.qpos, transpose=True)
+        entities_qpos = qd_to_numpy(rigid_data.rigid_info.qpos, transpose=True)
         for entity, articulation_data in self._articulation_data_by_entity.items():
             articulation_data.qpos_stored[:] = entities_qpos[..., entity.q_start : entity.q_end]
 
         # Store transforms for all rigid links
-        links_pos = qd_to_numpy(self.rigid_solver.dyn_state.links.pos, transpose=True)
-        links_quat = qd_to_numpy(self.rigid_solver.dyn_state.links.quat, transpose=True)
+        links_pos = qd_to_numpy(rigid_data.dyn_state.links.pos, transpose=True)
+        links_quat = qd_to_numpy(rigid_data.dyn_state.links.quat, transpose=True)
         links_transform = cast(np.ndarray, gu.trans_quat_to_T(links_pos, links_quat))
         for link, transforms in self._abd_transforms_by_link.items():
             for env_idx in range(self.sim._B):
                 transforms[env_idx][:] = links_transform[env_idx, link.idx]
 
-    def _apply_abd_coupling_forces(self):
+    def _apply_abd_coupling_forces(self, coupling_apply_wrench):
         """
         Apply coupling forces from IPC ABD constraint to Genesis rigid bodies.
 
@@ -1162,8 +1214,10 @@ class IPCCoupler(RBC):
                 "the simulation timestep."
             )
 
-        self.rigid_solver.apply_links_external_wrench(
-            self._coupling_data.out_forces if self.sim.n_envs > 0 else self._coupling_data.out_forces[0],
-            self._coupling_data.out_torques if self.sim.n_envs > 0 else self._coupling_data.out_torques[0],
-            links_idx=self._coupling_data.links_idx,
+        coupling_apply_wrench.invoke(
+            (
+                self._coupling_data.out_forces if self.sim.n_envs > 0 else self._coupling_data.out_forces[0],
+                self._coupling_data.out_torques if self.sim.n_envs > 0 else self._coupling_data.out_torques[0],
+                self._coupling_data.links_idx,
+            )
         )

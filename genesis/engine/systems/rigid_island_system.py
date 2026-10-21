@@ -1,9 +1,8 @@
 """Owner of rigid island partition and hibernation data shared by dynamics, contact and constraints."""
 
-from typing import TYPE_CHECKING
+from collections.abc import Iterator
 
 import numpy as np
-
 import quadrants as qd
 
 import genesis as gs
@@ -12,53 +11,83 @@ from genesis.engine.core import Data, Require, System, register_system
 from genesis.utils.misc import qd_to_numpy
 
 from .rigid_solver_system import RigidSolverSystem
-from .simulator_engine import SimulatorEngine
-
-if TYPE_CHECKING:
-    from genesis.engine.scene import Scene
-
-
-@qd.data_oriented
-class RigidIslandData(Data):
-    """Rigid topology partition, hibernation state and dynamic equality count."""
-
-    def __init__(self, island_state, qd_n_equalities) -> None:
-        self.island = island_state
-        self.qd_n_equalities = qd_n_equalities
+from ..simulator_engine import SimulatorEngine
 
 
 class RigidIslandSystem(System):
     """Own partition data used independently of whether contact or constraint solving is enabled."""
 
+    # -------------------------------- Data --------------------------------
+
+    @qd.data_oriented
+    class Data(Data):
+        """Rigid topology partition, hibernation state and dynamic equality count.
+
+        ``@qd.data_oriented`` is a QD discovery workaround: ``GlobalDataContext`` can expose this root only in a form
+        QD traverses. Remove it when QD derives ndarray parameters through ordinary non-data-oriented objects.
+        """
+
+        island: array_class.IslandState
+        qd_n_equalities: qd.Tensor
+
+    data: Data
+
+    # -------------------------------- Dependencies --------------------------------
+
     rigid_solver_system = Require(RigidSolverSystem)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.data = self.Data()
 
     def build(self) -> None:
         from .constraint_solver_system import ConstraintSolverSystem
         from .rigid_rigid_contact_system import RigidRigidContactSystem
 
-        self.contact_system = self.require(RigidRigidContactSystem)
+        self.contact_system = self.find(RigidRigidContactSystem)
         self.constraint_system = self.find(ConstraintSolverSystem)
+
+    # -------------------------------- Actions --------------------------------
 
     @System.action(kind="host")
     def initialize(self):
         return self.initialize_data
+
+    # -------------------------------- Public get/set API --------------------------------
+
+    def iter_data(self) -> Iterator[array_class.DataItem | array_class.ConfigItem]:
+        yield from array_class.iter_data(self.data, "island")
+        yield from array_class.iter_data(self.data, "qd_n_equalities", array_class.DataKind.STATE)
+
+    # -------------------------------- Implementation --------------------------------
 
     def initialize_data(self) -> None:
         rigid = self.rigid_solver_system
         max_contacts = 0
         len_constraints = 1
         if self.constraint_system is not None:
-            max_contacts = self.contact_system.collider_data.collider_info.max_contacts[None]
+            if self.contact_system is not None:
+                max_contacts = self.contact_system.data.collider_info.max_contacts[None]
             len_constraints = (
                 rigid.rigid_config.rows_per_contact * max_contacts
                 + sum(joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC) for joint in rigid.joints)
                 + rigid.n_dofs
                 + rigid.n_candidate_equalities_ * 6
             )
-        island_state = array_class.get_island_state(rigid, max_contacts, max(1, len_constraints))
+        island_state = array_class.get_island_state(
+            batch_size=rigid._B,
+            n_trees=rigid.n_trees_,
+            n_links_actual=rigid.n_links,
+            n_dofs_actual=rigid.n_dofs,
+            rigid_config=rigid.rigid_config,
+            use_hibernation=rigid._use_hibernation,
+            max_contacts=max_contacts,
+            len_constraints_=max(1, len_constraints),
+        )
         qd_n_equalities = array_class.V(dtype=gs.qd_int, shape=(rigid._B,))
         qd_n_equalities.from_numpy(np.full((rigid._B,), rigid.n_equalities, dtype=gs.np_int))
-        self.data = RigidIslandData(island_state, qd_n_equalities)
+        self.data.island = island_state
+        self.data.qd_n_equalities = qd_n_equalities
 
         island_state.links_island_idx.fill(-1)
         if rigid._use_hibernation:
@@ -78,5 +107,11 @@ class RigidIslandSystem(System):
 
 
 @register_system(SimulatorEngine)
-def create_rigid_island_system(scene: "Scene") -> RigidIslandSystem:
-    return RigidIslandSystem(scene)
+def create_rigid_island_system(engine: SimulatorEngine) -> RigidIslandSystem | None:
+    from genesis.engine.entities import RigidEntity
+
+    return (
+        RigidIslandSystem()
+        if any(isinstance(entity, RigidEntity) for entity in engine.scene.entities)
+        else None
+    )

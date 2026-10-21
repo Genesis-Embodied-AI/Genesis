@@ -7,7 +7,7 @@ import genesis as gs
 from genesis.constants import link_ref_frame
 from genesis.repr_base import RBC
 from genesis.typing import LaxPositiveFArrayType
-from genesis.utils.misc import DeprecationError, qd_to_torch
+from genesis.utils.misc import DeprecationError
 
 from .description import KinematicLinkDescription, RigidGeomDescription, RigidLinkDescription, RigidVisGeomDescription
 from .inertial import LinkInertial
@@ -510,11 +510,9 @@ class RigidLink(KinematicLink):
 
         verts_idx = slice(self._verts_state_start, self._verts_state_start + self.n_verts)
         if self.is_fixed and not self._entity._batch_fixed_verts:
-            tensor = qd_to_torch(self._solver.dyn_state.fixed_verts.pos, verts_idx, copy=True)
+            tensor = self._solver.get_fixed_collision_verts(verts_idx)
         else:
-            tensor = qd_to_torch(self._solver.dyn_state.free_verts.pos, None, verts_idx, transpose=True, copy=True)
-            if self._solver.n_envs == 0:
-                tensor = tensor[0]
+            tensor = self._solver.get_free_collision_verts(verts_idx)
         return tensor
 
     @gs.assert_built

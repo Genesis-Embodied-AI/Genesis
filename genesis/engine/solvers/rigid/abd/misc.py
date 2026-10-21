@@ -849,17 +849,8 @@ def kernel_apply_links_external_wrench_at_pos(
         )
 
 
-@qd.func
-def func_apply_coupling_force(
-    link_idx: int, env_idx: int, pos: qd.types.vector(3), force: qd.types.vector(3), links_state: array_class.LinksState
-):
-    torque = (pos - links_state.root_COM[link_idx, env_idx]).cross(force)
-    links_state.cfrc_coupling_ang[link_idx, env_idx] -= torque
-    links_state.cfrc_coupling_vel[link_idx, env_idx] -= force
-
-
-@qd.kernel(fastcache=True)
-def kernel_wakeup_coupled_links(
+@qd.func(requires_top_level=True)
+def func_wakeup_coupled_links(
     dyn_state: array_class.DynState,
     island_state: array_class.IslandState,
     dyn_info: array_class.DynInfo,

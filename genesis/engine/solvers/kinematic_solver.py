@@ -10,6 +10,10 @@ import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.engine.entities.rigid_entity import KinematicEntity
 from genesis.engine.materials import Kinematic
+from genesis.engine.solvers.rigid.kinematic_tools import balanced_variant_mapping as _balanced_variant_mapping
+from genesis.engine.solvers.rigid.kinematic_tools import fill_base_link_geom_offsets as _fill_base_link_geom_offsets
+from genesis.engine.solvers.rigid.kinematic_tools import offset_world_shift as _offset_world_shift
+from genesis.engine.solvers.rigid.kinematic_tools import select_links_offset as _select_links_offset
 from genesis.engine.solvers.rigid.abd.inverse_kinematics import (
     kernel_forward_kinematics_query,
     kernel_get_jacobian,
@@ -75,85 +79,6 @@ if TYPE_CHECKING:
 TERRAIN_HEIGHT_QUERY_TILT_TOLERANCE = 1e-3
 
 
-def _balanced_variant_mapping(n_variants, B):
-    """Map N variants to B environments using balanced block assignment."""
-    if B >= n_variants:
-        base = B // n_variants
-        extra = B % n_variants
-        sizes = np.r_[np.full(extra, base + 1), np.full(n_variants - extra, base)]
-        return np.repeat(np.arange(n_variants), sizes)
-    else:
-        return np.arange(B)
-
-
-def _select_links_offset(offset, links_idx, envs_idx):
-    """Index a base-link forward offset for a transposed state query.
-
-    'offset' has shape '[n_links, dim]' for an environment-uniform offset or '[n_envs, n_links, dim]' when
-    heterogeneous variants make it environment-specific. It is indexed with the same combined mask as 'qd_to_torch' so
-    the result broadcasts against the '[n_envs, n_sel, dim]' state tensor, keeping the link dimension for integer
-    indices.
-    """
-    if offset.ndim == 2:
-        return offset[indices_to_mask(links_idx)]
-    return offset[indices_to_mask(envs_idx, links_idx)]
-
-
-def _offset_world_shift(offset_pos, offset_quat, world_quat):
-    """World-frame displacement contributed by a body-frame offset position at a given world orientation.
-
-    The authored orientation is 'world_quat' with the offset stripped, and 'offset_pos' rotates with it. Relative
-    getters subtract this from the world position to recover the authored position; relative setters add it to do the
-    reverse.
-    """
-    authored_quat = gu.transform_quat_by_quat(gu.inv_quat(offset_quat), world_quat)
-    return gu.transform_by_quat(offset_pos, authored_quat)
-
-
-def _fill_base_link_geom_offsets(offset_pos, offset_quat, entity, geoms, ranges):
-    """Fill the per-geom forward offset for an entity's collision or visual geoms.
-
-    Each geom's stored offset is the morph offset (per-variant for a heterogeneous base link, else its own root link's
-    offset) conjugated into the geom's own frame, so the body-frame strip in the relative getters reverts it even for
-    geoms rotated/translated relative to the link. A geom's world pose is 'link_pose . G' with 'link_pose' carrying
-    'link_offset = morph_offset . alignment' (G is the geom pose relative to the link); reverting only the morph offset
-    from the geom's own frame needs '(link_offset . G)^-1 . morph_offset . (link_offset . G)'. This equals the morph
-    offset itself when the geom is aligned with the link or the offset is a pure translation. 'ranges' are the
-    per-variant geom index ranges for a heterogeneous base link, or None to use each geom's own root link offset.
-    """
-    for geom in geoms:
-        if ranges is None:
-            # An identity link offset leaves the geom frame in place, so the conjugation is skipped
-            link_off_pos = geom.link.desc.offset_pos
-            link_off_quat = geom.link.desc.offset_quat
-            if np.allclose(link_off_pos, 0.0, atol=gs.EPS) and np.allclose(
-                link_off_quat, gu.identity_quat(), atol=gs.EPS
-            ):
-                continue
-            morph = entity._morph
-        else:
-            # 'ranges' only cover the heterogeneous base link's variant geoms; geoms on other (child) links carry no
-            # offset, so skip them.
-            i_variant = next((i for i, (start, end) in enumerate(ranges) if start <= geom.idx < end), None)
-            if i_variant is None:
-                continue
-            link_off_pos = entity._desc.variants[i_variant].offset_pos
-            link_off_quat = entity._desc.variants[i_variant].offset_quat
-            morph = entity._morph if i_variant == 0 else entity._morph_heterogeneous[i_variant - 1]
-        frame_pos, frame_quat = gu.transform_pos_quat_by_trans_quat(
-            geom.init_pos, geom.init_quat, link_off_pos, link_off_quat
-        )
-        offset_frame_pos, offset_frame_quat = gu.transform_pos_quat_by_trans_quat(
-            frame_pos,
-            frame_quat,
-            np.array(morph.offset_pos, dtype=gs.np_float),
-            np.array(morph.offset_quat, dtype=gs.np_float),
-        )
-        offset_pos[geom.idx], offset_quat[geom.idx] = gu.inv_transform_pos_quat_by_trans_quat(
-            offset_frame_pos, offset_frame_quat, frame_pos, frame_quat
-        )
-
-
 IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
 
 
@@ -178,7 +103,6 @@ class KinematicSolver(Solver):
         self._enable_mujoco_compatibility = False
         self._requires_grad = False
         self._enable_heterogeneous = False  # Set to True when any entity has heterogeneous morphs
-        self._use_system = False
 
         self.collider = None
         self.constraint_solver = None
@@ -371,11 +295,6 @@ class KinematicSolver(Solver):
             self._options.batch_links_info = True
             self._options.batch_joints_info = True
             self._options.batch_dofs_info = True
-
-        # RigidSolverSystem allocates and owns the Rigid solver's kinematic data, including its padded inactive layout.
-        # The standalone KinematicSolver never sets this flag and keeps the legacy initialization below.
-        if self._use_system:
-            return
 
         self._build_static_config()
         self._create_data_manager()
@@ -1441,7 +1360,7 @@ class KinematicSolver(Solver):
             None, links_idx, self.n_links, "links_idx", envs_idx, (3,)
         )
         tensor = _tensor[None] if self.n_envs == 0 else _tensor
-        # The frame is passed as a plain int, see 'RigidSolver._sanitize_ref_frame'.
+        # The frame is passed as a plain int by the owning solver's reference-frame sanitizer.
         kernel_get_links_vel(
             links_idx,
             envs_idx,

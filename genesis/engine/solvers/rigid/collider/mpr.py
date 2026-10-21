@@ -9,9 +9,7 @@ from .contact import func_compute_geom_pair_scale
 
 
 class MPR:
-    def __init__(self, rigid_solver):
-        self._solver = rigid_solver
-
+    def __init__(self, *, batch_size, enable_mujoco_compatibility):
         self._mpr_info = array_class.get_mpr_info(
             # Dimensionless, every site scaling it by the magnitudes of its own operands so the degeneracy tests
             # ignore the scene scale; it bounds when a triangle, a segment or a portal counts as degenerate, and the
@@ -20,11 +18,11 @@ class MPR:
             # A fraction of the geom pair scale, turned into a length per pair: how close the portal must come to
             # the surface to count as having reached it, and the magnitude the ray is re-seeded with when the two
             # geoms' centres coincide.
-            CCD_TOLERANCE=1e-6 if rigid_solver._enable_mujoco_compatibility else 1e-5,
+            CCD_TOLERANCE=1e-6 if enable_mujoco_compatibility else 1e-5,
             # Bounds that refinement, which is not otherwise guaranteed to terminate.
             CCD_ITERATIONS=50,
         )
-        self.mpr_state = array_class.get_mpr_state(self._solver._B)
+        self.mpr_state = array_class.get_mpr_state(batch_size)
         # The scratch states of the split narrowphase, at the smallest size until 'activate' sizes them when it runs
         # FIXME: quadrants#856 - see the scratch states of GJK in gjk.py.
         self.contact0_mpr_state = array_class.get_mpr_state(1)

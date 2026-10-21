@@ -8,6 +8,10 @@ import torch.nn.functional as F
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.engine.solvers.rigid.abd.forward_kinematics import (
+    func_forward_kinematics_root,
+    func_update_geoms_root,
+)
 from genesis.utils import array_class
 
 if TYPE_CHECKING:
@@ -439,7 +443,7 @@ class RRT(PathPlanner):
                     i_l_base = dyn_info.entities.link_start[self._entity._idx_in_solver]
                     I_l_base = [i_l_base, i_b] if qd.static(self._solver.rigid_config.batch_links_info) else i_l_base
                     i_l_root = dyn_info.links.root_idx[I_l_base]
-                    gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_root(
+                    func_forward_kinematics_root(
                         i_l_root,
                         i_b,
                         rigid_info.qpos,
@@ -451,7 +455,7 @@ class RRT(PathPlanner):
                     )
                     for i_r in range(rigid_info.roots_link_idx.shape[0]):
                         i_l_root = rigid_info.roots_link_idx[i_r]
-                        gs.engine.solvers.rigid.rigid_solver.func_update_geoms_root(
+                        func_update_geoms_root(
                             i_l_root,
                             i_b,
                             dyn_state,
@@ -805,7 +809,7 @@ class RRTConnect(PathPlanner):
                     i_l_base = dyn_info.entities.link_start[self._entity._idx_in_solver]
                     I_l_base = [i_l_base, i_b] if qd.static(self._solver.rigid_config.batch_links_info) else i_l_base
                     i_l_root = dyn_info.links.root_idx[I_l_base]
-                    gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_root(
+                    func_forward_kinematics_root(
                         i_l_root,
                         i_b,
                         rigid_info.qpos,
@@ -817,7 +821,7 @@ class RRTConnect(PathPlanner):
                     )
                     for i_r in range(rigid_info.roots_link_idx.shape[0]):
                         i_l_root = rigid_info.roots_link_idx[i_r]
-                        gs.engine.solvers.rigid.rigid_solver.func_update_geoms_root(
+                        func_update_geoms_root(
                             i_l_root,
                             i_b,
                             dyn_state,

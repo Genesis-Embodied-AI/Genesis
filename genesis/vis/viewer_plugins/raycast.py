@@ -16,7 +16,8 @@ if TYPE_CHECKING:
     from genesis.engine.scene import Scene
     from genesis.engine.solvers.kinematic_solver import KinematicSolver
     from genesis.ext.pyrender.node import Node
-    from genesis.utils.array_class import BVHState, BVHStaticConfig, RaycastResult
+    from genesis.utils.array_class import (BVHState, BVHStaticConfig,
+                                           RaycastResult)
 
 
 class RaycastTarget(NamedTuple):
@@ -104,7 +105,8 @@ class Raycaster:
     @with_lock
     def update(self) -> None:
         """Refresh per-env vertex positions, AABBs and rebuild every BVH."""
-        from genesis.utils.raycast_qd import kernel_refresh_collision_bvh, kernel_refresh_visual_bvh
+        from genesis.utils.raycast_qd import (kernel_refresh_collision_bvh,
+                                              kernel_refresh_visual_bvh)
 
         for target in self.targets:
             solver = target.solver

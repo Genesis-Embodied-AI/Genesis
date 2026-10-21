@@ -4,8 +4,8 @@ import numpy as np
 import torch
 
 import genesis as gs
-from genesis.repr_base import RBC
 from genesis.constants import IMAGE_TYPE
+from genesis.repr_base import RBC
 from genesis.utils.misc import qd_to_torch
 
 from .camera import Camera

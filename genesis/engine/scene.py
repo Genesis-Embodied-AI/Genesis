@@ -245,6 +245,7 @@ class Scene(RBC):
 
         # description
         self._desc = SceneDescription(options=self.options)
+        self._entities: list["Entity"] = gs.List()
 
         # simulator
         self._sim = Simulator(scene=self, options=self.options)
@@ -466,8 +467,81 @@ class Scene(RBC):
         else:
             gs.raise_exception()
 
-        entity = self._sim._add_entity(morph, material, surface, visualize_contact, name)
+        entity = self._create_entity(morph, material, surface, visualize_contact, name)
 
+        return entity
+
+    def _create_entity(
+        self,
+        morph=None,
+        material=None,
+        surface=None,
+        visualize_contact=False,
+        name=None,
+        desc=None,
+    ):
+        if desc is not None:
+            material = desc.material
+        if isinstance(material, gs.materials.Rigid):
+            entity = self._create_rigid_entity(
+                morph,
+                material,
+                surface,
+                visualize_contact=visualize_contact,
+                name=name,
+                desc=desc,
+            )
+        else:
+            entity = self._sim._add_entity(
+                morph=morph,
+                material=material,
+                surface=surface,
+                visualize_contact=visualize_contact,
+                name=name,
+                desc=desc,
+            )
+        self._entities.append(entity)
+        if entity.desc is not None:
+            self._desc.entities.append(entity.desc)
+        return entity
+
+    def _create_rigid_entity(
+        self,
+        morph,
+        material,
+        surface,
+        *,
+        visualize_contact=False,
+        name=None,
+        desc=None,
+    ):
+        """Author one Rigid frontend entity; backend Systems collect it from the Scene during initialization."""
+        from genesis.engine.entities import DroneEntity, RigidEntity, TerrainEntity
+        from genesis.options.morphs import Drone, Terrain
+
+        entity_classes = ((Drone, DroneEntity), (Terrain, TerrainEntity), (Morph, RigidEntity))
+        if desc is None:
+            morphs = (morph,) if isinstance(morph, Morph) else tuple(morph)
+            entity_cls = next(cls for morph_cls, cls in entity_classes if isinstance(morphs[0], morph_cls))
+            desc = entity_cls._description_cls.resolve(
+                morphs,
+                material,
+                surface,
+                self.options.rigid,
+                self.options.rigid.enable_mujoco_compatibility,
+                visualize_contact,
+                name,
+            )
+        else:
+            for _, entity_cls in entity_classes:
+                if entity_cls._description_cls is type(desc):
+                    break
+            else:
+                gs.raise_exception(f"Rigid frontend exposes no entity described by {type(desc).__name__}.")
+
+        entity = entity_cls(self, self._sim.rigid_solver, len(self._entities), desc)
+        if desc.attachment is not None:
+            entity.attach(self.get_entity(desc.attachment.entity_name), desc.attachment.link_name)
         return entity
 
     @gs.assert_unbuilt
@@ -1702,7 +1776,7 @@ class Scene(RBC):
         # 'add_entity' would resolve a material and a surface the description already holds, and read the asset it
         # replaces.
         for desc in described.entities:
-            scene._sim._add_entity(desc=desc)
+            scene._create_entity(desc=desc)
         return scene
 
     @gs.assert_built
@@ -1974,7 +2048,7 @@ class Scene(RBC):
     @property
     def entities(self) -> list["Entity"]:
         """All the entities in the scene."""
-        return self._sim.entities
+        return self._entities
 
     @property
     def entity_names(self) -> tuple[str, ...]:

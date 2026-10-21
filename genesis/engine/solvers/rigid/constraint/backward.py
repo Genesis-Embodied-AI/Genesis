@@ -319,7 +319,7 @@ def kernel_accumulate_constraint_solver_grads(
 @qd.kernel(fastcache=True)
 def kernel_manual_add_joint_limit_constraints_bw(
     dyn_state: array_class.DynState,
-    collider_state: array_class.ColliderState,
+    collider_state: qd.template(),
     constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,

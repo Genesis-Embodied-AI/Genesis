@@ -19,8 +19,7 @@ class SDF:
     (see 'Mesh.tmesh_hash'), as the instances of an asset do.
     """
 
-    def __init__(self, rigid_solver):
-        geoms = rigid_solver.geoms
+    def __init__(self, geoms, para_level):
         geoms_grid_idx = np.empty((len(geoms),), dtype=gs.np_int)
         grids_idx_by_key: dict[tuple[str, "SignedDistanceFieldDescription"], int] = {}
         grids_desc = []
@@ -66,7 +65,7 @@ class SDF:
             grids_sdf_coarse_res[geoms_grid_idx],
             np.concatenate(grids_sdf_coarse_val, dtype=gs.np_float),
             self.sdf_info,
-            rigid_solver.rigid_config,
+            para_level,
         )
 
 
@@ -84,13 +83,13 @@ def sdf_kernel_init_geom_fields(
     geoms_sdf_coarse_res: qd.types.ndarray(),
     geoms_sdf_coarse_val: qd.types.ndarray(),
     sdf_info: array_class.SDFInfo,
-    rigid_config: qd.template(),
+    para_level: qd.template(),
 ):
     """Fill the signed distance field (SDF) info of the rigid geoms, from per-geom arrays in the order of the geoms."""
     n_cells = sdf_info.geoms_sdf_val.shape[0]
     n_coarse_cells = sdf_info.geoms_sdf_coarse_val.shape[0]
 
-    qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    qd.loop_config(serialize=qd.static(para_level < gs.PARA_LEVEL.PARTIAL))
     for i_g in range(geoms_sdf_cell_start.shape[0]):
         for j, k in qd.static(qd.ndrange(4, 4)):
             sdf_info.geoms_info.T_mesh_to_sdf[i_g][j, k] = geoms_T_mesh_to_sdf[i_g, j, k]

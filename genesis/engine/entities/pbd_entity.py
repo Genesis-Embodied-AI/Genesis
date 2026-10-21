@@ -98,9 +98,7 @@ class PBDBaseEntity(ParticleEntity):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx)
         particles_idx = particles_idx_local + self._particle_start
-        self._sim._coupler.kernel_attach_pbd_to_rigid_link(
-            particles_idx, envs_idx, link_idx, self._scene.rigid_solver.dyn_state.links
-        )
+        self._sim.attach_pbd_particles_to_rigid_link(particles_idx, envs_idx, link_idx)
 
     @gs.assert_built
     def fix_particles(self, particles_idx_local=None, envs_idx=None, zero_velocity=True):

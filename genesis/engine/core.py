@@ -4,22 +4,22 @@ A Data subclass follows the conventions of genesis.utils.array_class: a `@qd.dat
 fields allocated by `V()`, named with a `State` / `Info` suffix, created empty with its System and filled by its init
 Action.
 
-A System is a backend unit the user never names: it is constructed from the scene and declares on its class
-the Systems it depends on (Require / Find), the Actions it hands out (@System.action) and the ActionCollections it
-receives (@System.action_collection, filled through a @System.protocol). An Engine adds the Systems added by hand, the
-Systems the functions registered for its class with @register_system return for the scene, and every System they
-require, then resolves the dependencies, runs every build() and freezes the collections. A Pipeline runs one entry
-point: a host function or a kernel.
+A System is a backend unit the user never names: it declares the Systems it depends on (Require / Find), the Actions it
+hands out (@System.action) and the ActionCollections it receives (@System.action_collection, filled through a
+@System.protocol). A concrete Engine owns product context; scene-agnostic base Engine build invokes the factories
+registered for that exact concrete class, resolves dependencies, runs every build() and freezes collections. A Pipeline
+runs one entry point: a host function or a kernel.
 """
 
 from collections import deque
 from collections.abc import Iterable
 import functools
 import inspect
+import keyword
 import types
 import typing
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, Literal, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, Literal, TypeVar, cast, overload
 
 import quadrants as qd
 
@@ -27,8 +27,8 @@ import genesis as gs
 from genesis.utils.misc import check_inheritance_depth
 
 if TYPE_CHECKING:
-    from genesis.engine.scene import Scene
-
+    from genesis.engine.action_schedule import ActionSchedule
+    from genesis.utils.qd_ext import GlobalDataContext
 
 # ------------------------------------------------------------------------------------
 # --------------------------------------- Data ---------------------------------------
@@ -47,7 +47,7 @@ class DataDeclaration:
         self.__doc__ = function.__doc__
         self.function = function
 
-    def __set_name__(self, owner, name) -> None:
+    def __set_name__(self, owner: type[object], name: str) -> None:
         self._name = name
 
 
@@ -56,16 +56,19 @@ class DataDeclaration:
 # ------------------------------------------------------------------------------------
 
 # Where an Action may be invoked, derived from the wrapped function:
-#   "host"   - Python function, invoked from host code
+#   "host"   - Python function, bound method or @qd.kernel, invoked from host code
 #   "inline" - @qd.func, invoked inside the device loop of the manager
 #   "stage"  - @qd.func(requires_top_level=True), invoked at the top level of a kernel or graph body
 ActionKind = Literal["host", "inline", "stage"]
+_ActionSpec = Callable[..., object] | tuple[object, ...]
 
 
 def kind_of(function: Callable[..., Any]) -> ActionKind:
     """Derive the kind of an Action from the markers Quadrants sets on its callables."""
     if getattr(function, "_is_wrapped_kernel", False):
-        gs.raise_exception(f"{function} is a @qd.kernel, and an Action wraps a function.")
+        # A kernel is launched from Python, so it is a valid HostAction implementation. StageAction continues to bind
+        # the canonical top-level @qd.func itself for graph composition.
+        return "host"
     if not getattr(function, "_is_quadrants_function", False):
         return "host"
     return "stage" if getattr(function, "_qd_requires_top_level", False) else "inline"
@@ -76,18 +79,19 @@ ACTION_TYPES_MAP: dict[ActionKind, type["Action"]] = {}
 
 
 class Action:
-    """A function bound to its leading arguments, which a manager System invokes with the remaining call arguments.
+    """A callable closure over one function and its persistent arguments.
 
-    `bound_args` (Data, or the System of a bound method) are fixed at creation, and `invoke(call_args)` calls
-    `function(*bound_args, *call_args)`. The concrete type (HostAction, InlineAction or StageAction) states where the
-    manager invokes it, so a protocol annotates which kind each parameter requires.
+    ``invoke(call_args)`` executes ``function(*bound_args, *call_args)`` at the host, inline or graph-stage call site
+    identified by ``kind``.
     """
 
     kind: ClassVar[ActionKind]
+    _function: Callable[..., Any] | None
+    _bound_args: tuple[object, ...]
 
     # Each ActionKind has exactly one Action class, HostAction, InlineAction or StageAction, and each of them is final,
     # so a protocol annotation names the kind it requires without ambiguity
-    def __init_subclass__(cls, **kwargs):
+    def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
         check_inheritance_depth(cls, Action, max_depth=1)
         kind = vars(cls).get("kind")
@@ -100,13 +104,34 @@ class Action:
             )
         ACTION_TYPES_MAP[kind] = cls
 
-    def __init__(self, function: Callable[..., Any], bound_args: tuple[object, ...]) -> None:
-        self.function = function
-        self.bound_args = bound_args
+    def __init__(
+        self,
+        function: Callable[..., Any],
+        bound_args: tuple[object, ...],
+    ) -> None:
+        self._function = function
+        self._bound_args = bound_args
+        self._owner: System | None = None
+        self._declaration: ActionDeclaration | None = None
+        self._bound: _BoundAction | None = None
+        self._collections: list[ActionCollection] = []
 
-    @qd.pyfunc
+    @classmethod
+    def _from_declaration(cls, owner: "System", declaration: "ActionDeclaration") -> "Action":
+        action = cls.__new__(cls)
+        action._function = None
+        action._bound_args = ()
+        action._owner = owner
+        action._declaration = declaration
+        action._bound = None
+        action._collections = []
+        return action
+
+    def _bind(self, binder: "_ActionBinder | None" = None) -> "_BoundAction":
+        return (binder or _ActionBinder()).bind_action(self)
+
     def invoke(self, call_args: qd.template() = ()):
-        return self.function(*(self.bound_args + call_args))
+        return self._bind().invoke(call_args)
 
 
 class HostAction(Action):
@@ -121,8 +146,38 @@ class StageAction(Action):
     kind = "stage"
 
 
+class _BoundAction:
+    """Private immutable function partial used by QD adapters."""
+
+    def __init__(
+        self,
+        function: Callable[..., Any],
+        bound_args: tuple[object, ...],
+        kind: ActionKind,
+    ) -> None:
+        self._function = function
+        self._bound_args = bound_args
+        self.kind = kind
+
+    @qd.pyfunc
+    def invoke(self, call_args: qd.template() = ()):
+        return self._function(*(self._bound_args + call_args))
+
+
+class _BoundActionCollection:
+    """Frozen bound counterpart of one ActionCollection, safe to pass into a QD function."""
+
+    def __init__(self, actions: tuple[_BoundAction, ...]) -> None:
+        self._actions = actions
+
+    @qd.pyfunc
+    def invoke(self, call_args: qd.template() = ()):
+        for action in qd.static(self._actions):
+            action.invoke(call_args)
+
+
 class ActionCollection:
-    """Protocol storage owned by a manager System, filled by its protocols and frozen by Engine.
+    """Protocol storage owned by a manager System, filled during build and frozen in invocation order.
 
     `collection.add(action, rank=r)` registers with an explicit position, and `collection += action` registers
     unranked. The frozen order puts ranked entries first, sorted by rank, then unranked entries in registration order.
@@ -140,13 +195,20 @@ class ActionCollection:
         self._call_args = call_args
         self._pending: list[tuple[int | None, Action]] = []
         self._frozen: tuple[Action, ...] | None = None
+        self._bound: _BoundActionCollection | None = None
 
-    @property
-    def actions(self) -> tuple[Action, ...]:
-        """The frozen schedule, available once Engine has finished build()."""
+    def _frozen_actions(self) -> tuple[Action, ...]:
+        """Return compiler-only frozen storage after Engine build."""
         if self._frozen is None:
             gs.raise_exception(f"{type(self._owner).__name__}.{self._name} is frozen only after build().")
         return self._frozen
+
+    def _bind(self, binder: "_ActionBinder | None" = None) -> _BoundActionCollection:
+        return (binder or _ActionBinder()).bind_collection(self)
+
+    def invoke(self, call_args: qd.template() = ()):
+        """Invoke without exposing the inner Action tuple."""
+        return self._bind().invoke(call_args)
 
     def __iadd__(self, action: Action) -> "ActionCollection":
         self.add(action)
@@ -166,31 +228,15 @@ class ActionCollection:
         # tracing, a stage inside a loop breaks top-level ordering, and an inline function at top level runs serially.
         if action.kind != self._kind:
             gs.raise_exception(f"{where}: expects {self._kind!r} Actions, got {type(action).__name__}.")
-        # invoke() calls function(*bound_args, *call_args), so the signature ends with exactly the call arguments of
-        # this collection, and a mismatch fails here instead of during graph compilation
-        function = getattr(action.function, "fn", action.function)
-        parameters = list(inspect.signature(function).parameters.values())
-        positional_kinds = (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-        if any(parameter.kind not in positional_kinds for parameter in parameters):
-            gs.raise_exception(f"{where}: {function.__qualname__} must take positional parameters only.")
-        n_bound = len(action.bound_args)
-        if n_bound > len(parameters):
-            gs.raise_exception(
-                f"{where}: {function.__qualname__} takes {len(parameters)} parameter(s), "
-                f"but the Action binds {n_bound}."
-            )
-        call_args = tuple(parameter.name for parameter in parameters[n_bound:])
-        if call_args != self._call_args:
-            gs.raise_exception(
-                f"{where}: {function.__qualname__} binds {n_bound} argument(s) and then takes {call_args}, but the "
-                f"protocol calls it with {self._call_args}."
-            )
+        # The declaration has not run yet. Function-kind and signature validation happen atomically when this frozen
+        # collection is first bound, after initialization has made every Data/config argument available.
         # None keeps registration order, and an int >= 0 pins a position that one entry at most can hold
         if rank is not None:
             if not isinstance(rank, int) or isinstance(rank, bool) or rank < 0:
                 gs.raise_exception(f"{where}: rank must be None or an int >= 0, got {rank!r}.")
             if any(rank_taken == rank for rank_taken, _ in self._pending):
                 gs.raise_exception(f"{where}: rank {rank} is already taken.")
+        action._collections.append(self)
         self._pending.append((rank, action))
 
     def freeze(self) -> None:
@@ -200,6 +246,117 @@ class ActionCollection:
         )
         unranked_entries = [(rank, action) for rank, action in self._pending if rank is None]
         self._frozen = tuple(action for _, action in (*ranked_entries, *unranked_entries))
+
+
+class _ActionBinder:
+    """Private recursive closure resolver shared by every root of a Schedule expansion."""
+
+    _allowed_children: ClassVar[dict[ActionKind, set[ActionKind]]] = {
+        "host": {"host"},
+        "inline": {"inline"},
+        "stage": {"stage", "inline"},
+    }
+
+    def __init__(self) -> None:
+        self._active_actions: list[Action] = []
+        self._active_collections: list[ActionCollection] = []
+
+    @staticmethod
+    def _action_name(action: Action) -> str:
+        if action._declaration is not None:
+            return action._declaration.func.__qualname__
+        assert action._function is not None
+        function = getattr(action._function, "fn", action._function)
+        return function.__qualname__
+
+    def _check_child_kind(self, parent: Action, child_kind: ActionKind) -> None:
+        if child_kind not in self._allowed_children[parent.kind]:
+            gs.raise_exception(f"{parent.kind} Action cannot invoke {child_kind} Action")
+
+    def bind_action(self, action: Action) -> _BoundAction:
+        if action._bound is not None:
+            return action._bound
+        if any(action is parent for parent in self._active_actions):
+            cycle = " -> ".join((*map(self._action_name, self._active_actions), self._action_name(action)))
+            gs.raise_exception(f"recursive Action cycle: {cycle}")
+
+        self._active_actions.append(action)
+        try:
+            if action._declaration is None:
+                function = action._function
+                bound_args = list(action._bound_args)
+            else:
+                assert action._owner is not None
+                declared_result: Any = action._declaration.func(action._owner)
+                function, *bound_args = declared_result if isinstance(declared_result, tuple) else (declared_result,)
+
+            if isinstance(function, types.MethodType):
+                function, bound_args = function.__func__, [function.__self__, *bound_args]
+            if not isinstance(function, Callable):
+                gs.raise_exception(f"{self._action_name(action)} must return a callable first.")
+            function_kind = kind_of(function)
+            if function_kind != action.kind:
+                gs.raise_exception(
+                    f"{self._action_name(action)} declared {action.kind!r}, but the function is {function_kind!r}."
+                )
+
+            resolved_args: list[object] = []
+            for bound_arg in bound_args:
+                if isinstance(bound_arg, Action):
+                    self._check_child_kind(action, bound_arg.kind)
+                    resolved_args.append(self.bind_action(bound_arg))
+                elif isinstance(bound_arg, ActionCollection):
+                    self._check_child_kind(action, bound_arg._kind)
+                    resolved_args.append(self.bind_collection(bound_arg))
+                else:
+                    resolved_args.append(bound_arg)
+
+            bound = _BoundAction(function, tuple(resolved_args), action.kind)
+            for collection in action._collections:
+                if collection._frozen is not None:
+                    self._validate_collection_action(collection, bound)
+            action._bound = bound
+            return action._bound
+        finally:
+            self._active_actions.pop()
+
+    @staticmethod
+    def _validate_collection_action(collection: ActionCollection, action: _BoundAction) -> None:
+        where = f"{type(collection._owner).__name__}.{collection._name}"
+        function = getattr(action._function, "fn", action._function)
+        parameters = list(inspect.signature(function).parameters.values())
+        positional_kinds = (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        if any(parameter.kind not in positional_kinds for parameter in parameters):
+            gs.raise_exception(f"{where}: {function.__qualname__} must take positional parameters only.")
+        n_bound = len(action._bound_args)
+        if n_bound > len(parameters):
+            gs.raise_exception(
+                f"{where}: {function.__qualname__} takes {len(parameters)} parameter(s), "
+                f"but the Action binds {n_bound}."
+            )
+        call_args = tuple(parameter.name for parameter in parameters[n_bound:])
+        if call_args != collection._call_args:
+            gs.raise_exception(
+                f"{where}: {function.__qualname__} binds {n_bound} argument(s) and then takes {call_args}, but the "
+                f"protocol calls it with {collection._call_args}."
+            )
+
+    def bind_collection(self, collection: ActionCollection) -> _BoundActionCollection:
+        if collection._bound is not None:
+            return collection._bound
+        if any(collection is parent for parent in self._active_collections):
+            cycle = " -> ".join(item._name for item in (*self._active_collections, collection))
+            gs.raise_exception(f"recursive ActionCollection cycle: {cycle}")
+
+        self._active_collections.append(collection)
+        try:
+            actions = tuple(self.bind_action(action) for action in collection._frozen_actions())
+            for action in actions:
+                self._validate_collection_action(collection, action)
+            collection._bound = _BoundActionCollection(actions)
+            return collection._bound
+        finally:
+            self._active_collections.pop()
 
 
 # ------------------------------------------------------------------------------------
@@ -223,7 +380,7 @@ class Dep(Generic[T]):
     def __init__(self, system_type: type[T]) -> None:
         self.system_type = system_type
 
-    def __set_name__(self, owner, name):
+    def __set_name__(self, owner: type[object], name: str) -> None:
         self._name = name
 
 
@@ -233,10 +390,10 @@ class Require(Dep[T]):
     label = "required"
 
     @overload
-    def __get__(self, instance: None, owner: type) -> "Require[T]": ...
+    def __get__(self, instance: None, owner: type[object]) -> "Require[T]": ...
     @overload
-    def __get__(self, instance: object, owner: type) -> T: ...
-    def __get__(self, instance: object | None, owner: type) -> "Require[T] | T":
+    def __get__(self, instance: object, owner: type[object]) -> T: ...
+    def __get__(self, instance: object | None, owner: type[object]) -> "Require[T] | T":
         # Non-data descriptor: after resolution the System lives in the instance dict and shadows this
         if instance is None:
             return self
@@ -249,10 +406,10 @@ class Find(Dep[T]):
     label = "optional"
 
     @overload
-    def __get__(self, instance: None, owner: type) -> "Find[T]": ...
+    def __get__(self, instance: None, owner: type[object]) -> "Find[T]": ...
     @overload
-    def __get__(self, instance: object, owner: type) -> T | None: ...
-    def __get__(self, instance: object | None, owner: type) -> "Find[T] | T | None":
+    def __get__(self, instance: object, owner: type[object]) -> T | None: ...
+    def __get__(self, instance: object | None, owner: type[object]) -> "Find[T] | T | None":
         # Non-data descriptor: after resolution the System lives in the instance dict and shadows this
         if instance is None:
             return self
@@ -271,56 +428,45 @@ class ActionCollectionDeclaration:
         self.call_args = tuple(call_args)
 
     @overload
-    def __get__(self, instance: None, owner: type) -> "ActionCollectionDeclaration": ...
+    def __get__(self, instance: None, owner: type[object]) -> "ActionCollectionDeclaration": ...
     @overload
-    def __get__(self, instance: object, owner: type) -> ActionCollection: ...
-    def __get__(self, instance: Any, owner: type) -> "ActionCollectionDeclaration | ActionCollection":
+    def __get__(self, instance: "System", owner: type[object]) -> ActionCollection: ...
+    def __get__(
+        self, instance: "System | None", owner: type[object]
+    ) -> "ActionCollectionDeclaration | ActionCollection":
         return self
 
 
 class ActionDeclaration(Generic[A]):
-    """Class-level declaration created by @System.action(kind=...), whose method returns `function, *bound_args`."""
+    """Class-level declaration created by @System.action."""
 
-    def __init__(self, function: Callable[..., object], action_type: type[A]) -> None:
+    def __init__(self, function: Callable[..., _ActionSpec], action_type: type[A]) -> None:
         self.__doc__ = function.__doc__
         self.func = function
         self.action_type = action_type
 
-    def __set_name__(self, owner, name):
+    def __set_name__(self, owner: type[object], name: str) -> None:
         self._name = name
 
     @overload
-    def __get__(self, instance: None, owner: type) -> "ActionDeclaration[A]": ...
+    def __get__(self, instance: None, owner: type[object]) -> "ActionDeclaration[A]": ...
     @overload
-    def __get__(self, instance: object, owner: type) -> A: ...
-    def __get__(self, instance: Any, owner: type) -> "ActionDeclaration[A] | A":
+    def __get__(self, instance: "System", owner: type[object]) -> A: ...
+    def __get__(self, instance: "System | None", owner: type[object]) -> "ActionDeclaration[A] | A":
         if instance is None:
             return self
-        where = f"{type(instance).__name__}.{self._name}"
-        # Reached on the first access only. Actions are created during build(), once dependencies are resolved.
-        if not instance.is_building:
-            gs.raise_exception(f"{where}: Actions are created only in build().")
-        declared_result: Any = self.func(instance)
-        function, *bound_args = declared_result if isinstance(declared_result, tuple) else (declared_result,)
-        # A bound method binds its System as the first argument
-        if isinstance(function, types.MethodType):
-            function, bound_args = function.__func__, [function.__self__, *bound_args]
-        function_kind = kind_of(function)
-        if function_kind != self.action_type.kind:
-            gs.raise_exception(f"{where}: declared {self.action_type.kind!r}, but the function is {function_kind!r}.")
-        action = self.action_type(function, tuple(bound_args))
-        # The instance dict shadows this descriptor afterwards, so each System and name holds one Action
+        action = cast(A, self.action_type._from_declaration(instance, self))
         instance.__dict__[self._name] = action
         return action
 
 
-def wrap_protocol(method, doc: str | None, references: tuple[str, ...]) -> Any:
+def wrap_protocol(method: F, doc: str | None, references: tuple[str, ...]) -> F:
     """Wrap a protocol method with its build-time checks, and attach its guide and references."""
     signature = inspect.signature(method)
     hints: dict[str, Any] | None = None
 
     @functools.wraps(method)
-    def wrapper(self, *args, **kwargs):
+    def wrapper(self: "System", *args: object, **kwargs: object) -> object:
         nonlocal hints
         where = f"{type(self).__name__}.{method.__name__}"
         # A protocol changes the schedule that build() freezes
@@ -345,7 +491,7 @@ def wrap_protocol(method, doc: str | None, references: tuple[str, ...]) -> Any:
         wrapper.__doc__ = "\n\n".join(
             filter(None, [inspect.cleandoc(wrapper.__doc__ or ""), "\n".join(reference_lines)])
         )
-    return wrapper
+    return cast(F, wrapper)
 
 
 # ------------------------------------------------------------------------------------
@@ -355,12 +501,10 @@ def wrap_protocol(method, doc: str | None, references: tuple[str, ...]) -> Any:
 
 @qd.data_oriented
 class System:
-    """One backend unit of the simulation, constructed from the scene, that owns its Data and composes with
-    other Systems.
+    """One backend unit of the simulation that owns its Data and composes with other Systems.
 
-    Engine adds a System instance when it is added by hand, when a function registered with `register_system` returns
-    it for the scene, or when another added System or the Engine requires its class, which Engine then constructs from
-    the scene. Behavior is shared by composition: System accepts one level of inheritance only.
+    A concrete Engine owns any product-specific construction context. Base System has no Scene contract. Behavior is
+    shared by composition: System accepts one level of inheritance only.
     """
 
     # Read-only mapping from attribute name to its Require / Find declaration
@@ -372,7 +516,7 @@ class System:
     # Names of custom data parameters declared with @System.data
     data_declarations: ClassVar[tuple[str, ...]] = ()
 
-    def __init_subclass__(cls, **kwargs):
+    def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
         # Single-level inheritance with no intermediate bases or mixins, so behavior is composed
         check_inheritance_depth(cls, System, max_depth=1)
@@ -383,11 +527,11 @@ class System:
         cls.actions = tuple(name for name, value in vars(cls).items() if isinstance(value, ActionDeclaration))
         cls.data_declarations = tuple(name for name, value in vars(cls).items() if isinstance(value, DataDeclaration))
 
-    def __init__(self, scene: "Scene") -> None:
-        self._scene = scene
+    def __init__(self) -> None:
         self.is_building = False
         # The Systems of the Engine, which it hands over once the System set is fixed (see find)
         self._systems: MappingProxyType[type["System"], "System"] | None = None
+        self._custom_data_roots: dict[str, object] = {}
         for name in type(self).action_collections:
             declaration = vars(type(self))[name]
             self.__dict__[name] = ActionCollection(self, name, declaration.kind, declaration.call_args)
@@ -399,7 +543,13 @@ class System:
     @staticmethod
     def protocol(*, doc: str | None = None, references: tuple[str, ...] = ()) -> Callable[[F], F]: ...
     @staticmethod
-    def protocol(method=None, /, *, doc=None, references=()):
+    def protocol(
+        method: F | None = None,
+        /,
+        *,
+        doc: str | None = None,
+        references: tuple[str, ...] = (),
+    ) -> "F | Callable[[F], F]":
         """Mark an `on_*` method that receives Actions, valid only during build().
 
         Parameters annotated with HostAction, InlineAction or StageAction state which kind of Action they require, and
@@ -431,7 +581,7 @@ class System:
         kind       The kind of every Action it accepts: "host", "inline" or "stage" (see System.action). It matches
                    where the manager invokes them: host code, inside its own loop, or at the top level.
         call_args  The names of the arguments the manager supplies after the bound arguments of each Action. A function
-                   whose remaining parameters differ in count, order or name is rejected on `+=`.
+                   whose remaining parameters differ in count, order or name is rejected before invocation.
 
         The decorated method body is never executed, and its docstring documents the protocol.
         """
@@ -442,58 +592,34 @@ class System:
         """Expose one custom device-data parameter through GlobalDataContext.
 
         Direct System attributes inheriting Data are included automatically and need no declaration. Use this
-        decorator for one custom dataclass, @qd.data_oriented object or ndarray per function. The function is evaluated
-        after initialization and must only return an existing object.
+        decorator for one custom dataclass, @qd.data_oriented object or ndarray per function. The function must return
+        a stable object created with the System; initialization may fill its buffers but must not replace the root.
         """
         return DataDeclaration(function)
 
-    def action_schedule(self, *names: str, kind: ActionKind = "stage"):
-        """Compile this manager's selected frozen control topology, separately from GlobalDataContext.
-
-        With no names, include every collection of ``kind`` declared by this System. A nested Action or collection must
-        appear in an Action's bound arguments; hidden traversal through arbitrary System attributes is not scheduled.
-        Call only after Engine build has frozen all collections. The returned object is a Pipeline/kernel argument, not
-        System-owned Data.
-        """
-        from genesis.engine.action_schedule import compile_action_schedule
-
-        selected_names = names or tuple(
-            name for name in type(self).action_collections if self.__dict__[name]._kind == kind
-        )
-        collections = {}
-        for name in selected_names:
-            if name not in type(self).action_collections:
-                gs.raise_exception(f"{type(self).__name__} has no ActionCollection {name!r}.")
-            collection = self.__dict__[name]
-            if collection._kind != kind:
-                gs.raise_exception(f"{type(self).__name__}.{name} has kind {collection._kind!r}, expected {kind!r}.")
-            collections[name] = collection
-        return compile_action_schedule(collections)
-
     @overload
     @staticmethod
-    def action(*, kind: Literal["host"]) -> Callable[[Callable[..., Any]], ActionDeclaration[HostAction]]: ...
+    def action(*, kind: Literal["host"]) -> Callable[[Callable[..., _ActionSpec]], ActionDeclaration[HostAction]]: ...
     @overload
     @staticmethod
-    def action(*, kind: Literal["inline"]) -> Callable[[Callable[..., Any]], ActionDeclaration[InlineAction]]: ...
+    def action(
+        *, kind: Literal["inline"]
+    ) -> Callable[[Callable[..., _ActionSpec]], ActionDeclaration[InlineAction]]: ...
     @overload
     @staticmethod
-    def action(*, kind: Literal["stage"]) -> Callable[[Callable[..., Any]], ActionDeclaration[StageAction]]: ...
+    def action(*, kind: Literal["stage"]) -> Callable[[Callable[..., _ActionSpec]], ActionDeclaration[StageAction]]: ...
     @staticmethod
-    def action(*, kind: ActionKind) -> Callable[[Callable[..., Any]], ActionDeclaration[Any]]:
+    def action(*, kind: ActionKind) -> Callable[[Callable[..., _ActionSpec]], ActionDeclaration[Action]]:
         """Declare one Action of the given kind.
 
-        The decorated method returns `function, *bound_args`. Its first access, which happens during build(), binds
-        them into one Action of the declared kind and caches it, and every later access returns that object. Engine
-        accesses every declared Action before closing the build window, so a manager invokes any of them directly
-        afterwards. A bound method binds its own System, so `return self.initialize` is a complete Action.
+        The decorated method defines the Action closure by returning ``function, *bound_args``.
 
         `kind` states where the manager invokes the Action. It is required, and it matches the function:
 
         kind="host"
-            Function:  a plain Python function or bound method.
+            Function:  a plain Python function, bound method or @qd.kernel.
             Invoked:   from host code, e.g. the host function of an init pipeline.
-            Runs:      on the host, and may allocate, call from_numpy, or launch kernels itself.
+            Runs:      from the host, and may allocate, call from_numpy, or directly launch a kernel.
             Use for:   one-time setup that requires the host. Uncommon, since device-capable bookkeeping such as
                        counting or offsets belongs in a kernel.
             Typed as:  HostAction.
@@ -515,9 +641,7 @@ class System:
 
         Each kind has one valid call site: a host function fails when traced into device code, a stage called inside a
         loop has its top-level loops demoted and loses stage ordering, and an inline function called at top level runs
-        as one serial step. The declared kind is therefore checked three times: against the function when the Action is
-        created (a @qd.kernel is rejected), against the collection on `+=`, and against the protocol parameter
-        annotation (HostAction / InlineAction / StageAction) when the protocol is called.
+        as one serial step. Kind and signature are validated before invocation.
         """
         return lambda function: ActionDeclaration(function, ACTION_TYPES_MAP[kind])
 
@@ -544,7 +668,13 @@ class System:
             )
         return system
 
-    def build(self):
+    def action_schedule(self, **roots: "Action | ActionCollection | None") -> "ActionSchedule":
+        """Create a stage schedule whose roots are Actions or collections owned by this System."""
+        if self._systems is None or self.is_building:
+            gs.raise_exception(f"{type(self).__name__}.action_schedule requires a completed Engine build.")
+        return _compile_action_schedule(type(self).__name__, {self}, roots)
+
+    def build(self) -> None:
         pass
 
 
@@ -580,16 +710,16 @@ class Pipeline:
     GlobalDataContext binds it first, before control objects such as a schedule. Pipeline is final.
     """
 
-    def __init_subclass__(cls, **kwargs):
+    def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
         check_inheritance_depth(cls, Pipeline, max_depth=0)
 
     def __init__(
         self,
-        entry: Callable[..., Any],
+        entry: Callable[..., object],
         *bound_args: object,
-        yield_callbacks: dict[int, Callable[..., Any]] | None = None,
-    ):
+        yield_callbacks: dict[int, Callable[..., object]] | None = None,
+    ) -> None:
         # A Quadrants callable keeps the decorated Python function as `fn`
         entry_name = getattr(getattr(entry, "fn", entry), "__qualname__", repr(entry))
         if getattr(entry, "_is_wrapped_kernel", False):
@@ -609,13 +739,24 @@ class Pipeline:
         # A Quadrants kernel exposes resume(), which Callable cannot express
         self.entry: Any = entry
         self.bound_args = bound_args
+        self._prepared_bound_args: tuple[object, ...] | None = None
         self.kind: PipelineKind = kind
         self.yield_callbacks = dict(yield_callbacks or {})
+
+    def _prepare_bound_args(self) -> tuple[object, ...]:
+        """Expand every deferred ActionSchedule once, immediately before this Pipeline's first entry call."""
+        if self._prepared_bound_args is None:
+            from genesis.engine.action_schedule import ActionSchedule
+
+            self._prepared_bound_args = tuple(
+                arg.expand() if isinstance(arg, ActionSchedule) else arg for arg in self.bound_args
+            )
+        return self._prepared_bound_args
 
     def run(self, *call_args: object) -> None:
         """Run the entry once with the given call arguments, dispatching yield callbacks and resuming until a graph
         kernel completes."""
-        args = (*self.bound_args, *call_args)
+        args = (*self._prepare_bound_args(), *call_args)
         status = self.entry(*args)
         # A host entry and a plain kernel return None, and a graph kernel returns a GraphStatus that may have yielded
         while status is not None and status.yielded:
@@ -628,26 +769,25 @@ class Pipeline:
 
 
 SystemT = TypeVar("SystemT", bound=System)
-CreateFunT = TypeVar("CreateFunT", bound=Callable[["Scene"], System | None])
+CreateFunT = TypeVar("CreateFunT", bound=Callable[["Engine"], System | None])
 
 # Lists rather than sets, since the registration order fixes the order in which an Engine adds the Systems
-_system_registry: dict[type["Engine"], list[Callable[["Scene"], System | None]]] = {}
+_system_registry: dict[type["Engine"], list[Callable[["Engine"], System | None]]] = {}
 
 
 def register_system(engine_cls: type["Engine"]) -> Callable[[CreateFunT], CreateFunT]:
-    """Register, for one final Engine class, a function that receives the scene and returns the System it calls for, or
-    None for no System.
+    """Register, for one final Engine class, a concrete-context factory returning one System or None.
 
     Used as `@register_system(MyEngine)`, once per Engine class the function serves. Registering the same function again
-    for the same Engine class does nothing. The build of an Engine calls every function registered for its exact class
-    once, in registration order, and adds every System returned whose class the Engine does not hold yet.
+    for the same Engine class does nothing. Base Engine build looks up the exact runtime subclass and passes that
+    concrete Engine instance to every registered factory.
     """
     # Engine.__init_subclass__ makes every proper subclass of Engine final
     if not isinstance(engine_cls, type) or not issubclass(engine_cls, Engine) or engine_cls is Engine:
         gs.raise_exception(f"Systems are registered for a final Engine subclass, got {engine_cls!r}.")
 
     def register(create_fun: CreateFunT) -> CreateFunT:
-        # A create function decides from the scene whether the System exists at all, which a class cannot express
+        # A factory decides from concrete Engine context whether the System exists, which a class cannot express
         if isinstance(create_fun, type) or not isinstance(create_fun, Callable):
             gs.raise_exception(f"register_system takes a function that creates a System, got {create_fun!r}.")
         create_funs = _system_registry.setdefault(engine_cls, [])
@@ -658,9 +798,48 @@ def register_system(engine_cls: type["Engine"]) -> Callable[[CreateFunT], Create
     return register
 
 
-def unregister_system(engine_cls: type["Engine"], create_fun: Callable[["Scene"], System | None]) -> None:
+def unregister_system(engine_cls: type["Engine"], create_fun: Callable[["Engine"], System | None]) -> None:
     assert isinstance(create_fun, Callable)
     _system_registry[engine_cls].remove(create_fun)
+
+
+def registered_system_factories(engine_cls: type["Engine"]) -> tuple[Callable[["Engine"], System | None], ...]:
+    """Return the exact-class factories for invocation by that concrete Engine."""
+    return tuple(_system_registry.get(engine_cls, ()))
+
+
+def _compile_action_schedule(
+    owner_name: str,
+    owned_systems: set[System],
+    roots: dict[str, Action | ActionCollection | None],
+) -> "ActionSchedule":
+    from genesis.engine.action_schedule import compile_action_schedule
+
+    if not roots:
+        gs.raise_exception(f"{owner_name}.action_schedule requires at least one explicit root.")
+
+    seen: set[int] = set()
+    for alias, root in roots.items():
+        if not alias.isidentifier() or keyword.iskeyword(alias):
+            gs.raise_exception(f"{owner_name}.action_schedule alias {alias!r} is not a valid identifier.")
+        if root is None:
+            continue
+        if not isinstance(root, (Action, ActionCollection)):
+            gs.raise_exception(
+                f"{owner_name}.action_schedule root {alias!r} must be an Action, ActionCollection or None."
+            )
+        if id(root) in seen:
+            gs.raise_exception(f"{owner_name}.action_schedule binds the same root more than once.")
+        seen.add(id(root))
+        if root._owner not in owned_systems:
+            gs.raise_exception(f"Schedule root {alias!r} is not owned by {owner_name}.")
+        kind = root.kind if isinstance(root, Action) else root._kind
+        if kind != "stage":
+            gs.raise_exception(f"Schedule root {alias!r} must be stage, got {kind!r}.")
+        if isinstance(root, ActionCollection):
+            root._frozen_actions()
+
+    return compile_action_schedule(roots)
 
 
 class Engine:
@@ -672,14 +851,13 @@ class Engine:
     # Read-only mapping from attribute name to its Require / Find declaration
     deps: ClassVar[MappingProxyType[str, Dep]] = MappingProxyType({})
 
-    def __init_subclass__(cls, **kwargs):
+    def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
         # Every Engine subclass is final, so the Systems registered for it apply to exactly one class
         check_inheritance_depth(cls, Engine, max_depth=1)
         cls.deps = MappingProxyType({name: dep for name, dep in vars(cls).items() if isinstance(dep, Dep)})
 
-    def __init__(self, scene: "Scene") -> None:
-        self.scene = scene
+    def __init__(self) -> None:
         self.systems: dict[type[System], System] = {}
         self._is_resolved = False
 
@@ -711,7 +889,13 @@ class Engine:
             gs.raise_exception(f"{type(self).__name__} requires {system_type.__name__}, which it does not hold.")
         return system
 
-    def create_context(self):
+    def action_schedule(self, **roots: "Action | ActionCollection | None") -> "ActionSchedule":
+        """Create one explicitly aliased stage schedule from Actions/Collections owned by this Engine's Systems."""
+        if not self._is_resolved:
+            gs.raise_exception(f"{type(self).__name__}.action_schedule requires a resolved Engine.")
+        return _compile_action_schedule(type(self).__name__, set(self.systems.values()), roots)
+
+    def create_context(self) -> "GlobalDataContext":
         """Collect initialized System data parameters and create the first argument of device Pipelines."""
         from genesis.utils.qd_ext import GlobalDataContext
 
@@ -738,45 +922,39 @@ class Engine:
                     add(system, name, value)
             for name in type(system).data_declarations:
                 declaration = vars(type(system))[name]
-                add(system, name, declaration.function(system))
+                value = declaration.function(system)
+                previous = system._custom_data_roots.get(name)
+                if previous is None:
+                    system._custom_data_roots[name] = value
+                elif value is not previous:
+                    gs.raise_exception(f"{type(system).__name__}.{name}: @System.data root identity changed.")
+                add(system, name, system._custom_data_roots[name])
 
         return GlobalDataContext(data)
 
     def build(self) -> None:
-        """Add the registered and required Systems, resolve every dependency, run build() on every System in add order,
-        then freeze every ActionCollection.
-
-        Systems added by hand come first, then the Systems the functions registered for this Engine class return for
-        the scene (see register_system), then every System an added System or the Engine requires, constructed from
-        the scene, breadth first. A registered function returning a class already added by hand adds nothing, the
-        System added by hand taking its place. A Find adds nothing: it resolves to the System when
-        something else added it, and to None otherwise.
-        """
-        for create_fun in _system_registry.get(type(self), ()):
-            system = create_fun(self.scene)
+        """Invoke exact-subclass factories, admit required Systems, resolve/build them, then freeze collections."""
+        for create in registered_system_factories(type(self)):
+            system = create(self)
             # Importing the module of a System class registers its function, which must not admit the class twice
             if system is not None and type(system) not in self.systems:
                 self.add_system(system)
         # Compute the ordered unique closure of required System types before constructing any of them
         for system_type in get_required_system_types((type(self), *self.systems)):
-            self.add_system(system_type(self.scene))
+            self.add_system(system_type())
         # Resolve required and optional dependencies once the complete System set is fixed
         owners: list[Engine | System] = [self, *self.systems.values()]
         for owner in owners:
             for name, dep in owner.deps.items():
                 owner.__dict__[name] = self.systems.get(dep.system_type)
         self._is_resolved = True
-        # Actions are created and protocols called only while the build window is open
+        # Protocols compose Actions only while the build window is open.
         for system in self.systems.values():
             system._systems = MappingProxyType(self.systems)
             system.is_building = True
         for system in self.systems.values():
             system.build()
-        # Every declared Action is created within the window, so a manager invokes it directly from then on
-        for system in self.systems.values():
-            for name in type(system).actions:
-                getattr(system, name)
-        # Closing the window freezes every declared collection, so the graph topology is fixed from here on
+        # Closing the window freezes every ActionCollection's topology.
         for system in self.systems.values():
             system.is_building = False
             for name in type(system).action_collections:

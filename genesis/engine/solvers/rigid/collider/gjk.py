@@ -22,8 +22,17 @@ from .utils import func_det3, func_is_discrete_geoms
 
 
 class GJK:
-    def __init__(self, rigid_solver):
-        self._solver = rigid_solver
+    def __init__(
+        self,
+        *,
+        batch_size,
+        rigid_config,
+        options,
+        enable_mujoco_compatibility,
+        enable_multi_contact,
+    ):
+        self._batch_size = batch_size
+        self._rigid_config = rigid_config
 
         # Resolve the 'enable_contact_patch' option in place, so later consumers (the collider's convex contact
         # budget) read the resolved value. The contact patch (polygon clipping over the touching faces) skips
@@ -31,25 +40,21 @@ class GJK:
         # because the reference engine builds its manifolds that way inside its GJK/EPA and runs its perturbation
         # scheme only in its legacy fallback pipeline, which the MPR compatibility pipeline mirrors. It defaults off
         # otherwise, as the perturbation-based detection is more reliable on marginal manifolds.
-        enable_contact_patch = rigid_solver._options.enable_contact_patch
+        enable_contact_patch = options.enable_contact_patch
         if enable_contact_patch is None:
-            enable_contact_patch = (
-                rigid_solver._enable_mujoco_compatibility
-                and rigid_solver._options.use_gjk_collision
-                and rigid_solver._enable_multi_contact
-            )
+            enable_contact_patch = enable_mujoco_compatibility and options.use_gjk_collision and enable_multi_contact
         elif enable_contact_patch:
-            if not rigid_solver._options.use_gjk_collision:
+            if not options.use_gjk_collision:
                 gs.raise_exception("'enable_contact_patch' requires 'use_gjk_collision'.")
-            if not rigid_solver._enable_multi_contact:
+            if not enable_multi_contact:
                 gs.raise_exception("'enable_contact_patch' requires 'enable_multi_contact'.")
-        rigid_solver._options.enable_contact_patch = enable_contact_patch
+        options.enable_contact_patch = enable_contact_patch
         gjk_max_iterations = 50
         epa_max_iterations = 50
         # 6 * epa_max_iterations is the maximum number of faces in the polytope.
         polytope_max_faces = 6 * epa_max_iterations
 
-        if rigid_solver.rigid_config.requires_grad:
+        if rigid_config.requires_grad:
             # For differentiable contact detection, we find multiple contact points for each pair.
             max_contacts_per_pair = 20
             max_contact_polygon_verts = 1
@@ -121,13 +126,13 @@ class GJK:
             self.contact0_gjk_state = array_class.get_gjk_state_contact_only(n_contact0_threads)
             self.multicontact_gjk_state = array_class.get_gjk_state(
                 n_multicontact_threads,
-                self._solver.rigid_config,
+                self._rigid_config,
                 self._gjk_info,
-                self._solver.rigid_config.requires_grad,
+                self._rigid_config.requires_grad,
             )
         else:
             self.gjk_state = array_class.get_gjk_state(
-                self._solver._B, self._solver.rigid_config, self._gjk_info, self._solver.rigid_config.requires_grad
+                self._batch_size, self._rigid_config, self._gjk_info, self._rigid_config.requires_grad
             )
 
 

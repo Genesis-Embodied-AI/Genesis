@@ -613,7 +613,12 @@ def check_mujoco_data_consistency(
     gs_n_contacts = gs_sim.rigid_solver.collider.collider_state.n_contacts.to_numpy()[0]
     mj_n_contacts = mj_sim.data.ncon
     assert gs_n_contacts == mj_n_contacts, f"contact count differs: gs={gs_n_contacts} mj={mj_n_contacts}"
-    gs_n_constraints = gs_sim.rigid_solver.constraint_solver.n_constraints.to_numpy()[0]
+    constraint_solver = gs_sim.rigid_solver.constraint_solver
+    if constraint_solver is None:
+        assert ignore_constraints
+        gs_n_constraints = 0
+    else:
+        gs_n_constraints = constraint_solver.n_constraints.to_numpy()[0]
     mj_n_constraints = mj_sim.data.nefc
     assert gs_n_constraints == mj_n_constraints
 

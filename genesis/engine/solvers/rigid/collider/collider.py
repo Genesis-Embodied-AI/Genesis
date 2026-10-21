@@ -6,21 +6,20 @@ including broad-phase (sweep-and-prune), narrow-phase (convex-convex, SDF-based,
 terrain), and contact management.
 """
 
-from collections.abc import Iterator
-from typing import TYPE_CHECKING
+from collections.abc import Iterator, Sequence
+from typing import TYPE_CHECKING, TypeAlias
 
 import numpy as np
-import torch
-
-import trimesh
-
+from numpy.typing import ArrayLike, NDArray
 import quadrants as qd
+import torch
+import trimesh
 
 import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
-from genesis.engine.solvers.kinematic_solver import _balanced_variant_mapping
 from genesis.engine.solvers.rigid.abd.forward_kinematics import func_update_geom_aabbs
+from genesis.engine.solvers.rigid.kinematic_tools import balanced_variant_mapping as _balanced_variant_mapping
 from genesis.utils.misc import (
     assign_indexed_tensor,
     get_gpu_core_count,
@@ -30,7 +29,6 @@ from genesis.utils.misc import (
     qd_to_torch,
     tensor_to_array,
 )
-from genesis.utils.sdf import SDF
 
 from . import gjk, mpr, support_field
 from .broadphase import func_broad_phase
@@ -56,7 +54,30 @@ from .narrowphase import (
 )
 
 if TYPE_CHECKING:
-    from genesis.engine.systems.rigid_solver_system import RigidSolverSystem
+    from typing import Protocol
+
+    from genesis.engine.entities import RigidEntity
+    from genesis.engine.entities.rigid_entity.rigid_equality import RigidEquality
+    from genesis.engine.entities.rigid_entity.rigid_geom import RigidGeom
+    from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
+    from genesis.engine.systems.rigid_rigid_contact_system import RigidRigidContactSystem
+    from genesis.options.solvers import RigidOptions
+
+    ColliderData = RigidRigidContactSystem.Data
+
+    class RigidData(Protocol):
+        geoms_init_AABB: array_class.GeomsInitAABB
+        dyn_state: array_class.DynState
+        dyn_info: array_class.DynInfo
+        rigid_info: array_class.RigidInfo
+        errno: qd.Tensor
+
+
+EnvIndex: TypeAlias = ArrayLike | torch.Tensor | None
+ContactArray: TypeAlias = NDArray[np.generic] | torch.Tensor
+ContactValue: TypeAlias = ContactArray | tuple[ContactArray, ...]
+ContactResult: TypeAlias = dict[str, ContactValue]
+ConnectivityArray: TypeAlias = list[NDArray[np.integer]] | NDArray[np.integer]
 
 
 IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
@@ -66,112 +87,63 @@ NEUTRAL_COLLISION_RES_ABS = 0.01
 NEUTRAL_COLLISION_RES_REL = 0.05
 
 
-class ColliderData:
-    """The collision data of the rigid geoms: the collider info, state and static configuration, the narrowphase
-    sub-components, and the host-side tables and caches derived from the rigid model."""
-
-
-def create_collider_data(rigid: "RigidSolverSystem", sdf: SDF) -> "ColliderData":
-    """Create the collision data of the rigid geoms from the rigid model, the signed distance fields of the geoms
-    being embedded in its collider info."""
-    collider = ColliderData()
-
-    collider._mc_perturbation = 1e-3 if rigid._enable_mujoco_compatibility else 5e-3
-    collider._mc_tolerance = 1e-3 if rigid._enable_mujoco_compatibility else 1.5e-2
-    collider._box_MAXCONPAIR = 16
-    collider._diff_pos_tolerance = 1e-2
-    collider._diff_normal_tolerance = 1e-2
-    collider._prune_deep_penetration_ratio = 3.0
-    collider._prune_max_contacts_per_link_pair = 32
-    collider._prune_max_contacts_floor = 512
-
-    # The narrowphase sub-components are built AND activated before the collision fields, whose collider info embeds
-    # their description structs: support-field activation reallocates its data at the final size, so it has to run
-    # before embedding (see ColliderInfo). The SDF is precomputed once per geometry and owned by RigidSdfSystem.
-    collider.sdf = sdf
-    collider.mpr = mpr.MPR(rigid)
-    collider.gjk = gjk.GJK(rigid)
-    collider._support_field = support_field.SupportField(rigid)
-
-    _init_static_config(collider, rigid)
-    collider._use_split_narrowphase = (
-        collider.collider_config.has_non_box_plane_convex_convex and gs.backend != gs.cpu and not rigid._requires_grad
-    )
-
-    # The split narrowphase launches one thread per core, its contact0 pass rounding up to whole environments. An
-    # upper-bound estimate of the core count sizes these launches (Genesis-Embodied-AI/Genesis#2616).
-    if collider._use_split_narrowphase:
-        gpu_cores = collider.collider_config.gpu_cores
-        n_contact0_threads = rigid._B * ((gpu_cores + rigid._B - 1) // rigid._B)
-        collider.mpr.activate(n_contact0_threads, gpu_cores)
-        collider.gjk.activate(n_contact0_threads, gpu_cores)
-    elif collider.collider_config.has_non_box_plane_convex_convex:
-        collider.gjk.activate()
-    if collider.collider_config.has_terrain or collider.collider_config.has_non_box_plane_convex_convex:
-        collider._support_field.activate()
-
-    _init_collision_fields(collider, rigid)
-
-    if gs.use_zerocopy:
-        # Probe every view the zero-copy contact query needs (including the per-call n_contacts and
-        # contact_sort_idx ones, which qd_to_torch caches on their fields). If any field sits past 2**31 bytes
-        # in its SNode tree no zero-copy view exists, and get_contacts falls back to the gather-kernel path.
-        collider._contact_data: dict[str, torch.Tensor] | None = {}
-        try:
-            qd_to_torch(collider.collider_state.n_contacts, copy=False)
-            qd_to_torch(collider.collider_state.contact_sort_idx, transpose=True, copy=False)
-            qd_to_torch(collider.collider_state.first_time, copy=False)
-            if collider.collider_config.has_non_box_plane_convex_convex:
-                qd_to_torch(collider.collider_state.contact_cache.normal, copy=False)
-                qd_to_torch(collider.collider_state.contact_cache.penetration, copy=False)
-            for key, name in (
-                ("link_a", "link_a"),
-                ("link_b", "link_b"),
-                ("geom_a", "geom_a"),
-                ("geom_b", "geom_b"),
-                ("penetration", "penetration"),
-                ("position", "pos"),
-                ("normal", "normal"),
-                ("force", "force"),
-            ):
-                collider._contact_data[key] = qd_to_torch(
-                    getattr(collider.collider_state.contact_data, name), transpose=True, copy=False
-                )
-        except ValueError:
-            collider._contact_data = None
-
-    # Make sure that the initial state is clean
-    collider_clear(collider, rigid)
-    return collider
-
-
-def iter_collider_data(collider: "ColliderData") -> Iterator[array_class.DataItem | array_class.ConfigItem]:
+def iter_collider_data(
+    collider_data: "ColliderData",
+    use_split_narrowphase: bool,
+) -> Iterator[array_class.DataItem | array_class.ConfigItem]:
     """Yield every array and static config of the collider (see 'Solver.data')."""
     structs = [
-        (collider, "collider_config"),
-        (collider.gjk, "gjk_config"),
-        (collider, "collider_info"),
-        (collider, "collider_state"),
-        (collider.mpr, "mpr_state"),
+        (collider_data, "collider_config"),
+        (collider_data, "gjk_config"),
+        (collider_data, "collider_info"),
+        (collider_data, "collider_state"),
+        (collider_data, "mpr_state"),
     ]
-    if collider._use_split_narrowphase:
-        structs += [(collider.mpr, name) for name in ("contact0_mpr_state", "multicontact_mpr_state")]
-        structs += [(collider.gjk, name) for name in ("contact0_gjk_state", "multicontact_gjk_state")]
-    elif collider.collider_config.has_non_box_plane_convex_convex:
-        structs.append((collider.gjk, "gjk_state"))
+    if use_split_narrowphase:
+        structs += [(collider_data, name) for name in ("contact0_mpr_state", "multicontact_mpr_state")]
+        structs += [(collider_data, name) for name in ("contact0_gjk_state", "multicontact_gjk_state")]
+    elif collider_data.collider_config.has_non_box_plane_convex_convex:
+        structs.append((collider_data, "gjk_state"))
     for owner, name in structs:
         yield from array_class.iter_data(owner, name)
 
 
-def _init_static_config(collider: "ColliderData", rigid: "RigidSolverSystem") -> None:
+def build_collider_static_config(
+    *,
+    options: "RigidOptions",
+    rigid_config: array_class.RigidSimStaticConfig,
+    batch_size: int,
+    n_envs: int,
+    n_geoms: int,
+    entities: Sequence["RigidEntity"],
+    links: Sequence["RigidLink"],
+    geoms: Sequence["RigidGeom"],
+    equalities: Sequence["RigidEquality"],
+    geoms_pos: NDArray[np.floating],
+    geoms_quat: NDArray[np.floating],
+    enable_mujoco_compatibility: bool,
+    enable_self_collision: bool,
+    enable_adjacent_collision: bool,
+    enable_neutral_collision: bool,
+    requires_grad: bool,
+    delegated_link_idxs: frozenset[int],
+    exclusive_link_idxs: frozenset[int],
+    box_max_contacts_per_pair: int,
+) -> tuple[
+    array_class.ColliderStaticConfig,
+    int,
+    NDArray[np.integer],
+    NDArray[np.integer],
+    NDArray[np.bool_],
+]:
     # Identify the convex collision detection (ccd) algorithm
-    if rigid._options.use_gjk_collision:
-        if rigid._enable_mujoco_compatibility:
+    if options.use_gjk_collision:
+        if enable_mujoco_compatibility:
             ccd_algorithm = CCD_ALGORITHM_CODE.MJ_GJK
         else:
             ccd_algorithm = CCD_ALGORITHM_CODE.GJK
     else:
-        if rigid._enable_mujoco_compatibility:
+        if enable_mujoco_compatibility:
             ccd_algorithm = CCD_ALGORITHM_CODE.MJ_MPR
         else:
             ccd_algorithm = CCD_ALGORITHM_CODE.MPR
@@ -179,9 +151,9 @@ def _init_static_config(collider: "ColliderData", rigid: "RigidSolverSystem") ->
     # The contact patch can hand back the full clipped polygon of a box-box pair, which the reference engine
     # budgets at 8 contacts (see func_clip_polygon); the convex budget must hold it or the extra witnesses of the
     # patch are silently dropped. 'enable_contact_patch' is resolved by the GJK constructor.
-    if rigid.rigid_config.requires_grad:
+    if rigid_config.requires_grad:
         n_contacts_per_convex_pair = 20
-    elif rigid._options.enable_contact_patch:
+    elif options.enable_contact_patch:
         n_contacts_per_convex_pair = 8
     else:
         n_contacts_per_convex_pair = 5
@@ -193,20 +165,37 @@ def _init_static_config(collider: "ColliderData", rigid: "RigidSolverSystem") ->
     # represented: too few points and parts of the patch drop out intermittently as the geometry moves, losing
     # constraint directions and letting bodies slip.
     n_contacts_per_nonconvex_pair = 40
-    if rigid._options.box_box_detection and sum(g.type == gs.GEOM_TYPE.BOX for g in rigid.geoms) > 1:
-        n_contacts_per_nonconvex_pair = max(n_contacts_per_nonconvex_pair, collider._box_MAXCONPAIR)
+    if options.box_box_detection and sum(g.type == gs.GEOM_TYPE.BOX for g in geoms) > 1:
+        n_contacts_per_nonconvex_pair = max(n_contacts_per_nonconvex_pair, box_max_contacts_per_pair)
 
     # Compute collision pairs and algorithm flags in a single pass
     (
-        collider._n_possible_pairs,
-        collider._collision_pair_idx,
-        collider._valid_collision_pairs,
+        n_possible_pairs,
+        collision_pair_idx,
+        valid_collision_pairs,
         has_terrain,
         has_non_box_plane_convex_convex,
         has_convex_specialization,
         has_nonconvex_nonterrain,
-        collider._large_contact_pair_mask,
-    ) = _compute_collision_pair_idx(collider, rigid)
+        large_contact_pair_mask,
+    ) = _compute_collision_pair_idx(
+        options=options,
+        batch_size=batch_size,
+        n_envs=n_envs,
+        n_geoms=n_geoms,
+        entities=entities,
+        links=links,
+        geoms=geoms,
+        equalities=equalities,
+        geoms_pos=geoms_pos,
+        geoms_quat=geoms_quat,
+        enable_self_collision=enable_self_collision,
+        enable_adjacent_collision=enable_adjacent_collision,
+        enable_neutral_collision=enable_neutral_collision,
+        requires_grad=requires_grad,
+        delegated_link_idxs=delegated_link_idxs,
+        exclusive_link_idxs=exclusive_link_idxs,
+    )
 
     # The hull prune drops a contact only from a (link_a, link_b) bucket of at least 3 contacts, the middle one of 3
     # collinear points being the smallest case, so the pass is compiled in whenever some pair of links can emit 3
@@ -216,14 +205,14 @@ def _init_static_config(collider: "ColliderData", rigid: "RigidSolverSystem") ->
     # mode the pass is always compiled in, being a no-op wherever it would be left out. Composes with contact
     # islands: pruning writes a logical permutation into contact_sort_idx, which the island construction reads.
     has_prunable_contacts = gs.use_ndarray or has_nonconvex_nonterrain or has_terrain
-    if not has_prunable_contacts and len(collider._valid_collision_pairs):
-        geoms_type = np.array([geom.type for geom in rigid.geoms])
-        geoms_link_idx = np.array([geom.link.idx for geom in rigid.geoms])
-        pairs_type = geoms_type[collider._valid_collision_pairs]
-        pairs_link_idx = np.sort(geoms_link_idx[collider._valid_collision_pairs], axis=1)
+    if not has_prunable_contacts and len(valid_collision_pairs):
+        geoms_type = np.array([geom.type for geom in geoms])
+        geoms_link_idx = np.array([geom.link.idx for geom in geoms])
+        pairs_type = geoms_type[valid_collision_pairs]
+        pairs_link_idx = np.sort(geoms_link_idx[valid_collision_pairs], axis=1)
         is_point_pair = np.isin(pairs_type, (gs.GEOM_TYPE.SPHERE, gs.GEOM_TYPE.ELLIPSOID)).any(axis=1)
         is_multi_point_pair = ~is_point_pair & (
-            rigid._options.enable_multi_contact | (pairs_type == gs.GEOM_TYPE.BOX).any(axis=1)
+            options.enable_multi_contact | (pairs_type == gs.GEOM_TYPE.BOX).any(axis=1)
         )
         _, links_pair_idx = np.unique(pairs_link_idx, axis=0, return_inverse=True)
         links_pair_n_contacts = np.bincount(links_pair_idx, weights=np.where(is_multi_point_pair, 3, 1))
@@ -231,81 +220,159 @@ def _init_static_config(collider: "ColliderData", rigid: "RigidSolverSystem") ->
 
     # Initialize the static config, which stores every data that are compile-time constants.
     # Note that updating any of them will trigger recompilation.
-    collider.collider_config = array_class.ColliderStaticConfig(
+    compiled_has_non_box_plane_convex_convex = has_non_box_plane_convex_convex or gs.use_ndarray
+    split_narrowphase = compiled_has_non_box_plane_convex_convex and gs.backend != gs.cpu and not requires_grad
+    coop_dedup = (
+        gs.backend != gs.cpu
+        and not rigid_config.requires_grad
+        and has_prunable_contacts
+        and (options.contact_pruning_tolerance or 0.0) > 0.0
+        and batch_size <= 0.5 * get_gpu_core_count()
+    )
+    collider_config = array_class.ColliderStaticConfig(
+        has_possible_pairs=n_possible_pairs > 0,
         gpu_cores=get_gpu_core_count(),
         gpu_cores_per_unit=get_gpu_cores_per_unit(),
         has_terrain=has_terrain,
         # Outside performance mode the convex narrowphase and the contact sort it gates are always compiled in, the
         # narrowphase finding nothing in a scene whose convex pairs all take a box specialization.
-        has_non_box_plane_convex_convex=has_non_box_plane_convex_convex or gs.use_ndarray,
+        has_non_box_plane_convex_convex=compiled_has_non_box_plane_convex_convex,
         # Outside performance mode the box specializations are always compiled in, their pass finding nothing in a
         # scene without box pairs, which every other path leaves to it by geom type.
         has_convex_specialization=has_convex_specialization or gs.use_ndarray,
         has_nonconvex_nonterrain=has_nonconvex_nonterrain,
         has_prunable_contacts=has_prunable_contacts,
+        split_narrowphase=split_narrowphase,
+        coop_dedup=coop_dedup,
         n_contacts_per_convex_pair=n_contacts_per_convex_pair,
         n_contacts_per_nonconvex_pair=n_contacts_per_nonconvex_pair,
         ccd_algorithm=ccd_algorithm,
     )
+    return (
+        collider_config,
+        n_possible_pairs,
+        collision_pair_idx,
+        valid_collision_pairs,
+        large_contact_pair_mask,
+    )
 
 
-def _init_collision_fields(collider: "ColliderData", rigid: "RigidSolverSystem") -> None:
+def initialize_collider_fields(
+    collider_data: "ColliderData",
+    *,
+    rigid_data: "RigidData",
+    sdf_info: array_class.SDFInfo,
+    mpr_info: array_class.MPRInfo,
+    gjk_info: array_class.GJKInfo,
+    support_field_info: array_class.SupportFieldInfo,
+    options: "RigidOptions",
+    rigid_config: array_class.RigidSimStaticConfig,
+    collider_config: array_class.ColliderStaticConfig,
+    batch_size: int,
+    n_geoms: int,
+    n_links: int,
+    n_verts: int,
+    max_collision_pairs: int,
+    entities: Sequence["RigidEntity"],
+    geoms: Sequence["RigidGeom"],
+    requires_grad: bool,
+    n_possible_pairs: int,
+    collision_pair_idx: NDArray[np.integer],
+    valid_collision_pairs: NDArray[np.integer],
+    large_contact_pair_mask: NDArray[np.bool_],
+    mc_perturbation: float,
+    mc_tolerance: float,
+    diff_pos_tolerance: float,
+    diff_normal_tolerance: float,
+    prune_deep_penetration_ratio: float,
+    prune_max_contacts_per_link_pair: int,
+    prune_max_contacts_floor: int,
+) -> None:
     # Pre-compute fields, as they are needed to initialize the collider state and info.
-    vert_neighbors, vert_neighbor_start, vert_n_neighbors = _compute_verts_connectivity(collider, rigid)
+    vert_neighbors, vert_neighbor_start, vert_n_neighbors = _compute_verts_connectivity(geoms, n_verts)
     n_vert_neighbors = len(vert_neighbors)
-    n_valid_pairs = len(collider._valid_collision_pairs)
+    n_valid_pairs = len(valid_collision_pairs)
 
     # Initialize [info], which stores every data that must be considered mutable from Quadrants's perspective,
     # i.e. unknown at compile time, but IMMUTABLE from Genesis scene's perspective after build.
-    collider.collider_info = array_class.get_collider_info(
-        rigid,
+    collider_data.collider_info = array_class.get_collider_info(
+        geoms,
+        n_verts,
         n_vert_neighbors,
         n_valid_pairs,
-        collider.collider_config,
-        collider.mpr._mpr_info,
-        collider.gjk._gjk_info,
-        collider._support_field.support_field_info,
-        collider.sdf.sdf_info,
-        mc_perturbation=collider._mc_perturbation,
-        mc_tolerance=collider._mc_tolerance,
-        diff_pos_tolerance=collider._diff_pos_tolerance,
-        diff_normal_tolerance=collider._diff_normal_tolerance,
-        contact_pruning_tolerance=rigid._options.contact_pruning_tolerance or 0.0,
-        prune_deep_penetration_ratio=collider._prune_deep_penetration_ratio,
+        collider_config,
+        mpr_info,
+        gjk_info,
+        support_field_info,
+        sdf_info,
+        mc_perturbation=mc_perturbation,
+        mc_tolerance=mc_tolerance,
+        diff_pos_tolerance=diff_pos_tolerance,
+        diff_normal_tolerance=diff_normal_tolerance,
+        contact_pruning_tolerance=options.contact_pruning_tolerance or 0.0,
+        prune_deep_penetration_ratio=prune_deep_penetration_ratio,
     )
-    _init_collision_pair_idx(collider, rigid, collider._collision_pair_idx)
-    _init_valid_pairs(collider, rigid)
-    _init_verts_connectivity(collider, rigid, vert_neighbors, vert_neighbor_start, vert_n_neighbors)
-    _init_verts_spatial_grid(collider, rigid)
-    _init_max_contacts(collider, rigid, collider._n_possible_pairs, collider._large_contact_pair_mask)
-    _init_terrain_state(collider, rigid)
+    _init_collision_pair_idx(collider_data, n_possible_pairs, collision_pair_idx)
+    _init_valid_pairs(collider_data, valid_collision_pairs)
+    _init_verts_connectivity(collider_data, n_verts, vert_neighbors, vert_neighbor_start, vert_n_neighbors)
+    _init_verts_spatial_grid(collider_data, geoms, n_verts)
+    _init_max_contacts(
+        collider_data,
+        options=options,
+        geoms=geoms,
+        n_links=n_links,
+        max_collision_pairs=max_collision_pairs,
+        requires_grad=requires_grad,
+        n_possible_pairs=n_possible_pairs,
+        large_contact_pair_mask=large_contact_pair_mask,
+        valid_collision_pairs=valid_collision_pairs,
+        prune_max_contacts_per_link_pair=prune_max_contacts_per_link_pair,
+        prune_max_contacts_floor=prune_max_contacts_floor,
+    )
+    _init_terrain_state(collider_data, entities, rigid_data.dyn_info)
 
     # Initialize [state], which stores every data that are may be updated at every single simulation step
-    n_possible_pairs_ = max(collider._n_possible_pairs, 1)
-    collider.collider_state = array_class.get_collider_state(
-        rigid,
-        rigid.rigid_config,
+    n_possible_pairs_ = max(n_possible_pairs, 1)
+    collider_data.collider_state = array_class.get_collider_state(
+        batch_size,
+        n_geoms,
+        rigid_config,
         n_possible_pairs_,
-        collider.collider_info,
-        collider.collider_config,
-        split_narrowphase=collider._use_split_narrowphase,
-    )
-
-    # 'contact_data_cache' is not used in Quadrants kernels, so keep it outside of the collider state / info
-    collider._contact_data_cache: dict[tuple[bool, bool], dict[str, torch.Tensor | tuple[torch.Tensor]]] = {}
-
-    # The warp-per-env cooperative dedup kernel beats the one-env-per-thread fused kernel only while the GPU keeps
-    # spare occupancy: past half the cores in envs, the launch oversubscribes the SMs and the fused kernel wins.
-    collider._use_coop_dedup = (
-        gs.backend != gs.cpu
-        and not rigid.rigid_config.requires_grad
-        and collider.collider_config.has_prunable_contacts
-        and (rigid._options.contact_pruning_tolerance or 0.0) > 0.0
-        and rigid._B <= 0.5 * collider.collider_config.gpu_cores
+        collider_data.collider_info,
+        collider_config,
+        split_narrowphase=collider_config.split_narrowphase,
+        enable_contact_patch=options.enable_contact_patch,
     )
 
 
-def _compute_collision_pair_idx(collider: "ColliderData", rigid: "RigidSolverSystem"):
+def _compute_collision_pair_idx(
+    *,
+    options: "RigidOptions",
+    batch_size: int,
+    n_envs: int,
+    n_geoms: int,
+    entities: Sequence["RigidEntity"],
+    links: Sequence["RigidLink"],
+    geoms: Sequence["RigidGeom"],
+    equalities: Sequence["RigidEquality"],
+    geoms_pos: NDArray[np.floating],
+    geoms_quat: NDArray[np.floating],
+    enable_self_collision: bool,
+    enable_adjacent_collision: bool,
+    enable_neutral_collision: bool,
+    requires_grad: bool,
+    delegated_link_idxs: frozenset[int],
+    exclusive_link_idxs: frozenset[int],
+) -> tuple[
+    int,
+    NDArray[np.integer],
+    NDArray[np.integer],
+    bool,
+    bool,
+    bool,
+    bool,
+    NDArray[np.bool_],
+]:
     """
     Compute flat indices of all valid collision pairs, plus algorithm flags.
 
@@ -315,38 +382,19 @@ def _compute_collision_pair_idx(collider: "ColliderData", rigid: "RigidSolverSys
     Returns (n_possible_pairs, collision_pair_idx, pair_flags) where pair_flags is a dict of booleans
     for has_terrain, has_non_box_plane_convex_convex, has_convex_specialization, has_nonconvex_nonterrain.
     """
-    # Links whose contact is handled by an external solver (e.g. IPC) — exclude from GJK collision.
-    # Only applies when the IPC coupler is active. Mirrors the link filtering logic in
-    # IPCCoupler._add_rigid_geoms_to_ipc: for two_way_soft_constraint with a link filter,
-    # only the filtered links are in IPC; for all other coupling modes, all links are in IPC.
-    from genesis.engine.couplers import IPCCoupler
-
-    n_geoms = rigid.n_geoms
-    geoms = rigid.geoms
+    # Links whose contact is handled by an external backend are excluded from rigid-rigid collision according to the
+    # explicit sets selected by the Simulator.
+    n_geoms = n_geoms
+    geoms = geoms
 
     if n_geoms == 0:
         empty_pairs = np.empty((0, 2), dtype=gs.np_int)
         empty_mask = np.zeros((0,), dtype=bool)
         return 0, np.full((0, 0), -1, dtype=gs.np_int), empty_pairs, False, False, False, False, empty_mask
 
-    # Links delegated to IPC coupler (skip pair only when BOTH are IPC-handled)
-    ipc_delegated_link_idxs = set()
-    ipc_only_link_idxs = set()
-    if isinstance(rigid.sim.coupler, IPCCoupler):
-        for entity in rigid._entities:
-            if not entity.material.needs_coup:
-                continue
-            mode = entity.material.coup_type
-            if mode is None:
-                continue
-            if mode == "ipc_only":
-                ipc_only_link_idxs.update(l.idx for l in entity.links)
-            link_filter_names = entity.material.coup_links
-            if mode == "two_way_soft_constraint" and link_filter_names is not None:
-                for name in link_filter_names:
-                    ipc_delegated_link_idxs.add(entity.get_link(name=name).idx)
-            else:
-                ipc_delegated_link_idxs.update(l.idx for l in entity.links)
+    # A delegated pair is skipped only when both links belong to the external backend.
+    delegated_link_idxs = delegated_link_idxs
+    exclusive_link_idxs = exclusive_link_idxs
 
     # Pre-compute per-geom properties into numpy arrays for vectorized filtering
     geom_link_idx = np.array([g.link.idx for g in geoms], dtype=np.int32)
@@ -356,14 +404,14 @@ def _compute_collision_pair_idx(collider: "ColliderData", rigid: "RigidSolverSys
     geom_contype = np.array([g.contype for g in geoms], dtype=np.int64)
     geom_conaffinity = np.array([g.conaffinity for g in geoms], dtype=np.int64)
     geom_local_mask = np.array([g.entity.is_local_collision_mask for g in geoms], dtype=bool)
-    geom_is_ipc_only = np.array([g.link.idx in ipc_only_link_idxs for g in geoms], dtype=bool)
-    geom_is_ipc_deleg = np.array([g.link.idx in ipc_delegated_link_idxs for g in geoms], dtype=bool)
+    geom_is_exclusive = np.array([g.link.idx in exclusive_link_idxs for g in geoms], dtype=bool)
+    geom_is_delegated = np.array([g.link.idx in delegated_link_idxs for g in geoms], dtype=bool)
     geom_type = np.array([g.type for g in geoms], dtype=np.int32)
     geom_is_convex = np.array([g.is_convex for g in geoms], dtype=bool)
 
     # Build weld pairs set for O(1) lookup (use sorted tuple keys)
     weld_pairs = set()
-    for eq in rigid.equalities:
+    for eq in equalities:
         if eq.type == gs.EQUALITY_TYPE.WELD:
             a, b = eq.eq_obj1id, eq.eq_obj2id
             weld_pairs.add((min(a, b), max(a, b)))
@@ -377,12 +425,12 @@ def _compute_collision_pair_idx(collider: "ColliderData", rigid: "RigidSolverSys
     # geoms in the same link
     valid = link_a != link_b
 
-    # Skip all pairs involving ipc_only links
-    valid &= ~geom_is_ipc_only[row]
-    valid &= ~geom_is_ipc_only[col]
+    # Exclusive links never enter rigid-rigid collision.
+    valid &= ~geom_is_exclusive[row]
+    valid &= ~geom_is_exclusive[col]
 
-    # Skip pairs where both links are delegated to IPC
-    valid &= ~(geom_is_ipc_deleg[row] & geom_is_ipc_deleg[col])
+    # Delegated links still collide with ordinary rigid links, but not with one another.
+    valid &= ~(geom_is_delegated[row] & geom_is_delegated[col])
 
     # pair of fixed links wrt the world
     valid &= ~(geom_is_fixed[row] & geom_is_fixed[col])
@@ -396,7 +444,7 @@ def _compute_collision_pair_idx(collider: "ColliderData", rigid: "RigidSolverSys
 
     # collider collision (same root) — disabled
     same_root = geom_root_idx[row] == geom_root_idx[col]
-    if not rigid._enable_self_collision:
+    if not enable_self_collision:
         valid &= ~same_root
 
     # Weld constraint filtering
@@ -411,16 +459,16 @@ def _compute_collision_pair_idx(collider: "ColliderData", rigid: "RigidSolverSys
     # links in a given environment, so a pair is kept only if some environment carries the variant of both geoms.
     # Each variant of every heterogeneous entity gets its own key, and the key 0 stands for every homogeneous geom.
     geoms_variant_key = np.zeros((n_geoms,), dtype=gs.np_int)
-    entities_envs_variant_key = [np.zeros((rigid._B,), dtype=gs.np_int)]
+    entities_envs_variant_key = [np.zeros((batch_size,), dtype=gs.np_int)]
     n_variant_keys = 1
-    for entity in rigid.entities:
+    for entity in entities:
         if not entity.desc.variants:
             continue
         for link in entity.links:
             for i_variant, (geom_start, geom_end) in enumerate(link._variant_geom_ranges):
                 geoms_variant_key[geom_start:geom_end] = n_variant_keys + i_variant
         n_variants = len(entity.desc.variants)
-        entities_envs_variant_key.append(n_variant_keys + _balanced_variant_mapping(n_variants, rigid._B))
+        entities_envs_variant_key.append(n_variant_keys + _balanced_variant_mapping(n_variants, batch_size))
         n_variant_keys += n_variants
     envs_variant_key = np.stack(entities_envs_variant_key)
     variant_keys_is_co_carried = np.zeros((n_variant_keys, n_variant_keys), dtype=bool)
@@ -431,8 +479,8 @@ def _compute_collision_pair_idx(collider: "ColliderData", rigid: "RigidSolverSys
     # These checks only apply when self_collision is enabled and the pair passed all vectorized filters
     self_colliding_pairs: list[tuple[int, int]] = []
 
-    needs_self_check = rigid._enable_self_collision and np.any(valid & same_root)
-    needs_neutral_check = needs_self_check and not rigid._enable_neutral_collision
+    needs_self_check = enable_self_collision and np.any(valid & same_root)
+    needs_neutral_check = needs_self_check and not enable_neutral_collision
 
     # Lazily compute geom vertices only for geoms that need neutral overlap checks
     geoms_verts: dict[int, np.ndarray] = {}
@@ -449,9 +497,8 @@ def _compute_collision_pair_idx(collider: "ColliderData", rigid: "RigidSolverSys
         for i_g in self_root_geom_idxs:
             geom = geoms[i_g]
             i_b = geom.active_envs_idx[0] if geom.active_envs_idx is not None else 0
-            env_idx = i_b if rigid.n_envs > 0 else None
-            geom_pos = tensor_to_array(geom.get_pos(env_idx, relative=False).reshape((3,)))
-            geom_quat = tensor_to_array(geom.get_quat(env_idx, relative=False).reshape((4,)))
+            geom_pos = geoms_pos[i_b, i_g]
+            geom_quat = geoms_quat[i_b, i_g]
             verts = gu.transform_by_trans_quat(geom.init_verts, geom_pos, geom_quat)
             centroid = verts.mean(axis=0, keepdims=True)
             verts = centroid + (1.0 - 1e-3) * (verts - centroid)
@@ -466,7 +513,7 @@ def _compute_collision_pair_idx(collider: "ColliderData", rigid: "RigidSolverSys
 
             # adjacent links
             # FIXME: Links should be considered adjacent if connected by only fixed joints.
-            if not rigid._enable_adjacent_collision:
+            if not enable_adjacent_collision:
                 is_adjacent = False
                 link_a_, link_b_ = (link_ga, link_gb) if link_ga.idx < link_gb.idx else (link_gb, link_ga)
                 while link_b_.parent_idx != -1:
@@ -475,7 +522,7 @@ def _compute_collision_pair_idx(collider: "ColliderData", rigid: "RigidSolverSys
                         break
                     if not all(joint.type is gs.JOINT_TYPE.FIXED for joint in link_b_.joints):
                         break
-                    link_b_ = rigid.links[link_b_.parent_idx]
+                    link_b_ = links[link_b_.parent_idx]
                 if is_adjacent:
                     valid[idx] = False
                     continue
@@ -533,7 +580,7 @@ def _compute_collision_pair_idx(collider: "ColliderData", rigid: "RigidSolverSys
         is_plane_b = valid_type_b == gs.GEOM_TYPE.PLANE
         is_plane_box = (is_plane_a & is_box_b) | (is_box_a & is_plane_b)
         specialized = is_plane_box
-        if rigid._options.box_box_detection:
+        if options.box_box_detection:
             specialized = specialized | (is_box_a & is_box_b)
         has_non_box_plane_convex_convex = bool(np.any(both_convex & ~specialized))
 
@@ -542,7 +589,7 @@ def _compute_collision_pair_idx(collider: "ColliderData", rigid: "RigidSolverSys
         # smoothly curved Minkowski boundary on which EPA never converges, and no contact is ever generated -
         # the bodies silently tunnel. Faceted partners (box, mesh) and the analytical plane branch are unaffected,
         # and sphere-sphere pairs are reconstructed in closed form (func_differentiable_sphere_contact).
-        if rigid._requires_grad:
+        if requires_grad:
             is_smooth_a = (valid_type_a == gs.GEOM_TYPE.SPHERE) | (valid_type_a == gs.GEOM_TYPE.ELLIPSOID)
             is_smooth_b = (valid_type_b == gs.GEOM_TYPE.SPHERE) | (valid_type_b == gs.GEOM_TYPE.ELLIPSOID)
             is_sphere_sphere = (valid_type_a == gs.GEOM_TYPE.SPHERE) & (valid_type_b == gs.GEOM_TYPE.SPHERE)
@@ -555,7 +602,7 @@ def _compute_collision_pair_idx(collider: "ColliderData", rigid: "RigidSolverSys
     else:
         has_non_box_plane_convex_convex = False
 
-    if rigid._options.box_box_detection:
+    if options.box_box_detection:
         spec_types = [gs.GEOM_TYPE.TERRAIN, gs.GEOM_TYPE.BOX]
         has_convex_specialization = bool(np.any(np.isin(valid_type_a, spec_types) | np.isin(valid_type_b, spec_types)))
     else:
@@ -577,7 +624,7 @@ def _compute_collision_pair_idx(collider: "ColliderData", rigid: "RigidSolverSys
     # detector is enabled) emit up to box_MAXCONPAIR contacts, so they join the nonconvex pairs in the large-cap
     # bucket rather than being sized as generic convex pairs.
     large_contact_mask = nonconvex_pair_mask
-    if rigid._options.box_box_detection:
+    if options.box_box_detection:
         large_contact_mask = large_contact_mask | (
             (valid_type_a == gs.GEOM_TYPE.BOX) & (valid_type_b == gs.GEOM_TYPE.BOX)
         )
@@ -594,7 +641,9 @@ def _compute_collision_pair_idx(collider: "ColliderData", rigid: "RigidSolverSys
     )
 
 
-def _compute_verts_connectivity(collider: "ColliderData", rigid: "RigidSolverSystem"):
+def _compute_verts_connectivity(
+    geoms: Sequence["RigidGeom"], n_verts: int
+) -> tuple[ConnectivityArray, ConnectivityArray, ConnectivityArray]:
     """
     Compute the vertex connectivity.
     """
@@ -602,13 +651,13 @@ def _compute_verts_connectivity(collider: "ColliderData", rigid: "RigidSolverSys
     vert_neighbor_start = []
     vert_n_neighbors = []
     offset = 0
-    for geom in rigid.geoms:
+    for geom in geoms:
         vert_neighbors.append(geom.vert_neighbors + geom.vert_start)
         vert_neighbor_start.append(geom.vert_neighbor_start + offset)
         vert_n_neighbors.append(geom.vert_n_neighbors)
         offset = offset + len(geom.vert_neighbors)
 
-    if rigid.n_verts > 0:
+    if n_verts > 0:
         vert_neighbors = np.concatenate(vert_neighbors, dtype=gs.np_int)
         vert_neighbor_start = np.concatenate(vert_neighbor_start, dtype=gs.np_int)
         vert_n_neighbors = np.concatenate(vert_n_neighbors, dtype=gs.np_int)
@@ -616,7 +665,7 @@ def _compute_verts_connectivity(collider: "ColliderData", rigid: "RigidSolverSys
     return vert_neighbors, vert_neighbor_start, vert_n_neighbors
 
 
-def _init_verts_spatial_grid(collider: "ColliderData", rigid: "RigidSolverSystem"):
+def _init_verts_spatial_grid(collider_data: "ColliderData", geoms: Sequence["RigidGeom"], n_verts: int) -> None:
     """
     Sort each geom's collision verts into a fixed 8x8x8 grid over its local AABB, as a permutation of vert
     indices ordered by grid cell (z fastest) plus per-cell vert ranges.
@@ -625,16 +674,16 @@ def _init_verts_spatial_grid(collider: "ColliderData", rigid: "RigidSolverSystem
     verts wholesale. Binning uses the same single-precision cell mapping as the kernel side; that mapping is
     monotone, so a vert inside a (padded) query box always lands inside the visited cell range.
     """
-    if rigid.n_verts == 0:
+    if n_verts == 0:
         return
-    n_geoms = len(rigid.geoms)
+    n_geoms = len(geoms)
     verts_idx = []
     verts_pos = []
     cells_vert_start = []
     geoms_origin = np.zeros((n_geoms, 3), dtype=gs.np_float)
     geoms_inv_cell_size = np.zeros((n_geoms, 3), dtype=gs.np_float)
     offset_vert = 0
-    for i_g, geom in enumerate(rigid.geoms):
+    for i_g, geom in enumerate(geoms):
         verts = geom.init_verts.astype(gs.np_float)
         if len(verts) == 0:
             verts_idx.append(np.zeros(0, dtype=gs.np_int))
@@ -657,7 +706,7 @@ def _init_verts_spatial_grid(collider: "ColliderData", rigid: "RigidSolverSystem
         geoms_inv_cell_size[i_g] = inv_cell_size
         offset_vert = offset_vert + len(verts)
 
-    verts_spatial_grid = collider.collider_info.verts_spatial_grid
+    verts_spatial_grid = collider_data.collider_info.verts_spatial_grid
     verts_spatial_grid.verts_idx.from_numpy(np.concatenate(verts_idx, dtype=gs.np_int))
     verts_spatial_grid.verts_pos.from_numpy(np.concatenate(verts_pos, dtype=gs.np_float))
     verts_spatial_grid.cells_vert_start.from_numpy(np.concatenate(cells_vert_start, dtype=gs.np_int))
@@ -665,44 +714,66 @@ def _init_verts_spatial_grid(collider: "ColliderData", rigid: "RigidSolverSystem
     verts_spatial_grid.geoms_inv_cell_size.from_numpy(geoms_inv_cell_size)
 
 
-def _init_collision_pair_idx(collider: "ColliderData", rigid: "RigidSolverSystem", collision_pair_idx):
-    if collider._n_possible_pairs == 0:
-        collider.collider_info.collision_pair_idx.fill(-1)
+def _init_collision_pair_idx(
+    collider_data: "ColliderData",
+    n_possible_pairs: int,
+    collision_pair_idx: NDArray[np.integer],
+) -> None:
+    if n_possible_pairs == 0:
+        collider_data.collider_info.collision_pair_idx.fill(-1)
         return
-    collider.collider_info.collision_pair_idx.from_numpy(collision_pair_idx)
+    collider_data.collider_info.collision_pair_idx.from_numpy(collision_pair_idx)
 
 
-def _init_valid_pairs(collider: "ColliderData", rigid: "RigidSolverSystem"):
-    if len(collider._valid_collision_pairs) > 0:
-        collider.collider_info.valid_collision_pairs.from_numpy(collider._valid_collision_pairs)
+def _init_valid_pairs(
+    collider_data: "ColliderData",
+    valid_collision_pairs: NDArray[np.integer],
+) -> None:
+    if len(valid_collision_pairs) > 0:
+        collider_data.collider_info.valid_collision_pairs.from_numpy(valid_collision_pairs)
 
 
 def _init_verts_connectivity(
-    collider: "ColliderData", rigid: "RigidSolverSystem", vert_neighbors, vert_neighbor_start, vert_n_neighbors
-):
-    if rigid.n_verts > 0:
-        collider.collider_info.vert_neighbors.from_numpy(vert_neighbors)
-        collider.collider_info.vert_neighbor_start.from_numpy(vert_neighbor_start)
-        collider.collider_info.vert_n_neighbors.from_numpy(vert_n_neighbors)
+    collider_data: "ColliderData",
+    n_verts: int,
+    vert_neighbors: ConnectivityArray,
+    vert_neighbor_start: ConnectivityArray,
+    vert_n_neighbors: ConnectivityArray,
+) -> None:
+    if n_verts > 0:
+        collider_data.collider_info.vert_neighbors.from_numpy(vert_neighbors)
+        collider_data.collider_info.vert_neighbor_start.from_numpy(vert_neighbor_start)
+        collider_data.collider_info.vert_n_neighbors.from_numpy(vert_n_neighbors)
 
 
-def _init_max_contacts(collider: "ColliderData", rigid: "RigidSolverSystem", n_possible_pairs, large_contact_pair_mask):
+def _init_max_contacts(
+    collider_data: "ColliderData",
+    *,
+    options: "RigidOptions",
+    geoms: Sequence["RigidGeom"],
+    n_links: int,
+    max_collision_pairs: int,
+    requires_grad: bool,
+    n_possible_pairs: int,
+    large_contact_pair_mask: NDArray[np.bool_],
+    valid_collision_pairs: NDArray[np.integer],
+    prune_max_contacts_per_link_pair: int,
+    prune_max_contacts_floor: int,
+) -> None:
     n_possible_nonconvex_pairs = int(np.count_nonzero(large_contact_pair_mask))
-    max_collision_pairs = min(rigid.max_collision_pairs, n_possible_pairs)
+    max_collision_pairs = min(max_collision_pairs, n_possible_pairs)
     # Size the contact buffer per regime: nonconvex pairs each emit up to n_contacts_per_nonconvex_pair, convex and
     # terrain pairs up to n_contacts_per_convex_pair. The worst case fills the capped pair budget with as many
     # (larger-cap) nonconvex pairs as exist, then the rest with convex pairs. The budget of a nonconvex pair is
     # shared between its two vertex scans: the verification scan appends while the pair is under its cap and then
     # only displaces the pair's least-penetrating contact, so the cap holds regardless of the number of scans.
-    cap_nonconvex = collider.collider_config.n_contacts_per_nonconvex_pair
-    cap_convex = collider.collider_config.n_contacts_per_convex_pair
+    cap_nonconvex = collider_data.collider_config.n_contacts_per_nonconvex_pair
+    cap_convex = collider_data.collider_config.n_contacts_per_convex_pair
     n_nonconvex = min(n_possible_nonconvex_pairs, max_collision_pairs)
     n_convex = min(n_possible_pairs - n_possible_nonconvex_pairs, max_collision_pairs - n_nonconvex)
     max_candidate_contacts = n_nonconvex * cap_nonconvex + n_convex * cap_convex
     # The broad phase reports each possible pair at most once per environment
-    max_collision_pairs_broad = min(
-        max_collision_pairs * rigid._options.multiplier_collision_broad_phase, n_possible_pairs
-    )
+    max_collision_pairs_broad = min(max_collision_pairs * options.multiplier_collision_broad_phase, n_possible_pairs)
 
     # Post-pruning contact budget for sizing the contact constraint buffers. The physical contact buffer must hold
     # everything the narrowphase can emit (max_candidate_contacts), but the constraint solver only consumes
@@ -716,37 +787,42 @@ def _init_max_contacts(collider: "ColliderData", rigid: "RigidSolverSystem", n_p
     # 'max_contacts' is set.
     max_contacts = max_candidate_contacts
     if (
-        collider.collider_config.has_prunable_contacts
-        and not rigid._requires_grad
-        and rigid._options.contact_pruning_tolerance is not None
+        collider_data.collider_config.has_prunable_contacts
+        and not requires_grad
+        and options.contact_pruning_tolerance is not None
     ):
-        geoms_link_idx = np.array([geom.link.idx for geom in rigid.geoms], dtype=np.int64)
-        pairs_link_idx = geoms_link_idx[collider._valid_collision_pairs]
-        pairs_key = rigid.n_links * pairs_link_idx.min(axis=1) + pairs_link_idx.max(axis=1)
+        geoms_link_idx = np.array([geom.link.idx for geom in geoms], dtype=np.int64)
+        pairs_link_idx = geoms_link_idx[valid_collision_pairs]
+        pairs_key = n_links * pairs_link_idx.min(axis=1) + pairs_link_idx.max(axis=1)
         _, pairs_group_idx = np.unique(pairs_key, return_inverse=True)
         pairs_n_contacts = np.where(large_contact_pair_mask, cap_nonconvex, cap_convex)
         link_pairs_n_contacts = np.bincount(pairs_group_idx, weights=pairs_n_contacts)
-        max_contacts_pruned = np.minimum(link_pairs_n_contacts, collider._prune_max_contacts_per_link_pair)
-        max_contacts_pruned_total = max(int(max_contacts_pruned.sum()), collider._prune_max_contacts_floor)
+        max_contacts_pruned = np.minimum(link_pairs_n_contacts, prune_max_contacts_per_link_pair)
+        max_contacts_pruned_total = max(int(max_contacts_pruned.sum()), prune_max_contacts_floor)
         max_contacts = min(max_contacts, max_contacts_pruned_total)
 
-    collider.collider_info.max_possible_pairs[None] = n_possible_pairs
-    collider.collider_info.max_collision_pairs[None] = max_collision_pairs
-    collider.collider_info.max_collision_pairs_broad[None] = max_collision_pairs_broad
-    collider.collider_info.max_candidate_contacts[None] = max_candidate_contacts
-    collider.collider_info.max_contacts[None] = max_contacts
+    if options.max_contacts is None:
+        options.max_contacts = max_contacts
+    else:
+        options.max_contacts = min(options.max_contacts, max_candidate_contacts)
+        max_contacts = options.max_contacts
+
+    collider_data.collider_info.max_possible_pairs[None] = n_possible_pairs
+    collider_data.collider_info.max_collision_pairs[None] = max_collision_pairs
+    collider_data.collider_info.max_collision_pairs_broad[None] = max_collision_pairs_broad
+    collider_data.collider_info.max_candidate_contacts[None] = max_candidate_contacts
+    collider_data.collider_info.max_contacts[None] = max_contacts
 
 
-def _init_terrain_state(collider: "ColliderData", rigid: "RigidSolverSystem"):
-    if collider.collider_config.has_terrain:
-        solver = rigid
-        links_idx = solver.dyn_info.geoms.link_idx.to_numpy()[
-            solver.dyn_info.geoms.type.to_numpy() == gs.GEOM_TYPE.TERRAIN
-        ]
-        entity_idx = solver.dyn_info.links.entity_idx.to_numpy()[links_idx[0]]
+def _init_terrain_state(
+    collider_data: "ColliderData", entities: Sequence["RigidEntity"], dyn_info: array_class.DynInfo
+) -> None:
+    if collider_data.collider_config.has_terrain:
+        links_idx = dyn_info.geoms.link_idx.to_numpy()[dyn_info.geoms.type.to_numpy() == gs.GEOM_TYPE.TERRAIN]
+        entity_idx = dyn_info.links.entity_idx.to_numpy()[links_idx[0]]
         if isinstance(entity_idx, np.ndarray):
             entity_idx = entity_idx[0]
-        entity = solver._entities[entity_idx]
+        entity = entities[entity_idx]
 
         rc = np.array(entity.terrain_hf.shape, dtype=gs.np_int)
         xyz_maxmin = np.array(
@@ -761,26 +837,32 @@ def _init_terrain_state(collider: "ColliderData", rigid: "RigidSolverSystem"):
             dtype=gs.np_float,
         )
 
-        collider.collider_info.terrain_hf.from_numpy(entity.terrain_hf)
-        collider.collider_info.terrain_rc.from_numpy(rc)
-        collider.collider_info.terrain_scale.from_numpy(entity.terrain_scale)
-        collider.collider_info.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
+        collider_data.collider_info.terrain_hf.from_numpy(entity.terrain_hf)
+        collider_data.collider_info.terrain_rc.from_numpy(rc)
+        collider_data.collider_info.terrain_scale.from_numpy(entity.terrain_scale)
+        collider_data.collider_info.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
 
 
 def collider_reset(
-    collider: "ColliderData", rigid: "RigidSolverSystem", envs_idx=None, *, cache_only: bool = True
+    collider_data: "ColliderData",
+    contact_data_cache: dict,
+    contact_views: dict[str, torch.Tensor] | None,
+    rigid_config: array_class.RigidSimStaticConfig,
+    envs_idx: EnvIndex,
+    *,
+    cache_only: bool = True,
 ) -> None:
-    collider._contact_data_cache.clear()
-    if gs.use_zerocopy and collider._contact_data is not None:
+    contact_data_cache.clear()
+    if gs.use_zerocopy and contact_views is not None:
         envs_mask = indices_to_mask(envs_idx)
         if not cache_only:
-            first_time = qd_to_torch(collider.collider_state.first_time, copy=False)
+            first_time = qd_to_torch(collider_data.collider_state.first_time, copy=False)
             assign_indexed_tensor(first_time, envs_mask, True)
 
-        if collider.collider_config.has_non_box_plane_convex_convex:
+        if collider_data.collider_config.has_non_box_plane_convex_convex:
             pairs_mask = (slice(None), *envs_mask)
-            normal = qd_to_torch(collider.collider_state.contact_cache.normal, copy=False)
-            penetration = qd_to_torch(collider.collider_state.contact_cache.penetration, copy=False)
+            normal = qd_to_torch(collider_data.collider_state.contact_cache.normal, copy=False)
+            penetration = qd_to_torch(collider_data.collider_state.contact_cache.penetration, copy=False)
             assign_indexed_tensor(normal, pairs_mask, 0.0)
             assign_indexed_tensor(penetration, pairs_mask, 0.0)
 
@@ -788,28 +870,48 @@ def collider_reset(
             torch.mps.synchronize()
         return
 
-    envs_idx = rigid._scene._sanitize_envs_idx(envs_idx)
-    collider_kernel_reset(envs_idx, collider.collider_state, rigid.rigid_config, collider.collider_config, cache_only)
+    collider_kernel_reset(
+        envs_idx,
+        collider_data.collider_state,
+        rigid_config,
+        collider_data.collider_config,
+        cache_only,
+    )
 
 
-def collider_clear(collider: "ColliderData", rigid: "RigidSolverSystem", envs_idx=None):
-    collider_reset(collider, rigid, envs_idx, cache_only=False)
+def collider_clear(
+    collider_data: "ColliderData",
+    contact_data_cache: dict,
+    contact_views: dict[str, torch.Tensor] | None,
+    rigid_data: "RigidData",
+    rigid_config: array_class.RigidSimStaticConfig,
+    use_hibernation: bool,
+    envs_idx: EnvIndex,
+) -> None:
+    collider_reset(
+        collider_data,
+        contact_data_cache,
+        contact_views,
+        rigid_config,
+        envs_idx,
+        cache_only=False,
+    )
 
     if (
         gs.use_zerocopy
-        and collider._contact_data is not None
-        and not rigid._use_hibernation
+        and contact_views is not None
+        and not use_hibernation
         and (not isinstance(envs_idx, torch.Tensor) or (not IS_OLD_TORCH or envs_idx.dtype == torch.bool))
     ):
-        n_contacts = qd_to_torch(collider.collider_state.n_contacts, copy=False)
-        link_a = qd_to_torch(collider.collider_state.contact_data.link_a, copy=False)
-        link_b = qd_to_torch(collider.collider_state.contact_data.link_b, copy=False)
-        geom_a = qd_to_torch(collider.collider_state.contact_data.geom_a, copy=False)
-        geom_b = qd_to_torch(collider.collider_state.contact_data.geom_b, copy=False)
-        penetration = qd_to_torch(collider.collider_state.contact_data.penetration, copy=False)
-        pos = qd_to_torch(collider.collider_state.contact_data.pos, copy=False)
-        normal = qd_to_torch(collider.collider_state.contact_data.normal, copy=False)
-        force = qd_to_torch(collider.collider_state.contact_data.force, copy=False)
+        n_contacts = qd_to_torch(collider_data.collider_state.n_contacts, copy=False)
+        link_a = qd_to_torch(collider_data.collider_state.contact_data.link_a, copy=False)
+        link_b = qd_to_torch(collider_data.collider_state.contact_data.link_b, copy=False)
+        geom_a = qd_to_torch(collider_data.collider_state.contact_data.geom_a, copy=False)
+        geom_b = qd_to_torch(collider_data.collider_state.contact_data.geom_b, copy=False)
+        penetration = qd_to_torch(collider_data.collider_state.contact_data.penetration, copy=False)
+        pos = qd_to_torch(collider_data.collider_state.contact_data.pos, copy=False)
+        normal = qd_to_torch(collider_data.collider_state.contact_data.normal, copy=False)
+        force = qd_to_torch(collider_data.collider_state.contact_data.force, copy=False)
         if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
             n_contacts.masked_fill_(envs_idx, 0)
             link_a.masked_fill_(envs_idx[None, :], -1)
@@ -845,70 +947,36 @@ def collider_clear(collider: "ColliderData", rigid: "RigidSolverSystem", envs_id
             torch.mps.synchronize()
         return
 
-    if not isinstance(envs_idx, torch.Tensor):
-        envs_idx = rigid._scene._sanitize_envs_idx(envs_idx)
     if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
         fn = kernel_masked_collider_clear
     else:
         fn = kernel_collider_clear
     fn(
         envs_idx,
-        rigid.dyn_state,
-        collider.collider_state,
-        rigid.dyn_info,
-        rigid.rigid_info,
-        rigid.rigid_config,
+        rigid_data.dyn_state,
+        collider_data.collider_state,
+        rigid_data.dyn_info,
+        rigid_data.rigid_info,
+        rigid_config,
     )
-
-
-def collider_detection(
-    collider: "ColliderData",
-    rigid: "RigidSolverSystem",
-    qd_n_equalities: qd.Tensor,
-) -> None:
-    # FIXME: quadrants#946 - a graph refuses the ndarrays that own a gradient, so a scene tracking gradients
-    # launches the detection without a graph.
-    kernel = kernel_detection_without_graph if rigid._requires_grad else kernel_detection
-    kernel(
-        rigid.geoms_init_AABB,
-        rigid.dyn_state,
-        collider.collider_state,
-        collider.mpr.mpr_state,
-        collider.gjk.gjk_state,
-        collider.gjk.gjk_state.diff_contact_input,
-        collider.mpr.contact0_mpr_state,
-        collider.gjk.contact0_gjk_state,
-        collider.mpr.multicontact_mpr_state,
-        collider.gjk.multicontact_gjk_state,
-        qd_n_equalities,
-        rigid.dyn_info,
-        rigid.rigid_info,
-        collider.collider_info,
-        rigid.rigid_config,
-        collider.collider_config,
-        collider.gjk.gjk_config,
-        collider._n_possible_pairs > 0,
-        collider._use_split_narrowphase,
-        collider._use_coop_dedup,
-        rigid._errno,
-    )
-    collider._contact_data_cache.clear()
 
 
 def collider_get_contacts(
-    collider: "ColliderData",
-    rigid: "RigidSolverSystem",
+    collider_data: "ColliderData",
+    contact_data_cache: dict,
+    contact_views: dict[str, torch.Tensor] | None,
+    rigid_config: array_class.RigidSimStaticConfig,
+    n_envs: int,
     as_tensor: bool = True,
     to_torch: bool = True,
     keep_batch_dim: bool = False,
     is_padded: bool = False,
-):
+) -> ContactResult:
     # Early return if already pre-computed
-    contact_data = collider._contact_data_cache.setdefault((as_tensor, to_torch, is_padded), {})
+    contact_data = contact_data_cache.setdefault((as_tensor, to_torch, is_padded), {})
     if contact_data:
         return contact_data.copy()
 
-    n_envs = rigid.n_envs
     # When pruning and spatial sort are both statically disabled, contact_sort_idx is guaranteed to stay at the
     # identity permutation, so the physical layout of contact_data already matches the logical order. In that
     # case the zero-copy fast path returns torch views over contact_data storage truncated to n_contacts_max.
@@ -916,11 +984,11 @@ def collider_get_contacts(
     # views, then materialize each field via a single torch.gather along the contact axis. This still avoids the
     # Quadrants gather kernel and produces a contiguous output suitable for downstream consumers.
     zerocopy_aligned = (
-        not collider.collider_config.has_prunable_contacts
-        and not collider.collider_config.has_non_box_plane_convex_convex
+        not collider_data.collider_config.has_prunable_contacts
+        and not collider_data.collider_config.has_non_box_plane_convex_convex
     )
-    if gs.use_zerocopy and collider._contact_data is not None:
-        n_contacts = qd_to_torch(collider.collider_state.n_contacts, copy=False)
+    if gs.use_zerocopy and contact_views is not None:
+        n_contacts = qd_to_torch(collider_data.collider_state.n_contacts, copy=False)
         # 'is_padded' returns fixed-capacity tensors (plus per-env 'n_contacts'), skipping the
         # 'n_contacts.max().item()' device->host sync that trimming to the live count needs.
         padded = is_padded
@@ -933,7 +1001,7 @@ def collider_get_contacts(
             # field; per-env trimming to n_contacts[i] happens in the ragged split below.
             if not (as_tensor or n_envs == 0) and not padded:
                 n_contacts_max = n_contacts.max().item()
-            sort_idx_view = qd_to_torch(collider.collider_state.contact_sort_idx, transpose=True, copy=False)
+            sort_idx_view = qd_to_torch(collider_data.collider_state.contact_sort_idx, transpose=True, copy=False)
             if padded:
                 # Gather the full capacity so no host-side trim (sync) is needed. Sort indices past the live
                 # range may be stale; clamp (out-of-place, preserving the zero-copy view) keeps them in-bounds.
@@ -950,7 +1018,7 @@ def collider_get_contacts(
             if as_tensor and n_envs > 0 and not padded:
                 pad_mask = torch.arange(n_contacts_max, device=sort_idx_view.device)[None, :] >= n_contacts[:, None]
 
-        for key, data in collider._contact_data.items():
+        for key, data in contact_views.items():
             if zerocopy_aligned:
                 if n_envs == 0:
                     if padded:
@@ -992,7 +1060,7 @@ def collider_get_contacts(
         return contact_data.copy()
 
     # Find out how much dynamic memory must be allocated
-    n_contacts = qd_to_numpy(collider.collider_state.n_contacts)
+    n_contacts = qd_to_numpy(collider_data.collider_state.n_contacts)
     n_contacts_max = n_contacts.max().item()
     # 'is_padded' is honored here too so the result matches the zero-copy path on every backend (this path
     # already syncs to size its buffers, so padding only fixes the shape). Padding needs the dense rectangular
@@ -1016,7 +1084,7 @@ def collider_get_contacts(
 
     # Copy contact data
     if n_contacts_max > 0:
-        collider_kernel_get_contacts(iout, fout, collider.collider_state, rigid.rigid_config, dense)
+        collider_kernel_get_contacts(iout, fout, collider_data.collider_state, rigid_config, dense)
 
     # Build structured view (no copy)
     if dense:
@@ -1026,7 +1094,7 @@ def collider_get_contacts(
         if padded:
             # Widen from the live count to the fixed capacity the zero-copy path returns (contact buffers are
             # sized max(max_candidate_contacts, 1)). New slots keep the sentinel (-1 ints / 0 floats).
-            capacity = max(collider.collider_info.max_candidate_contacts[None], 1)
+            capacity = max(collider_data.collider_info.max_candidate_contacts[None], 1)
             if to_torch:
                 iout_full = torch.full((nb, capacity, 4), -1, dtype=gs.tc_int, device=gs.device)
                 fout_full = torch.zeros((nb, capacity, 10), dtype=gs.tc_float, device=gs.device)
@@ -1090,97 +1158,120 @@ def collider_get_contacts(
     return contact_data.copy()
 
 
-def collider_backward(collider: "ColliderData", rigid: "RigidSolverSystem", dL_dposition, dL_dnormal, dL_dpenetration):
+def collider_backward(
+    collider: "ColliderData",
+    rigid_data: "RigidData",
+    rigid_config: array_class.RigidSimStaticConfig,
+    dL_dposition: NDArray[np.floating] | torch.Tensor,
+    dL_dnormal: NDArray[np.floating] | torch.Tensor,
+    dL_dpenetration: NDArray[np.floating] | torch.Tensor,
+) -> None:
     func_set_upstream_grad(dL_dposition, dL_dnormal, dL_dpenetration, collider.collider_state)
-    collider_backward_narrowphase(collider, rigid)
+    collider_backward_narrowphase(collider, rigid_data, rigid_config)
 
 
-def collider_backward_narrowphase(collider: "ColliderData", rigid: "RigidSolverSystem"):
+def collider_backward_narrowphase(
+    collider: "ColliderData",
+    rigid_data: "RigidData",
+    rigid_config: array_class.RigidSimStaticConfig,
+) -> None:
     func_narrow_phase_diff_convex_vs_convex.grad(
-        rigid.dyn_state,
+        rigid_data.dyn_state,
         collider.collider_state,
         collider.collider_state.diff_contact_input,
-        rigid.dyn_info,
-        rigid.rigid_info,
+        rigid_data.dyn_info,
+        rigid_data.rigid_info,
         collider.collider_info,
-        rigid.rigid_config,
-        rigid._errno,
+        rigid_config,
+        rigid_data.errno,
     )
 
 
-def forward_to_collider_data(name: str) -> property:
-    """Attribute of the facade that forwards to the collision data, settable as an attribute of the collider is."""
-
-    def get(facade):
-        return getattr(facade._data, name)
-
-    def set(facade, value):
-        setattr(facade._data, name, value)
-
-    return property(get, set)
-
-
 class Collider:
-    """User-facing collision facade over legacy Solver-owned or ContactSystem-owned data."""
-
-    collider_config = forward_to_collider_data("collider_config")
-    collider_info = forward_to_collider_data("collider_info")
-    collider_state = forward_to_collider_data("collider_state")
-    mpr = forward_to_collider_data("mpr")
-    gjk = forward_to_collider_data("gjk")
-    _mc_perturbation = forward_to_collider_data("_mc_perturbation")
-    _mc_tolerance = forward_to_collider_data("_mc_tolerance")
-    _box_MAXCONPAIR = forward_to_collider_data("_box_MAXCONPAIR")
-    _diff_pos_tolerance = forward_to_collider_data("_diff_pos_tolerance")
-    _diff_normal_tolerance = forward_to_collider_data("_diff_normal_tolerance")
-    _prune_deep_penetration_ratio = forward_to_collider_data("_prune_deep_penetration_ratio")
-    _prune_max_contacts_per_link_pair = forward_to_collider_data("_prune_max_contacts_per_link_pair")
-    _prune_max_contacts_floor = forward_to_collider_data("_prune_max_contacts_floor")
-    sdf = forward_to_collider_data("sdf")
-    _support_field = forward_to_collider_data("_support_field")
-    _large_contact_pair_mask = forward_to_collider_data("_large_contact_pair_mask")
-    _contact_data = forward_to_collider_data("_contact_data")
-    _collision_pair_idx = forward_to_collider_data("_collision_pair_idx")
-    _valid_collision_pairs = forward_to_collider_data("_valid_collision_pairs")
-    _n_possible_pairs = forward_to_collider_data("_n_possible_pairs")
-    _use_split_narrowphase = forward_to_collider_data("_use_split_narrowphase")
-    _use_coop_dedup = forward_to_collider_data("_use_coop_dedup")
-    _contact_data_cache = forward_to_collider_data("_contact_data_cache")
+    """Read-only public collision facade backed by RigidRigidContactSystem."""
 
     def __init__(
         self,
-        rigid: "RigidSolverSystem",
-        collider_data: ColliderData,
-        qd_n_equalities,
+        contact_system: "RigidRigidContactSystem",
     ) -> None:
-        self._rigid = rigid
-        self._data = collider_data
-        self._qd_n_equalities = qd_n_equalities
+        self._system = contact_system
+        self._data = contact_system.data
+
+    @property
+    def collider_config(self) -> array_class.ColliderStaticConfig:
+        return self._data.collider_config
+
+    @property
+    def collider_info(self) -> array_class.ColliderInfo:
+        return self._data.collider_info
+
+    @property
+    def collider_state(self) -> array_class.ColliderState:
+        return self._data.collider_state
+
+    @property
+    def mpr(self) -> mpr.MPR:
+        return self._system._mpr
+
+    @property
+    def gjk(self) -> gjk.GJK:
+        return self._system._gjk
+
+    @property
+    def _mc_perturbation(self) -> float:
+        return self._system._mc_perturbation
+
+    @property
+    def _mc_tolerance(self) -> float:
+        return self._system._mc_tolerance
+
+    @property
+    def _collision_pair_idx(self) -> NDArray[np.integer]:
+        return self._system._collision_pair_idx
+
+    @property
+    def _use_split_narrowphase(self) -> bool:
+        return self._data.collider_config.split_narrowphase
 
     @property
     def data(self) -> Iterator[array_class.DataItem | array_class.ConfigItem]:
         """Yield every array and static config of the collider (see 'Solver.data')."""
-        return iter_collider_data(self._data)
+        return iter_collider_data(self._data, self._data.collider_config.split_narrowphase)
 
-    def reset(self, envs_idx=None, *, cache_only: bool = True) -> None:
-        collider_reset(self._data, self._rigid, envs_idx, cache_only=cache_only)
+    def reset(self, envs_idx: EnvIndex = None, *, cache_only: bool = True) -> None:
+        self._system.reset_contacts(envs_idx, cache_only=cache_only)
 
-    def clear(self, envs_idx=None) -> None:
-        collider_clear(self._data, self._rigid, envs_idx)
+    def clear(self, envs_idx: EnvIndex = None) -> None:
+        self._system.clear_contacts(envs_idx)
 
     def detection(self) -> None:
-        collider_detection(self._data, self._rigid, self._qd_n_equalities)
+        self._system.detect_launching_kernels()
+
+    def detect_collision(self, env_idx: int = 0) -> NDArray[np.integer]:
+        """Run detection and return the live geometry pairs of one environment."""
+        self.clear()
+        self.detection()
+        n_collision = qd_to_numpy(self.collider_state.n_contacts)[env_idx]
+        collision_pairs = np.empty((n_collision, 2), dtype=np.int32)
+        collision_pairs[:, 0] = qd_to_numpy(self.collider_state.contact_data.geom_a)[:n_collision, env_idx]
+        collision_pairs[:, 1] = qd_to_numpy(self.collider_state.contact_data.geom_b)[:n_collision, env_idx]
+        return collision_pairs
 
     def get_contacts(
         self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False, is_padded: bool = False
-    ):
-        return collider_get_contacts(self._data, self._rigid, as_tensor, to_torch, keep_batch_dim, is_padded)
+    ) -> ContactResult:
+        return self._system.get_contacts(as_tensor, to_torch, keep_batch_dim, is_padded)
 
-    def backward(self, dL_dposition, dL_dnormal, dL_dpenetration) -> None:
-        collider_backward(self._data, self._rigid, dL_dposition, dL_dnormal, dL_dpenetration)
+    def backward(
+        self,
+        dL_dposition: NDArray[np.floating] | torch.Tensor,
+        dL_dnormal: NDArray[np.floating] | torch.Tensor,
+        dL_dpenetration: NDArray[np.floating] | torch.Tensor,
+    ) -> None:
+        self._system.backward(dL_dposition, dL_dnormal, dL_dpenetration)
 
     def backward_narrowphase(self) -> None:
-        collider_backward_narrowphase(self._data, self._rigid)
+        self._system.backward_narrowphase()
 
 
 @qd.func
@@ -1319,103 +1410,36 @@ def func_detection(
             func_fill_diff_contact_input_analytic(dyn_state, collider_state, dyn_info, rigid_config)
 
 
-@qd.kernel(graph=True, fastcache=True)
-def kernel_detection(
-    geoms_init_AABB: array_class.GeomsInitAABB,
-    dyn_state: array_class.DynState,
-    collider_state: array_class.ColliderState,
-    mpr_state: array_class.MPRState,
-    gjk_state: array_class.GJKState,
-    diff_contact_input: array_class.DiffContactInput,
-    contact0_mpr_state: array_class.MPRState,
-    contact0_gjk_state: array_class.GJKState,
-    multicontact_mpr_state: array_class.MPRState,
-    multicontact_gjk_state: array_class.GJKState,
-    qd_n_equalities: qd.Tensor,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    collider_info: array_class.ColliderInfo,
+@qd.func(requires_top_level=True)
+def func_substep_detection(
+    rigid_data: qd.template(),
     rigid_config: qd.template(),
-    collider_static_config: qd.template(),
-    gjk_static_config: qd.template(),
-    has_possible_pairs: qd.template(),
-    split_narrowphase: qd.template(),
-    coop_dedup: qd.template(),
-    errno: qd.Tensor,
+    contact_data: qd.template(),
+    island_data: qd.template(),
 ):
-    """Detect the collisions of every environment, captured as one graph."""
+    """Detect rigid contacts from explicit owner data and compile-time configuration."""
     func_detection(
-        geoms_init_AABB=geoms_init_AABB,
-        dyn_state=dyn_state,
-        collider_state=collider_state,
-        mpr_state=mpr_state,
-        gjk_state=gjk_state,
-        diff_contact_input=diff_contact_input,
-        contact0_mpr_state=contact0_mpr_state,
-        contact0_gjk_state=contact0_gjk_state,
-        multicontact_mpr_state=multicontact_mpr_state,
-        multicontact_gjk_state=multicontact_gjk_state,
-        qd_n_equalities=qd_n_equalities,
-        dyn_info=dyn_info,
-        rigid_info=rigid_info,
-        collider_info=collider_info,
+        geoms_init_AABB=rigid_data.geoms_init_AABB,
+        dyn_state=rigid_data.dyn_state,
+        collider_state=contact_data.collider_state,
+        mpr_state=contact_data.mpr_state,
+        gjk_state=contact_data.gjk_state,
+        diff_contact_input=contact_data.gjk_state.diff_contact_input,
+        contact0_mpr_state=contact_data.contact0_mpr_state,
+        contact0_gjk_state=contact_data.contact0_gjk_state,
+        multicontact_mpr_state=contact_data.multicontact_mpr_state,
+        multicontact_gjk_state=contact_data.multicontact_gjk_state,
+        qd_n_equalities=island_data.qd_n_equalities,
+        dyn_info=rigid_data.dyn_info,
+        rigid_info=rigid_data.rigid_info,
+        collider_info=contact_data.collider_info,
         rigid_config=rigid_config,
-        collider_static_config=collider_static_config,
-        gjk_static_config=gjk_static_config,
-        has_possible_pairs=has_possible_pairs,
-        split_narrowphase=split_narrowphase,
-        coop_dedup=coop_dedup,
-        errno=errno,
-    )
-
-
-@qd.kernel(fastcache=True)
-def kernel_detection_without_graph(
-    geoms_init_AABB: array_class.GeomsInitAABB,
-    dyn_state: array_class.DynState,
-    collider_state: array_class.ColliderState,
-    mpr_state: array_class.MPRState,
-    gjk_state: array_class.GJKState,
-    diff_contact_input: array_class.DiffContactInput,
-    contact0_mpr_state: array_class.MPRState,
-    contact0_gjk_state: array_class.GJKState,
-    multicontact_mpr_state: array_class.MPRState,
-    multicontact_gjk_state: array_class.GJKState,
-    qd_n_equalities: qd.Tensor,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    collider_info: array_class.ColliderInfo,
-    rigid_config: qd.template(),
-    collider_static_config: qd.template(),
-    gjk_static_config: qd.template(),
-    has_possible_pairs: qd.template(),
-    split_narrowphase: qd.template(),
-    coop_dedup: qd.template(),
-    errno: qd.Tensor,
-):
-    """Detect the collisions of every environment without a graph (see collider_detection)."""
-    func_detection(
-        geoms_init_AABB=geoms_init_AABB,
-        dyn_state=dyn_state,
-        collider_state=collider_state,
-        mpr_state=mpr_state,
-        gjk_state=gjk_state,
-        diff_contact_input=diff_contact_input,
-        contact0_mpr_state=contact0_mpr_state,
-        contact0_gjk_state=contact0_gjk_state,
-        multicontact_mpr_state=multicontact_mpr_state,
-        multicontact_gjk_state=multicontact_gjk_state,
-        qd_n_equalities=qd_n_equalities,
-        dyn_info=dyn_info,
-        rigid_info=rigid_info,
-        collider_info=collider_info,
-        rigid_config=rigid_config,
-        collider_static_config=collider_static_config,
-        gjk_static_config=gjk_static_config,
-        has_possible_pairs=has_possible_pairs,
-        split_narrowphase=split_narrowphase,
-        coop_dedup=coop_dedup,
-        errno=errno,
+        collider_static_config=contact_data.collider_config,
+        gjk_static_config=contact_data.gjk_config,
+        has_possible_pairs=contact_data.collider_config.has_possible_pairs,
+        split_narrowphase=contact_data.collider_config.split_narrowphase,
+        coop_dedup=contact_data.collider_config.coop_dedup,
+        errno=rigid_data.errno,
     )
 
 

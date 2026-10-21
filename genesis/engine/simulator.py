@@ -1,6 +1,7 @@
 from collections.abc import Iterator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeAlias
 
+from numpy.typing import ArrayLike
 import torch
 
 import genesis as gs
@@ -14,28 +15,26 @@ from genesis.utils.tools import StepTimer
 from .couplers import IPCCoupler, LegacyCoupler, SAPCoupler
 from .entities import HybridEntity
 from .sensors import SensorManager
-from .solvers import (
-    FEMSolver,
-    KinematicSolver,
-    MPMSolver,
-    PBDSolver,
-    RigidSolver,
-    SFSolver,
-    SPHSolver,
-    ToolSolver,
-)
+from .simulator_engine import SimulatorEngine
+from .solvers import FEMSolver, KinematicSolver, MPMSolver, PBDSolver, RigidSolver, SFSolver, SPHSolver, ToolSolver
 from .solvers.base_solver import GravityMixin, TimeBasedMixin
 from .states.cache import QueriedStates
 from .states.solvers import SimState, SimulatorCheckpoint
-from .core import Pipeline
-from .systems import SimulatorEngine
+from .systems import RigidSolverSystem
 
 if TYPE_CHECKING:
     from genesis.engine.entities.base_entity import Entity, EntityDescription
+    from genesis.engine.force_fields import ForceField
+    from genesis.engine.materials.base import Material
     from genesis.engine.scene import Scene
+    from genesis.options.surfaces import Surface
     from genesis.options.scene import SceneOptions
 
-    from .solvers.base_solver import Solver
+SolverLike: TypeAlias = (
+    ToolSolver | RigidSolver | KinematicSolver | MPMSolver | SPHSolver | PBDSolver | FEMSolver | SFSolver
+)
+Coupler: TypeAlias = LegacyCoupler | SAPCoupler | IPCCoupler
+IndexLike: TypeAlias = ArrayLike | torch.Tensor | None
 
 
 RATE_CHECK_ERRNO = 10
@@ -55,7 +54,7 @@ class Simulator(RBC):
         ``sim.scene.options``.
     """
 
-    def __init__(self, scene: "Scene", options: "SceneOptions"):
+    def __init__(self, scene: "Scene", options: "SceneOptions") -> None:
         self._scene = scene
         self._step_timer = StepTimer()
 
@@ -81,7 +80,7 @@ class Simulator(RBC):
         self.fem_solver = FEMSolver(self.scene, self, options.fem)
         self.sf_solver = SFSolver(self.scene, self, options.sf)
 
-        self._solvers: list["Solver"] = gs.List(
+        self._solvers: list[SolverLike] = gs.List(
             [
                 self.tool_solver,
                 self.rigid_solver,
@@ -94,7 +93,7 @@ class Simulator(RBC):
             ]
         )
 
-        self._active_solvers: list["Solver"] = gs.List()
+        self._active_solvers: list[SolverLike] = gs.List()
 
         # coupler
         if isinstance(options.coupler, SAPCouplerOptions):
@@ -109,17 +108,12 @@ class Simulator(RBC):
                 "LegacyCouplerOptions, or IPCCouplerOptions."
             )
 
-        # The compositional engine owns active Rigid data in every scene. Mixed and coupled scenes keep the legacy
-        # Simulator/Solver/Coupler API control flow around the System-backed Rigid facade.
+        # The compositional engine exists only when an admitted backend needs Rigid data.
         self._engine: SimulatorEngine | None = None
-        self._rigid_substep_pipeline: Pipeline | None = None
-        self._use_rigid_solver_system = False
+        self._rigid_system: RigidSolverSystem | None = None
 
         # states
         self._queried_states = QueriedStates()
-
-        # entities
-        self._entities: list["Entity"] = gs.List()
 
         # sensors
         self._sensor_manager = SensorManager(self)
@@ -127,12 +121,12 @@ class Simulator(RBC):
     def _add_entity(
         self,
         morph: Morph | None = None,
-        material=None,
-        surface=None,
-        visualize_contact=False,
+        material: "Material | None" = None,
+        surface: "Surface | None" = None,
+        visualize_contact: bool = False,
         name: str | None = None,
         desc: "EntityDescription | None" = None,
-    ):
+    ) -> "Entity":
         if desc is not None:
             material = desc.material
         if visualize_contact and not isinstance(material, gs.materials.Rigid):
@@ -154,16 +148,13 @@ class Simulator(RBC):
             entity = solver.add_entity(
                 self.n_entities, material, morph, surface, visualize_contact, name=name, desc=desc
             )
-        self._entities.append(entity)
-        if entity.desc is not None:
-            self.scene._desc.entities.append(entity.desc)
         return entity
 
-    def _add_force_field(self, force_field):
+    def _add_force_field(self, force_field: "ForceField") -> None:
         for solver in self._solvers:
             solver._add_force_field(force_field)
 
-    def build(self):
+    def build(self) -> None:
         self.n_envs = self.scene.n_envs
         self._B = self.scene._B
         self._para_level = self.scene._para_level
@@ -173,7 +164,9 @@ class Simulator(RBC):
         # solver is active follows from the entities added to it, which is already known at this point. A solver that
         # integrates over no interval of its own has no rate to agree on.
         integrating_solvers = [
-            solver for solver in self._solvers if isinstance(solver, TimeBasedMixin) and solver.is_active
+            solver
+            for solver in self._solvers
+            if solver.is_active and (solver is self.rigid_solver or isinstance(solver, TimeBasedMixin))
         ]
         # A solver given an interval asks for a rate of its own, whatever that interval works out to. A solver left
         # unset takes the rate the shorthand of SimOptions decides, and has nothing to reconcile.
@@ -218,16 +211,13 @@ class Simulator(RBC):
         # Counted per environment to support per-env reset, as steps rather than seconds to avoid drifting over time.
         self._steps = torch.zeros((self._B,), dtype=gs.tc_int, device=gs.device)
 
-        # Rigid always uses System ownership, including its padded inactive layout. A rigid-only scene may execute its
-        # Pipeline directly; mixed and coupled scenes retain the legacy Simulator/Solver/Coupler API call order.
-        self._use_rigid_solver_system = True
+        # A rigid-only scene may execute the Engine schedule directly; mixed and coupled scenes retain the legacy
+        # Simulator/Solver/Coupler API call order.
         self._rigid_only = (
             self.rigid_solver.is_active
             and isinstance(self._coupler, LegacyCoupler)
             and not any(solver.is_active for solver in self._solvers if solver is not self.rigid_solver)
         )
-        self.rigid_solver._use_system = self._use_rigid_solver_system
-
         # solvers
         for solver in self._solvers:
             solver.build()
@@ -235,33 +225,87 @@ class Simulator(RBC):
                 self._active_solvers.append(solver)
             # Rigid's owner Systems initialize before later legacy solvers build: MPM CPIC and similar legacy APIs may
             # query the rigid Collider during their own build.
-            if solver is self.rigid_solver:
+            if solver is self.rigid_solver and solver.is_active:
                 self._engine = SimulatorEngine(self.scene)
                 self._engine.build()
-                self._engine.init_pipeline.run()
-                self._rigid_substep_pipeline = self._engine.rigid_substep_pipeline
+                self._rigid_system = self._engine.require(RigidSolverSystem)
+                if isinstance(self._coupler, IPCCoupler) and self._engine.contact_system is not None:
+                    delegated_links, exclusive_links = self._coupler.rigid_collision_exclusions(
+                        self._rigid_system.entities
+                    )
+                    self._engine.contact_system.configure_external_collision_links(
+                        delegated_links,
+                        exclusive_links,
+                    )
+                self._engine.initialize()
+                self.rigid_solver.wire_backend(
+                    self._rigid_system,
+                    self._engine.island_system,
+                    self._engine.contact_system,
+                    self._engine.constraint_system,
+                )
 
         # A coupler exchanges state once per substep, so it is built once the rate that loop runs at is known.
-        self._coupler.build()
+        rigid = self._rigid_system
+        rigid_active = rigid is not None
+        if rigid_active and rigid._requires_grad and isinstance(self._coupler, (SAPCoupler, IPCCoupler)):
+            gs.raise_exception(f"{type(self._coupler).__name__} is not supported yet when requires_grad is True.")
+        contact_data = None if self._engine is None or self._engine.contact_system is None else self._engine.contact_system.data
+        if isinstance(self._coupler, LegacyCoupler):
+            self._coupler.build(
+                rigid_active=rigid_active,
+                n_rigid_geoms=self.rigid_solver.n_geoms,
+                n_rigid_geoms_padded=max(1, self.rigid_solver.n_geoms),
+                rigid_batch_links_info=self.rigid_solver._options.batch_links_info,
+                rigid_substep_dt=self.rigid_solver._substep_dt,
+            )
+        elif isinstance(self._coupler, SAPCoupler):
+            self._coupler.build(
+                rigid_active=rigid_active,
+                n_rigid_dofs=self.rigid_solver.n_dofs,
+                n_rigid_entities=self.rigid_solver.n_entities,
+                n_rigid_equalities=self.rigid_solver.n_equalities,
+                n_rigid_faces=self.rigid_solver.n_faces,
+                n_rigid_free_verts=self.rigid_solver.n_free_verts,
+                n_rigid_verts=self.rigid_solver.n_verts,
+                rigid_batch_links_info=self.rigid_solver._options.batch_links_info,
+                equalities=self.rigid_solver.equalities,
+                geoms=self.rigid_solver.geoms,
+                rigid_data=None if rigid is None else rigid.data,
+                rigid_config=None if rigid is None else rigid.rigid_config,
+                contact_data=contact_data,
+            )
+        else:
+            self._coupler.build(
+                rigid_active=rigid_active,
+                rigid_options=self.rigid_solver._options,
+                rigid_entities=self.rigid_solver.entities,
+                rigid_links=self.rigid_solver.links,
+                rigid_data=None if rigid is None else rigid.data,
+                rigid_config=None if rigid is None else rigid.rigid_config,
+            )
 
         if self.n_envs > 0 and self.sf_solver.is_active:
             gs.raise_exception("Batching is not supported for SF solver as of now.")
 
         # hybrid
-        for entity in self._entities:
+        for entity in self.scene.entities:
             if isinstance(entity, HybridEntity):
                 entity.build()
 
         self._step_timer.add_phases("physics", "sensors")
         self._sensor_manager.build()
 
-    def destroy(self):
+    def destroy(self) -> None:
         self._sensor_manager.destroy()
 
-    def reset(self, state: SimState, envs_idx=None):
+    def reset(self, state: SimState, envs_idx: IndexLike = None) -> None:
         for solver, solver_state in zip(self._solvers, state):
             if solver.n_entities > 0:
-                solver.set_state(0, solver_state, envs_idx)
+                if solver is self.rigid_solver:
+                    self.rigid_solver.set_state(0, solver_state, envs_idx)
+                else:
+                    solver.set_state(0, solver_state, envs_idx)
 
         if envs_idx is None:
             self._steps.zero_()
@@ -269,7 +313,7 @@ class Simulator(RBC):
             self._steps[indices_to_mask(envs_idx)] = 0
         self._restart(envs_idx)
 
-    def _restart(self, envs_idx=None):
+    def _restart(self, envs_idx: IndexLike = None) -> None:
         """Restart the coupler, the gradient tape and the sensors."""
         self._coupler.reset(envs_idx=envs_idx)
 
@@ -295,7 +339,8 @@ class Simulator(RBC):
                 yield item._replace(name=f"Simulator.{item.name}")
         for solver in self._active_solvers:
             prefix = type(solver).__name__
-            for item in solver.data:
+            items = solver.data
+            for item in items:
                 if isinstance(item, DataItem) and item.kind in kinds:
                     yield item._replace(name=f"{prefix}.{item.name}")
 
@@ -307,7 +352,12 @@ class Simulator(RBC):
             )
         return SimulatorCheckpoint(
             steps=self._steps.clone(),
-            solvers={type(solver).__name__: solver.__getstate__() for solver in self._active_solvers},
+            solvers={
+                type(solver).__name__: (
+                    solver.__getstate__()
+                )
+                for solver in self._active_solvers
+            },
         )
 
     def __setstate__(self, state: SimulatorCheckpoint) -> None:
@@ -322,15 +372,19 @@ class Simulator(RBC):
         # state, whose gradients it would zero otherwise.
         self._restart()
         for solver in self._active_solvers:
-            solver.__setstate__(state.solvers[type(solver).__name__])
+            solver_state = state.solvers[type(solver).__name__]
+            solver.__setstate__(solver_state)
         self._steps[:] = torch.as_tensor(state.steps, device=gs.device)
         # Flush the zero-copy writes of fill_data on Metal.
         if gs.use_zerocopy and gs.backend == gs.metal:
             torch.mps.synchronize()
 
-    def reset_grad(self):
+    def reset_grad(self) -> None:
         for solver in self._active_solvers:
-            solver.reset_grad()
+            if solver is self.rigid_solver:
+                self._rigid_system.reset_grad()
+            else:
+                solver.reset_grad()
 
         # clear up all queried scene states and free up memory
         self._queried_states.clear()
@@ -342,20 +396,20 @@ class Simulator(RBC):
     We use f to represent substep, and s to represent step.
     """
 
-    def f_global_to_f_local(self, f_global):
+    def f_global_to_f_local(self, f_global: int) -> int:
         f_local = f_global % self._substeps_local
         return f_local
 
-    def f_local_to_s_local(self, f_local):
+    def f_local_to_s_local(self, f_local: int) -> int:
         f_local = f_local // self._substeps
         return f_local
 
-    def f_global_to_s_local(self, f_global):
+    def f_global_to_s_local(self, f_global: int) -> int:
         f_local = self.f_global_to_f_local(f_global)
         s_local = self.f_local_to_s_local(f_local)
         return s_local
 
-    def f_global_to_s_global(self, f_global):
+    def f_global_to_s_global(self, f_global: int) -> int:
         s_global = f_global // self._substeps
         return s_global
 
@@ -363,7 +417,7 @@ class Simulator(RBC):
     # ------------------------------------ stepping --------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def step(self, in_backward=False):
+    def step(self, in_backward: bool = False) -> None:
         # Check errno at the very beginning of the step.
         # This will trigger GPU sync, but it is not a big deal at the point, since we are going to enqueue very large
         # kernel right away. Moreover, if computations are still not done at this point, then the queue will just
@@ -379,7 +433,7 @@ class Simulator(RBC):
         with self._step_timer.phase("physics"):
             if self._rigid_only and not self._requires_grad:  # "Only Advance!" --Thomas Wade :P
                 for _ in range(self._substeps):
-                    self._rigid_substep_pipeline.run(self.cur_substep_local)
+                    self._engine.substep_graph()
                     self._cur_substep_global += 1
             else:
                 self.process_input(in_backward=in_backward)
@@ -391,12 +445,12 @@ class Simulator(RBC):
                         self.save_ckpt()
 
             if self.rigid_solver.is_active:
-                self.rigid_solver.clear_external_force()
+                self._rigid_system.clear_external_force()
 
         with self._step_timer.phase("sensors"):
             self._sensor_manager.step()
 
-    def _step_grad(self):
+    def _step_grad(self) -> None:
         self._steps -= 1
         for _ in range(self._substeps - 1, -1, -1):
             if self.cur_substep_local == 0:
@@ -407,56 +461,185 @@ class Simulator(RBC):
 
         self.process_input_grad()
 
-    def process_input(self, in_backward=False):
+    def process_input(self, in_backward: bool = False) -> None:
         """
         setting _tgt state using external commands
         note that external inputs are given at step level, not substep
         """
         for solver in self._active_solvers:
-            solver.process_input(in_backward=in_backward)
+            if solver is self.rigid_solver:
+                self._rigid_system.process_input(in_backward=in_backward)
+            else:
+                solver.process_input(in_backward=in_backward)
 
-    def process_input_grad(self):
+    def process_input_grad(self) -> None:
         for solver in reversed(self._active_solvers):
-            solver.process_input_grad()
+            if solver is self.rigid_solver:
+                self._rigid_system.process_input_grad()
+            else:
+                solver.process_input_grad()
 
-    def substep(self, f):
-        self._coupler.preprocess(f)
+    def substep(self, f: int) -> None:
+        self._coupler_preprocess(f)
         self.substep_pre_coupling(f)
-        self._coupler.couple(f)
+        self._coupler_couple(f)
         self.substep_post_coupling(f)
 
-    def sub_step_grad(self, f):
+    def sub_step_grad(self, f: int) -> None:
         self.substep_post_coupling_grad(f)
-        self._coupler.couple_grad(f)
+        self._coupler_couple_grad(f)
         self.substep_pre_coupling_grad(f)
 
-    # -------------- pre coupling --------------
-    def substep_pre_coupling(self, f):
-        for solver in self._active_solvers:
-            solver.substep_pre_coupling(f)
+    def _coupler_preprocess(self, f: int) -> None:
+        rigid = self._rigid_system
+        rigid_data = None if rigid is None else rigid.data
+        rigid_config = None if rigid is None else rigid.rigid_config
+        rigid_sdf = None if self._engine is None else self._engine.rigid_sdf_system.data
+        if isinstance(self._coupler, LegacyCoupler):
+            self._coupler.preprocess(
+                f,
+                rigid_data,
+                None if rigid_sdf is None else rigid_sdf.sdf_config,
+                rigid_sdf,
+            )
+        elif isinstance(self._coupler, SAPCoupler):
+            self._coupler.preprocess(f, rigid_data, rigid_config)
+        else:
+            self._coupler.preprocess(f)
 
-    def substep_pre_coupling_grad(self, f):
+    def _coupler_couple(self, f: int) -> None:
+        rigid = self._rigid_system
+        rigid_data = None if rigid is None else rigid.data
+        rigid_sdf = None if self._engine is None else self._engine.rigid_sdf_system.data
+        if isinstance(self._coupler, LegacyCoupler):
+            self._coupler.couple(
+                f,
+                rigid_data,
+                None if rigid_sdf is None else rigid_sdf.sdf_config,
+                rigid_sdf,
+            )
+        elif isinstance(self._coupler, SAPCoupler):
+            self._coupler.couple(f, rigid_data)
+        else:
+            self._coupler.couple(
+                f,
+                rigid_data,
+                None if rigid is None else rigid.coupling_set_qpos,
+                None if rigid is None else rigid.coupling_set_dofs_velocity,
+                None if rigid is None else rigid.coupling_apply_wrench,
+            )
+
+    def _coupler_couple_grad(self, f: int) -> None:
+        rigid = self._rigid_system
+        rigid_data = None if rigid is None else rigid.data
+        rigid_sdf = None if self._engine is None else self._engine.rigid_sdf_system.data
+        if isinstance(self._coupler, LegacyCoupler):
+            self._coupler.couple_grad(
+                f,
+                rigid_data,
+                None if rigid_sdf is None else rigid_sdf.sdf_config,
+                rigid_sdf,
+            )
+        elif isinstance(self._coupler, SAPCoupler):
+            self._coupler.couple_grad(f)
+        else:
+            self._coupler.couple_grad(f)
+
+    def get_rigid_link_poses_for_coupling(self, links_idx: IndexLike) -> tuple[torch.Tensor, torch.Tensor]:
+        """Read Rigid link poses through the Simulator's explicit coupling boundary."""
+        return (
+            self._rigid_system.get_links_pos(links_idx=links_idx),
+            self._rigid_system.get_links_quat(links_idx=links_idx),
+        )
+
+    def attach_pbd_particles_to_rigid_link(self, particles_idx: IndexLike, envs_idx: IndexLike, link_idx: int) -> None:
+        """Attach PBD particles using explicit Rigid link state owned by the backend."""
+        self._coupler.kernel_attach_pbd_to_rigid_link(
+            particles_idx,
+            envs_idx,
+            link_idx,
+            self._rigid_system.data.dyn_state.links,
+        )
+
+    # -------------- pre coupling --------------
+
+    def substep_pre_coupling(self, f: int) -> None:
+        for solver in self._active_solvers:
+            if solver is self.rigid_solver:
+                if isinstance(self._coupler, SAPCoupler):
+                    self._engine.substep_to_velocity()
+                elif not isinstance(self._coupler, IPCCoupler) or not self._coupler.has_any_rigid_coupling:
+                    self._engine.substep_host(f)
+            elif solver is self.mpm_solver:
+                rigid = self._rigid_system
+                solver.substep_pre_coupling(
+                    f,
+                    None if rigid is None else rigid.data,
+                    None
+                    if self._engine is None
+                    else self._engine.rigid_sdf_system.data.sdf_config,
+                    None if self._engine is None else self._engine.rigid_sdf_system.data,
+                )
+            else:
+                solver.substep_pre_coupling(f)
+
+    def substep_pre_coupling_grad(self, f: int) -> None:
         for solver in reversed(self._active_solvers):
-            solver.substep_pre_coupling_grad(f)
+            if solver is self.rigid_solver:
+                self._engine.substep_backward(f)
+            elif solver is self.mpm_solver:
+                rigid = self._rigid_system
+                solver.substep_pre_coupling_grad(
+                    f,
+                    None if rigid is None else rigid.data,
+                    None
+                    if self._engine is None
+                    else self._engine.rigid_sdf_system.data.sdf_config,
+                    None if self._engine is None else self._engine.rigid_sdf_system.data,
+                )
+            else:
+                solver.substep_pre_coupling_grad(f)
 
     # -------------- post coupling --------------
-    def substep_post_coupling(self, f):
+    def substep_post_coupling(self, f: int) -> None:
         for solver in self._active_solvers:
-            solver.substep_post_coupling(f)
+            if solver is self.rigid_solver:
+                if isinstance(self._coupler, SAPCoupler):
+                    self._engine.substep_after_velocity_coupling()
+                elif isinstance(self._coupler, IPCCoupler) and self._coupler.has_any_rigid_coupling:
+                    self._engine.substep_host(f)
+            elif solver is self.mpm_solver:
+                solver.substep_post_coupling(
+                    f,
+                    None if self._rigid_system is None else self._rigid_system.data,
+                )
+            else:
+                solver.substep_post_coupling(f)
 
-    def substep_post_coupling_grad(self, f):
+    def substep_post_coupling_grad(self, f: int) -> None:
         for solver in reversed(self._active_solvers):
-            solver.substep_post_coupling_grad(f)
+            if solver is self.rigid_solver:
+                continue
+            if solver is self.mpm_solver:
+                solver.substep_post_coupling_grad(
+                    f,
+                    None if self._rigid_system is None else self._rigid_system.data,
+                )
+            else:
+                solver.substep_post_coupling_grad(f)
 
     # ------------------------------------------------------------------------------------
     # ------------------------------------ gradient --------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def add_grad_from_state(self, state):
+    def add_grad_from_state(self, state: SimState) -> None:
         for solver, solver_state in zip(self._solvers, state):
-            solver.add_grad_from_state(solver_state)
+            if solver is self.rigid_solver:
+                self._rigid_system.add_grad_from_state(solver_state)
+            else:
+                solver.add_grad_from_state(solver_state)
 
-    def collect_output_grads(self):
+    def collect_output_grads(self) -> None:
         """
         Collect gradients from downstream queried states.
         """
@@ -469,9 +652,12 @@ class Simulator(RBC):
 
         # each solver will have their own entities, each of which stores a set of _queried_states
         for solver in self._active_solvers:
-            solver.collect_output_grads()
+            if solver is self.rigid_solver:
+                self._rigid_system.collect_output_grads()
+            else:
+                solver.collect_output_grads()
 
-    def save_ckpt(self):
+    def save_ckpt(self) -> None:
         """
         This function refreshes the gpu memory (copy the last frame to the first frame in the local memory), and then saves the checkpoint.
         This function is called every `substeps_local` steps, which means it's called only once per step when `requires_grad` is True.
@@ -481,20 +667,26 @@ class Simulator(RBC):
         ckpt_name = f"{ckpt_start_substep}"
 
         for solver in self._active_solvers:
-            solver.save_ckpt(ckpt_name)
+            if solver is self.rigid_solver:
+                self._rigid_system.save_ckpt(ckpt_name)
+            else:
+                solver.save_ckpt(ckpt_name)
 
         if self._requires_grad:
             gs.logger.debug(
                 f"Forward: Saved checkpoint for global substep {ckpt_start_substep} to {ckpt_end_step}. Now starts from substep {self._cur_substep_global}."
             )
 
-    def load_ckpt(self):
+    def load_ckpt(self) -> None:
         ckpt_start_substep = self._cur_substep_global - self._substeps_local
         ckpt_end_step = self._cur_substep_global - 1
         ckpt_name = f"{ckpt_start_substep}"
 
         for solver in self._active_solvers:
-            solver.load_ckpt(ckpt_name)
+            if solver is self.rigid_solver:
+                self._rigid_system.load_ckpt(ckpt_name)
+            else:
+                solver.load_ckpt(ckpt_name)
 
         # now that we loaded the first frame, we do a forward pass to fill up the rest
         self._cur_substep_global = ckpt_start_substep
@@ -509,7 +701,7 @@ class Simulator(RBC):
     # --------------------------------------- io -----------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def get_state(self):
+    def get_state(self) -> SimState:
         state = SimState(
             scene=self.scene,
             s_global=self.cur_step_global,
@@ -532,9 +724,9 @@ class Simulator(RBC):
 
         return state
 
-    def set_gravity(self, gravity, envs_idx=None):
+    def set_gravity(self, gravity: ArrayLike | torch.Tensor, envs_idx: IndexLike = None) -> None:
         for solver in self._solvers:
-            if solver.is_active and isinstance(solver, GravityMixin):
+            if solver.is_active and (solver is self.rigid_solver or isinstance(solver, GravityMixin)):
                 solver.set_gravity(gravity, envs_idx)
 
     # ------------------------------------------------------------------------------------
@@ -552,7 +744,7 @@ class Simulator(RBC):
         return self._dt
 
     @property
-    def substeps(self):
+    def substeps(self) -> int:
         """The number of substeps per simulation step."""
         return self._substeps
 
@@ -562,42 +754,42 @@ class Simulator(RBC):
         return self._substep_dt
 
     @property
-    def scene(self):
+    def scene(self) -> "Scene":
         """The scene object that the simulator is associated with."""
         return self._scene
 
     @property
-    def requires_grad(self):
+    def requires_grad(self) -> bool:
         """Whether the simulator requires gradients."""
         return self._requires_grad
 
     @property
     def n_entities(self) -> int:
         """The number of entities in the simulator."""
-        return len(self._entities)
+        return len(self.scene.entities)
 
     @property
-    def entities(self):
+    def entities(self) -> list["Entity"]:
         """The list of entities in the simulator."""
-        return self._entities
+        return self.scene.entities
 
     @property
-    def substeps_local(self):
+    def substeps_local(self) -> int:
         """The number of substeps stored in local memory."""
         return self._substeps_local
 
     @property
-    def cur_substep_global(self):
+    def cur_substep_global(self) -> int:
         """The current substep of the simulation."""
         return self._cur_substep_global
 
     @property
-    def cur_substep_local(self):
+    def cur_substep_local(self) -> int:
         """The current substep of the simulation in local memory."""
         return self.f_global_to_f_local(self._cur_substep_global)
 
     @property
-    def cur_step_local(self):
+    def cur_step_local(self) -> int:
         """The current step of the simulation in local memory."""
         return self.f_global_to_s_local(self._cur_substep_global)
 
@@ -607,7 +799,7 @@ class Simulator(RBC):
         return self._step_timer
 
     @property
-    def cur_step_global(self):
+    def cur_step_global(self) -> int:
         """Number of `scene.step()` calls, counted for the whole batch.
 
         Use it to tell that the simulation moved on, for instance to invalidate a cache. For the simulated time of an
@@ -615,7 +807,7 @@ class Simulator(RBC):
         """
         return self.f_global_to_s_global(self._cur_substep_global)
 
-    def get_time(self, envs_idx=None):
+    def get_time(self, envs_idx: IndexLike = None) -> torch.Tensor:
         """The simulated time of each environment, in seconds.
 
         Environments are stepped and reset independently, so simulated time is per environment, and this is where it
@@ -625,7 +817,7 @@ class Simulator(RBC):
         return time[0] if self.n_envs == 0 else time
 
     @property
-    def cur_t(self):
+    def cur_t(self) -> float:
         """How far the substep loop has advanced, in seconds: the number of substeps run times the substep interval.
 
         Shared by every environment, so it tells that the simulation moved on rather than what one environment has
@@ -634,16 +826,16 @@ class Simulator(RBC):
         return self._cur_substep_global * self._substep_dt
 
     @property
-    def coupler(self):
+    def coupler(self) -> Coupler:
         """The coupler object that manages the inter-solver coupling."""
         return self._coupler
 
     @property
-    def solvers(self):
+    def solvers(self) -> list[SolverLike]:
         """The list of solvers in the simulator."""
         return self._solvers
 
     @property
-    def active_solvers(self):
+    def active_solvers(self) -> list[SolverLike]:
         """The list of active solvers in the simulator."""
         return self._active_solvers
