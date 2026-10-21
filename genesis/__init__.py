@@ -29,7 +29,7 @@ import numpy as np
 
 from .constants import backend as _gs_backend
 from .logging import Logger
-from .utils import get_device, redirect_libc_stderr, set_random_seed
+from .utils import get_device, redirect_libc_stderr, set_environ, set_random_seed
 from .version import __version__
 
 
@@ -245,6 +245,17 @@ def init(
             offline_cache_max_size_of_files=2**31 - 1,
         )
 
+    # Environment variables read by Quadrants while initializing, set for the duration of its initialization only.
+    # FIXME: quadrants#983 - Buffers from the HIP memory pool fault on their first write on RDNA4 GPUs (gfx12), so
+    # Quadrants allocates through plain hipMalloc there, at the cost of reserving its device memory budget at init.
+    qd_init_environ = {}
+    if (
+        backend == _gs_backend.amdgpu
+        and "QD_ENABLE_HIP_MEMPOOL" not in os.environ
+        and torch.cuda.get_device_properties().gcnArchName.startswith("gfx12")
+    ):
+        qd_init_environ["QD_ENABLE_HIP_MEMPOOL"] = "0"
+
     if seed is not None:
         global SEED
         SEED = seed
@@ -270,7 +281,7 @@ def init(
     # The native logger of Quadrants writes to the stderr file descriptor directly, before its Python logger is
     # redirected to ours below, so what it prints while initializing is collected there as well
     with tempfile.TemporaryFile(mode="w+") as qd_errors:
-        with redirect_stdout(_qd_outputs), redirect_libc_stderr(qd_errors):
+        with redirect_stdout(_qd_outputs), redirect_libc_stderr(qd_errors), set_environ(qd_init_environ):
             qd.init(
                 arch=getattr(qd, backend.name),
                 enable_fallback=False,
