@@ -165,6 +165,21 @@ def func_add_polytope_vertex_contacts_sdf(
         for k in range(n_max):
             top_pen[k] = -gs.qd_float(1e30)
             top_iv[k] = -1
+        # Both passes walk groups of candidate verts of A, each group a contiguous vert range, and pick the group and
+        # the vert in runtime branches, so that the SDF query and the insertion below are inlined once. This trades
+        # some runtime for compile time: the per-vert branches on 'seeded' make the scan slower than two dedicated
+        # loops, each with its own copy of the query and the insertion.
+        n_cells_per_axis = 8
+        cell_min = qd.Vector.zero(gs.qd_int, 3)
+        cell_max = qd.Vector.zero(gs.qd_int, 3)
+        n_groups = 0
+        # The full scan keeps the verts within one SDF cell of B's surface. The verification only keeps UNAMBIGUOUS
+        # penetrations: the first scan already supplies the near-surface approach band from the other side, and
+        # duplicating it here with grid-noise-level pens and grid-smoothed normals disturbs tuned interfaces (it
+        # decouples the pitch of a threaded nut-bolt pair and injects residual jitter into a settled pile). A
+        # quarter-cell floor keeps grid noise out while a genuine wall crossing (at least half a wall thickness deep)
+        # clears it long before locking.
+        band = margin
         if not seeded:
             # Pull B's world AABB back into A's local frame (its exact enclosing box, padded to absorb the
             # rounding of the two transform paths) and walk only the spatial cells of A overlapping it: a vert
@@ -178,7 +193,6 @@ def func_add_polytope_vertex_contacts_sdf(
             box_min = box_center - box_half_size
             box_max = box_center + box_half_size
             box_pad = 1e-6 * (1.0 + box_min.norm() + box_max.norm())
-            n_cells_per_axis = 8
             spatial_origin = collider_info.verts_spatial_grid.geoms_origin[i_ga]
             spatial_inv_cell_size = collider_info.verts_spatial_grid.geoms_inv_cell_size[i_ga]
             cell_min = qd.floor((box_min - box_pad - spatial_origin) * spatial_inv_cell_size, gs.qd_int)
@@ -190,67 +204,44 @@ def func_add_polytope_vertex_contacts_sdf(
             if (cell_max >= 0).all() and (cell_min <= n_cells_per_axis - 1).all():
                 cell_min = qd.max(cell_min, 0)
                 cell_max = qd.min(cell_max, n_cells_per_axis - 1)
-                for i_cx in range(cell_min[0], cell_max[0] + 1):
-                    for i_cy in range(cell_min[1], cell_max[1] + 1):
-                        # Cells along z are contiguous in the cell-range layout, so the whole z-run is one vert range.
-                        i_cell = (
-                            i_ga * (n_cells_per_axis**3 + 1)
-                            + (i_cx * n_cells_per_axis + i_cy) * n_cells_per_axis
-                            + cell_min[2]
-                        )
-                        for i_sv in range(
-                            collider_info.verts_spatial_grid.cells_vert_start[i_cell],
-                            collider_info.verts_spatial_grid.cells_vert_start[i_cell + cell_max[2] - cell_min[2] + 1],
-                        ):
-                            vertex_pos = gu.qd_transform_by_trans_quat(
-                                collider_info.verts_spatial_grid.verts_pos[i_sv], ga_pos, ga_quat
-                            )
-                            if func_point_in_geom_aabb(i_gb, i_b, vertex_pos, 0.0, dyn_state):
-                                is_in_band, sd_v = sdf.sdf_func_world_local_banded(
-                                    i_gb, vertex_pos, gb_pos, gb_quat, margin, dyn_info, collider_info
-                                )
-                                pen_v = -sd_v
-                                if is_in_band:
-                                    i_v = collider_info.verts_spatial_grid.verts_idx[i_sv]
-                                    close_idx = -1
-                                    for k in range(n_max):
-                                        if close_idx < 0 and top_iv[k] >= 0:
-                                            other_pos = gu.qd_transform_by_trans_quat(
-                                                dyn_info.verts.init_pos[top_iv[k]], ga_pos, ga_quat
-                                            )
-                                            if (vertex_pos - other_pos).norm() < diversity_radius:
-                                                close_idx = k
-                                    if close_idx >= 0:
-                                        if pen_v > top_pen[close_idx]:
-                                            top_pen[close_idx] = pen_v
-                                            top_iv[close_idx] = i_v
-                                    else:
-                                        weakest_idx = 0
-                                        for k in range(1, n_max):
-                                            if top_pen[k] < top_pen[weakest_idx]:
-                                                weakest_idx = k
-                                        if pen_v > top_pen[weakest_idx]:
-                                            top_pen[weakest_idx] = pen_v
-                                            top_iv[weakest_idx] = i_v
+                # One group per xy column of cells: cells along z are contiguous in the cell-range layout, so the whole
+                # z-run is one vert range.
+                n_groups = (cell_max[0] - cell_min[0] + 1) * (cell_max[1] - cell_min[1] + 1)
         else:
             # Seeded verification: what the pair's first scan cannot see is a feature of A (rim, edge) crossing one
             # of B's faces BETWEEN B's verts; any such feature lies in B's near-surface band, connected on A's vertex
             # graph to a local SDF minimum. So instead of scanning every A vert, hill-climb down B's SDF from each
             # first-scan contact plus the image of B's center (covers the zero-contact crossing, e.g. a thin blade
-            # fully through a plate), and consider only the minimum and its 1-ring. The early stop is a convergence
-            # dedup: seeds of the same patch resolve to an already-visited closest vert or climb into a known
-            # minimum, so only the first seed of each basin pays for a climb. Cost is O(basins * climb * ring),
+            # fully through a plate), and consider only the minimum and its 1-ring, one group per seed. The early stop
+            # is a convergence dedup: seeds of the same patch resolve to an already-visited closest vert or climb into
+            # a known minimum, so only the first seed of each basin pays for a climb. Cost is O(basins * climb * ring),
             # affordable for every pair including world-anchored meshes with huge vert counts.
-            seen_verts = qd.Vector.zero(gs.qd_int, n_max)
-            n_seen = 0
-            for i_seed in range(n_max + 1):
-                i_v_min = -1
-                if i_seed == 0:
+            n_groups = n_max + 1
+            band = -0.25 * margin
+        seen_verts = qd.Vector.zero(gs.qd_int, n_max)
+        n_seen = 0
+        weakest_idx = 0
+        for i_group in range(n_groups):
+            i_v_min = -1
+            i_c_start = 0
+            i_c_end = 0
+            if not seeded:
+                n_cells_y = cell_max[1] - cell_min[1] + 1
+                i_cell = (
+                    i_ga * (n_cells_per_axis**3 + 1)
+                    + ((cell_min[0] + i_group // n_cells_y) * n_cells_per_axis + cell_min[1] + i_group % n_cells_y)
+                    * n_cells_per_axis
+                    + cell_min[2]
+                )
+                i_c_start = collider_info.verts_spatial_grid.cells_vert_start[i_cell]
+                i_c_end = collider_info.verts_spatial_grid.cells_vert_start[i_cell + cell_max[2] - cell_min[2] + 1]
+            else:
+                if i_group == 0:
                     i_v_min = sdf.sdf_func_find_closest_vert(
                         i_ga, i_b, center_b_world, dyn_state, dyn_info, collider_info
                     )
-                elif i_seed <= n_prev:
-                    seed_pos = collider_state.contact_data.pos[contacts_slot[n_prev - i_seed], i_b]
+                elif i_group <= n_prev:
+                    seed_pos = collider_state.contact_data.pos[contacts_slot[n_prev - i_group], i_b]
                     i_v_min = sdf.sdf_func_find_closest_vert(i_ga, i_b, seed_pos, dyn_state, dyn_info, collider_info)
                 if i_v_min >= 0:
                     for k in range(n_max):
@@ -291,45 +282,51 @@ def func_add_polytope_vertex_contacts_sdf(
                         seen_verts[n_seen] = i_v_min
                         n_seen = n_seen + 1
                 if i_v_min >= 0:
-                    # Candidates are the minimum itself and its 1-ring (the leading index selects the minimum).
-                    # Unlike the full scan, the verification only emits UNAMBIGUOUS penetrations: the first scan
-                    # already supplies the near-surface approach band from the other side, and duplicating it here
-                    # with grid-noise-level pens and grid-smoothed normals disturbs tuned interfaces (it decouples
-                    # the pitch of a threaded nut-bolt pair and injects residual jitter into a settled pile). A
-                    # quarter-cell floor keeps grid noise out while a genuine wall crossing (at least half a wall
-                    # thickness deep) clears it long before locking.
-                    for i_c in range(
-                        collider_info.vert_neighbor_start[i_v_min] - 1,
-                        collider_info.vert_neighbor_start[i_v_min] + collider_info.vert_n_neighbors[i_v_min],
-                    ):
-                        i_v = i_v_min
-                        if i_c >= collider_info.vert_neighbor_start[i_v_min]:
-                            i_v = collider_info.vert_neighbors[i_c]
-                        vertex_pos = gu.qd_transform_by_trans_quat(dyn_info.verts.init_pos[i_v], ga_pos, ga_quat)
-                        pen_v = -sdf.sdf_func_world_local(
-                            i_gb, vertex_pos, gb_pos, gb_quat, dyn_info.geoms, collider_info.sdf
-                        )
-                        if pen_v > 0.25 * margin:
-                            close_idx = -1
-                            for k in range(n_max):
-                                if close_idx < 0 and top_iv[k] >= 0:
-                                    other_pos = gu.qd_transform_by_trans_quat(
-                                        dyn_info.verts.init_pos[top_iv[k]], ga_pos, ga_quat
-                                    )
-                                    if (vertex_pos - other_pos).norm() < diversity_radius:
-                                        close_idx = k
-                            if close_idx >= 0:
-                                if pen_v > top_pen[close_idx]:
-                                    top_pen[close_idx] = pen_v
-                                    top_iv[close_idx] = i_v
-                            else:
-                                weakest_idx = 0
-                                for k in range(1, n_max):
-                                    if top_pen[k] < top_pen[weakest_idx]:
-                                        weakest_idx = k
-                                if pen_v > top_pen[weakest_idx]:
-                                    top_pen[weakest_idx] = pen_v
-                                    top_iv[weakest_idx] = i_v
+                    # The leading index of the range selects the minimum itself, the others its 1-ring.
+                    i_c_start = collider_info.vert_neighbor_start[i_v_min] - 1
+                    i_c_end = collider_info.vert_neighbor_start[i_v_min] + collider_info.vert_n_neighbors[i_v_min]
+            for i_c in range(i_c_start, i_c_end):
+                i_v = i_v_min
+                vertex_local = qd.Vector.zero(gs.qd_float, 3)
+                if not seeded:
+                    i_v = collider_info.verts_spatial_grid.verts_idx[i_c]
+                    vertex_local = collider_info.verts_spatial_grid.verts_pos[i_c]
+                else:
+                    if i_c > i_c_start:
+                        i_v = collider_info.vert_neighbors[i_c]
+                    vertex_local = dyn_info.verts.init_pos[i_v]
+                vertex_pos = gu.qd_transform_by_trans_quat(vertex_local, ga_pos, ga_quat)
+                is_candidate = True
+                if not seeded:
+                    is_candidate = func_point_in_geom_aabb(i_gb, i_b, vertex_pos, 0.0, dyn_state)
+                if is_candidate:
+                    is_in_band, sd_v = sdf.sdf_func_world_local_banded(
+                        i_gb, vertex_pos, gb_pos, gb_quat, band, dyn_info, collider_info
+                    )
+                    pen_v = -sd_v
+                    # A vert no deeper than the shallowest kept one (at weakest_idx, the first of minimal pen, an
+                    # empty slot being the shallowest) can neither replace a close kept vert nor displace the weakest,
+                    # which spares the closeness test for most verts of a dense mesh once the buffer is full.
+                    if is_in_band and pen_v > top_pen[weakest_idx]:
+                        i_put = weakest_idx
+                        for k in range(n_max):
+                            i_v_kept = top_iv[k]
+                            if i_v_kept >= 0:
+                                other_pos = gu.qd_transform_by_trans_quat(
+                                    dyn_info.verts.init_pos[i_v_kept], ga_pos, ga_quat
+                                )
+                                if (vertex_pos - other_pos).norm() < diversity_radius:
+                                    i_put = -1
+                                    if pen_v > top_pen[k]:
+                                        i_put = k
+                                    break
+                        if i_put >= 0:
+                            top_pen[i_put] = pen_v
+                            top_iv[i_put] = i_v
+                            weakest_idx = 0
+                            for k in range(1, n_max):
+                                if top_pen[k] < top_pen[weakest_idx]:
+                                    weakest_idx = k
 
         # Pass 2: emit contacts at the selected vertices. Reference normal is the grid SDF gradient sampled at A's
         # center, which gives a stable per-patch normal whenever A is small relative to B's features. Per-vertex
