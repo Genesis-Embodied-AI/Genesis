@@ -236,6 +236,38 @@ def func_mass_mat_force(
 
 
 @qd.func
+def func_mass_mat_add_diag(
+    i_d: int,
+    i_b: int,
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+    implicit_damping: qd.template(),
+    is_backward: qd.template(),
+):
+    """Add the armature of one dof to its diagonal entry of the mass matrix, and its implicit damping term if requested.
+
+    A hibernated dof is skipped: the assembly leaves the mass blocks of its tree as they were on its last awake substep,
+    so adding to them again would accumulate one more armature per substep spent asleep.
+    """
+    is_awake = True
+    if qd.static(rigid_config.use_hibernation):
+        is_awake = not dyn_state.dofs.is_hibernated[i_d, i_b]
+    if is_awake:
+        I_d = [i_d, i_b] if qd.static(rigid_config.batch_dofs_info) else i_d
+        func_add_safe_backward((i_d, i_d, i_b), dyn_info.dofs.armature[I_d], rigid_info.mass_mat, is_backward)
+        if qd.static(implicit_damping):
+            h = rigid_info.substep_dt[None]
+            rigid_info.mass_mat[i_d, i_d, i_b] = rigid_info.mass_mat[i_d, i_d, i_b] + dyn_info.dofs.damping[I_d] * h
+            if dyn_state.dofs.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY:
+                # qM += d qfrc_actuator / d qvel = -act_bias[2] * dt
+                rigid_info.mass_mat[i_d, i_d, i_b] = (
+                    rigid_info.mass_mat[i_d, i_d, i_b] - dyn_info.dofs.act_bias[I_d][2] * h
+                )
+
+
+@qd.func
 def func_mass_mat_assemble_tree_cooperative(
     tid: int,
     i_t: int,
@@ -387,20 +419,7 @@ def func_compute_mass_matrix(
 
     qd.loop_config(name="armature", serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_d, i_b in qd.ndrange(dyn_state.dofs.f_ang.shape[0], dyn_state.dofs.f_ang.shape[1]):
-        I_d = [i_d, i_b] if qd.static(rigid_config.batch_dofs_info) else i_d
-        func_add_safe_backward((i_d, i_d, i_b), dyn_info.dofs.armature[I_d], rigid_info.mass_mat, is_backward)
-
-    if qd.static(implicit_damping):
-        qd.loop_config(name="impint_order_1_corr", serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_d, i_b in qd.ndrange(dyn_state.dofs.f_ang.shape[0], dyn_state.dofs.f_ang.shape[1]):
-            I_d = [i_d, i_b] if qd.static(rigid_config.batch_dofs_info) else i_d
-            h = rigid_info.substep_dt[None]
-            rigid_info.mass_mat[i_d, i_d, i_b] = rigid_info.mass_mat[i_d, i_d, i_b] + dyn_info.dofs.damping[I_d] * h
-            if dyn_state.dofs.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY:
-                # qM += d qfrc_actuator / d qvel = -act_bias[2] * dt
-                rigid_info.mass_mat[i_d, i_d, i_b] = (
-                    rigid_info.mass_mat[i_d, i_d, i_b] - dyn_info.dofs.act_bias[I_d][2] * h
-                )
+        func_mass_mat_add_diag(i_d, i_b, dyn_state, dyn_info, rigid_info, rigid_config, implicit_damping, is_backward)
 
 
 @qd.func
@@ -445,21 +464,7 @@ def func_compute_mass_matrix_masked(
     qd.loop_config(name="armature", serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_d, i_b_ in qd.ndrange(dyn_state.dofs.f_ang.shape[0], envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
-        I_d = [i_d, i_b] if qd.static(rigid_config.batch_dofs_info) else i_d
-        func_add_safe_backward((i_d, i_d, i_b), dyn_info.dofs.armature[I_d], rigid_info.mass_mat, is_backward)
-
-    if qd.static(implicit_damping):
-        qd.loop_config(name="impint_order_1_corr", serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_d, i_b_ in qd.ndrange(dyn_state.dofs.f_ang.shape[0], envs_idx.shape[0]):
-            i_b = envs_idx[i_b_]
-            I_d = [i_d, i_b] if qd.static(rigid_config.batch_dofs_info) else i_d
-            h = rigid_info.substep_dt[None]
-            rigid_info.mass_mat[i_d, i_d, i_b] = rigid_info.mass_mat[i_d, i_d, i_b] + dyn_info.dofs.damping[I_d] * h
-            if dyn_state.dofs.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY:
-                # qM += d qfrc_actuator / d qvel = -act_bias[2] * dt
-                rigid_info.mass_mat[i_d, i_d, i_b] = (
-                    rigid_info.mass_mat[i_d, i_d, i_b] - dyn_info.dofs.act_bias[I_d][2] * h
-                )
+        func_mass_mat_add_diag(i_d, i_b, dyn_state, dyn_info, rigid_info, rigid_config, implicit_damping, is_backward)
 
 
 @qd.func
