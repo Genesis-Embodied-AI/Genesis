@@ -1326,7 +1326,7 @@ class SortBuffer:
     kind: ClassVar[DataKind] = DataKind.STATE
 
     value: qd.Tensor
-    i_g: qd.Tensor
+    i_l: qd.Tensor
     is_max: qd.Tensor
 
 
@@ -1334,9 +1334,9 @@ def get_sort_buffer(solver):
     _B = solver._B
 
     return SortBuffer(
-        value=V(dtype=gs.qd_float, shape=(2 * solver.n_geoms_, _B)),
-        i_g=V(dtype=gs.qd_int, shape=(2 * solver.n_geoms_, _B)),
-        is_max=V(dtype=gs.qd_bool, shape=(2 * solver.n_geoms_, _B)),
+        value=V(dtype=gs.qd_float, shape=(2 * solver.n_links_, _B)),
+        i_l=V(dtype=gs.qd_int, shape=(2 * solver.n_links_, _B)),
+        is_max=V(dtype=gs.qd_bool, shape=(2 * solver.n_links_, _B)),
     )
 
 
@@ -1407,10 +1407,14 @@ class ColliderState:
     sort_buffer: SortBuffer
     contact_data: ContactData
     active_buffer: qd.Tensor
+    # Bounding box of every link, the box of its frame moved with it (see func_collision_clear in broadphase.py)
+    links_aabb_min: qd.Tensor
+    links_aabb_max: qd.Tensor
+    # Valid link pairs whose boxes overlap, by index into ColliderInfo.valid_link_pairs
+    n_broad_link_pairs: qd.Tensor
+    broad_link_pairs: qd.Tensor
     n_broad_pairs: qd.Tensor
     broad_collision_pairs: qd.Tensor
-    active_buffer_awake: qd.Tensor
-    active_buffer_hib: qd.Tensor
     box_depth: qd.Tensor
     box_points: qd.Tensor
     box_pts: qd.Tensor
@@ -1447,7 +1451,8 @@ def get_collider_state(
     solver, rigid_config, n_possible_pairs, collider_info, collider_static_config, split_narrowphase
 ):
     _B = solver._B
-    n_geoms = solver.n_geoms_
+    n_links = solver.n_links_
+    n_valid_link_pairs = collider_info.n_valid_link_pairs[None]
     # Collider._init_max_contacts, which runs before this, sizes the contacts per regime (convex vs nonconvex) and the
     # broad phase candidates within the possible pairs.
     max_collision_pairs_broad = collider_info.max_collision_pairs_broad[None]
@@ -1470,10 +1475,12 @@ def get_collider_state(
 
     return ColliderState(
         sort_buffer=get_sort_buffer(solver),
-        active_buffer=V(dtype=gs.qd_int, shape=(n_geoms, _B)),
+        active_buffer=V(dtype=gs.qd_int, shape=(n_links, _B)),
+        links_aabb_min=V(dtype=gs.qd_vec3, shape=(n_links, _B)),
+        links_aabb_max=V(dtype=gs.qd_vec3, shape=(n_links, _B)),
+        n_broad_link_pairs=V(dtype=gs.qd_int, shape=(_B,)),
+        broad_link_pairs=V(dtype=gs.qd_int, shape=(max(n_valid_link_pairs, 1), _B)),
         n_broad_pairs=V(dtype=gs.qd_int, shape=(_B,)),
-        active_buffer_awake=V(dtype=gs.qd_int, shape=(n_geoms, _B)),
-        active_buffer_hib=V(dtype=gs.qd_int, shape=(n_geoms, _B)),
         box_depth=V(dtype=gs.qd_float, shape=box_depth_shape),
         box_points=V_VEC(3, dtype=gs.qd_float, shape=box_points_shape),
         box_pts=V_VEC(3, dtype=gs.qd_float, shape=box_pts_shape),
@@ -2150,8 +2157,13 @@ class ColliderInfo:
     vert_neighbor_start: qd.Tensor
     vert_n_neighbors: qd.Tensor
     verts_spatial_grid: VertsSpatialGrid
-    # (i_ga, i_gb) -> dense pair index, or -1 if invalid. Used by SAP broadphase, narrowphase, and contact cache.
+    # (i_ga, i_gb) -> dense pair index, or -1 if invalid. Used by the broadphase, the narrowphase and the contact cache.
     collision_pair_idx: qd.Tensor
+    # (i_la, i_lb) -> index into valid_link_pairs, or -1 if no geom pair between the two links is valid
+    link_pair_idx: qd.Tensor
+    # Lower and upper corners of the box of every link in its own frame, bounding the boxes of its geoms
+    links_init_aabb_min: qd.Tensor
+    links_init_aabb_max: qd.Tensor
     max_possible_pairs: qd.Tensor
     max_collision_pairs: qd.Tensor
     max_candidate_contacts: qd.Tensor
@@ -2159,9 +2171,9 @@ class ColliderInfo:
     # Post-pruning contact-point budget per environment, which sizes the contact constraint buffers (4 constraints per
     # contact point). Smaller than max_candidate_contacts when contact pruning is enabled or 'max_contacts' is set.
     max_contacts: qd.Tensor
-    # Compact list of valid collision pairs. Used by all-vs-all broadphase to dispatch valid pairs to GPU threads.
-    n_valid_pairs: qd.Tensor
-    valid_collision_pairs: qd.Tensor
+    # Link pairs holding at least one valid geom pair, the link carrying most geoms first (see func_broad_phase_geoms)
+    n_valid_link_pairs: qd.Tensor
+    valid_link_pairs: qd.Tensor
     # Terrain fields
     terrain_hf: qd.Tensor
     terrain_rc: qd.Tensor
@@ -2181,7 +2193,7 @@ class ColliderInfo:
 def get_collider_info(
     solver,
     n_vert_neighbors,
-    n_valid_pairs,
+    n_valid_link_pairs,
     collider_static_config,
     mpr_info,
     gjk_info,
@@ -2206,13 +2218,16 @@ def get_collider_info(
         vert_n_neighbors=V(dtype=gs.qd_int, shape=(solver.n_verts_,)),
         verts_spatial_grid=get_verts_spatial_grid(solver),
         collision_pair_idx=V(dtype=gs.qd_int, shape=(solver.n_geoms_, solver.n_geoms_)),
+        link_pair_idx=V(dtype=gs.qd_int, shape=(solver.n_links_, solver.n_links_)),
+        links_init_aabb_min=V(dtype=gs.qd_vec3, shape=(solver.n_links_,)),
+        links_init_aabb_max=V(dtype=gs.qd_vec3, shape=(solver.n_links_,)),
         max_possible_pairs=V(dtype=gs.qd_int, shape=()),
         max_collision_pairs=V(dtype=gs.qd_int, shape=()),
         max_candidate_contacts=V(dtype=gs.qd_int, shape=()),
         max_collision_pairs_broad=V(dtype=gs.qd_int, shape=()),
         max_contacts=V(dtype=gs.qd_int, shape=()),
-        n_valid_pairs=V_SCALAR_FROM(dtype=gs.qd_int, value=n_valid_pairs),
-        valid_collision_pairs=V(dtype=gs.qd_ivec2, shape=(max(n_valid_pairs, 1),)),
+        n_valid_link_pairs=V_SCALAR_FROM(dtype=gs.qd_int, value=n_valid_link_pairs),
+        valid_link_pairs=V(dtype=gs.qd_ivec2, shape=(max(n_valid_link_pairs, 1),)),
         terrain_hf=V(dtype=gs.qd_float, shape=terrain_hf_shape),
         terrain_rc=V(dtype=gs.qd_int, shape=(2,)),
         terrain_scale=V(dtype=gs.qd_float, shape=(2,)),
