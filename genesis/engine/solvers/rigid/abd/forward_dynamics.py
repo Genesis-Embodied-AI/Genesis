@@ -1971,7 +1971,7 @@ def func_midpoint_free_body(
     """
     EPS = rigid_info.EPS[None]
     # Newton tolerance on the residual, relative to the momentum scale (matching MuJoCo's midpoint integration)
-    tol = gs.qd_float(1e-6) if qd.static(gs.qd_float == qd.f32) else gs.qd_float(1e-13)
+    tol = gs.qd_float(1e-6) if qd.static(qd.lang.impl.get_runtime().default_fp == qd.f32) else gs.qd_float(1e-13)
     h = rigid_info.substep_dt[None]
     i2h = 2.0 / h
 
