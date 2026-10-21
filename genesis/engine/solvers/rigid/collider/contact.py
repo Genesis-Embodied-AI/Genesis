@@ -382,12 +382,15 @@ def func_add_contact(
     use_atomic: qd.template(),
     errno: qd.Tensor,
 ):
+    """Append a contact to the buffer of an environment, returning its slot, or -1 when the buffer is full."""
     i_c = 0
     if qd.static(use_atomic):
         i_c = qd.atomic_add(collider_state.n_contacts[i_b], 1)
     else:
         i_c = collider_state.n_contacts[i_b]
+    i_c_added = -1
     if i_c < collider_info.max_candidate_contacts[None]:
+        i_c_added = i_c
         func_set_contact(
             i_ga,
             i_gb,
@@ -409,6 +412,7 @@ def func_add_contact(
             collider_state.n_contacts[i_b] = i_c + 1
     else:
         errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
+    return i_c_added
 
 
 @qd.func
