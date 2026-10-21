@@ -441,7 +441,6 @@ def func_noslip_batch(
     tid: int,
     n_colors: int,
     dyn_state: array_class.DynState,
-    collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
@@ -467,9 +466,7 @@ def func_noslip_batch(
     ne = constraint_state.n_constraints_equality[i_b]
     nf = constraint_state.n_constraints_frictionloss[i_b]
     const_start = ne + nf
-    const_end = const_start + qd.static(rigid_config.rows_per_contact) * (
-        collider_state.n_contacts[i_b] - collider_state.n_contacts_hibernated[i_b]
-    )
+    const_end = const_start + constraint_state.n_constraints_contact[i_b]
 
     n_dofs = constraint_state.island.dof_slices.n[i_island, i_b]
     n_rows = constraint_state.island_solve.constraint_slices.n[i_island, i_b]
@@ -548,7 +545,6 @@ def func_dual_finish_batch(
 @qd.func
 def func_noslip(
     dyn_state: array_class.DynState,
-    collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
@@ -584,9 +580,7 @@ def func_noslip(
                 if qd.static(rigid_config.enable_cooperative_noslip):
                     func_color_rows_batch(i_b, i_island, tid, constraint_state, rigid_info)
                     n_colors = constraint_state.noslip_islands_n_colors[i_island, i_b]
-                func_noslip_batch(
-                    i_b, i_island, tid, n_colors, dyn_state, collider_state, constraint_state, rigid_info, rigid_config
-                )
+                func_noslip_batch(i_b, i_island, tid, n_colors, dyn_state, constraint_state, rigid_info, rigid_config)
                 func_dual_finish_batch(
                     i_b, i_island, tid, n_colors, dyn_state, constraint_state, rigid_info, rigid_config
                 )

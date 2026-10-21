@@ -305,26 +305,21 @@ def kernel_accumulate_constraint_solver_grads(
 # 1.0 and piecewise +-1 respectively, so the sub-gradient w.r.t. jac is 0). Each kernel consumes these and
 # accumulates into its own differentiable inputs.
 #
-# n_con row layout: the forward adds constraints in the order equality -> frictionloss -> collision -> joint-limit
-# (see add_equality_constraints / add_inequality_constraints in solver.py). All three equality sub-types (JOINT,
-# CONNECT, WELD) are differentiated by kernel_manual_add_equality_constraints_bw. The manual reverses re-walk the
-# same forward loops deterministically to recover their own n_con:
-#   n_eq   = constraint_state.n_constraints_equality[i_b]
-#   n_fric = constraint_state.n_constraints_frictionloss[i_b]
-#   equality     : seed counter at 0
-#   frictionloss : seed counter at n_eq
-#   collision    : n_con = n_eq + n_fric + i_col_ * 4 + i, with i_col_ the logical (sorted) contact index
-#   joint-limit  : seed counter at n_eq + n_fric (+ 4 * n_contacts if collision on)
+# n_con row layout: each constraint kind appends one contiguous segment of rows and records where it starts (see
+# ConstraintRowSegment in array_class.py and func_assemble_constraints in solver.py). All three equality sub-types
+# (JOINT, CONNECT, WELD) are differentiated by kernel_manual_add_equality_constraints_bw. The manual reverses re-walk
+# the same forward loops deterministically from the start of their own segment to recover their own n_con:
+#   equality, frictionloss, joint-limit : seed counter at segment.row_start
+#   collision : n_con = segment.row_start + i_col_ * rows_per_contact + i, with i_col_ the logical (sorted) contact
 # ---------------------------------------------------------------------------
 @qd.kernel(fastcache=True)
 def kernel_manual_add_joint_limit_constraints_bw(
+    segment: array_class.ConstraintRowSegment,
     dyn_state: array_class.DynState,
-    collider_state: qd.template(),
     constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
-    enable_collision: qd.template(),
 ):
     """Manual reverse of `add_joint_limit_constraints`. See the section header
     above for the shared `n_con` layout and upstream-grad conventions.
@@ -367,17 +362,8 @@ def kernel_manual_add_joint_limit_constraints_bw(
         serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL),
     )
     for i_b in range(_B):
-        # Forward row layout: equality -> frictionloss -> collision -> joint-limit.
-        # Seed the joint-limit counter past equality + frictionloss (always)
-        # and collision (when on).
-        n_con_counter = gs.qd_int(
-            constraint_state.n_constraints_equality[i_b] + constraint_state.n_constraints_frictionloss[i_b]
-        )
-        if qd.static(enable_collision):
-            n_con_counter = n_con_counter + gs.qd_int(
-                (collider_state.n_contacts[i_b] - collider_state.n_contacts_hibernated[i_b])
-                * qd.static(rigid_config.rows_per_contact)
-            )
+        # The joint-limit rows are the segment the forward appended from its recorded start
+        n_con_counter = segment.row_start[i_b]
 
         for i_l in range(n_links):
             I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
@@ -444,6 +430,7 @@ def kernel_manual_add_joint_limit_constraints_bw(
 
 @qd.kernel(fastcache=True)
 def kernel_manual_add_collision_constraints_bw(
+    segment: array_class.ConstraintRowSegment,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
@@ -487,7 +474,7 @@ def kernel_manual_add_collision_constraints_bw(
         n_hib = collider_state.n_contacts_hibernated[i_b]
         if i_col_ < collider_state.n_contacts[i_b] - n_hib:
             # The forward assembles the contact rows in logical (sorted) order of the live contacts: row group i_col_
-            # maps to physical contact contact_sort_idx[n_hib + i_col_] (see add_inequality_constraints).
+            # maps to physical contact contact_sort_idx[n_hib + i_col_] (see func_substep_order_contacts in island.py).
             i_col = collider_state.contact_sort_idx[n_hib + i_col_, i_b]
             link_a = collider_state.contact_data.link_a[i_col, i_b]
             link_b = collider_state.contact_data.link_b[i_col, i_b]
@@ -543,11 +530,8 @@ def kernel_manual_add_collision_constraints_bw(
             g_d1 = gs.qd_vec3(0.0, 0.0, 0.0)
             g_d2 = gs.qd_vec3(0.0, 0.0, 0.0)
 
-            # Forward row layout: equality -> frictionloss -> collision -> joint-limit.
-            # Offset past equality + frictionloss.
-            const_start = (
-                constraint_state.n_constraints_equality[i_b] + constraint_state.n_constraints_frictionloss[i_b]
-            )
+            # The contact rows are the segment the forward appended from its recorded start
+            const_start = segment.row_start[i_b]
             for i in range(qd.static(rigid_config.rows_per_contact)):
                 s_i = gs.qd_float(2 * (i % 2) - 1)
                 d = s_i * d1 if i < 2 else s_i * d2
@@ -644,6 +628,7 @@ def kernel_manual_add_collision_constraints_bw(
 
 @qd.kernel(fastcache=True)
 def kernel_manual_add_frictionloss_constraints_bw(
+    segment: array_class.ConstraintRowSegment,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
@@ -680,10 +665,8 @@ def kernel_manual_add_frictionloss_constraints_bw(
         serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL and rigid_config.backend != gs.metal),
     )
     for i_b in range(_B):
-        # Forward row layout: equality -> frictionloss -> collision -> joint-limit.
-        # Frictionloss row counter starts past the equality block (which may be
-        # nonzero when JOINT-type equalities are present).
-        n_con_counter = gs.qd_int(constraint_state.n_constraints_equality[i_b])
+        # The frictionloss rows are the segment the forward appended from its recorded start
+        n_con_counter = segment.row_start[i_b]
 
         for i_l in range(n_links):
             I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
@@ -782,6 +765,7 @@ def func_equality_jdotv_bw(
 
 @qd.kernel(fastcache=True)
 def kernel_manual_add_equality_constraints_bw(
+    segment: array_class.ConstraintRowSegment,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
@@ -825,8 +809,8 @@ def kernel_manual_add_equality_constraints_bw(
         serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL),
     )
     for i_b in range(_B):
-        # Equality is the first constraint group; row counter starts at 0.
-        n_con_counter = gs.qd_int(0)
+        # The equality rows are the segment the forward appended from its recorded start
+        n_con_counter = segment.row_start[i_b]
 
         for i_e in range(constraint_state.qd_n_equalities[i_b]):
             if dyn_info.equalities.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.JOINT:

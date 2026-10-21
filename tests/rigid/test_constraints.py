@@ -4,7 +4,7 @@ import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.utils.misc import tensor_to_array
+from genesis.utils.misc import qd_to_numpy, tensor_to_array
 
 from ..utils.assertions import assert_allclose, assert_equal
 
@@ -341,3 +341,64 @@ def test_set_sol_params(n_envs, batched, tol):
                 assert_allclose(obj.get_sol_params(), sol_params, tol=tol)
             obj.set_sol_params([0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0])
             assert_allclose(obj.get_sol_params(), [2.0e-02, 0.5, 1e-4, 1e-4, 0.0, 1e-4, 1.0], tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.precision("64")
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_contact_free_rows_invariant_to_collision():
+    # Nothing in this scene ever touches, so it assembles the same rows with rigid-rigid collision on or off: the empty
+    # contact segment leaves the equality, frictionloss and joint-limit rows in place, and both runs step bit for bit
+    # alike. The arm starts past the upper limit of its fourth joint and falls under gravity, the free boxes fall welded.
+    def simulate(enable_collision):
+        scene = gs.Scene(
+            rigid_options=gs.options.RigidOptions(
+                enable_collision=enable_collision,
+                enable_self_collision=False,
+            ),
+            show_viewer=False,
+        )
+        robot = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+        boxes = [
+            scene.add_entity(
+                gs.morphs.Box(
+                    size=(0.1, 0.1, 0.1),
+                    pos=(2.0 + 0.3 * i_box, 0.0, 1.0),
+                )
+            )
+            for i_box in range(2)
+        ]
+        scene.build(n_envs=2)
+
+        solver = scene.rigid_solver
+        robot.set_dofs_frictionloss(np.full((robot.n_dofs,), 0.5))
+        solver.add_weld_constraint(boxes[0].base_link_idx, boxes[1].base_link_idx)
+
+        constraint_state = solver.constraint_solver.constraint_state
+        trajectory, n_rows = [], []
+        for _ in range(50):
+            scene.step()
+            state = (
+                solver.get_qpos(),
+                solver.get_dofs_velocity(),
+                solver.get_dofs_force(),
+                solver.get_dofs_actuator_force(),
+            )
+            trajectory.append(tensor_to_array(torch.cat(state, dim=-1)))
+            n_equality, n_frictionloss, n_all = (
+                qd_to_numpy(counter)
+                for counter in (
+                    constraint_state.n_constraints_equality,
+                    constraint_state.n_constraints_frictionloss,
+                    constraint_state.n_constraints,
+                )
+            )
+            n_rows.append(np.stack((n_equality, n_frictionloss, n_all - n_equality - n_frictionloss), axis=-1))
+        return np.stack(trajectory), np.stack(n_rows)
+
+    trajectory_off, n_rows_off = simulate(enable_collision=False)
+    trajectory_on, n_rows_on = simulate(enable_collision=True)
+    # Every category holds rows at some step: the equality, the frictionloss and, past them, the joint-limit rows
+    assert (n_rows_off.max(axis=(0, 1)) > 0).all()
+    assert_equal(n_rows_on, n_rows_off)
+    assert_equal(trajectory_on, trajectory_off)

@@ -1056,6 +1056,61 @@ def test_hibernation_wakes_on_daisy_chain(show_viewer, n_envs):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
+def test_hibernation_without_collision(show_viewer, n_envs):
+    # Falling asleep takes no contact: with rigid-rigid collision disabled, a body at rest in zero gravity sleeps once
+    # the solve has run, and a user input on it wakes it alone, each box being an island of its own.
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+            use_hibernation=True,
+        ),
+        show_viewer=show_viewer,
+    )
+    box_qpos = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.5),
+        )
+    )
+    box_wrench = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(1.0, 0.0, 0.5),
+        )
+    )
+    scene.build(n_envs=n_envs)
+
+    solver = scene.rigid_solver
+
+    def asleep(entity):
+        return qd_to_numpy(solver.dyn_state.entities.is_hibernated, entity.idx).all()
+
+    def awake(entity):
+        return not qd_to_numpy(solver.dyn_state.entities.is_hibernated, entity.idx).any()
+
+    for _ in range(30):
+        scene.step()
+    assert asleep(box_qpos) and asleep(box_wrench)
+
+    box_qpos.set_qpos([0.0, 0.0, 0.8, 1.0, 0.0, 0.0, 0.0])
+    assert awake(box_qpos) and asleep(box_wrench)
+    for _ in range(30):
+        scene.step()
+    assert asleep(box_qpos) and asleep(box_wrench)
+
+    z0 = box_wrench.get_pos()[..., 2]
+    for _ in range(5):
+        solver.apply_links_external_wrench([0.0, 0.0, 2.0], links_idx=box_wrench.base_link_idx)
+        scene.step()
+    assert awake(box_wrench) and (box_wrench.get_pos()[..., 2] > z0).all()
+    assert asleep(box_qpos)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
 def test_hibernation_repartitioning(show_viewer, n_envs):
     # Full lifecycle of hibernation and the partition together: two boxes sleep apart (2 islands); moving one onto the
     # other wakes it, it collides, and the stack sleeps as one merged island; moving a box off the hibernated stack

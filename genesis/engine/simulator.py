@@ -238,12 +238,7 @@ class Simulator(RBC):
                         exclusive_links,
                     )
                 self._engine.initialize()
-                self.rigid_solver.wire_backend(
-                    self._rigid_system,
-                    self._engine.island_system,
-                    self._engine.contact_system,
-                    self._engine.constraint_system,
-                )
+                self.rigid_solver.wire_backend(self._engine)
 
         # A coupler exchanges state once per substep, so it is built once the rate that loop runs at is known.
         rigid = self._rigid_system

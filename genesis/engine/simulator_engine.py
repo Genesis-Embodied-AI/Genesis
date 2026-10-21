@@ -23,7 +23,7 @@ class SimulatorEngine(Engine):
         from .systems.rigid_solver_system import RigidSolverSystem
         from .systems.rigid_island_system import RigidIslandSystem
         from .systems.rigid_rigid_contact_system import RigidRigidContactSystem
-        from .systems.constraint_solver_system import ConstraintSolverSystem
+        from .systems.rigid_constraint_system import RigidConstraintSystem
 
         super().build()
         self.rigid_system = self.find(RigidSolverSystem)
@@ -36,30 +36,38 @@ class SimulatorEngine(Engine):
         self.rigid_sdf_system = self.require(RigidSdfSystem)
         self.island_system = self.require(RigidIslandSystem)
         self.contact_system = self.find(RigidRigidContactSystem)
-        self.constraint_system = self.find(ConstraintSolverSystem)
+        self.constraint_system = self.find(RigidConstraintSystem)
         context = self.create_context()
 
-        # Dynamics graph: wake coupled bodies, advance dynamics, then assemble equality constraints.
+        # Dynamics graph: wake coupled bodies, then advance dynamics.
         dynamics_schedule = self.action_schedule(
             wakeup=self.rigid_system.wake_coupled_links_stage,
             dynamics=self.rigid_system.forward_dynamics_stage,
-            equalities=self.constraint_system.assemble_equalities if self.constraint_system else None,
         )
         self._dynamics_pipeline = Pipeline(kernel_substep_dynamics, context, dynamics_schedule)
 
-        # Collision graph: detect contacts, then assemble inequality constraints.
+        # Collision graph: detect contacts, then assemble the constraint rows.
         collision_schedule = self.action_schedule(
             collision=self.contact_system.detect if self.contact_system else None,
-            constraints=self.constraint_system.assemble_inequalities if self.constraint_system else None,
+            constraints=self.constraint_system.assemble if self.constraint_system else None,
         )
         self._collision_pipeline = Pipeline(kernel_substep_collision, context, collision_schedule)
 
         # Post-solve graph: apply the host-solved constraint forces, then integrate.
         post_schedule = self.action_schedule(
-            force_updates=self.constraint_system.update_forces if self.constraint_system else None,
+            constraints=self.constraint_system.post_solve if self.constraint_system else None,
             integration=self.rigid_system.integrate_stage,
         )
         self._post_pipeline = Pipeline(kernel_substep_post, context, post_schedule)
+
+        # The host path runs the same collision and post-solve phases, launched as plain kernels.
+        self._collision_host_pipeline = None
+        if self.contact_system is not None or self.constraint_system is not None:
+            self._collision_host_pipeline = Pipeline(kernel_substep_collision_host, context, collision_schedule)
+        self._post_solve_host_pipeline = None
+        if self.constraint_system is not None:
+            post_solve_schedule = self.action_schedule(constraints=self.constraint_system.post_solve)
+            self._post_solve_host_pipeline = Pipeline(kernel_substep_post_solve_host, context, post_solve_schedule)
 
     def initialize(self) -> None:
         if self.rigid_system is None:
@@ -80,8 +88,6 @@ class SimulatorEngine(Engine):
             return
         if self.contact_system is not None:
             self.contact_system.prepare.invoke()
-        if self.constraint_system is not None:
-            self.constraint_system.prepare.invoke()
         is_forward_pos_updated, is_forward_vel_updated = self.rigid_system.get_forward_update_flags()
         self._dynamics_pipeline.run(is_forward_pos_updated, is_forward_vel_updated)
         self._collision_pipeline.run()
@@ -103,8 +109,6 @@ class SimulatorEngine(Engine):
             rigid.save_adjoint_cache(f)
         if self.contact_system is not None:
             self.contact_system.prepare.invoke()
-        if self.constraint_system is not None:
-            self.constraint_system.prepare.invoke()
         rigid.wake_coupled_links_kernel.invoke()
         rigid.forward_dynamics_kernel.invoke(rigid.get_forward_kernel_args())
         self.constraint_force_host()
@@ -113,19 +117,19 @@ class SimulatorEngine(Engine):
         if rigid.requires_grad:
             rigid.save_adjoint_cache(f + 1)
 
+    def assemble_constraints_host(self) -> None:
+        """Detect the contacts and assemble the constraint rows through host-launched kernels."""
+        if self._collision_host_pipeline is not None:
+            self._collision_host_pipeline.run()
+
     def constraint_force_host(self) -> None:
         """Run collision and constraint phases for the temporary host coupling/backward path."""
-        rigid = self.rigid_system
-        if rigid is None:
+        if self.rigid_system is None:
             return
+        self.assemble_constraints_host()
         if self.constraint_system is not None:
-            self.constraint_system.assemble_equalities_kernel.invoke()
-        if self.contact_system is not None:
-            self.contact_system.detect_kernel.invoke()
-        if self.constraint_system is not None:
-            self.constraint_system.assemble_inequalities_kernel.invoke()
             self.constraint_system.solve.invoke()
-            self.constraint_system.update_forces_kernel.invoke()
+            self._post_solve_host_pipeline.run()
 
     def substep_to_velocity(self) -> None:
         """Advance to the velocity cut retained for the current SAP coupling lifecycle."""
@@ -155,18 +159,15 @@ class SimulatorEngine(Engine):
         if self.constraint_system is None:
             rigid.reverse_smooth_acceleration()
         else:
-            self.constraint_system.reverse_solve.invoke()
-            if self.contact_system is not None:
-                self.contact_system.prepare_backward.invoke()
-                self.constraint_system.reverse_collision_rows.invoke()
-                self.contact_system.backward_narrowphase()
-            self.constraint_system.reverse_joint_limit_rows.invoke()
+            self.constraint_system.reverse.invoke()
         rigid.finish_backward(f)
 
 
-# These graph adapter kernels belong to Engine scheduling. The participating Systems provide only Actions and Data.
+# These adapter kernels belong to Engine scheduling. The participating Systems provide only Actions and Data. A
+# composite Action binds the Data of its children inside nested Actions, which no owner kernel exposes as parameters,
+# so every adapter takes the context first, graph or not.
 # FIXME: quadrants#966 - fastcache keys a kernel on its arguments without the constants an Action binds, so it could
-# load a kernel compiled for another configuration. Keep these graph kernels out of fastcache until then.
+# load a kernel compiled for another configuration. Keep these kernels out of fastcache until then.
 @qd.kernel(graph=True)
 def kernel_substep_dynamics(
     context: qd.template(),
@@ -178,8 +179,6 @@ def kernel_substep_dynamics(
         action.invoke()
     for action in qd.static(action_schedule.dynamics):
         action.invoke((is_forward_pos_updated, is_forward_vel_updated, False))
-    for action in qd.static(action_schedule.equalities):
-        action.invoke()
 
 
 @qd.kernel(graph=True)
@@ -198,7 +197,27 @@ def kernel_substep_post(
     context: qd.template(),
     action_schedule: qd.template(),
 ):
-    for action in qd.static(action_schedule.force_updates):
+    for action in qd.static(action_schedule.constraints):
         action.invoke()
     for action in qd.static(action_schedule.integration):
         action.invoke((False,))
+
+
+@qd.kernel
+def kernel_substep_collision_host(
+    context: qd.template(),
+    action_schedule: qd.template(),
+):
+    for action in qd.static(action_schedule.collision):
+        action.invoke()
+    for action in qd.static(action_schedule.constraints):
+        action.invoke()
+
+
+@qd.kernel
+def kernel_substep_post_solve_host(
+    context: qd.template(),
+    action_schedule: qd.template(),
+):
+    for action in qd.static(action_schedule.constraints):
+        action.invoke()

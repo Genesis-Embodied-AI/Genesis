@@ -18,10 +18,10 @@ from genesis.utils.misc import data_to_array, indices_to_mask, qd_to_torch
 
 from ..base_solver import MutatedLinks, StateChange, Subscriber, mutates, register_subscriber
 from .collider import Collider
-from .constraint import ConstraintSolver
 from .rigid_tools import sanitize_sol_params as _sanitize_sol_params
 
 if TYPE_CHECKING:
+    from genesis.engine.core import System
     from genesis.engine.entities.rigid_entity.rigid_equality import RigidEquality
     from genesis.engine.entities.rigid_entity.rigid_geom import RigidGeom, RigidVisGeom
     from genesis.engine.entities.rigid_entity.rigid_joint import RigidJoint
@@ -29,9 +29,11 @@ if TYPE_CHECKING:
     from genesis.engine.force_fields import ForceField
     from genesis.engine.scene import Scene
     from genesis.engine.simulator import Simulator
-    from genesis.engine.systems.constraint_solver_system import ConstraintSolverSystem
+    from genesis.engine.simulator_engine import SimulatorEngine
+    from genesis.engine.systems.rigid_constraint_system import RigidConstraintSystem
+    from genesis.engine.systems.rigid_equality_constraint_system import RigidEqualityConstraintSystem
+    from genesis.engine.systems.rigid_frictionloss_constraint_system import RigidFrictionLossConstraintSystem
     from genesis.engine.systems.rigid_island_system import RigidIslandSystem
-    from genesis.engine.systems.rigid_rigid_contact_system import RigidRigidContactSystem
     from genesis.engine.systems.rigid_solver_system import RigidSolverSystem
 
 TensorLike: TypeAlias = ArrayLike | torch.Tensor
@@ -39,6 +41,86 @@ IndexLike: TypeAlias = ArrayLike | torch.Tensor | None
 HostTensor: TypeAlias = NDArray[np.generic] | torch.Tensor
 StructuredValue: TypeAlias = HostTensor | tuple[HostTensor, ...]
 StructuredResult: TypeAlias = dict[str, StructuredValue]
+
+
+def _constraint_state_property(name: str) -> property:
+    return property(lambda facade: getattr(facade._system.data.constraint_state, name))
+
+
+class ConstraintSolver:
+    """External compatibility surface of the rigid constraint Systems.
+
+    It reads the state of the constraint manager and delegates to its owner APIs, and to the equality constraints for
+    the equality and weld queries and edits.
+    """
+
+    def __init__(
+        self,
+        system: "RigidConstraintSystem",
+        equality_system: "RigidEqualityConstraintSystem",
+        participants: tuple["System", ...],
+    ) -> None:
+        self._system = system
+        self._equality_system = equality_system
+        self._participants = participants
+
+    @property
+    def constraint_state(self) -> array_class.ConstraintState:
+        return self._system.data.constraint_state
+
+    @property
+    def len_constraints(self) -> int:
+        return self._system.get_len_constraints()
+
+    @property
+    def _n_iterations(self) -> int:
+        return self._system.get_n_iterations()
+
+    @property
+    def data(self) -> Iterator[array_class.DataItem | array_class.ConfigItem]:
+        yield from self._system.iter_data()
+        for participant in self._participants:
+            yield from participant.iter_data()
+
+    qd_n_equalities = _constraint_state_property("qd_n_equalities")
+    n_constraints = _constraint_state_property("n_constraints")
+    n_constraints_equality = _constraint_state_property("n_constraints_equality")
+    n_constraints_frictionloss = _constraint_state_property("n_constraints_frictionloss")
+    n_constraints_cone = _constraint_state_property("n_constraints_cone")
+    active = _constraint_state_property("active")
+    jac = _constraint_state_property("jac")
+    efc_D = _constraint_state_property("efc_D")
+    aref = _constraint_state_property("aref")
+    qacc = _constraint_state_property("qacc")
+    qacc_ws = _constraint_state_property("qacc_ws")
+    qfrc_constraint = _constraint_state_property("qfrc_constraint")
+    efc_force = _constraint_state_property("efc_force")
+    grad = _constraint_state_property("grad")
+
+    def reset(self, envs_idx: IndexLike = None) -> None:
+        return self._system.reset(envs_idx)
+
+    def clear(self, envs_idx: IndexLike = None) -> None:
+        return self._system.clear(envs_idx)
+
+    def clear_query_cache(self) -> None:
+        return self._equality_system.clear_query_cache()
+
+    def get_equality_constraints(self, as_tensor: bool = True, to_torch: bool = True) -> StructuredResult:
+        return self._equality_system.get_equality_constraints(as_tensor, to_torch)
+
+    def get_weld_constraints(self, as_tensor: bool = True, to_torch: bool = True) -> StructuredResult:
+        return self._equality_system.get_weld_constraints(as_tensor, to_torch)
+
+    def add_weld_constraint(self, link1_idx: int, link2_idx: int, envs_idx: IndexLike = None) -> None:
+        return self._equality_system.add_weld_constraint(link1_idx, link2_idx, envs_idx)
+
+    def delete_weld_constraint(self, link1_idx: int, link2_idx: int, envs_idx: IndexLike = None) -> None:
+        return self._equality_system.delete_weld_constraint(link1_idx, link2_idx, envs_idx)
+
+    def backward(self) -> None:
+        return self._system.backward()
+
 
 class RigidSolver:
     material_cls = Rigid
@@ -69,6 +151,7 @@ class RigidSolver:
         # An admitted Rigid backend owns simulation state. Scenes without Rigid entities keep this facade unwired.
         self._system: "RigidSolverSystem | None" = None
         self._island_system: "RigidIslandSystem | None" = None
+        self._frictionloss_system: "RigidFrictionLossConstraintSystem | None" = None
 
         self.collider = None
         self.constraint_solver = None
@@ -78,20 +161,37 @@ class RigidSolver:
     def init_ckpt(self) -> None:
         pass
 
-    def wire_backend(
-        self,
-        system: "RigidSolverSystem",
-        island_system: "RigidIslandSystem",
-        contact_system: "RigidRigidContactSystem | None",
-        constraint_system: "ConstraintSolverSystem | None",
-    ) -> None:
-        """Connect the public facade to explicit owner APIs after initialization."""
+    def wire_backend(self, engine: "SimulatorEngine") -> None:
+        """Connect the public facade to the owner APIs of the Systems of the Engine after initialization."""
+        from genesis.engine.systems import (
+            RigidContactConstraintSystem,
+            RigidEqualityConstraintSystem,
+            RigidFrictionLossConstraintSystem,
+            RigidJointLimitConstraintSystem,
+            RigidSolverSystem,
+        )
+
+        system = engine.require(RigidSolverSystem)
         self._system = system
-        self._island_system = island_system
+        self._island_system = engine.island_system
         self._articulated_links_idx = system._articulated_links_idx
         self._links_parent_idx = system._links_parent_idx
-        self.constraint_solver = None if constraint_system is None else ConstraintSolver(constraint_system)
-        self.collider = None if contact_system is None else Collider(contact_system)
+        self._frictionloss_system = engine.find(RigidFrictionLossConstraintSystem)
+        self.collider = None if engine.contact_system is None else Collider(engine.contact_system)
+        self.constraint_solver = None
+        if engine.constraint_system is not None:
+            participant_types = (
+                RigidEqualityConstraintSystem,
+                RigidFrictionLossConstraintSystem,
+                RigidContactConstraintSystem,
+                RigidJointLimitConstraintSystem,
+            )
+            participants = tuple(
+                participant for participant in map(engine.find, participant_types) if participant is not None
+            )
+            self.constraint_solver = ConstraintSolver(
+                engine.constraint_system, engine.require(RigidEqualityConstraintSystem), participants
+            )
 
     # Explicit compatibility exports of Rigid-owned data. These replace the former inheritance/__getattr__ surface:
     # the facade never owns or reimplements the fields, and adding a new backend field requires an intentional export.
@@ -597,7 +697,7 @@ class RigidSolver:
         if self.collider is not None:
             self.collider._system.clear_contact_data_cache()
         if self.constraint_solver is not None:
-            self.constraint_solver._system.clear_equality_info_cache()
+            self.constraint_solver.clear_query_cache()
 
     def _reset_dependents(self, envs_idx: IndexLike = None) -> None:
         if self.collider is not None:
@@ -906,20 +1006,13 @@ class RigidSolver:
         qf_passive = qd_to_torch(rigid.data.dyn_state.dofs.qf_passive, envs_idx, transpose=True)
         if self._options.batch_dofs_info:
             armature = qd_to_torch(rigid.data.dyn_info.dofs.armature, envs_idx, transpose=True)
-            frictionloss = qd_to_torch(rigid.data.dyn_info.dofs.frictionloss, envs_idx, transpose=True)
         else:
             armature = qd_to_torch(rigid.data.dyn_info.dofs.armature, transpose=True)
-            frictionloss = qd_to_torch(rigid.data.dyn_info.dofs.frictionloss, transpose=True)
 
-        if constraint_state is None:
+        if self._frictionloss_system is None:
             qf_frictionloss = torch.zeros_like(qf_applied)
         else:
-            efc_force = qd_to_torch(constraint_state.efc_force, envs_idx, transpose=True)
-            n_constraints_equality = qd_to_torch(constraint_state.n_constraints_equality, envs_idx)
-            has_frictionloss = frictionloss > gs.EPS
-            rank = torch.cumsum(has_frictionloss, dim=-1) - 1
-            gather_idx = (n_constraints_equality[:, None] + rank).clamp_(min=0)
-            qf_frictionloss = torch.gather(efc_force, 1, gather_idx) * has_frictionloss
+            qf_frictionloss = self._frictionloss_system.get_dofs_frictionloss_force(envs_idx)
 
         actuator_force = qf_applied - armature * qacc + qf_frictionloss + qf_passive
         if dofs_idx is not None:

@@ -1,4 +1,3 @@
-from collections.abc import Iterator
 import quadrants as qd
 from frozendict import frozendict
 
@@ -9,23 +8,15 @@ import genesis.utils.geom as gu
 import genesis.utils.simt as su
 from genesis.engine.solvers.rigid.abd import func_solve_mass_batch
 from genesis.engine.solvers.rigid.abd.misc import (
-    func_hibernate_island_if_settled,
     func_list_item,
     func_list_range_start,
     linear_to_lower_tri,
 )
 
 from .island import (
-    func_build_islands,
-    func_build_islands_coop,
-    func_build_islands_no_contact,
-    func_build_single_island,
-    func_build_single_island_coop,
     func_group_constraints_by_island,
     func_group_constraints_by_island_coop,
     func_reorder_island_dofs,
-    func_sort_contacts,
-    func_sort_contacts_coop,
 )
 from . import linesearch
 from . import noslip as constraint_noslip
@@ -86,80 +77,6 @@ def _sort_relevant_dofs_descending(
             constraint_state.jac_dofs_idx[i_con, j + 1, i_b] = key
 
 
-def _constraint_state_property(name):
-    return property(lambda facade: getattr(facade._system.data.constraint_state, name))
-
-
-class ConstraintSolver:
-    """External compatibility facade over ConstraintSolverSystem-owned state."""
-
-    def __init__(self, system) -> None:
-        self._system = system
-
-    @property
-    def constraint_state(self):
-        return self._system.data.constraint_state
-
-    @property
-    def len_constraints(self) -> int:
-        return self._system.get_len_constraints()
-
-    @property
-    def _n_iterations(self) -> int:
-        return self._system.get_n_iterations()
-
-    @property
-    def data(self) -> Iterator[array_class.DataItem]:
-        for item in array_class.iter_data(self._system.data, "constraint_state"):
-            if not item.name.startswith(("constraint_state.island.", "constraint_state.qd_n_equalities")):
-                yield item
-
-    qd_n_equalities = _constraint_state_property("qd_n_equalities")
-    n_constraints = _constraint_state_property("n_constraints")
-    n_constraints_equality = _constraint_state_property("n_constraints_equality")
-    n_constraints_frictionloss = _constraint_state_property("n_constraints_frictionloss")
-    n_constraints_cone = _constraint_state_property("n_constraints_cone")
-    active = _constraint_state_property("active")
-    jac = _constraint_state_property("jac")
-    efc_D = _constraint_state_property("efc_D")
-    aref = _constraint_state_property("aref")
-    qacc = _constraint_state_property("qacc")
-    qacc_ws = _constraint_state_property("qacc_ws")
-    qfrc_constraint = _constraint_state_property("qfrc_constraint")
-    efc_force = _constraint_state_property("efc_force")
-    grad = _constraint_state_property("grad")
-
-    def reset(self, envs_idx=None):
-        return self._system.reset(envs_idx)
-
-    def clear(self, envs_idx=None):
-        return self._system.clear(envs_idx)
-
-    def add_equality_constraints(self):
-        return self._system.add_equality_constraints()
-
-    def add_inequality_constraints(self):
-        return self._system.add_inequality_constraints()
-
-    def resolve(self):
-        return self._system.resolve()
-
-    def get_equality_constraints(self, as_tensor=True, to_torch=True):
-        return self._system.get_equality_constraints(as_tensor, to_torch)
-
-    def get_weld_constraints(self, as_tensor=True, to_torch=True):
-        return self._system.get_weld_constraints(as_tensor, to_torch)
-
-    def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None):
-        return self._system.add_weld_constraint(link1_idx, link2_idx, envs_idx)
-
-    def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx=None):
-        return self._system.delete_weld_constraint(link1_idx, link2_idx, envs_idx)
-
-    def backward(self):
-        return self._system.backward()
-
-
 # =====================================================================================================================
 # ================================================= Getters / Setters =================================================
 # =====================================================================================================================
@@ -169,6 +86,7 @@ class ConstraintSolver:
 def kernel_get_equality_constraints(
     iout: qd.types.ndarray(),
     fout: qd.types.ndarray(),
+    segment: array_class.ConstraintRowSegment,
     constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
@@ -187,7 +105,7 @@ def kernel_get_equality_constraints(
 
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
-        i_c_start = gs.qd_int(0)
+        i_c_start = segment.row_start[i_b]
         i_e_start = gs.qd_int(0)
         if qd.static(is_padded):
             i_e_start = i_b * n_eqs_max
@@ -251,6 +169,7 @@ def func_clear_constraint_at_env(
     constraint_state.n_constraints_equality[i_b] = 0
     constraint_state.n_constraints_frictionloss[i_b] = 0
     constraint_state.n_constraints_cone[i_b] = 0
+    constraint_state.n_constraints_contact[i_b] = 0
     constraint_state.qd_n_equalities[i_b] = rigid_info.n_equalities[None]
     for i_d, i_c in qd.ndrange(n_dofs, len_constraints):
         constraint_state.jac[i_c, i_d, i_b] = 0.0
@@ -764,6 +683,7 @@ def _add_collision_constraints_per_contact(
 
 @qd.func
 def add_collision_constraints(
+    segment: array_class.ConstraintRowSegment,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
@@ -788,7 +708,10 @@ def add_collision_constraints(
         n_collision_rows = (
             collider_state.n_contacts[i_b] - collider_state.n_contacts_hibernated[i_b]
         ) * rows_per_contact
+        # The row groups started at the row cursor the assembly above read
+        segment.row_start[i_b] = constraint_state.n_constraints[i_b]
         constraint_state.n_constraints[i_b] = constraint_state.n_constraints[i_b] + n_collision_rows
+        constraint_state.n_constraints_contact[i_b] = constraint_state.n_constraints_contact[i_b] + n_collision_rows
         # The elliptic cone rows are the whole collision segment (rows_per_contact contiguous per contact); joint
         # limits follow.
         if qd.static(rigid_config.enable_elliptic_friction):
@@ -1044,7 +967,33 @@ def func_equality_joint(
 
 
 @qd.func
+def func_begin_rows(
+    dyn_state: array_class.DynState,
+    constraint_state: array_class.ConstraintState,
+    rigid_config: qd.template(),
+):
+    """Empty the rows of every env before the row categories append theirs: the row cursor, every category counter,
+    and the per-link constraint involvement the equality and collision rows mark back (see is_constrained in
+    array_class.py)."""
+    _B = dyn_state.dofs.ctrl_mode.shape[1]
+    n_links = dyn_state.links.pos.shape[0]
+
+    qd.loop_config(name="clear_links_constrained", serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    for i_l, i_b in qd.ndrange(n_links, _B):
+        dyn_state.links.is_constrained[i_l, i_b] = False
+
+    qd.loop_config(name="begin_constraint_rows", serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
+    for i_b in range(_B):
+        constraint_state.n_constraints[i_b] = 0
+        constraint_state.n_constraints_equality[i_b] = 0
+        constraint_state.n_constraints_frictionloss[i_b] = 0
+        constraint_state.n_constraints_contact[i_b] = 0
+        constraint_state.n_constraints_cone[i_b] = 0
+
+
+@qd.func
 def func_add_equality_constraints(
+    segment: array_class.ConstraintRowSegment,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
@@ -1053,18 +1002,9 @@ def func_add_equality_constraints(
 ):
     _B = dyn_state.dofs.ctrl_mode.shape[1]
 
-    n_links = dyn_state.links.pos.shape[0]
-
-    # Reset the per-link constraint involvement (see is_constrained in array_class.py); the equality funcs below and
-    # the collision assembly mark it back.
-    qd.loop_config(name="clear_links_constrained", serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
-    for i_l, i_b in qd.ndrange(n_links, _B):
-        dyn_state.links.is_constrained[i_l, i_b] = False
-
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b in range(_B):
-        constraint_state.n_constraints[i_b] = 0
-        constraint_state.n_constraints_equality[i_b] = 0
+        segment.row_start[i_b] = constraint_state.n_constraints[i_b]
 
         for i_e in range(constraint_state.qd_n_equalities[i_b]):
             if dyn_info.equalities.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.CONNECT:
@@ -1077,194 +1017,37 @@ def func_add_equality_constraints(
 
 
 @qd.func
-def _sort_contacts_and_build_islands(
-    dyn_state: array_class.DynState,
-    collider_state: array_class.ColliderState,
-    constraint_state: array_class.ConstraintState,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    rigid_config: qd.template(),
-    collider_static_config: qd.template(),
-):
-    """Build the island partition of every env and order its live contacts (see add_inequality_constraints) in one
-    launch.
+def func_prepare_island_solve(constraint_state: array_class.ConstraintState, rigid_config: qd.template()):
+    """List the awake islands of every env on the factor work-lists of their size class (see
+    func_append_factor_worklist), by the lanes of a block per env where the cooperative kernels run.
 
-    Where the cooperative kernels run, a block serves each env: the lanes build the partition together
-    (func_build_islands_coop), then sort together (func_sort_contacts_coop); elsewhere one thread per env does both.
-    Both ways give the same partition and order. The build comes first: waking a struck sleeper promotes its kept
-    contacts among the live ones, which the sort then orders with the rest. A single-island scene writes its partition
-    outright (func_build_single_island), off the CPU skyline path and in every env where nothing sleeps.
-    """
-    _B = constraint_state.jac.shape[2]
-    # Under hibernation the trivial partition serves the envs where nothing sleeps, the full build the others
-    has_trivial_partition = qd.static(rigid_config.is_single_island and not rigid_config.sparse_solve)
+    The work-list order follows the atomic reservations, and every listed island is factored and solved on its own, so
+    the order changes no result."""
     if qd.static(rigid_config.enable_tiled_island_seed and not rigid_config.is_single_island):
-        # Reset the per-class (env, island) work-list counters before the per-env builds append to them
+        _B = constraint_state.jac.shape[2]
         N_CLASSES = qd.static(
             len(array_class.island_tile_caps(rigid_config.island_tile_cap_first, rigid_config.island_tile_cap_last))
         )
         qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
         for i_class in range(N_CLASSES):
             constraint_state.island_solve.factor_worklist_size[i_class] = 0
-    if qd.static(rigid_config.enable_cooperative_constraint_kernels):
-        _K = qd.static(32)
-        qd.loop_config(name="sort_contacts_and_build_islands", block_dim=_K)
-        for i_flat in range(_B * _K):
-            tid = i_flat % _K
-            i_b = i_flat // _K
-            if qd.static(has_trivial_partition):
-                is_partition_trivial = True
-                if qd.static(rigid_config.use_hibernation):
-                    is_partition_trivial = rigid_info.n_awake_dofs[i_b] >= dyn_state.dofs.is_hibernated.shape[0]
-                if is_partition_trivial:
-                    func_build_single_island_coop(i_b, tid, constraint_state, rigid_info, rigid_config)
-                else:
-                    if qd.static(rigid_config.use_hibernation):
-                        func_build_islands_coop(
-                            i_b, tid, dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config
-                        )
-            else:
-                func_build_islands_coop(
-                    i_b, tid, dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config
-                )
-            if qd.static(rigid_config.enable_collision):
-                if qd.static(collider_static_config.has_non_box_plane_convex_convex):
-                    qd.simt.block.sync()
-                    func_sort_contacts_coop(i_b, tid, dyn_state, collider_state)
-                    qd.simt.block.sync()
-            if qd.static(not rigid_config.is_single_island):
+        if qd.static(rigid_config.enable_cooperative_constraint_kernels):
+            _K = qd.static(32)
+            qd.loop_config(name="append_factor_worklist", block_dim=_K)
+            for i_flat in range(_B * _K):
+                tid = i_flat % _K
+                i_b = i_flat // _K
                 i_island = tid
                 while i_island < constraint_state.island.n_islands[i_b]:
                     func_append_factor_worklist(i_b, i_island, constraint_state, rigid_config)
                     i_island = i_island + _K
-    else:
-        qd.loop_config(
-            name="sort_contacts_and_build_islands", serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL)
-        )
-        for i_b in range(_B):
-            if qd.static(has_trivial_partition):
-                is_partition_trivial = True
-                if qd.static(rigid_config.use_hibernation):
-                    is_partition_trivial = rigid_info.n_awake_dofs[i_b] >= dyn_state.dofs.is_hibernated.shape[0]
-                if is_partition_trivial:
-                    func_build_single_island(i_b, constraint_state, rigid_info, rigid_config)
-                else:
-                    if qd.static(rigid_config.use_hibernation):
-                        func_build_islands(
-                            i_b, dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config
-                        )
-            else:
-                func_build_islands(i_b, dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config)
-            if qd.static(rigid_config.enable_collision):
-                if qd.static(collider_static_config.has_non_box_plane_convex_convex):
-                    func_sort_contacts(
-                        i_b,
-                        collider_state.n_contacts_hibernated[i_b],
-                        collider_state.n_contacts[i_b],
-                        collider_state.contact_sort_idx,
-                        collider_state.contact_data.pos,
-                        collider_state.contact_data.geom_a,
-                        collider_state.contact_data.geom_b,
-                        dyn_state.geoms.pos,
-                        dyn_state.geoms.quat,
-                    )
-            if qd.static(
-                rigid_config.enable_collision and rigid_config.sparse_solve and not has_trivial_partition
-            ):
-                func_reorder_island_dofs(i_b, collider_state, constraint_state, rigid_info)
-            if qd.static(rigid_config.enable_tiled_island_seed and not rigid_config.is_single_island):
+        else:
+            qd.loop_config(
+                name="append_factor_worklist", serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL)
+            )
+            for i_b in range(_B):
                 for i_island in range(constraint_state.island.n_islands[i_b]):
                     func_append_factor_worklist(i_b, i_island, constraint_state, rigid_config)
-
-
-@qd.func
-def _build_islands_no_contact(
-    dyn_state: array_class.DynState,
-    constraint_state: array_class.ConstraintState,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    rigid_config: qd.template(),
-):
-    """Build the same partition without Contact-owned inputs."""
-    _B = constraint_state.jac.shape[2]
-    has_trivial_partition = qd.static(rigid_config.is_single_island and not rigid_config.sparse_solve)
-    if qd.static(rigid_config.enable_tiled_island_seed and not rigid_config.is_single_island):
-        n_classes = qd.static(
-            len(array_class.island_tile_caps(rigid_config.island_tile_cap_first, rigid_config.island_tile_cap_last))
-        )
-        qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
-        for i_class in range(n_classes):
-            constraint_state.island_solve.factor_worklist_size[i_class] = 0
-
-    qd.loop_config(name="build_islands_no_contact", serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
-    for i_b in range(_B):
-        if qd.static(has_trivial_partition):
-            is_partition_trivial = True
-            if qd.static(rigid_config.use_hibernation):
-                is_partition_trivial = rigid_info.n_awake_dofs[i_b] >= dyn_state.dofs.is_hibernated.shape[0]
-            if is_partition_trivial:
-                func_build_single_island(i_b, constraint_state, rigid_info, rigid_config)
-            else:
-                func_build_islands_no_contact(
-                    i_b,
-                    dyn_state,
-                    constraint_state,
-                    dyn_info,
-                    rigid_info,
-                    rigid_config,
-                )
-        else:
-            func_build_islands_no_contact(
-                i_b,
-                dyn_state,
-                constraint_state,
-                dyn_info,
-                rigid_info,
-                rigid_config,
-            )
-        if qd.static(rigid_config.enable_tiled_island_seed and not rigid_config.is_single_island):
-            for i_island in range(constraint_state.island.n_islands[i_b]):
-                func_append_factor_worklist(i_b, i_island, constraint_state, rigid_config)
-
-
-@qd.func
-def func_add_inequality_constraints(
-    dyn_state: array_class.DynState,
-    collider_state: array_class.ColliderState,
-    constraint_state: array_class.ConstraintState,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    rigid_config: qd.template(),
-    collider_static_config: qd.template(),
-):
-    _sort_contacts_and_build_islands(
-        dyn_state,
-        collider_state,
-        constraint_state,
-        dyn_info,
-        rigid_info,
-        rigid_config,
-        collider_static_config,
-    )
-    add_frictionloss_constraints(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
-    if qd.static(rigid_config.enable_collision):
-        add_collision_constraints(dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config)
-    if qd.static(rigid_config.enable_joint_limit):
-        add_joint_limit_constraints(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
-
-
-@qd.func
-def func_add_inequality_constraints_no_contact(
-    dyn_state: array_class.DynState,
-    constraint_state: array_class.ConstraintState,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    rigid_config: qd.template(),
-):
-    _build_islands_no_contact(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
-    add_frictionloss_constraints(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
-    if qd.static(rigid_config.enable_joint_limit):
-        add_joint_limit_constraints(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
 
 
 @qd.func
@@ -1584,6 +1367,7 @@ def _func_add_joint_limit_row(
 
 @qd.func
 def add_joint_limit_constraints(
+    segment: array_class.ConstraintRowSegment,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
@@ -1603,6 +1387,8 @@ def add_joint_limit_constraints(
             tid = i_flat % BLOCK_DIM
             i_b = i_flat // BLOCK_DIM
             i_con_start = constraint_state.n_constraints[i_b]
+            if tid == 0:
+                segment.row_start[i_b] = i_con_start
             for i_chunk_ in range((n_joints + BLOCK_DIM - 1) // BLOCK_DIM):
                 i_j = i_chunk_ * BLOCK_DIM + tid
                 i_d = 0
@@ -1637,6 +1423,7 @@ def add_joint_limit_constraints(
             name="add_joint_limit_constraints", serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL)
         )
         for i_b in range(_B):
+            segment.row_start[i_b] = constraint_state.n_constraints[i_b]
             for i_l in range(n_links):
                 I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
                 for i_j in range(dyn_info.links.joint_start[I_l], dyn_info.links.joint_end[I_l]):
@@ -1662,6 +1449,7 @@ def add_joint_limit_constraints(
 
 @qd.func
 def add_frictionloss_constraints(
+    segment: array_class.ConstraintRowSegment,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
@@ -1682,7 +1470,7 @@ def add_frictionloss_constraints(
         serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL and rigid_config.backend != gs.metal),
     )
     for i_b in range(_B):
-        constraint_state.n_constraints_frictionloss[i_b] = 0
+        segment.row_start[i_b] = constraint_state.n_constraints[i_b]
 
         for i_l in range(n_links):
             I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
@@ -5248,8 +5036,8 @@ def func_solve_init(
         rigid_config=rigid_config,
     )
 
-    # The island partition itself (links_island_idx / dof_id) is built earlier, in add_inequality_constraints, before
-    # the contact constraints are assembled; grouping the constraints by island needs the assembled jac, so it rides
+    # The island partition itself (links_island_idx / dof_id) is built earlier, in func_assemble_constraints, before
+    # the constraints are assembled; grouping the constraints by island needs the assembled jac, so it rides
     # this per-env loop, ahead of every per-island consumer below: by the lanes of the env's block where the
     # cooperative kernels run, serially otherwise.
     if qd.static(rigid_config.enable_cooperative_constraint_kernels):
@@ -5514,11 +5302,10 @@ def func_solve_body_monolith(dyn_state, constraint_state, dyn_info, rigid_info, 
 
 @qd.func
 def func_update_contact_force(
+    segment: array_class.ConstraintRowSegment,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     n_links = dyn_state.links.contact_force.shape[0]
@@ -5530,9 +5317,8 @@ def func_update_contact_force(
 
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
-        const_start = constraint_state.n_constraints_equality[i_b] + constraint_state.n_constraints_frictionloss[i_b]
+        const_start = segment.row_start[i_b]
 
-        # contact constraints should be after equality and frictionloss constraints and before joint limit constraints.
         # A kept contact of a sleeper (see n_contacts_hibernated in array_class.py) has no row and keeps the force of
         # the last solve it took part in, so a resting sleeper keeps reporting the support force it is at rest under.
         n_first_contact = collider_state.n_contacts_hibernated[i_b]
@@ -5582,40 +5368,62 @@ def func_update_contact_force(
                 dyn_state.links.contact_force[contact_data_link_b, i_b] + force
             )
 
-        # The settled islands fall asleep here, once the solve has written the forces their contacts and dofs keep
-        # reporting for as long as they sleep, and before the integration skips their dofs.
-        if qd.static(rigid_config.use_hibernation):
-            for i_island in range(constraint_state.island.n_islands[i_b]):
-                func_hibernate_island_if_settled(
-                    i_island, i_b, dyn_state, constraint_state.island, dyn_info, rigid_info, rigid_config
-                )
 
-
-@qd.func
-def func_resolve_post(
-    dyn_state: array_class.DynState,
-    collider_state: array_class.ColliderState,
-    constraint_state: array_class.ConstraintState,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
+@qd.func(requires_top_level=True)
+def func_assemble_constraints(
+    constraint_data: qd.template(),
+    rigid_data: qd.template(),
     rigid_config: qd.template(),
-    noslip: qd.template(),
-    errno: qd.Tensor,
+    partition: qd.template(),
+    equality_rows: qd.template(),
+    frictionloss_rows: qd.template(),
+    contact_rows: qd.template(),
+    limit_rows: qd.template(),
 ):
-    """Update the accelerations from the solved constraint forces, then the contact forces."""
-    func_update_qacc(dyn_state, constraint_state, rigid_config, errno)
-    if qd.static(noslip):
-        constraint_noslip.func_noslip(dyn_state, collider_state, constraint_state, rigid_info, rigid_config)
-    func_update_contact_force(dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config)
+    """Assemble the constraint rows of a substep over the island partition it builds first.
+
+    The row categories append their segments at the row cursor in the order the solve classifies the rows by (see the
+    category counters of ConstraintState): equality, frictionloss, contact, then limit rows. Each category reads the
+    cursor the previous one left, so the categories run one after the other; the Actions of one category are peers.
+    """
+    func_begin_rows(rigid_data.dyn_state, constraint_data.constraint_state, rigid_config)
+    partition.invoke()
+    func_prepare_island_solve(constraint_data.constraint_state, rigid_config)
+    equality_rows.invoke()
+    frictionloss_rows.invoke()
+    contact_rows.invoke()
+    limit_rows.invoke()
 
 
 @qd.func(requires_top_level=True)
-def func_substep_add_equality_constraints(
+def func_post_solve(
+    constraint_data: qd.template(),
     rigid_data: qd.template(),
     rigid_config: qd.template(),
+    row_post_solves: qd.template(),
+    settle: qd.template(),
+):
+    """Update the accelerations from the solved constraint forces, refine the friction forces by the noslip pass, let
+    the row categories read their forces back, then put the settled islands to sleep before the integration skips
+    their dofs."""
+    func_update_qacc(rigid_data.dyn_state, constraint_data.constraint_state, rigid_config, rigid_data.errno)
+    if qd.static(constraint_data.noslip):
+        constraint_noslip.func_noslip(
+            rigid_data.dyn_state, constraint_data.constraint_state, rigid_data.rigid_info, rigid_config
+        )
+    row_post_solves.invoke()
+    settle.invoke()
+
+
+@qd.func(requires_top_level=True)
+def func_substep_add_equality_rows(
+    equality_data: qd.template(),
     constraint_data: qd.template(),
+    rigid_data: qd.template(),
+    rigid_config: qd.template(),
 ):
     func_add_equality_constraints(
+        equality_data.segment,
         rigid_data.dyn_state,
         constraint_data.constraint_state,
         rigid_data.dyn_info,
@@ -5625,30 +5433,66 @@ def func_substep_add_equality_constraints(
 
 
 @qd.func(requires_top_level=True)
-def func_substep_add_inequality_constraints(
+def func_substep_add_frictionloss_rows(
+    frictionloss_data: qd.template(),
+    constraint_data: qd.template(),
     rigid_data: qd.template(),
     rigid_config: qd.template(),
-    contact_data: qd.template(),
-    constraint_data: qd.template(),
 ):
-    func_add_inequality_constraints(
+    add_frictionloss_constraints(
+        frictionloss_data.segment,
+        rigid_data.dyn_state,
+        constraint_data.constraint_state,
+        rigid_data.dyn_info,
+        rigid_data.rigid_info,
+        rigid_config,
+    )
+
+
+@qd.func(requires_top_level=True)
+def func_substep_add_contact_rows(
+    contact_constraint_data: qd.template(),
+    constraint_data: qd.template(),
+    island_data: qd.template(),
+    contact_data: qd.template(),
+    rigid_data: qd.template(),
+    rigid_config: qd.template(),
+    order_contacts: qd.template(),
+):
+    """Order the live contacts, reorder each island's dofs by their adjacency on the CPU skyline path, then assemble
+    the contact rows."""
+    order_contacts.invoke()
+    if qd.static(rigid_config.sparse_solve and not rigid_config.enable_cooperative_constraint_kernels):
+        _B = rigid_data.dyn_state.dofs.ctrl_mode.shape[1]
+        qd.loop_config(name="reorder_island_dofs", serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
+        for i_b in range(_B):
+            func_reorder_island_dofs(
+                i_b,
+                contact_data.collider_state,
+                island_data.island,
+                contact_constraint_data.reorder,
+                rigid_data.rigid_info,
+            )
+    add_collision_constraints(
+        contact_constraint_data.segment,
         rigid_data.dyn_state,
         contact_data.collider_state,
         constraint_data.constraint_state,
         rigid_data.dyn_info,
         rigid_data.rigid_info,
         rigid_config,
-        contact_data.collider_config,
     )
 
 
 @qd.func(requires_top_level=True)
-def func_substep_add_inequality_constraints_no_contact(
+def func_substep_add_joint_limit_rows(
+    joint_limit_data: qd.template(),
+    constraint_data: qd.template(),
     rigid_data: qd.template(),
     rigid_config: qd.template(),
-    constraint_data: qd.template(),
 ):
-    func_add_inequality_constraints_no_contact(
+    add_joint_limit_constraints(
+        joint_limit_data.segment,
         rigid_data.dyn_state,
         constraint_data.constraint_state,
         rigid_data.dyn_info,
@@ -5658,35 +5502,19 @@ def func_substep_add_inequality_constraints_no_contact(
 
 
 @qd.func(requires_top_level=True)
-def func_substep_resolve_post(
+def func_substep_update_contact_force(
+    contact_constraint_data: qd.template(),
+    constraint_data: qd.template(),
+    contact_data: qd.template(),
     rigid_data: qd.template(),
     rigid_config: qd.template(),
-    contact_data: qd.template(),
-    constraint_data: qd.template(),
 ):
-    func_resolve_post(
+    func_update_contact_force(
+        contact_constraint_data.segment,
         rigid_data.dyn_state,
         contact_data.collider_state,
         constraint_data.constraint_state,
-        rigid_data.dyn_info,
-        rigid_data.rigid_info,
         rigid_config,
-        constraint_data.noslip,
-        rigid_data.errno,
-    )
-
-
-@qd.func(requires_top_level=True)
-def func_substep_resolve_post_no_contact(
-    rigid_data: qd.template(),
-    rigid_config: qd.template(),
-    constraint_data: qd.template(),
-):
-    func_update_qacc(
-        rigid_data.dyn_state,
-        constraint_data.constraint_state,
-        rigid_config,
-        rigid_data.errno,
     )
 
 

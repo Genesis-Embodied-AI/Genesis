@@ -7,7 +7,9 @@ import quadrants as qd
 
 import genesis as gs
 import genesis.utils.array_class as array_class
-from genesis.engine.core import Data, Require, System, register_system
+from genesis.engine.core import Data, InlineAction, Require, System, register_system
+from genesis.engine.solvers.rigid.constraint.island import func_substep_partition_islands
+from genesis.engine.solvers.rigid.substep import func_substep_hibernate_settled_islands
 from genesis.utils.misc import qd_to_numpy
 
 from .rigid_solver_system import RigidSolverSystem
@@ -15,7 +17,12 @@ from ..simulator_engine import SimulatorEngine
 
 
 class RigidIslandSystem(System):
-    """Own partition data used independently of whether contact or constraint solving is enabled."""
+    """Own partition data used independently of whether contact or constraint solving is enabled.
+
+    The partition groups the kinematic trees into islands, the components of the trees under the edges the edge
+    sources join (see on_partition_edges), the equality constraints and the hibernation chains. An island at rest falls
+    asleep after the solve (see settle), and the bodies of a sleeping island an awake one reaches wake in the partition.
+    """
 
     # -------------------------------- Data --------------------------------
 
@@ -40,18 +47,42 @@ class RigidIslandSystem(System):
         super().__init__()
         self.data = self.Data()
 
-    def build(self) -> None:
-        from .constraint_solver_system import ConstraintSolverSystem
-        from .rigid_rigid_contact_system import RigidRigidContactSystem
+    # -------------------------------- Action collections --------------------------------
 
-        self.contact_system = self.find(RigidRigidContactSystem)
-        self.constraint_system = self.find(ConstraintSolverSystem)
+    @System.action_collection(kind="inline", call_args=("i_b", "tid"))
+    def partition_edges(self):
+        """The edge sources of the partition, see on_partition_edges."""
+
+    # -------------------------------- Protocols --------------------------------
+
+    @System.protocol
+    def on_partition_edges(self, edges: InlineAction) -> None:
+        """Join the trees an edge source couples into the islands of the partition.
+
+        Signature  edges(*bound_args, i_b, tid).
+        Invoked    inside the partition loop of env i_b, in the one thread of the serial build (tid 0), or in every
+                   lane tid of the 32 of the block of the cooperative build, once per hooking round, before the barrier
+                   that ends the round.
+        Must       pass every edge of env i_b to func_union_link_trees, the lanes of a block striding over the edges.
+        Must not   write the partition otherwise, or read it beyond the roots func_union_link_trees resolves.
+        """
+        self.partition_edges += edges
 
     # -------------------------------- Actions --------------------------------
 
     @System.action(kind="host")
     def initialize(self):
         return self.initialize_data
+
+    @System.action(kind="stage")
+    def partition(self):
+        rigid = self.rigid_solver_system
+        return func_substep_partition_islands, self.data, rigid.data, rigid.rigid_config, self.partition_edges
+
+    @System.action(kind="stage")
+    def settle(self):
+        rigid = self.rigid_solver_system
+        return func_substep_hibernate_settled_islands, self.data, rigid.data, rigid.rigid_config
 
     # -------------------------------- Public get/set API --------------------------------
 
@@ -63,9 +94,6 @@ class RigidIslandSystem(System):
 
     def initialize_data(self) -> None:
         rigid = self.rigid_solver_system
-        max_contacts = 0
-        if self.constraint_system is not None and self.contact_system is not None:
-            max_contacts = self.contact_system.data.collider_info.max_contacts[None]
         island_state = array_class.get_island_state(
             batch_size=rigid._B,
             n_trees=rigid.n_trees_,
@@ -73,7 +101,6 @@ class RigidIslandSystem(System):
             n_dofs_actual=rigid.n_dofs,
             rigid_config=rigid.rigid_config,
             use_hibernation=rigid._use_hibernation,
-            max_contacts=max_contacts,
         )
         qd_n_equalities = array_class.V(dtype=gs.qd_int, shape=(rigid._B,))
         qd_n_equalities.from_numpy(np.full((rigid._B,), rigid.n_equalities, dtype=gs.np_int))

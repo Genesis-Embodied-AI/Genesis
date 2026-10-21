@@ -14,7 +14,31 @@ from genesis.engine.solvers.rigid.abd.forward_kinematics import (
     func_forward_velocity,
     func_update_cartesian_space,
 )
-from genesis.engine.solvers.rigid.abd.misc import func_wakeup_coupled_links
+from genesis.engine.solvers.rigid.abd.misc import func_hibernate_island_if_settled, func_wakeup_coupled_links
+
+
+@qd.func(requires_top_level=True)
+def func_substep_hibernate_settled_islands(
+    island_data: qd.template(),
+    rigid_data: qd.template(),
+    rigid_config: qd.template(),
+):
+    """Put the settled islands to sleep, once the solve has written the forces their contacts and dofs keep reporting
+    for as long as they sleep, and before the integration skips their dofs."""
+    if qd.static(rigid_config.use_hibernation):
+        _B = rigid_data.dyn_state.dofs.ctrl_mode.shape[1]
+        qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(_B):
+            for i_island in range(island_data.island.n_islands[i_b]):
+                func_hibernate_island_if_settled(
+                    i_island,
+                    i_b,
+                    rigid_data.dyn_state,
+                    island_data.island,
+                    rigid_data.dyn_info,
+                    rigid_data.rigid_info,
+                    rigid_config,
+                )
 
 
 @qd.func(requires_top_level=True)

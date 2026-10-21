@@ -23,6 +23,7 @@ from genesis.engine.solvers.rigid.collider.collider import (
     iter_collider_data,
 )
 from genesis.engine.solvers.rigid.collider import gjk, mpr, support_field
+from genesis.engine.solvers.rigid.constraint.island import func_substep_order_contacts, func_union_contact_edges
 from genesis.utils.misc import qd_to_numpy, qd_to_torch, qd_zero_grad
 
 from .rigid_sdf_system import RigidSdfSystem
@@ -101,6 +102,7 @@ class RigidRigidContactSystem(System):
         from .rigid_island_system import RigidIslandSystem
 
         self.island_system = self.require(RigidIslandSystem)
+        self.island_system.on_partition_edges(self.contact_edges)
 
     # -------------------------------- Actions --------------------------------
 
@@ -134,11 +136,21 @@ class RigidRigidContactSystem(System):
             self.island_system.data,
         )
 
-    @System.action(kind="host")
-    def prepare_backward(self):
-        return self.clear_backward_input_grads
+    @System.action(kind="inline")
+    def contact_edges(self):
+        rigid = self.rigid_solver_system
+        return func_union_contact_edges, self.data, self.island_system.data, rigid.data, rigid.rigid_config
+
+    @System.action(kind="stage")
+    def order_contacts(self):
+        rigid = self.rigid_solver_system
+        return func_substep_order_contacts, self.data, self.island_system.data, rigid.data, rigid.rigid_config
 
     # -------------------------------- Public get/set API --------------------------------
+
+    def get_max_contacts(self) -> int:
+        """The most contacts per env the detection keeps once pruned, as resolved from 'RigidOptions.max_contacts'."""
+        return int(self.data.collider_info.max_contacts[None])
 
     def configure_external_collision_links(
         self,
