@@ -457,10 +457,10 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
     def _resolve_broadphase_traversal(self):
         if self._options.broadphase_traversal is not None:
             return self._options.broadphase_traversal
-        # The valid pairs are shared by every environment, while a heterogeneous environment carries one variant of each
-        # entity. ALL_VS_ALL tests the pairs of every variant in every environment, those of the variants it does not
-        # carry failing on their empty axis-aligned bounding box (see func_update_geom_aabbs), whereas sweep-and-prune
-        # (SAP) only sweeps the geoms each environment carries.
+        # The valid link pairs are shared by every environment, while a heterogeneous environment carries one variant of
+        # each entity. ALL_VS_ALL tests the link pairs of every variant in every environment, those of the variants it
+        # does not carry failing on their empty axis-aligned bounding box (see func_collision_clear), whereas
+        # sweep-and-prune (SAP) sorts those empty boxes out of the sweep.
         if gs.backend == gs.cpu or self._enable_heterogeneous:
             return gs.broadphase_traversal.SAP
         return gs.broadphase_traversal.ALL_VS_ALL

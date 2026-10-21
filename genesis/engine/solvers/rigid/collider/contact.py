@@ -382,12 +382,15 @@ def func_add_contact(
     use_atomic: qd.template(),
     errno: qd.Tensor,
 ):
+    """Append a contact to the buffer of an environment, returning its slot, or -1 when the buffer is full."""
     i_c = 0
     if qd.static(use_atomic):
         i_c = qd.atomic_add(collider_state.n_contacts[i_b], 1)
     else:
         i_c = collider_state.n_contacts[i_b]
+    i_c_added = -1
     if i_c < collider_info.max_candidate_contacts[None]:
+        i_c_added = i_c
         func_set_contact(
             i_ga,
             i_gb,
@@ -409,6 +412,7 @@ def func_add_contact(
             collider_state.n_contacts[i_b] = i_c + 1
     else:
         errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
+    return i_c_added
 
 
 @qd.func
@@ -805,34 +809,43 @@ def func_contact_heapsort(
 
 
 @qd.func
-def func_contact_is_before(i_b: int, i_q: int, i_p: int, collider_state: array_class.ColliderState):
+def func_contact_sort_key(i_la: int, i_lb: int, i_ga: int, i_gb: int, frame_key: float):
+    """Leading keys of a contact in the order of phase 1 of the contact pruning (see func_contact_is_before).
+
+    Returns the link pair, the geom pair and the frame order key 'frame_key' of the contact between geoms 'i_ga' and
+    'i_gb' of links 'i_la' and 'i_lb'.
+    """
+    return qd.Vector([qd.min(i_la, i_lb), qd.max(i_la, i_lb), i_ga, i_gb, frame_key], dt=gs.qd_float)
+
+
+@qd.func
+def func_contact_is_before(
+    i_b: int,
+    i_q: int,
+    i_p: int,
+    key_q: qd.types.vector(5),
+    key_p: qd.types.vector(5),
+    collider_state: array_class.ColliderState,
+):
     """Whether one contact sorts before another in the order of phase 1 of the contact pruning.
 
     Contacts are ordered by link pair, then geom pair, then frame order key ('contact_proj_v', see
     func_contact_frame_order_key), then intrinsic order (see func_contact_is_after), the lower index going first among
     identical contacts. The link indices are compared themselves, as a key packing them loses exactness and lets
     distinct pairs interleave in the order of their contact indices, which the racy atomic slot reservation of the
-    narrowphase sets.
+    narrowphase sets. 'key_q' and 'key_p' are the leading keys of both contacts (see func_contact_sort_key), and the
+    intrinsic order alone reads the contact data.
 
     Returns whether contact 'i_q' of environment 'i_b' sorts before contact 'i_p'.
     """
-    keys = qd.Matrix.zero(gs.qd_float, 2, 5)
-    for i_k, i_c in qd.static(enumerate((i_q, i_p))):
-        i_la = collider_state.contact_data.link_a[i_c, i_b]
-        i_lb = collider_state.contact_data.link_b[i_c, i_b]
-        keys[i_k, 0] = qd.min(i_la, i_lb)
-        keys[i_k, 1] = qd.max(i_la, i_lb)
-        keys[i_k, 2] = collider_state.contact_data.geom_a[i_c, i_b]
-        keys[i_k, 3] = collider_state.contact_data.geom_b[i_c, i_b]
-        keys[i_k, 4] = collider_state.contact_proj_v[i_c, i_b]
     is_before = False
     is_tied = True
     for i_k in qd.static(range(5)):
         if is_tied:
-            if keys[0, i_k] < keys[1, i_k]:
+            if key_q[i_k] < key_p[i_k]:
                 is_before = True
                 is_tied = False
-            elif keys[0, i_k] > keys[1, i_k]:
+            elif key_q[i_k] > key_p[i_k]:
                 is_tied = False
     if is_tied:
         # One loop runs both comparisons, so that the comparison is inlined once
@@ -889,6 +902,48 @@ def func_contact_patch_end(
         i_pc = collider_state.contact_sort_idx[i_cb, i_b]
         if i_cb < i_cb_end and qd.abs(collider_state.contact_data.normal[i_pc, i_b].dot(normal_start)) < cos_tol:
             i_cb_end = i_cb
+    return i_cb_end
+
+
+@qd.func
+def func_contact_patch_end_coop(
+    tid: int,
+    i_b: int,
+    i_cb_start: int,
+    n_con: int,
+    collider_state: array_class.ColliderState,
+    cos_tol: float,
+    is_patch: qd.template(),
+):
+    """End of the bucket or of the patch that a contact opens, found by the 32 lanes of a block together.
+
+    The bucket of the contact at 'i_cb_start', among the first 'n_con' contacts sorted by link pair, ends at the first
+    contact of another link pair, as func_contact_link_pair_end finds it. The patch ('is_patch' set) ends there too, or
+    earlier at the first contact whose normal leaves the axis of its own by an angle of cosine below 'cos_tol', as
+    func_contact_patch_end finds it. The lanes test 32 contacts at a time, so that the walk waits on one read of the
+    contacts per 32 of them instead of one per contact. Every lane receives the end.
+    """
+    i_pc_start = collider_state.contact_sort_idx[i_cb_start, i_b]
+    i_la_start = collider_state.contact_data.link_a[i_pc_start, i_b]
+    i_lb_start = collider_state.contact_data.link_b[i_pc_start, i_b]
+    i_l_min_start = qd.min(i_la_start, i_lb_start)
+    i_l_max_start = qd.max(i_la_start, i_lb_start)
+    normal_start = collider_state.contact_data.normal[i_pc_start, i_b]
+    i_cb_end = n_con
+    for i_chunk_ in range((n_con - i_cb_start - 1 + 31) // 32):
+        if i_cb_end == n_con:
+            i_cb = i_cb_start + 1 + i_chunk_ * 32 + tid
+            i_cb_end_l = n_con
+            if i_cb < n_con:
+                i_pc = collider_state.contact_sort_idx[i_cb, i_b]
+                i_la = collider_state.contact_data.link_a[i_pc, i_b]
+                i_lb = collider_state.contact_data.link_b[i_pc, i_b]
+                is_end = qd.min(i_la, i_lb) != i_l_min_start or qd.max(i_la, i_lb) != i_l_max_start
+                if qd.static(is_patch):
+                    is_end = is_end or qd.abs(collider_state.contact_data.normal[i_pc, i_b].dot(normal_start)) < cos_tol
+                if is_end:
+                    i_cb_end_l = i_cb
+            i_cb_end = su.qd_block_min(i_cb_end_l)
     return i_cb_end
 
 
@@ -1141,6 +1196,25 @@ def func_contact_support_hull(
 
 
 @qd.func
+def func_contact_patch_basis(normal: qd.types.vector(3)):
+    """Orthonormal basis of the plane of a contact patch of unit normal 'normal'.
+
+    The first axis is the world axis least aligned with the normal, projected onto the plane and normalized, the
+    second one is the normal crossed with the first one. The world axis follows the normal alone, so every lane that
+    holds the same normal gets the same basis.
+    """
+    normal_abs = qd.abs(normal)
+    axis = qd.Vector([1.0, 0.0, 0.0], dt=gs.qd_float)
+    if normal_abs[1] < normal_abs[0] and normal_abs[1] < normal_abs[2]:
+        axis = qd.Vector([0.0, 1.0, 0.0])
+    elif normal_abs[2] < normal_abs[0] and normal_abs[2] <= normal_abs[1]:
+        axis = qd.Vector([0.0, 0.0, 1.0])
+    axis_u = axis - axis.dot(normal) * normal
+    axis_u /= axis_u.norm()
+    return axis_u, normal.cross(axis_u)
+
+
+@qd.func
 def func_clamp_prune_contacts(
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
@@ -1254,49 +1328,25 @@ def func_clamp_prune_contacts(
 
                         # Mean normal (folded to the hemisphere of contact at i_cb_start) and centroid.
                         normal_ref = collider_state.contact_data.normal[i_pc0, i_b]
-                        normal_ref_x = normal_ref[0]
-                        normal_ref_y = normal_ref[1]
-                        normal_ref_z = normal_ref[2]
-                        mean_normal_x = gs.qd_float(0.0)
-                        mean_normal_y = gs.qd_float(0.0)
-                        mean_normal_z = gs.qd_float(0.0)
-                        centroid_x = gs.qd_float(0.0)
-                        centroid_y = gs.qd_float(0.0)
-                        centroid_z = gs.qd_float(0.0)
+                        mean_normal = qd.Vector.zero(gs.qd_float, 3)
+                        centroid = qd.Vector.zero(gs.qd_float, 3)
                         for i_cb in range(i_cb_start, i_cb_end):
                             i_pc = collider_state.contact_sort_idx[i_cb, i_b]
                             normal_c = collider_state.contact_data.normal[i_pc, i_b]
-                            dot_ref = (
-                                normal_ref_x * normal_c[0] + normal_ref_y * normal_c[1] + normal_ref_z * normal_c[2]
-                            )
                             sign = gs.qd_float(1.0)
-                            if dot_ref < gs.qd_float(0.0):
-                                sign = gs.qd_float(-1.0)
-                            mean_normal_x += sign * normal_c[0]
-                            mean_normal_y += sign * normal_c[1]
-                            mean_normal_z += sign * normal_c[2]
-                            pos_c = collider_state.contact_data.pos[i_pc, i_b]
-                            centroid_x += pos_c[0]
-                            centroid_y += pos_c[1]
-                            centroid_z += pos_c[2]
-                        inv_n_cb = gs.qd_float(1.0) / qd.cast(n_cb, gs.qd_float)
-                        centroid_x *= inv_n_cb
-                        centroid_y *= inv_n_cb
-                        centroid_z *= inv_n_cb
-                        mean_normal_norm = qd.sqrt(
-                            mean_normal_x * mean_normal_x
-                            + mean_normal_y * mean_normal_y
-                            + mean_normal_z * mean_normal_z
-                        )
+                            if normal_ref.dot(normal_c) < 0.0:
+                                sign = -1.0
+                            mean_normal += sign * normal_c
+                            centroid += collider_state.contact_data.pos[i_pc, i_b]
+                        centroid *= 1.0 / n_cb
+                        mean_normal_norm = mean_normal.norm()
 
                         # Hoisted out so the hull-build branch below can read it (quadrants scopes per if).
                         max_in_plane_r2 = gs.qd_float(0.0)
 
-                        coplanar = mean_normal_norm > EPS
-                        if coplanar:
-                            mean_normal_x /= mean_normal_norm
-                            mean_normal_y /= mean_normal_norm
-                            mean_normal_z /= mean_normal_norm
+                        is_coplanar = mean_normal_norm > EPS
+                        if is_coplanar:
+                            mean_normal /= mean_normal_norm
 
                             # Depth coplanarity: positions must lie in a single plane perpendicular to the mean normal. No
                             # per-contact normal check: a contact whose normal is diagonal (e.g. an edge-vs-edge contact at a
@@ -1306,49 +1356,19 @@ def func_clamp_prune_contacts(
                             max_depth = gs.qd_float(0.0)
                             for i_cb in range(i_cb_start, i_cb_end):
                                 i_pc = collider_state.contact_sort_idx[i_cb, i_b]
-                                pos_c = collider_state.contact_data.pos[i_pc, i_b]
-                                delta_x = pos_c[0] - centroid_x
-                                delta_y = pos_c[1] - centroid_y
-                                delta_z = pos_c[2] - centroid_z
-                                depth = qd.abs(
-                                    delta_x * mean_normal_x + delta_y * mean_normal_y + delta_z * mean_normal_z
-                                )
+                                delta = collider_state.contact_data.pos[i_pc, i_b] - centroid
+                                depth = qd.abs(delta.dot(mean_normal))
                                 if depth > max_depth:
                                     max_depth = depth
-                                radius_sq = delta_x * delta_x + delta_y * delta_y + delta_z * delta_z - depth * depth
+                                radius_sq = delta.norm_sqr() - depth * depth
                                 if radius_sq > max_in_plane_r2:
                                     max_in_plane_r2 = radius_sq
 
                             if max_depth > tol * qd.sqrt(max_in_plane_r2):
-                                coplanar = False
+                                is_coplanar = False
 
-                        if coplanar:
-                            # In-plane basis (u, v): seed from the world axis least-aligned with mean normal.
-                            abs_mean_normal_x = qd.abs(mean_normal_x)
-                            abs_mean_normal_y = qd.abs(mean_normal_y)
-                            abs_mean_normal_z = qd.abs(mean_normal_z)
-                            axis_x = gs.qd_float(1.0)
-                            axis_y = gs.qd_float(0.0)
-                            axis_z = gs.qd_float(0.0)
-                            if abs_mean_normal_y < abs_mean_normal_x and abs_mean_normal_y < abs_mean_normal_z:
-                                axis_x = gs.qd_float(0.0)
-                                axis_y = gs.qd_float(1.0)
-                                axis_z = gs.qd_float(0.0)
-                            elif abs_mean_normal_z < abs_mean_normal_x and abs_mean_normal_z <= abs_mean_normal_y:
-                                axis_x = gs.qd_float(0.0)
-                                axis_y = gs.qd_float(0.0)
-                                axis_z = gs.qd_float(1.0)
-                            axis_dot_normal = axis_x * mean_normal_x + axis_y * mean_normal_y + axis_z * mean_normal_z
-                            u_x = axis_x - axis_dot_normal * mean_normal_x
-                            u_y = axis_y - axis_dot_normal * mean_normal_y
-                            u_z = axis_z - axis_dot_normal * mean_normal_z
-                            u_norm = qd.sqrt(u_x * u_x + u_y * u_y + u_z * u_z)
-                            u_x /= u_norm
-                            u_y /= u_norm
-                            u_z /= u_norm
-                            v_x = mean_normal_y * u_z - mean_normal_z * u_y
-                            v_y = mean_normal_z * u_x - mean_normal_x * u_z
-                            v_z = mean_normal_x * u_y - mean_normal_y * u_x
+                        if is_coplanar:
+                            axis_u, axis_v = func_contact_patch_basis(mean_normal)
 
                             # Project bucket contacts to (u, v). sort_key holds u, contact_proj_v holds v. Both are
                             # indexed by bucket-logical position so the (u, v) sort below can read them without another
@@ -1357,14 +1377,9 @@ def func_clamp_prune_contacts(
                             # support polygon would otherwise cancel down to.
                             for i_cb in range(i_cb_start, i_cb_end):
                                 i_pc = collider_state.contact_sort_idx[i_cb, i_b]
-                                pos_c = collider_state.contact_data.pos[i_pc, i_b]
-                                delta_x = pos_c[0] - centroid_x
-                                delta_y = pos_c[1] - centroid_y
-                                delta_z = pos_c[2] - centroid_z
-                                collider_state.contact_sort_key[i_cb, i_b] = (
-                                    delta_x * u_x + delta_y * u_y + delta_z * u_z
-                                )
-                                collider_state.contact_proj_v[i_cb, i_b] = delta_x * v_x + delta_y * v_y + delta_z * v_z
+                                delta = collider_state.contact_data.pos[i_pc, i_b] - centroid
+                                collider_state.contact_sort_key[i_cb, i_b] = delta.dot(axis_u)
+                                collider_state.contact_proj_v[i_cb, i_b] = delta.dot(axis_v)
 
                             for i_cb in range(i_cb_start, i_cb_end):
                                 collider_state.contact_lex_idx[i_cb, i_b] = i_cb
@@ -1446,6 +1461,7 @@ def func_clamp_prune_contacts(
 def func_clamp_prune_contacts_coop(
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
+    dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
     errno: qd.Tensor,
@@ -1456,11 +1472,13 @@ def func_clamp_prune_contacts_coop(
     algorithm and same contract (mandatory clamp + identity-init contact_sort_idx + phase-3 compact) as
     func_clamp_prune_contacts. Deterministic ordering of the kept contacts is applied later in
     add_inequality_constraints.
-    Difference from func_clamp_prune_contacts: 32 warp lanes split the per-env work:
-      - PARALLEL: per-contact init, phase-1 sort and normal agreement check, phase-2 mean-normal / centroid reductions,
-        coplanarity reduction, in-plane projection writes and lexicographic ranks.
-      - SERIAL on lane 0: grouping of a bucket of several patches, patch walk control, support polygon, hull-mark,
-        deep-pen restore, and the phase-3 compact.
+    Difference from func_clamp_prune_contacts: a block of warps splits the per-env work:
+      - PARALLEL over contacts, every thread: per-contact init and the phase-1 sort.
+      - PARALLEL over contacts, the lanes of one warp: bucket and patch ends and the phase-3 compact.
+      - PARALLEL over patches, one warp each: mean-normal / centroid reductions, coplanarity reduction, in-plane
+        projection writes and lexicographic ranks.
+      - PARALLEL over patches, one thread each: support polygon, hull-mark and deep-pen restore.
+      - SERIAL on lane 0: grouping of a bucket of several patches.
     """
     _B = collider_state.n_contacts.shape[0]
     max_candidate_contacts = collider_info.max_candidate_contacts[None]
@@ -1471,43 +1489,70 @@ def func_clamp_prune_contacts_coop(
     prune_deep_penetration_ratio = collider_info.prune_deep_penetration_ratio[None]
     EPS = rigid_info.EPS[None]
 
+    # A block of _W warps of _K lanes runs each env. The warps sort the contacts together, then share out the patches
+    # of a round: each warp computes the statistics of its patches with its own lanes, and each lane of the block
+    # builds the support polygon of one patch.
     _K = qd.static(32)
-    qd.loop_config(name="clamp_prune_contacts_coop", block_dim=_K)
-    for i_flat in range(_B * _K):
-        tid = i_flat % _K
-        i_b = i_flat // _K
-        # All lanes compute n_con (cheap, no memory write on non-lane-0).
+    _W = qd.static(4)
+    # Contacts whose sort keys the block holds in shared memory, two per thread (see phase 1)
+    _N_STAGED = qd.static(2 * _K * _W)
+    qd.loop_config(name="clamp_prune_contacts_coop", block_dim=_K * _W)
+    for i_flat in range(_B * _K * _W):
+        i_thread = i_flat % (_K * _W)
+        tid = i_thread % _K
+        i_warp = i_thread // _K
+        i_b = i_flat // (_K * _W)
+        sh_patch_start = qd.simt.block.SharedArray((_K * _W,), gs.qd_int)
+        sh_patch_end = qd.simt.block.SharedArray((_K * _W,), gs.qd_int)
+        sh_is_hull = qd.simt.block.SharedArray((_K * _W,), gs.qd_int)
+        sh_max_in_plane_r2 = qd.simt.block.SharedArray((_K * _W,), gs.qd_float)
+        sh_round = qd.simt.block.SharedArray((2,), gs.qd_int)
+        sh_sort_geoms = qd.simt.block.SharedArray((_N_STAGED, 2), gs.qd_int)
+        sh_sort_v = qd.simt.block.SharedArray((_N_STAGED,), gs.qd_float)
+        sh_sort_idx = qd.simt.block.SharedArray((_N_STAGED,), gs.qd_int)
         n_con = qd.min(collider_state.n_contacts[i_b], max_candidate_contacts)
         n_hib = collider_state.n_contacts_hibernated[i_b]
-        if tid == 0:
+        qd.simt.block.sync()
+        if i_thread == 0:
             collider_state.n_contacts[i_b] = n_con
 
         # PARALLEL: clamp+init. Mirrors the fused kernel's unconditional init block: every env (including n_con < 5
         # where the prune/sort branch below is skipped) needs contact_sort_idx set to identity over the live contacts
         # so downstream consumers that always indirect through contact_sort_idx (constraint solver, sensors) read
         # valid permutations rather than stale data from the previous step. contact_keep default-keep is set here for
-        # the same reason. 32 lanes stride.
-        i_c_ = n_hib + tid
-        while i_c_ < n_con:
-            collider_state.contact_keep[i_c_, i_b] = 1
-            collider_state.contact_sort_idx[i_c_, i_b] = i_c_
-            i_c_ += _K
+        # the same reason.
+        for i_chunk_ in range((n_con - n_hib + _K * _W - 1) // (_K * _W)):
+            i_c = n_hib + i_chunk_ * _K * _W + i_thread
+            if i_c < n_con:
+                collider_state.contact_keep[i_c, i_b] = 1
+                collider_state.contact_sort_idx[i_c, i_b] = i_c
 
         if n_con - n_hib >= 3:
             # Phase 1: contacts in a deterministic order, grouped by link pair then sorted within each pair (see
-            # func_clamp_prune_contacts). The lanes sort the live contacts in place by a bitonic network, whose every
+            # func_clamp_prune_contacts). The threads sort the live contacts in place by a bitonic network, whose every
             # step puts the earlier contact of a pair of slots in the lower slot: the first step of a level pairs each
             # slot with its mirror in a block of twice the size of the previous level, and the following ones pair slots
             # half as far apart each time. The live contacts are padded with slots that sort after every contact up to a
             # power of two, which never move under such steps, so that the pairs reaching them are skipped.
-            for i_chunk_ in range((n_con - n_hib + _K - 1) // _K):
-                i_c = n_hib + i_chunk_ * _K + tid
-                if i_c < n_con:
-                    collider_state.contact_proj_v[i_c, i_b] = func_contact_frame_order_key(
-                        i_c, i_b, dyn_state, collider_state
-                    )
-            qd.simt.subgroup.sync()
+            # The contacts of an env lie one environment stride apart in memory, so that the reads of a block share no
+            # cache line as soon as there are several envs. While they fit, the block reads their geom pairs and frame
+            # order keys once into shared memory, sorts them there, then writes the permutation back. The intrinsic
+            # order of tied keys reads the contact data still. A larger capacity measured slower on phase 2, whose
+            # reads go through the cache.
             n_live = n_con - n_hib
+            is_staged = n_live <= _N_STAGED and _B > 1
+            for i_chunk_ in range((n_live + _K * _W - 1) // (_K * _W)):
+                i_s = i_chunk_ * _K * _W + i_thread
+                if i_s < n_live:
+                    i_c = n_hib + i_s
+                    frame_key = func_contact_frame_order_key(i_c, i_b, dyn_state, collider_state)
+                    collider_state.contact_proj_v[i_c, i_b] = frame_key
+                    if is_staged:
+                        sh_sort_geoms[i_s, 0] = collider_state.contact_data.geom_a[i_c, i_b]
+                        sh_sort_geoms[i_s, 1] = collider_state.contact_data.geom_b[i_c, i_b]
+                        sh_sort_v[i_s] = frame_key
+                        sh_sort_idx[i_s] = i_c
+            qd.simt.block.sync()
             n_level = 0
             for i_bit in range(31):
                 if (1 << i_bit) < n_live:
@@ -1517,260 +1562,324 @@ def func_clamp_prune_contacts_coop(
                     slot_mask = 1 << (i_level - i_step)
                     if i_step == 0:
                         slot_mask = (2 << i_level) - 1
-                    for i_chunk_ in range(((1 << n_level) + _K - 1) // _K):
-                        i_s = i_chunk_ * _K + tid
+                    # The lower slot of each pair has the bit of the pair distance cleared, so that the threads take
+                    # the pairs directly by inserting a cleared bit at that position into their pair index
+                    i_bit_pair = i_level - i_step
+                    for i_chunk_ in range(((1 << (n_level - 1)) + _K * _W - 1) // (_K * _W)):
+                        i_pair = i_chunk_ * _K * _W + i_thread
+                        i_s = ((i_pair >> i_bit_pair) << (i_bit_pair + 1)) | (i_pair & ((1 << i_bit_pair) - 1))
                         i_t = i_s ^ slot_mask
-                        if i_s < i_t and i_t < n_live:
-                            i_p = collider_state.contact_sort_idx[n_hib + i_s, i_b]
-                            i_q = collider_state.contact_sort_idx[n_hib + i_t, i_b]
-                            if func_contact_is_before(i_b, i_q, i_p, collider_state):
-                                collider_state.contact_sort_idx[n_hib + i_s, i_b] = i_q
-                                collider_state.contact_sort_idx[n_hib + i_t, i_b] = i_p
-                    qd.simt.subgroup.sync()
+                        if i_t < n_live:
+                            i_p = 0
+                            i_q = 0
+                            key_p = qd.Vector.zero(gs.qd_float, 5)
+                            key_q = qd.Vector.zero(gs.qd_float, 5)
+                            for i_k_ in range(2):
+                                i_ss = i_s if i_k_ == 0 else i_t
+                                i_c = 0
+                                i_la = 0
+                                i_lb = 0
+                                i_ga = 0
+                                i_gb = 0
+                                frame_key = gs.qd_float(0.0)
+                                if is_staged:
+                                    # A contact touches the links of its geoms, which every env shares
+                                    i_c = sh_sort_idx[i_ss]
+                                    i_ga = sh_sort_geoms[i_ss, 0]
+                                    i_gb = sh_sort_geoms[i_ss, 1]
+                                    i_la = dyn_info.geoms.link_idx[i_ga]
+                                    i_lb = dyn_info.geoms.link_idx[i_gb]
+                                    frame_key = sh_sort_v[i_ss]
+                                else:
+                                    i_c = collider_state.contact_sort_idx[n_hib + i_ss, i_b]
+                                    i_la = collider_state.contact_data.link_a[i_c, i_b]
+                                    i_lb = collider_state.contact_data.link_b[i_c, i_b]
+                                    i_ga = collider_state.contact_data.geom_a[i_c, i_b]
+                                    i_gb = collider_state.contact_data.geom_b[i_c, i_b]
+                                    frame_key = collider_state.contact_proj_v[i_c, i_b]
+                                key = func_contact_sort_key(i_la, i_lb, i_ga, i_gb, frame_key)
+                                if i_k_ == 0:
+                                    i_p = i_c
+                                    key_p = key
+                                else:
+                                    i_q = i_c
+                                    key_q = key
+                            if func_contact_is_before(i_b, i_q, i_p, key_q, key_p, collider_state):
+                                if is_staged:
+                                    sh_sort_idx[i_s] = i_q
+                                    sh_sort_idx[i_t] = i_p
+                                    for i_k in qd.static(range(2)):
+                                        i_g = sh_sort_geoms[i_s, i_k]
+                                        sh_sort_geoms[i_s, i_k] = sh_sort_geoms[i_t, i_k]
+                                        sh_sort_geoms[i_t, i_k] = i_g
+                                    sh_sort_v[i_s] = key_q[4]
+                                    sh_sort_v[i_t] = key_p[4]
+                                else:
+                                    collider_state.contact_sort_idx[n_hib + i_s, i_b] = i_q
+                                    collider_state.contact_sort_idx[n_hib + i_t, i_b] = i_p
+                    qd.simt.block.sync()
+            if is_staged:
+                for i_chunk_ in range((n_live + _K * _W - 1) // (_K * _W)):
+                    i_s = i_chunk_ * _K * _W + i_thread
+                    if i_s < n_live:
+                        collider_state.contact_sort_idx[n_hib + i_s, i_b] = sh_sort_idx[i_s]
+                qd.simt.block.sync()
 
-            # Group the contacts of each link pair into patches (see func_contact_group_by_normal). The lanes compare
-            # the normals of a bucket with its first one together, and lane 0 groups the rare bucket of several patches.
-            i_cb_start = n_hib
-            while i_cb_start < n_con:
-                i_cb_end = func_contact_link_pair_end(i_b, i_cb_start, n_con, collider_state)
-                i_pc_start = collider_state.contact_sort_idx[i_cb_start, i_b]
-                normal_start = collider_state.contact_data.normal[i_pc_start, i_b]
-                has_several_patches_l = 0
-                for i_chunk_ in range((i_cb_end - i_cb_start - 1 + _K - 1) // _K):
-                    i_cb = i_cb_start + 1 + i_chunk_ * _K + tid
-                    if i_cb < i_cb_end:
-                        i_pc = collider_state.contact_sort_idx[i_cb, i_b]
-                        if qd.abs(collider_state.contact_data.normal[i_pc, i_b].dot(normal_start)) < cos_tol:
-                            has_several_patches_l = 1
-                if su.qd_block_max(has_several_patches_l) > 0:
+            # Group the contacts of each link pair into patches (see func_contact_group_by_normal). The lanes of the
+            # first warp find the end of the first patch of a bucket together, which ends the bucket unless a contact of
+            # the same link pair follows, and lane 0 groups the rare bucket of several patches.
+            if i_warp == 0:
+                i_cb_start = n_hib
+                while i_cb_start < n_con:
+                    i_cb_end = func_contact_patch_end_coop(
+                        tid, i_b, i_cb_start, n_con, collider_state, cos_tol, is_patch=True
+                    )
+                    if i_cb_end < n_con:
+                        i_pc_start = collider_state.contact_sort_idx[i_cb_start, i_b]
+                        i_pc_end = collider_state.contact_sort_idx[i_cb_end, i_b]
+                        i_la_start = collider_state.contact_data.link_a[i_pc_start, i_b]
+                        i_lb_start = collider_state.contact_data.link_b[i_pc_start, i_b]
+                        i_la_end = collider_state.contact_data.link_a[i_pc_end, i_b]
+                        i_lb_end = collider_state.contact_data.link_b[i_pc_end, i_b]
+                        if qd.min(i_la_end, i_lb_end) == qd.min(i_la_start, i_lb_start) and qd.max(
+                            i_la_end, i_lb_end
+                        ) == qd.max(i_la_start, i_lb_start):
+                            i_cb_end = func_contact_patch_end_coop(
+                                tid, i_b, i_cb_end, n_con, collider_state, cos_tol, is_patch=False
+                            )
+                            if tid == 0:
+                                func_contact_group_by_normal(i_b, i_cb_start, i_cb_end, collider_state, cos_tol)
+                            qd.simt.subgroup.sync()
+                    i_cb_start = i_cb_end
+            qd.simt.block.sync()
+
+            # Phase 2: the patches are taken in rounds of up to one per thread. The first warp finds the patches of a
+            # round, each warp computes the mean normal, the centroid, the coplanarity check, the projections and the
+            # lexicographic ranks of its share of them with its own lanes, then each thread builds the support polygon
+            # of one patch and restores its deep contacts, a serial chain of reads that the patches of a round run side
+            # by side. Each patch writes the scratch of its own range of contacts alone.
+            i_cb_next = n_hib
+            while i_cb_next < n_con:
+                if i_warp == 0:
+                    i_cb_start = i_cb_next
+                    n_patches_round = 0
+                    while i_cb_start < n_con and n_patches_round < _K * _W:
+                        i_cb_end = func_contact_patch_end_coop(
+                            tid, i_b, i_cb_start, n_con, collider_state, cos_tol, is_patch=True
+                        )
+                        if tid == 0:
+                            sh_patch_start[n_patches_round] = i_cb_start
+                            sh_patch_end[n_patches_round] = i_cb_end
+                        n_patches_round += 1
+                        i_cb_start = i_cb_end
                     if tid == 0:
-                        func_contact_group_by_normal(i_b, i_cb_start, i_cb_end, collider_state, cos_tol)
-                    qd.simt.subgroup.sync()
-                i_cb_start = i_cb_end
+                        sh_round[0] = n_patches_round
+                        sh_round[1] = i_cb_start
+                qd.simt.block.sync()
+                n_patches_round = sh_round[0]
+                i_cb_next = sh_round[1]
 
-            # Phase 2: patch walk control runs on all 32 lanes (inputs are DRAM-cached). Inside a patch, mean-normal
-            # / centroid sums, the coplanarity-check max-reduction and the lexicographic ranking of the projections run
-            # coop. The hull build, mark-survivors, and deep-pen restore stay serial on lane 0.
-            i_cb_start = n_hib
-            while i_cb_start < n_con:
-                i_cb_end = func_contact_patch_end(i_b, i_cb_start, n_con, collider_state, cos_tol)
-                n_cb = i_cb_end - i_cb_start
+                for i_patch_ in range((n_patches_round + _W - 1) // _W):
+                    i_patch = i_patch_ * _W + i_warp
+                    if i_patch < n_patches_round:
+                        i_cb_start_p = sh_patch_start[i_patch]
+                        i_cb_end_p = sh_patch_end[i_patch]
+                        n_cb = i_cb_end_p - i_cb_start_p
+                        is_hull = False
+                        max_in_plane_r2 = gs.qd_float(0.0)
 
-                if n_cb >= 3:
-                    i_pc0 = collider_state.contact_sort_idx[i_cb_start, i_b]
-                    normal_ref = collider_state.contact_data.normal[i_pc0, i_b]
-                    normal_ref_x = normal_ref[0]
-                    normal_ref_y = normal_ref[1]
-                    normal_ref_z = normal_ref[2]
-                    mean_normal_x_l = gs.qd_float(0.0)
-                    mean_normal_y_l = gs.qd_float(0.0)
-                    mean_normal_z_l = gs.qd_float(0.0)
-                    centroid_x_l = gs.qd_float(0.0)
-                    centroid_y_l = gs.qd_float(0.0)
-                    centroid_z_l = gs.qd_float(0.0)
-                    i_cb_ = i_cb_start + tid
-                    while i_cb_ < i_cb_end:
-                        i_pc = collider_state.contact_sort_idx[i_cb_, i_b]
-                        normal_c = collider_state.contact_data.normal[i_pc, i_b]
-                        dot_ref = normal_ref_x * normal_c[0] + normal_ref_y * normal_c[1] + normal_ref_z * normal_c[2]
-                        sign = gs.qd_float(1.0)
-                        if dot_ref < gs.qd_float(0.0):
-                            sign = gs.qd_float(-1.0)
-                        mean_normal_x_l += sign * normal_c[0]
-                        mean_normal_y_l += sign * normal_c[1]
-                        mean_normal_z_l += sign * normal_c[2]
-                        pos_c = collider_state.contact_data.pos[i_pc, i_b]
-                        centroid_x_l += pos_c[0]
-                        centroid_y_l += pos_c[1]
-                        centroid_z_l += pos_c[2]
-                        i_cb_ += _K
+                        if n_cb >= 3:
+                            i_pc0 = collider_state.contact_sort_idx[i_cb_start_p, i_b]
+                            normal_ref = collider_state.contact_data.normal[i_pc0, i_b]
+                            mean_normal_l = qd.Vector.zero(gs.qd_float, 3)
+                            centroid_l = qd.Vector.zero(gs.qd_float, 3)
+                            i_cb_ = i_cb_start_p + tid
+                            while i_cb_ < i_cb_end_p:
+                                i_pc = collider_state.contact_sort_idx[i_cb_, i_b]
+                                normal_c = collider_state.contact_data.normal[i_pc, i_b]
+                                sign = gs.qd_float(1.0)
+                                if normal_ref.dot(normal_c) < 0.0:
+                                    sign = -1.0
+                                mean_normal_l += sign * normal_c
+                                centroid_l += collider_state.contact_data.pos[i_pc, i_b]
+                                i_cb_ += _K
 
-                    mean_normal_x = su.qd_block_sum(mean_normal_x_l)
-                    mean_normal_y = su.qd_block_sum(mean_normal_y_l)
-                    mean_normal_z = su.qd_block_sum(mean_normal_z_l)
-                    centroid_x = su.qd_block_sum(centroid_x_l)
-                    centroid_y = su.qd_block_sum(centroid_y_l)
-                    centroid_z = su.qd_block_sum(centroid_z_l)
+                            mean_normal = qd.Vector.zero(gs.qd_float, 3)
+                            centroid = qd.Vector.zero(gs.qd_float, 3)
+                            for i_3 in qd.static(range(3)):
+                                mean_normal[i_3] = su.qd_block_sum(mean_normal_l[i_3])
+                                centroid[i_3] = su.qd_block_sum(centroid_l[i_3])
 
-                    # Every lane holds the sums lane 0 does (see qd_block_sum in utils/simt.py), so the post-reduce math
-                    # runs on all 32 lanes and agrees bit for bit across them.
-                    inv_n_cb = gs.qd_float(1.0) / qd.cast(n_cb, gs.qd_float)
-                    centroid_x *= inv_n_cb
-                    centroid_y *= inv_n_cb
-                    centroid_z *= inv_n_cb
-                    mean_normal_norm = qd.sqrt(
-                        mean_normal_x * mean_normal_x + mean_normal_y * mean_normal_y + mean_normal_z * mean_normal_z
+                            # Every lane holds the sums lane 0 does (see qd_block_sum in utils/simt.py), so the
+                            # post-reduce math runs on all 32 lanes and agrees bit for bit across them.
+                            centroid *= 1.0 / n_cb
+                            mean_normal_norm = mean_normal.norm()
+
+                            is_coplanar = mean_normal_norm > EPS
+                            if is_coplanar:
+                                mean_normal /= mean_normal_norm
+
+                                # COOP coplanarity check (stage 3). Each lane strides [i_cb_start_p + tid, i_cb_end_p)
+                                # by _K, locally tracking max_depth / max_in_plane_r2. Wasted work per warp is at most
+                                # n_cb/_K. The upstream algo no longer checks per-contact normals (a contact with a
+                                # diagonal normal at the corner of a patch still participates in the 2D hull because its
+                                # position is a vertex), so we only do the depth coplanarity gate here.
+                                max_depth_l = gs.qd_float(0.0)
+                                max_radius_sq_l = gs.qd_float(0.0)
+                                i_cb_ = i_cb_start_p + tid
+                                while i_cb_ < i_cb_end_p:
+                                    i_pc = collider_state.contact_sort_idx[i_cb_, i_b]
+                                    delta = collider_state.contact_data.pos[i_pc, i_b] - centroid
+                                    depth = qd.abs(delta.dot(mean_normal))
+                                    if depth > max_depth_l:
+                                        max_depth_l = depth
+                                    radius_sq = delta.norm_sqr() - depth * depth
+                                    if radius_sq > max_radius_sq_l:
+                                        max_radius_sq_l = radius_sq
+                                    i_cb_ += _K
+
+                                max_depth = su.qd_block_max(max_depth_l)
+                                max_in_plane_r2 = su.qd_block_max(max_radius_sq_l)
+
+                                if max_depth > tol * qd.sqrt(max_in_plane_r2):
+                                    is_coplanar = False
+
+                            if is_coplanar:
+                                # Every lane computes the same basis from the mean normal the reduce broadcast to it
+                                axis_u, axis_v = func_contact_patch_basis(mean_normal)
+
+                                # COOP projection relative to the centroid (see func_clamp_prune_contacts): 32 lanes
+                                # stride writes to contact_sort_key + contact_proj_v.
+                                i_cb_ = i_cb_start_p + tid
+                                while i_cb_ < i_cb_end_p:
+                                    i_pc = collider_state.contact_sort_idx[i_cb_, i_b]
+                                    delta = collider_state.contact_data.pos[i_pc, i_b] - centroid
+                                    collider_state.contact_sort_key[i_cb_, i_b] = delta.dot(axis_u)
+                                    collider_state.contact_proj_v[i_cb_, i_b] = delta.dot(axis_v)
+                                    i_cb_ += _K
+
+                                # COOP mark-drop: stride writes to contact_keep[i_pc].
+                                i_cb_ = i_cb_start_p + tid
+                                while i_cb_ < i_cb_end_p:
+                                    i_pc = collider_state.contact_sort_idx[i_cb_, i_b]
+                                    collider_state.contact_keep[i_pc, i_b] = 0
+                                    i_cb_ += _K
+
+                                # COOP lexicographic order of the projections (see func_contact_support_hull): each lane
+                                # ranks its contacts among those of the bucket
+                                qd.simt.subgroup.sync()
+                                i_cb_ = i_cb_start_p + tid
+                                while i_cb_ < i_cb_end_p:
+                                    i_lex = i_cb_start_p
+                                    pos_u = collider_state.contact_sort_key[i_cb_, i_b]
+                                    pos_v = collider_state.contact_proj_v[i_cb_, i_b]
+                                    for i_cr in range(i_cb_start_p, i_cb_end_p):
+                                        pos_ur = collider_state.contact_sort_key[i_cr, i_b]
+                                        pos_vr = collider_state.contact_proj_v[i_cr, i_b]
+                                        if pos_ur < pos_u or (
+                                            pos_ur <= pos_u and (pos_vr < pos_v or (pos_vr <= pos_v and i_cr < i_cb_))
+                                        ):
+                                            i_lex += 1
+                                    collider_state.contact_lex_idx[i_lex, i_b] = i_cb_
+                                    i_cb_ += _K
+
+                                # SYNC between coop writes (sort_key, proj_v, lex_idx, contact_keep[i_pc]) and the hull
+                                # build that reads them.
+                                qd.simt.subgroup.sync()
+
+                            is_hull = is_coplanar
+
+                        if tid == 0:
+                            sh_is_hull[i_patch] = 1 if is_hull else 0
+                            sh_max_in_plane_r2[i_patch] = max_in_plane_r2
+                qd.simt.block.sync()
+
+                # Consecutive patches go to different warps, which step through their diverging hull builds
+                # independently, whereas the lanes of one warp step through them in turn
+                i_patch_hull = tid * _W + i_warp
+                i_cb_start_l = 0
+                i_cb_end_l = 0
+                is_hull_l = False
+                max_in_plane_r2_l = gs.qd_float(0.0)
+                if i_patch_hull < n_patches_round:
+                    i_cb_start_l = sh_patch_start[i_patch_hull]
+                    i_cb_end_l = sh_patch_end[i_patch_hull]
+                    is_hull_l = sh_is_hull[i_patch_hull] != 0
+                    max_in_plane_r2_l = sh_max_in_plane_r2[i_patch_hull]
+                if is_hull_l:
+                    n_hull, i_cb_deepest = func_contact_support_hull(
+                        i_b,
+                        i_cb_start_l,
+                        i_cb_end_l,
+                        collider_state,
+                        tol,
+                        rounding=qd.sqrt(EPS * max_in_plane_r2_l),
+                        eps=EPS,
+                        sort_positions=False,
                     )
 
-                    max_in_plane_r2 = gs.qd_float(0.0)
-                    coplanar = mean_normal_norm > EPS
-                    if coplanar:
-                        mean_normal_x /= mean_normal_norm
-                        mean_normal_y /= mean_normal_norm
-                        mean_normal_z /= mean_normal_norm
+                    for i_h in range(n_hull):
+                        i_hv = collider_state.contact_hull_stack[i_cb_start_l + i_h, i_b]
+                        i_pc = collider_state.contact_sort_idx[i_hv, i_b]
+                        collider_state.contact_keep[i_pc, i_b] = 1
 
-                        # COOP coplanarity check (stage 3). Each lane strides [i_cb_start + tid, i_cb_end) by _K,
-                        # locally tracking max_depth / max_in_plane_r2. Wasted work per warp is at most n_cb/_K.
-                        # The upstream algo no longer checks per-contact normals (a contact with a diagonal normal at
-                        # the corner of a patch still participates in the 2D hull because its position is a vertex), so
-                        # we only do the depth coplanarity gate here.
-                        max_depth_l = gs.qd_float(0.0)
-                        max_radius_sq_l = gs.qd_float(0.0)
-                        i_cb_ = i_cb_start + tid
-                        while i_cb_ < i_cb_end:
-                            i_pc = collider_state.contact_sort_idx[i_cb_, i_b]
-                            pos_c = collider_state.contact_data.pos[i_pc, i_b]
-                            delta_x = pos_c[0] - centroid_x
-                            delta_y = pos_c[1] - centroid_y
-                            delta_z = pos_c[2] - centroid_z
-                            depth = qd.abs(delta_x * mean_normal_x + delta_y * mean_normal_y + delta_z * mean_normal_z)
-                            if depth > max_depth_l:
-                                max_depth_l = depth
-                            radius_sq = delta_x * delta_x + delta_y * delta_y + delta_z * delta_z - depth * depth
-                            if radius_sq > max_radius_sq_l:
-                                max_radius_sq_l = radius_sq
-                            i_cb_ += _K
-
-                        max_depth = su.qd_block_max(max_depth_l)
-                        max_in_plane_r2 = su.qd_block_max(max_radius_sq_l)
-
-                        if max_depth > tol * qd.sqrt(max_in_plane_r2):
-                            coplanar = False
-
-                    if coplanar:
-                        # Basis on all lanes (deterministic from the mean normal the reduce broadcast to every lane).
-                        abs_mean_normal_x = qd.abs(mean_normal_x)
-                        abs_mean_normal_y = qd.abs(mean_normal_y)
-                        abs_mean_normal_z = qd.abs(mean_normal_z)
-                        axis_x = gs.qd_float(1.0)
-                        axis_y = gs.qd_float(0.0)
-                        axis_z = gs.qd_float(0.0)
-                        if abs_mean_normal_y < abs_mean_normal_x and abs_mean_normal_y < abs_mean_normal_z:
-                            axis_x = gs.qd_float(0.0)
-                            axis_y = gs.qd_float(1.0)
-                            axis_z = gs.qd_float(0.0)
-                        elif abs_mean_normal_z < abs_mean_normal_x and abs_mean_normal_z <= abs_mean_normal_y:
-                            axis_x = gs.qd_float(0.0)
-                            axis_y = gs.qd_float(0.0)
-                            axis_z = gs.qd_float(1.0)
-                        axis_dot_normal = axis_x * mean_normal_x + axis_y * mean_normal_y + axis_z * mean_normal_z
-                        u_x = axis_x - axis_dot_normal * mean_normal_x
-                        u_y = axis_y - axis_dot_normal * mean_normal_y
-                        u_z = axis_z - axis_dot_normal * mean_normal_z
-                        u_norm = qd.sqrt(u_x * u_x + u_y * u_y + u_z * u_z)
-                        u_x /= u_norm
-                        u_y /= u_norm
-                        u_z /= u_norm
-                        v_x = mean_normal_y * u_z - mean_normal_z * u_y
-                        v_y = mean_normal_z * u_x - mean_normal_x * u_z
-                        v_z = mean_normal_x * u_y - mean_normal_y * u_x
-
-                        # COOP projection relative to the centroid (see func_clamp_prune_contacts): 32 lanes stride
-                        # writes to contact_sort_key + contact_proj_v.
-                        i_cb_ = i_cb_start + tid
-                        while i_cb_ < i_cb_end:
-                            i_pc = collider_state.contact_sort_idx[i_cb_, i_b]
-                            pos_c = collider_state.contact_data.pos[i_pc, i_b]
-                            delta_x = pos_c[0] - centroid_x
-                            delta_y = pos_c[1] - centroid_y
-                            delta_z = pos_c[2] - centroid_z
-                            collider_state.contact_sort_key[i_cb_, i_b] = delta_x * u_x + delta_y * u_y + delta_z * u_z
-                            collider_state.contact_proj_v[i_cb_, i_b] = delta_x * v_x + delta_y * v_y + delta_z * v_z
-                            i_cb_ += _K
-
-                        # COOP mark-drop: stride writes to contact_keep[i_pc].
-                        i_cb_ = i_cb_start + tid
-                        while i_cb_ < i_cb_end:
-                            i_pc = collider_state.contact_sort_idx[i_cb_, i_b]
-                            collider_state.contact_keep[i_pc, i_b] = 0
-                            i_cb_ += _K
-
-                        # COOP lexicographic order of the projections (see func_contact_support_hull): each lane ranks
-                        # its contacts among those of the bucket
-                        qd.simt.subgroup.sync()
-                        i_cb_ = i_cb_start + tid
-                        while i_cb_ < i_cb_end:
-                            i_lex = i_cb_start
-                            pos_u = collider_state.contact_sort_key[i_cb_, i_b]
-                            pos_v = collider_state.contact_proj_v[i_cb_, i_b]
-                            for i_cr in range(i_cb_start, i_cb_end):
-                                pos_ur = collider_state.contact_sort_key[i_cr, i_b]
-                                pos_vr = collider_state.contact_proj_v[i_cr, i_b]
-                                if pos_ur < pos_u or (
-                                    pos_ur <= pos_u and (pos_vr < pos_v or (pos_vr <= pos_v and i_cr < i_cb_))
-                                ):
-                                    i_lex += 1
-                            collider_state.contact_lex_idx[i_lex, i_b] = i_cb_
-                            i_cb_ += _K
-
-                        # SYNC between coop writes (sort_key, proj_v, lex_idx, contact_keep[i_pc]) and the lane-0 lex
-                        # sort + hull build that reads them.
-                        qd.simt.subgroup.sync()
-
-                    if tid == 0 and coplanar:
-                        n_hull, i_cb_deepest = func_contact_support_hull(
-                            i_b,
-                            i_cb_start,
-                            i_cb_end,
-                            collider_state,
-                            tol,
-                            rounding=qd.sqrt(EPS * max_in_plane_r2),
-                            eps=EPS,
-                            sort_positions=False,
+                    # Deep-penetration restore. See func_clamp_prune_contacts for the rationale. Indices here live in
+                    # orig-space because the cycle-permute is fused into phase 3 below (contact_data is still in
+                    # pre-sort order, so we translate sort-space hull/bucket indices through contact_sort_idx).
+                    hull_pen_max = gs.qd_float(0.0)
+                    for i_h in range(n_hull):
+                        i_hv = collider_state.contact_hull_stack[i_cb_start_l + i_h, i_b]
+                        i_pc = collider_state.contact_sort_idx[i_hv, i_b]
+                        pen = collider_state.contact_data.penetration[i_pc, i_b]
+                        if pen > hull_pen_max:
+                            hull_pen_max = pen
+                    # See the depth-preservation rounding estimate in func_clamp_prune_contacts
+                    if i_cb_deepest >= 0:
+                        i_pc_deepest = collider_state.contact_sort_idx[i_cb_deepest, i_b]
+                        penetration_max = collider_state.contact_data.penetration[i_pc_deepest, i_b]
+                        depth_rounding = EPS * (
+                            2.0 * collider_state.contact_data.pos[i_pc_deepest, i_b].norm()
+                            + penetration_max
+                            + 2.0 * qd.sqrt(max_in_plane_r2_l)
                         )
+                        if penetration_max > hull_pen_max + depth_rounding:
+                            collider_state.contact_keep[i_pc_deepest, i_b] = 1
+                    deep_keep_threshold = prune_deep_penetration_ratio * hull_pen_max
+                    for i_cb in range(i_cb_start_l, i_cb_end_l):
+                        i_pc = collider_state.contact_sort_idx[i_cb, i_b]
+                        if collider_state.contact_keep[i_pc, i_b] == 0:
+                            if collider_state.contact_data.penetration[i_pc, i_b] > deep_keep_threshold:
+                                collider_state.contact_keep[i_pc, i_b] = 1
+                qd.simt.block.sync()
 
-                        for i_h in range(n_hull):
-                            i_hv = collider_state.contact_hull_stack[i_cb_start + i_h, i_b]
-                            i_pc = collider_state.contact_sort_idx[i_hv, i_b]
-                            collider_state.contact_keep[i_pc, i_b] = 1
-
-                        # Lane-0 deep-penetration restore. See func_clamp_prune_contacts for the rationale. Indices here live in
-                        # orig-space because the cycle-permute is fused into phase 3 below (contact_data is still in
-                        # pre-sort order, so we translate sort-space hull/bucket indices through contact_sort_idx).
-                        hull_pen_max = gs.qd_float(0.0)
-                        for i_h in range(n_hull):
-                            i_hv = collider_state.contact_hull_stack[i_cb_start + i_h, i_b]
-                            i_pc = collider_state.contact_sort_idx[i_hv, i_b]
-                            pen = collider_state.contact_data.penetration[i_pc, i_b]
-                            if pen > hull_pen_max:
-                                hull_pen_max = pen
-                        # See the depth-preservation rounding estimate in func_clamp_prune_contacts
-                        if i_cb_deepest >= 0:
-                            i_pc_deepest = collider_state.contact_sort_idx[i_cb_deepest, i_b]
-                            penetration_max = collider_state.contact_data.penetration[i_pc_deepest, i_b]
-                            depth_rounding = EPS * (
-                                2.0 * collider_state.contact_data.pos[i_pc_deepest, i_b].norm()
-                                + penetration_max
-                                + 2.0 * qd.sqrt(max_in_plane_r2)
-                            )
-                            if penetration_max > hull_pen_max + depth_rounding:
-                                collider_state.contact_keep[i_pc_deepest, i_b] = 1
-                        deep_keep_threshold = prune_deep_penetration_ratio * hull_pen_max
-                        for i_cb in range(i_cb_start, i_cb_end):
-                            i_pc = collider_state.contact_sort_idx[i_cb, i_b]
-                            if collider_state.contact_keep[i_pc, i_b] == 0:
-                                if collider_state.contact_data.penetration[i_pc, i_b] > deep_keep_threshold:
-                                    collider_state.contact_keep[i_pc, i_b] = 1
-
-                i_cb_start = i_cb_end
-
-        if tid == 0:
             # Phase 3 (compact): squeeze dropped slots out of contact_sort_idx and update n_contacts. The survivors
             # keep the order phase 1 and the per-bucket sort leave them in, which is what holds a scene and a rotated
             # copy of it to the same reported contacts. contact_keep is indexed physically, so the read indirects
-            # through the permutation while the write compacts it in place, valid while the write index trails the
-            # read one.
-            i_cw = n_hib
-            for i_c in range(n_hib, n_con):
-                i_pc = collider_state.contact_sort_idx[i_c, i_b]
-                if collider_state.contact_keep[i_pc, i_b] != 0:
-                    collider_state.contact_sort_idx[i_cw, i_b] = i_pc
-                    i_cw = i_cw + 1
-            collider_state.n_contacts[i_b] = i_cw
+            # through the permutation while the write compacts it in place. The lanes take 32 slots at a time, each
+            # survivor writing at its rank among them, which trails every slot not read yet. Fewer contacts than a
+            # patch prunes keep their identity permutation, which needs no compaction.
+            qd.simt.block.sync()
+            if i_warp == 0:
+                i_cw = n_hib
+                for i_chunk_ in range((n_con - n_hib + _K - 1) // _K):
+                    i_c = n_hib + i_chunk_ * _K + tid
+                    i_pc = 0
+                    is_kept = 0
+                    if i_c < n_con:
+                        i_pc = collider_state.contact_sort_idx[i_c, i_b]
+                        if collider_state.contact_keep[i_pc, i_b] != 0:
+                            is_kept = 1
+                    i_rank_incl, n_kept = su.qd_block_scan(is_kept)
+                    if is_kept != 0:
+                        collider_state.contact_sort_idx[i_cw + i_rank_incl - 1, i_b] = i_pc
+                    i_cw += n_kept
+                if tid == 0:
+                    collider_state.n_contacts[i_b] = i_cw
 
-            # The contact constraint buffers are sized to 4 * max_contacts, so any surviving contact beyond that
-            # budget would write out of bounds. Clamp and flag the env: check_errno halts the simulation with a
-            # request to increase 'max_contacts'.
+        # The contact constraint buffers are sized to 4 * max_contacts, so any surviving contact beyond that budget
+        # would write out of bounds. Clamp and flag the env: check_errno halts the simulation with a request to
+        # increase 'max_contacts'.
+        if i_thread == 0:
             if collider_state.n_contacts[i_b] > max_contacts:
                 collider_state.n_contacts[i_b] = max_contacts
                 errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_CONTACTS

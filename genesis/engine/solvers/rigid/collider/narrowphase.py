@@ -77,6 +77,8 @@ def func_add_polytope_vertex_contacts_sdf(
     gb_pos: qd.types.vector(3),
     gb_quat: qd.types.vector(4),
     tolerance: float,
+    n_prev: int,
+    contacts_slot,
     geoms_init_AABB: array_class.GeomsInitAABB,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
@@ -97,7 +99,8 @@ def func_add_polytope_vertex_contacts_sdf(
     # patch and not arbitrary body verts that would starve the solver of normal-force capacity. The margin is sized to
     # B's smallest SDF cell so verts within one cell of the surface still register a contact even when the kernel pen
     # reads <= 0; the synthetic pen tapers smoothly across the band to avoid a discontinuity that would drive a settled
-    # body into a limit-cycle oscillation.
+    # body into a limit-cycle oscillation. The pair's first n_prev contacts sit at the buffer slots contacts_slot lists,
+    # and the count and slots of its contacts once this scan emitted its own are returned.
     n_max = qd.static(collider_static_config.n_contacts_per_nonconvex_pair if rigid_config.enable_multi_contact else 1)
     EPS = rigid_info.EPS[None]
     gb_cell = collider_info.sdf.geoms_info.sdf_cell_size[i_gb]
@@ -131,17 +134,9 @@ def func_add_polytope_vertex_contacts_sdf(
         can_use_sd_reject = not sdf.sdf_func_is_outside_sdf_grid(i_gb, pos_sdf, collider_info.sdf)
     sd_center = sdf.sdf_func_world_local(i_gb, center_a_world, gb_pos, gb_quat, dyn_info.geoms, collider_info.sdf)
 
-    # Contacts already emitted for this pair by the first scan, recovered from the buffer where the pair's contacts
-    # sit contiguously on top: the repeated-contact check and the shared pair budget below cover both scans. The
-    # count and buffer top are snapshotted for seeding, since the emission below grows both.
-    n_added = 0
-    i_contact_top = collider_state.n_contacts[i_b]
-    if seeded:
-        while (
-            n_added < i_contact_top and collider_state.contact_data.pair_idx[i_contact_top - 1 - n_added, i_b] == i_pair
-        ):
-            n_added = n_added + 1
-    n_prev = n_added
+    # The pairs of an env are detected in parallel, so the contacts of the pair's first scan are found through their
+    # slots: the repeated-contact check and the shared pair budget below cover both scans.
+    n_added = n_prev
     if (not can_use_sd_reject) or sd_center <= rbound_a:
         # Pass 1: select the n_max deepest spatially-diverse vertices of A by grid SDF pen. The buffer keeps verts at
         # least `diversity_radius` apart in world space: a candidate close to an existing entry replaces that entry
@@ -255,7 +250,7 @@ def func_add_polytope_vertex_contacts_sdf(
                         i_ga, i_b, center_b_world, dyn_state, dyn_info, collider_info
                     )
                 elif i_seed <= n_prev:
-                    seed_pos = collider_state.contact_data.pos[i_contact_top - i_seed, i_b]
+                    seed_pos = collider_state.contact_data.pos[contacts_slot[n_prev - i_seed], i_b]
                     i_v_min = sdf.sdf_func_find_closest_vert(i_ga, i_b, seed_pos, dyn_state, dyn_info, collider_info)
                 if i_v_min >= 0:
                     for k in range(n_max):
@@ -524,7 +519,7 @@ def func_add_polytope_vertex_contacts_sdf(
                     pen_emit = approach_depth_pair
                 is_repeated = False
                 for j in range(n_added):
-                    idx_prev = collider_state.n_contacts[i_b] - 1 - j
+                    idx_prev = contacts_slot[n_added - 1 - j]
                     if (contact_pos_v - collider_state.contact_data.pos[idx_prev, i_b]).norm() < tolerance:
                         is_repeated = True
                 if not is_repeated and pen_emit > 0.0:
@@ -546,7 +541,7 @@ def func_add_polytope_vertex_contacts_sdf(
                         rigid_config,
                     )
                     if n_added < n_max:
-                        func_add_contact(
+                        i_c = func_add_contact(
                             i_ga,
                             i_gb,
                             i_b,
@@ -559,10 +554,12 @@ def func_add_polytope_vertex_contacts_sdf(
                             dyn_info,
                             rigid_info,
                             collider_info,
-                            use_atomic=False,
+                            use_atomic=qd.static(rigid_config.para_level >= gs.PARA_LEVEL.PARTIAL),
                             errno=errno,
                         )
-                        n_added = n_added + 1
+                        if i_c >= 0:
+                            contacts_slot[n_added] = i_c
+                            n_added = n_added + 1
                     else:
                         # The pair budget is shared between the two scans: at the cap, a new contact may only
                         # displace the pair's least-penetrating one, keeping the n_max deepest.
@@ -570,7 +567,7 @@ def func_add_polytope_vertex_contacts_sdf(
                         weakest_pen = pen_emit
                         for j in range(n_max):
                             if j < n_added:
-                                idx_prev = collider_state.n_contacts[i_b] - 1 - j
+                                idx_prev = contacts_slot[n_added - 1 - j]
                                 if collider_state.contact_data.penetration[idx_prev, i_b] < weakest_pen:
                                     weakest_pen = collider_state.contact_data.penetration[idx_prev, i_b]
                                     weakest_idx = idx_prev
@@ -591,6 +588,7 @@ def func_add_polytope_vertex_contacts_sdf(
                                 collider_info,
                                 errno,
                             )
+    return n_added, contacts_slot
 
 
 @qd.func
@@ -990,7 +988,7 @@ def func_add_polytope_vertex_contacts_sdf_shell(
                 dyn_info,
                 rigid_info,
                 collider_info,
-                use_atomic=False,
+                use_atomic=qd.static(rigid_config.para_level >= gs.PARA_LEVEL.PARTIAL),
                 errno=errno,
             )
 
@@ -3773,19 +3771,25 @@ def func_narrowphase_multicontact(
             if N_PERTURBATIONS * n_queue <= collider_static_config.gpu_cores:
                 n_units = N_PERTURBATIONS
         n_works_per_claim = BLOCK_DIM // n_units
-        for _claim in range(n_queue + 1):
-            # FIXME: quadrants#925 - every lane of the block issues the claim atomic, the other lanes adding 0, instead
-            # of one atomic per block.
-            i_claim = qd.atomic_add(
-                collider_state.narrowphase_work_queues.mpr_work_counter[0], n_works_per_claim if i_lane == 0 else 0
-            )
-            if i_lane == 0:
-                sh_work_start[0] = i_claim
-            qd.simt.block.sync()
-            i_work = sh_work_start[0] + i_lane // n_units
-            is_exhausted = sh_work_start[0] >= n_queue
-            qd.simt.block.sync()
-            if is_exhausted:
+        for i_claim_ in range(n_queue + 1):
+            # A block takes its first works by its rank and the next ones from the shared counter, offset past the
+            # works taken by rank, so that the blocks a short queue leaves idle exit without an atomic on the counter,
+            # which every block of the launch would otherwise hit at once.
+            i_work_start = (i_tid // BLOCK_DIM) * n_works_per_claim
+            if i_claim_ > 0:
+                # FIXME: quadrants#925 - every lane of the block issues the claim atomic, the other lanes adding 0,
+                # instead of one atomic per block.
+                i_claim = qd.atomic_add(
+                    collider_state.narrowphase_work_queues.mpr_work_counter[0], n_works_per_claim if i_lane == 0 else 0
+                )
+                if i_lane == 0:
+                    n_blocks = (collider_static_config.gpu_cores + BLOCK_DIM - 1) // BLOCK_DIM
+                    sh_work_start[0] = n_blocks * n_works_per_claim + i_claim
+                qd.simt.block.sync()
+                i_work_start = sh_work_start[0]
+                qd.simt.block.sync()
+            i_work = i_work_start + i_lane // n_units
+            if i_work_start >= n_queue:
                 break
             i_unit = i_lane % n_units
             if i_work < n_queue and i_unit == 0:
@@ -4543,14 +4547,23 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
 ):
     EPS = rigid_info.EPS[None]
 
-    _B = collider_state.active_buffer.shape[1]
-    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in range(_B):
-        for i_pair in range(qd.min(collider_state.n_broad_pairs[i_b], collider_state.broad_collision_pairs.shape[0])):
-            i_ga = collider_state.broad_collision_pairs[i_pair, i_b][0]
-            i_gb = collider_state.broad_collision_pairs[i_pair, i_b][1]
-
-            if qd.static(collider_static_config.has_nonconvex_nonterrain):
+    if qd.static(collider_static_config.has_nonconvex_nonterrain):
+        n_max = qd.static(
+            collider_static_config.n_contacts_per_nonconvex_pair if rigid_config.enable_multi_contact else 1
+        )
+        # The pairs of an env are split over chunks so that the GPU cores are kept busy whatever the env count, as in
+        # func_narrowphase_contact0. Every pair is detected by one thread, its contacts appended atomically.
+        _B = collider_state.active_buffer.shape[1]
+        n_chunks = qd.max((collider_static_config.gpu_cores + _B - 1) // _B, 1)
+        max_broad_pairs = collider_state.broad_collision_pairs.shape[0]
+        qd.loop_config(name="narrowphase_nonconvex", serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_b_chunk in range(_B * n_chunks):
+            i_b = i_b_chunk // n_chunks
+            i_chunk = i_b_chunk % n_chunks
+            n_pairs = qd.min(collider_state.n_broad_pairs[i_b], max_broad_pairs)
+            for i_pair in range(i_chunk * n_pairs // n_chunks, (i_chunk + 1) * n_pairs // n_chunks):
+                i_ga = collider_state.broad_collision_pairs[i_pair, i_b][0]
+                i_gb = collider_state.broad_collision_pairs[i_pair, i_b][1]
                 if (
                     not (dyn_info.geoms.is_convex[i_ga] and dyn_info.geoms.is_convex[i_gb])
                     and dyn_info.geoms.type[i_gb] != gs.GEOM_TYPE.TERRAIN
@@ -4651,13 +4664,15 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                         # local search rather than a full scan. Skipped only for PLANE (its handful of far-flung
                         # verts carry no contact information).
                         n_scans = 1 if dyn_info.geoms.type[i_gb] == gs.GEOM_TYPE.PLANE else 2
+                        n_added = 0
+                        contacts_slot = qd.Vector.zero(gs.qd_int, n_max)
                         for i_scan in range(n_scans):
                             i_g1, i_g2 = i_ga, i_gb
                             g1_pos, g1_quat, g2_pos, g2_quat = ga_pos, ga_quat, gb_pos, gb_quat
                             if i_scan > 0:
                                 i_g1, i_g2 = i_gb, i_ga
                                 g1_pos, g1_quat, g2_pos, g2_quat = gb_pos, gb_quat, ga_pos, ga_quat
-                            func_add_polytope_vertex_contacts_sdf(
+                            n_added, contacts_slot = func_add_polytope_vertex_contacts_sdf(
                                 i_g1,
                                 i_g2,
                                 i_b,
@@ -4667,6 +4682,8 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                 g2_pos,
                                 g2_quat,
                                 tolerance,
+                                n_added,
+                                contacts_slot,
                                 geoms_init_AABB,
                                 dyn_state,
                                 collider_state,
