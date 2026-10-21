@@ -165,11 +165,19 @@ def _func_update_gradient(
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
-    """Step 5: Update gradient"""
+    """Step 5: update the gradient of every env still iterating, one env per thread.
+
+    Where the solve is seeded one env per thread (see has_per_env_solve_seed in array_class.py), the Hessian of the env
+    is assembled and factored first.
+    """
     _B = constraint_state.grad.shape[1]
     qd.loop_config(name="update_gradient", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+            if qd.static(rigid_config.has_per_env_solve_seed):
+                solver.func_hessian_and_cholesky_factor_direct_batch(
+                    i_b, constraint_state, dyn_info, rigid_info, rigid_config
+                )
             solver.func_update_gradient_batch(i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
 
 
@@ -316,7 +324,9 @@ def _kernel_solve_graph(
         _func_islands_linesearch_and_apply(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
         _func_update_constraint_forces(constraint_state, rigid_config)
         _func_update_qfrc_constraint_per_dof(constraint_state, rigid_config)
-        if qd.static(rigid_config.solver_type == gs.constraint_solver.Newton):
+        if qd.static(
+            rigid_config.solver_type == gs.constraint_solver.Newton and not rigid_config.has_per_env_solve_seed
+        ):
             # Every island's Hessian block maintained in nt_H, patched with the rows whose active state flipped, then a
             # tiled factor + solve of every island in its own shared tile, which reads the block without consuming it,
             # the coupled elliptic-cone block bracketed around the factor (see func_wrap_cone_hessian).
@@ -350,7 +360,8 @@ def func_solve_decomposed(dyn_state, constraint_state, dyn_info, rigid_info, rig
     Early exits when all batch elements have converged (no improved[i_b] is True).
 
     The per-iteration factor/solve runs per island over the (env, island) work-list, an unpartitioned env being a
-    single island spanning every dof.
+    single island spanning every dof, except where the solve is seeded one env per thread (see has_per_env_solve_seed
+    in array_class.py): the seed and every factor then run one env per thread.
     """
     # The graph maintains the assembled Hessian in nt_H, so the seed leaves it there (write_L=False).
     solver.func_solve_init(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config, write_L=False)
