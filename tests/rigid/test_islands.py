@@ -400,8 +400,8 @@ def test_islands_converge_independently(show_viewer, n_envs):
 def test_monolith_seed_oversaturated(show_viewer, monkeypatch):
     # enable_cooperative_constraint_kernels is bounded by get_gpu_core_count(), so faking extreme GPU saturation
     # (get_gpu_core_count -> 1) disables the cooperative kernels at 2 envs - a small-scale stand-in for the
-    # >get_gpu_core_count() env regime. With the monolith arm pinned, the seed factor + gradient come from the
-    # monolith body itself (see is_self_seeding in func_solve_init); a stale Mgrad drops the boxes through the floor.
+    # >get_gpu_core_count() env regime. With the monolith arm pinned, the seed factor + gradient come from the monolith
+    # body itself (see has_per_env_solve_seed in array_class.py). A stale Mgrad drops the boxes through the floor.
     import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
     from genesis.utils.array_class import RigidSimStaticConfig
 

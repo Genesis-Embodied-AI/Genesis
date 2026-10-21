@@ -5576,16 +5576,6 @@ def func_solve_init(
     _B = dyn_state.dofs.acc_smooth.shape[1]
     n_dofs = dyn_state.dofs.acc_smooth.shape[0]
 
-    # The one arm whose factor, gradient and convergence certificate are all seeded inside its own body (see
-    # _kernel_solve_monolith) rather than here: the GPU monolith without the tiled factor seed self-inits per env, so
-    # every seed in this kernel routes around it (the block assembly stays here where the tiled seed is on). The
-    # decomposed arm only runs with the cooperative kernels, which imply the tiled seed, so the predicate holds for
-    # every arm this init can serve.
-    is_self_seeding = qd.static(
-        rigid_config.solver_type == gs.constraint_solver.Newton
-        and rigid_config.backend != gs.cpu
-        and (not rigid_config.enable_tiled_island_seed or rigid_config.has_scalar_seed_factor)
-    )
     if qd.static(rigid_config.enable_signorini_contact):
         # The first row update of the solve seeds every latch, see func_relatch_cone.
         n_cones = constraint_state.cone_latch.shape[0]
@@ -5692,17 +5682,20 @@ def func_solve_init(
             func_island_tiled_factor_solve_all(constraint_state, dyn_info, rigid_info, rigid_config, write_L)
             func_wrap_cone_hessian(constraint_state, rigid_config, is_removal=True, is_enabled=not write_L)
     else:
-        if qd.static(rigid_config.solver_type == gs.constraint_solver.Newton and not is_self_seeding):
-            # Seed the initial Hessian factor. The decomposed arm has no self-init: its graph is linesearch-first, so
-            # its first linesearch consumes the search direction computed here (this kernel is its "iteration 0"; the
-            # graph then computes each subsequent direction at the end of an iteration). The monolith seeds it here
-            # except where its body self-inits the factor per env (is_self_seeding).
+        # Where the arms seed the factor, the gradient and the convergence certificate in their own kernels (see
+        # has_per_env_solve_seed in array_class.py), this kernel leaves them out.
+        if qd.static(
+            rigid_config.solver_type == gs.constraint_solver.Newton and not rigid_config.has_per_env_solve_seed
+        ):
+            # Seed the initial Hessian factor. The decomposed graph is linesearch-first, so its first linesearch
+            # consumes the search direction computed here (this kernel is its "iteration 0"; the graph then computes
+            # each subsequent direction at the end of an iteration).
             # compute_envelope=True computes each island's structural skyline envelope once, reused per iteration.
             func_hessian_and_cholesky_factor_direct(
                 constraint_state, dyn_info, rigid_info, rigid_config, compute_envelope=True
             )
 
-        if qd.static(not is_self_seeding):
+        if qd.static(not rigid_config.has_per_env_solve_seed):
             # Initial gradient (Mgrad = H^-1 grad for Newton, grad for CG), the decomposed arm's first search direction
             func_update_gradient(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
 
@@ -5713,10 +5706,12 @@ def func_solve_init(
         constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
 
     if qd.static(
-        not rigid_config.requires_grad and not rigid_config.enable_mujoco_compatibility and not is_self_seeding
+        not rigid_config.requires_grad
+        and not rigid_config.enable_mujoco_compatibility
+        and not rigid_config.has_per_env_solve_seed
     ):
-        # The certificate consumes the seed gradient, so the one arm that self-seeds it in its own body certifies
-        # there instead (see _kernel_solve_monolith). The differentiable path keeps its full iteration trace.
+        # The certificate consumes the seed gradient, so the arms that seed it in their own kernels certify there
+        # instead (see func_solve_seed_batch). The differentiable path keeps its full iteration trace.
         # TODO: Remove the MuJoCo compatibility gate once on MuJoCo 3.11, which carries this criterion natively.
         if qd.static(rigid_config.enable_cooperative_constraint_kernels):
             _K = qd.static(32)
@@ -5823,6 +5818,40 @@ def func_solve_iter(
         )
 
 
+@qd.func
+def func_solve_seed_batch(
+    i_b: int,
+    dyn_state: array_class.DynState,
+    constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+):
+    """Seed the Newton solve of one env with its Hessian factor, its gradient, its first search direction and its
+    convergence certificate.
+
+    The solve arms run it one env per thread where func_solve_init leaves the seed to them (see has_per_env_solve_seed
+    in array_class.py). The Hessian block of the env is already assembled into nt_H where the tiled seed is on (see
+    has_scalar_seed_factor), so only its factor remains to compute there.
+    """
+    n_dofs = constraint_state.qacc.shape[0]
+
+    if qd.static(rigid_config.enable_tiled_island_seed):
+        func_cholesky_factor_direct_batch(i_b, 0, constraint_state, rigid_info, rigid_config)
+    else:
+        func_hessian_and_cholesky_factor_direct_batch(
+            i_b, constraint_state, dyn_info, rigid_info, rigid_config, compute_envelope=True
+        )
+    func_update_gradient_batch(i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
+    for i_d in range(n_dofs):
+        constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
+    if qd.static(not rigid_config.requires_grad and not rigid_config.enable_mujoco_compatibility):
+        # Certificate gating: see func_solve_init.
+        constraint_state.improved[i_b] = linesearch.func_exit_islands_serial(
+            i_b, constraint_state, rigid_info, rigid_config, certify=True
+        )
+
+
 def _get_static_config(*args, **kwargs):
     # Positional index of rigid_config in func_solve_body's signature.
     return args[4] if len(args) > 4 else kwargs["rigid_config"]
@@ -5856,7 +5885,6 @@ def _kernel_solve_monolith(
     _n_iterations: int,
 ):
     _B = constraint_state.grad.shape[1]
-    n_dofs = constraint_state.qacc.shape[0]
 
     # The monolith arm solves each env whole (32 envs packed per warp); islands change only the per-env factor's block
     # structure, handled inside func_solve_iter, not the iteration scheme. Per-island parallelism is the decomposed
@@ -5869,28 +5897,8 @@ def _kernel_solve_monolith(
         if qd.static(rigid_config.use_hibernation):
             has_awake_work = has_awake_work and rigid_info.n_awake_dofs[i_b] > 0
         if has_awake_work:
-            if qd.static(
-                rigid_config.backend != gs.cpu
-                and rigid_config.solver_type == gs.constraint_solver.Newton
-                and (not rigid_config.enable_tiled_island_seed or rigid_config.has_scalar_seed_factor)
-            ):
-                # A GPU without the tiled factor seed: func_solve_init leaves the factor to the monolith, which
-                # self-seeds each island's scalar factor + gradient + search here (once per step), the block already
-                # assembled into nt_H where the tiled seed is on (see has_scalar_seed_factor).
-                if qd.static(rigid_config.enable_tiled_island_seed):
-                    func_cholesky_factor_direct_batch(i_b, 0, constraint_state, rigid_info, rigid_config)
-                else:
-                    func_hessian_and_cholesky_factor_direct_batch(
-                        i_b, constraint_state, dyn_info, rigid_info, rigid_config, compute_envelope=True
-                    )
-                func_update_gradient_batch(i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
-                for i_d in range(n_dofs):
-                    constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
-                if qd.static(not rigid_config.requires_grad and not rigid_config.enable_mujoco_compatibility):
-                    # Certificate gating: see func_solve_init.
-                    constraint_state.improved[i_b] = linesearch.func_exit_islands_serial(
-                        i_b, constraint_state, rigid_info, rigid_config, certify=True
-                    )
+            if qd.static(rigid_config.has_per_env_solve_seed):
+                func_solve_seed_batch(i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
             for it in range(rigid_info.iterations[None]):
                 # Checked at the top so a solve certified converged on its seed runs zero iterations.
                 if not constraint_state.improved[i_b]:

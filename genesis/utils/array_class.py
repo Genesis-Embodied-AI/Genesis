@@ -3101,7 +3101,8 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # resolution for the gating.
     enable_fused_smooth_acc_solve: bool = False
     # When True, func_solve_init seeds every island's factor with the tiled per-island kernels at any env count. The
-    # monolith self-seeds with the scalar per-island factor otherwise. See the rigid solver's resolution for the gating.
+    # solve arms seed the scalar per-island factor otherwise (see has_per_env_solve_seed). See the rigid solver's
+    # resolution for the gating.
     enable_tiled_island_seed: bool = False
     # When True, the scene holds one dof-carrying kinematic tree, so an env forms at most one island and the
     # per-island passes of the solve read the env's plain dof and row ranges. See the rigid solver's resolution.
@@ -3160,6 +3161,22 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
         (see func_cone_rank_update_island).
         """
         return max(8, 2 * self.rows_per_contact)
+
+    @property
+    def has_per_env_solve_seed(self) -> bool:
+        """Whether each solve arm seeds the Newton factor, the gradient and the convergence certificate one env per
+        thread in its own kernels, func_solve_init leaving them out.
+
+        This holds on GPU wherever the tiled factor seed is off or leaves the factor to the scalar dense Cholesky (see
+        has_scalar_seed_factor). The decomposed arm then factors the Hessian of every env one env per thread at each
+        iteration too, since its tiled per-iteration factor maintains the assembled Hessian that only the tiled seed
+        provides.
+        """
+        return (
+            self.solver_type == gs.constraint_solver.Newton
+            and self.backend != gs.cpu
+            and (not self.enable_tiled_island_seed or self.has_scalar_seed_factor)
+        )
 
 
 # =========================================== DataManager ===========================================
