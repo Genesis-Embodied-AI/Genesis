@@ -1233,7 +1233,7 @@ def func_detection(
                 errno,
             )
         if qd.static(coop_dedup):
-            func_clamp_prune_contacts_coop(dyn_state, collider_state, rigid_info, collider_info, errno)
+            func_clamp_prune_contacts_coop(dyn_state, collider_state, dyn_info, rigid_info, collider_info, errno)
         else:
             func_clamp_prune_contacts(
                 dyn_state, collider_state, rigid_info, collider_info, rigid_config, collider_static_config, errno

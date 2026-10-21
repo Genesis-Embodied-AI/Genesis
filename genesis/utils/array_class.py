@@ -20,6 +20,10 @@ def _tensor_backend():
     return qd.Backend.NDARRAY if gs.use_ndarray else qd.Backend.FIELD
 
 
+# FIXME: quadrants#936 - a vector or matrix tensor takes no layout, so those read environment by environment are
+# allocated and indexed with the environment first instead of last, against the convention of every other tensor.
+# FIXME: quadrants#935 - indexing a laid-out tensor by a list or tuple skips its axis permutation, so laid-out tensors
+# are indexed by plain subscripts alone.
 def V(*args, **kwargs):
     return qd.tensor(*args, backend=_tensor_backend(), **kwargs)
 
@@ -1471,7 +1475,10 @@ def get_collider_state(
     box_axi_shape = maybe_shape((3, _B), rigid_config.box_box_detection)
     box_ppts2_shape = maybe_shape((4, 2, _B), rigid_config.box_box_detection)
     box_pu_shape = maybe_shape((4, _B), rigid_config.box_box_detection)
+    # The pruning scratch is laid out environment-first, so that the threads of the block running an environment read
+    # neighbouring slots from the same cache lines (see func_clamp_prune_contacts_coop)
     prune_shape = maybe_shape((max(max_candidate_contacts, 1), _B), collider_static_config.has_prunable_contacts)
+    prune_layout = (1, 0) if collider_static_config.has_prunable_contacts else None
 
     return ColliderState(
         sort_buffer=get_sort_buffer(solver),
@@ -1507,12 +1514,12 @@ def get_collider_state(
             1 if solver._options.enable_contact_patch else 5,
             split_narrowphase,
         ),
-        contact_sort_key=V(dtype=gs.qd_float, shape=(max(max_candidate_contacts, 1), _B)),
+        contact_sort_key=V(dtype=gs.qd_float, shape=(max(max_candidate_contacts, 1), _B), layout=(1, 0)),
         contact_sort_idx=V(dtype=gs.qd_int, shape=(max(max_candidate_contacts, 1), _B)),
-        contact_proj_v=V(dtype=gs.qd_float, shape=prune_shape),
-        contact_keep=V(dtype=gs.qd_int, shape=prune_shape),
-        contact_hull_stack=V(dtype=gs.qd_int, shape=prune_shape),
-        contact_lex_idx=V(dtype=gs.qd_int, shape=prune_shape),
+        contact_proj_v=V(dtype=gs.qd_float, shape=prune_shape, layout=prune_layout),
+        contact_keep=V(dtype=gs.qd_int, shape=prune_shape, layout=prune_layout),
+        contact_hull_stack=V(dtype=gs.qd_int, shape=prune_shape, layout=prune_layout),
+        contact_lex_idx=V(dtype=gs.qd_int, shape=prune_shape, layout=prune_layout),
     )
 
 
