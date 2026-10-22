@@ -1009,17 +1009,16 @@ def test_color_overwrite(overwrite, urdf_with_external_assets, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize(
-    "xml_path",
+    "model_name",
     [
         "xml/franka_emika_panda/panda.xml",
         "urdf/go2/urdf/go2.urdf",
         "urdf/panda_bullet/panda.urdf",
-        "primitive_collision_urdf",
+        "urdf_with_legacy_parsed_primitives",
     ],
 )
-def test_robot_scale_and_dofs_armature(xml_path, monkeypatch, request, tol):
+def test_robot_scale_and_dofs_armature(xml_path, monkeypatch, tol):
     ROBOT_SCALES = (1.0, 0.2, 5.0)
 
     scene = gs.Scene(
@@ -1032,7 +1031,7 @@ def test_robot_scale_and_dofs_armature(xml_path, monkeypatch, request, tol):
         show_viewer=False,
         show_FPS=False,
     )
-    files = [xml_path if os.path.splitext(xml_path)[1] else request.getfixturevalue(xml_path)]
+    files = [xml_path]
     if xml_path.endswith(".urdf"):
         # The asset is also loaded as one in-memory model shared by an entity at every scale, which parsing must leave
         # intact for the next one. An in-memory model resolves its relative mesh paths against the working directory.

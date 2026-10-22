@@ -272,6 +272,27 @@ def urdf_with_external_assets(asset_tmp_path):
 
 
 @pytest.fixture(scope="session")
+def urdf_with_legacy_parsed_primitives(asset_tmp_path):
+    """Generate a URDF that falls back to the legacy parser while holding a primitive collision geometry.
+
+    Its GLB collision mesh makes MuJoCo reject the model, so the legacy parser builds every collision geometry, the
+    box included. The link authors no inertial element, so its mass and inertia derive from these geometries.
+    """
+    assets = asset_tmp_path / "urdf_with_legacy_parsed_primitives"
+    assets.mkdir(exist_ok=True)
+    mesh_path = str(assets / "cube.glb")
+    trimesh.creation.box(extents=(0.05, 0.05, 0.05)).export(mesh_path)
+    urdf = ET.Element("robot", name="urdf_with_legacy_parsed_primitives")
+    link = ET.SubElement(urdf, "link", name="base_link")
+    collision = ET.SubElement(link, "collision")
+    ET.SubElement(ET.SubElement(collision, "geometry"), "box", size="0.1 0.2 0.3")
+    collision = ET.SubElement(link, "collision")
+    ET.SubElement(collision, "origin", xyz="0.5 0 0")
+    ET.SubElement(ET.SubElement(collision, "geometry"), "mesh", filename=mesh_path)
+    return urdf
+
+
+@pytest.fixture(scope="session")
 def mimic_hinges():
     mjcf = ET.Element("mujoco", model="mimic_hinges")
     ET.SubElement(mjcf, "compiler", angle="degree")
@@ -728,20 +749,6 @@ def undefined_inertia():
     """Generate a URDF with a single link that has no inertial element."""
     urdf = ET.Element("robot", name="undefined_inertia")
     _add_sphere_link(urdf, "base_link", "0.0 0.0 0.09")
-    return ET.tostring(urdf, encoding="unicode")
-
-
-@pytest.fixture(scope="session")
-def primitive_collision_urdf(asset_tmp_path):
-    mesh_path = str(asset_tmp_path / "collision_cube.glb")
-    trimesh.creation.box(extents=(0.05, 0.05, 0.05)).export(mesh_path)
-    urdf = ET.Element("robot", name="primitive_collision")
-    link = ET.SubElement(urdf, "link", name="base_link")
-    collision = ET.SubElement(link, "collision")
-    ET.SubElement(ET.SubElement(collision, "geometry"), "box", size="0.1 0.2 0.3")
-    collision = ET.SubElement(link, "collision")
-    ET.SubElement(collision, "origin", xyz="0.5 0 0")
-    ET.SubElement(ET.SubElement(collision, "geometry"), "mesh", filename=mesh_path)
     return ET.tostring(urdf, encoding="unicode")
 
 
