@@ -1,0 +1,56 @@
+genesis/utils/array_class.py
+  s_3ff9d75a2306af::t_062777c10e6fb6 1435-1437
+  s_3eda376a4e5c90::t_d251df164b9561 1434
+genesis/engine/solvers/rigid/collider/contact.py
+  s_3eda376a4e5c90::t_6a1399dc0de752 184-204
+  s_3eda376a4e5c90::t_2f29dff39f2853 215
+  s_3eda376a4e5c90::t_4ecc61e8b07c23 216-221
+  s_3ff9d75a2306af::t_f93b545aa0b022 233
+  s_3eda376a4e5c90::t_994ff9b6d63150 288-294,298
+  s_3ff9d75a2306af::t_96786a5cb61989 299-302
+  s_3eda376a4e5c90::t_8b38a4b7ce3c91 310
+  s_c99bab33f0f79d::t_bcf09fb025d212 183
+tests/rigid/test_islands.py
+  s_3eda376a4e5c90::t_a274021328ed56 1068,1070-1072,1138-1142
+  s_3ff9d75a2306af::t_daa03d4f488266 1143
+  s_3eda376a4e5c90::t_63579fd4aa57fd 861
+  s_3ff9d75a2306af::t_fe8b87dcc668fa 1144
+  s_3ff9d75a2306af::t_d04a224f22ccbb 1145
+genesis/engine/solvers/rigid/constraint/island.py
+  s_3eda376a4e5c90::t_db53ad61442e65 434,733
+genesis/engine/solvers/rigid/collider/broadphase.py
+  s_3eda376a4e5c90::t_5d0e2f3dded73a 15
+  s_3eda376a4e5c90::t_c475ab3a47b8d1 45-46,49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ae207ed1ea4cb37158d292fb9a507c6d0c4d4f80",
+  "prompts": {},
+  "sessions": {
+    "s_3eda376a4e5c90": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6c68070c-2496-49cc-89d2-fadda83e0571",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trinity Chung <trinity.chung@genesis-ai.company>"
+    },
+    "s_3ff9d75a2306af": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7c40a1ec-b4ad-424a-8f08-4bc518106af3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trinity Chung <trinity.chung@genesis-ai.company>"
+    },
+    "s_c99bab33f0f79d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "38bb435e-1eec-44ba-a42c-7dffe6088c56",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trinity Chung <trinity.chung@genesis-ai.company>"
+    }
+  }
+}
