@@ -8,11 +8,11 @@ from genesis.engine.core import Data, Require, System, register_system
 from genesis.engine.entities import RigidEntity
 from genesis.utils.sdf import SDF
 
-from .rigid_solver_system import RigidSolverSystem
+from .rigid_dynamics import RigidDynamics
 from ..simulator_engine import SimulatorEngine
 
 
-class RigidSdfSystem(System):
+class RigidSdf(System):
     """System owning the signed distance fields of the rigid geoms, a geometric description of each geom that does not
     depend on what queries it.
 
@@ -32,7 +32,7 @@ class RigidSdfSystem(System):
 
     # -------------------------------- Dependencies --------------------------------
 
-    rigid_solver_system = Require(RigidSolverSystem)
+    rigid_dynamics = Require(RigidDynamics)
 
     def __init__(self) -> None:
         super().__init__()
@@ -49,7 +49,7 @@ class RigidSdfSystem(System):
     def allocate(self) -> None:
         """Allocate the fields from the model of the rigid geoms, ahead of the collision detection that embeds
         them."""
-        rigid = self.rigid_solver_system
+        rigid = self.rigid_dynamics
         geoms = tuple(rigid.geoms)
         self.data.sdf_config = array_class.SDFStaticConfig(
             has_terrain=any(geom.type == gs.GEOM_TYPE.TERRAIN for geom in geoms)
@@ -58,10 +58,10 @@ class RigidSdfSystem(System):
 
 
 @register_system(SimulatorEngine)
-def create_rigid_sdf_system(engine: SimulatorEngine) -> RigidSdfSystem | None:
+def create_rigid_sdf(engine: SimulatorEngine) -> RigidSdf | None:
     """Admit SDF ownership only for a Scene with Rigid geometry."""
     return (
-        RigidSdfSystem()
+        RigidSdf()
         if any(isinstance(entity, RigidEntity) for entity in engine.scene.entities)
         else None
     )

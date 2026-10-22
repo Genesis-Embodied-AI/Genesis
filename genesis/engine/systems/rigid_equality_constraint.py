@@ -19,8 +19,8 @@ from genesis.engine.solvers.rigid.constraint.solver import (
     kernel_get_equality_constraints,
 )
 
-from .rigid_constraint_system import RigidConstraintSystem, RowCategory
-from .rigid_solver_system import RigidSolverSystem
+from .rigid_constraint import RigidConstraint, RowCategory
+from .rigid_dynamics import RigidDynamics
 from ..simulator_engine import SimulatorEngine
 
 EnvIndex: TypeAlias = ArrayLike | torch.Tensor | None
@@ -29,7 +29,7 @@ ConstraintValue: TypeAlias = ConstraintArray | tuple[ConstraintArray, ...]
 ConstraintResult: TypeAlias = dict[str, ConstraintValue]
 
 
-class RigidEqualityConstraintSystem(System):
+class RigidEqualityConstraint(System):
     """Append the equality rows of every env, and own the queries and edits of the equality constraints.
 
     The rows are bilateral: up to 3 for a connect, 6 for a weld and 1 for a joint equality, over the equalities of the
@@ -52,9 +52,9 @@ class RigidEqualityConstraintSystem(System):
 
     # -------------------------------- Dependencies --------------------------------
 
-    rigid_solver_system = Require(RigidSolverSystem)
+    rigid_dynamics = Require(RigidDynamics)
 
-    constraint_system = Require(RigidConstraintSystem)
+    rigid_constraint = Require(RigidConstraint)
 
     def __init__(self) -> None:
         super().__init__()
@@ -63,7 +63,7 @@ class RigidEqualityConstraintSystem(System):
         self._eq_const_info_revision = -1
 
     def build(self) -> None:
-        self.constraint_system.on_rows(
+        self.rigid_constraint.on_rows(
             RowCategory.EQUALITY,
             initialize=self.initialize,
             assemble=self.assemble,
@@ -78,17 +78,17 @@ class RigidEqualityConstraintSystem(System):
 
     @System.action(kind="stage")
     def assemble(self):
-        rigid = self.rigid_solver_system
-        return func_substep_add_equality_rows, self.data, self.constraint_system.data, rigid.data, rigid.rigid_config
+        rigid = self.rigid_dynamics
+        return func_substep_add_equality_rows, self.data, self.rigid_constraint.data, rigid.data, rigid.rigid_config
 
     @System.action(kind="host")
     def reverse(self):
-        rigid = self.rigid_solver_system
+        rigid = self.rigid_dynamics
         return (
             kernel_manual_add_equality_constraints_bw,
             self.data.segment,
             rigid.dyn_state,
-            self.constraint_system.data.constraint_state,
+            self.rigid_constraint.data.constraint_state,
             rigid.dyn_info,
             rigid.rigid_info,
             rigid.rigid_config,
@@ -106,7 +106,7 @@ class RigidEqualityConstraintSystem(System):
 
     def get_equality_constraints(self, as_tensor: bool = True, to_torch: bool = True) -> ConstraintResult:
         # The equalities read back stand until the next solve or clear rewrites the forces or the equality count
-        revision = self.constraint_system.get_solve_revision()
+        revision = self.rigid_constraint.get_solve_revision()
         if revision != self._eq_const_info_revision:
             self._eq_const_info_cache.clear()
             self._eq_const_info_revision = revision
@@ -116,7 +116,7 @@ class RigidEqualityConstraintSystem(System):
         if eq_const_info is not None:
             return eq_const_info.copy()
 
-        constraint_state = self.constraint_system.data.constraint_state
+        constraint_state = self.rigid_constraint.data.constraint_state
         n_eqs = tuple(constraint_state.qd_n_equalities.to_numpy())
         n_envs = len(n_eqs)
         n_eqs_max = max(n_eqs)
@@ -139,8 +139,8 @@ class RigidEqualityConstraintSystem(System):
                 fout,
                 self.data.segment,
                 constraint_state,
-                self.rigid_solver_system.dyn_info,
-                self.rigid_solver_system.rigid_config,
+                self.rigid_dynamics.dyn_info,
+                self.rigid_dynamics.rigid_config,
                 as_tensor,
             )
 
@@ -202,7 +202,7 @@ class RigidEqualityConstraintSystem(System):
         return weld_const_info
 
     def add_weld_constraint(self, link1_idx: int, link2_idx: int, envs_idx: EnvIndex = None) -> None:
-        rigid = self.rigid_solver_system
+        rigid = self.rigid_dynamics
         envs_idx = rigid._scene._sanitize_envs_idx(envs_idx)
         link1_idx, link2_idx = int(link1_idx), int(link2_idx)
 
@@ -220,7 +220,7 @@ class RigidEqualityConstraintSystem(System):
             link2_idx,
             envs_idx,
             rigid.dyn_state,
-            self.constraint_system.data.constraint_state,
+            self.rigid_constraint.data.constraint_state,
             rigid.dyn_info,
             rigid.rigid_info,
             rigid.rigid_config,
@@ -233,14 +233,14 @@ class RigidEqualityConstraintSystem(System):
             )
 
     def delete_weld_constraint(self, link1_idx: int, link2_idx: int, envs_idx: EnvIndex = None) -> None:
-        rigid = self.rigid_solver_system
+        rigid = self.rigid_dynamics
         envs_idx = rigid._scene._sanitize_envs_idx(envs_idx)
         self.clear_query_cache()
         kernel_delete_weld_constraint(
             int(link1_idx),
             int(link2_idx),
             envs_idx,
-            self.constraint_system.data.constraint_state,
+            self.rigid_constraint.data.constraint_state,
             rigid.dyn_info,
             rigid.rigid_info,
             rigid.rigid_config,
@@ -250,20 +250,20 @@ class RigidEqualityConstraintSystem(System):
 
     def initialize_data(self) -> None:
         """Allocate the segment record and reserve up to 6 rows per candidate equality, a weld taking 6."""
-        rigid = self.rigid_solver_system
+        rigid = self.rigid_dynamics
         self.data.segment = array_class.get_constraint_row_segment(batch_size=rigid._B)
-        self.constraint_system.reserve_rows(RowCategory.EQUALITY, 6 * rigid.n_candidate_equalities_)
+        self.rigid_constraint.reserve_rows(RowCategory.EQUALITY, 6 * rigid.n_candidate_equalities_)
         self.clear_query_cache()
 
 
 @register_system(SimulatorEngine)
-def create_rigid_equality_constraint_system(engine: SimulatorEngine) -> RigidEqualityConstraintSystem | None:
+def create_rigid_equality_constraint(engine: SimulatorEngine) -> RigidEqualityConstraint | None:
     """Create the equality rows whenever a Rigid scene solves constraints, since welds may be registered at run time."""
     from genesis.engine.entities import RigidEntity
 
     has_rigid = any(isinstance(entity, RigidEntity) for entity in engine.scene.entities)
     return (
-        RigidEqualityConstraintSystem()
+        RigidEqualityConstraint()
         if has_rigid and not engine.scene.options.rigid.disable_constraint
         else None
     )

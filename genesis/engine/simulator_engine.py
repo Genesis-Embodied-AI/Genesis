@@ -19,82 +19,82 @@ class SimulatorEngine(Engine):
 
     def build(self) -> None:
         # Importing each module registers its factory for this concrete Engine; local imports avoid module cycles.
-        from .systems.rigid_sdf_system import RigidSdfSystem
-        from .systems.rigid_solver_system import RigidSolverSystem
-        from .systems.rigid_island_system import RigidIslandSystem
-        from .systems.rigid_rigid_contact_system import RigidRigidContactSystem
-        from .systems.rigid_constraint_system import RigidConstraintSystem
+        from .systems.rigid_sdf import RigidSdf
+        from .systems.rigid_dynamics import RigidDynamics
+        from .systems.rigid_island import RigidIsland
+        from .systems.rigid_rigid_contact import RigidRigidContact
+        from .systems.rigid_constraint import RigidConstraint
 
         super().build()
-        self.rigid_system = self.find(RigidSolverSystem)
-        if self.rigid_system is None:
-            self.rigid_sdf_system = None
-            self.island_system = None
-            self.contact_system = None
-            self.constraint_system = None
+        self.rigid_dynamics = self.find(RigidDynamics)
+        if self.rigid_dynamics is None:
+            self.rigid_sdf = None
+            self.rigid_island = None
+            self.rigid_rigid_contact = None
+            self.rigid_constraint = None
             return
-        self.rigid_sdf_system = self.require(RigidSdfSystem)
-        self.island_system = self.require(RigidIslandSystem)
-        self.contact_system = self.find(RigidRigidContactSystem)
-        self.constraint_system = self.find(RigidConstraintSystem)
+        self.rigid_sdf = self.require(RigidSdf)
+        self.rigid_island = self.require(RigidIsland)
+        self.rigid_rigid_contact = self.find(RigidRigidContact)
+        self.rigid_constraint = self.find(RigidConstraint)
         context = self.create_context()
 
         # Dynamics graph: wake coupled bodies, then advance dynamics.
         dynamics_schedule = self.action_schedule(
-            wakeup=self.rigid_system.wake_coupled_links_stage,
-            dynamics=self.rigid_system.forward_dynamics_stage,
+            wakeup=self.rigid_dynamics.wake_coupled_links_stage,
+            dynamics=self.rigid_dynamics.forward_dynamics_stage,
         )
         self._dynamics_pipeline = Pipeline(kernel_substep_dynamics, context, dynamics_schedule)
 
         # Collision graph: detect contacts, then assemble the constraint rows.
         collision_schedule = self.action_schedule(
-            collision=self.contact_system.detect if self.contact_system else None,
-            constraints=self.constraint_system.assemble if self.constraint_system else None,
+            collision=self.rigid_rigid_contact.detect if self.rigid_rigid_contact else None,
+            constraints=self.rigid_constraint.assemble if self.rigid_constraint else None,
         )
         self._collision_pipeline = Pipeline(kernel_substep_collision, context, collision_schedule)
 
         # Post-solve graph: apply the host-solved constraint forces, then integrate.
         post_schedule = self.action_schedule(
-            constraints=self.constraint_system.post_solve if self.constraint_system else None,
-            integration=self.rigid_system.integrate_stage,
+            constraints=self.rigid_constraint.post_solve if self.rigid_constraint else None,
+            integration=self.rigid_dynamics.integrate_stage,
         )
         self._post_pipeline = Pipeline(kernel_substep_post, context, post_schedule)
 
         # The host path runs the same collision and post-solve phases, launched as plain kernels.
         self._collision_host_pipeline = None
-        if self.contact_system is not None or self.constraint_system is not None:
+        if self.rigid_rigid_contact is not None or self.rigid_constraint is not None:
             self._collision_host_pipeline = Pipeline(kernel_substep_collision_host, context, collision_schedule)
         self._post_solve_host_pipeline = None
-        if self.constraint_system is not None:
-            post_solve_schedule = self.action_schedule(constraints=self.constraint_system.post_solve)
+        if self.rigid_constraint is not None:
+            post_solve_schedule = self.action_schedule(constraints=self.rigid_constraint.post_solve)
             self._post_solve_host_pipeline = Pipeline(kernel_substep_post_solve_host, context, post_solve_schedule)
 
     def initialize(self) -> None:
-        if self.rigid_system is None:
+        if self.rigid_dynamics is None:
             return
-        self.rigid_system.collect.invoke()
-        self.rigid_sdf_system.initialize.invoke()
-        self.rigid_system.initialize.invoke()
-        if self.contact_system is not None:
-            self.contact_system.initialize.invoke()
-        self.island_system.initialize.invoke()
-        if self.constraint_system is not None:
-            self.constraint_system.initialize.invoke()
-        self.rigid_system.finalize.invoke()
+        self.rigid_dynamics.collect.invoke()
+        self.rigid_sdf.initialize.invoke()
+        self.rigid_dynamics.initialize.invoke()
+        if self.rigid_rigid_contact is not None:
+            self.rigid_rigid_contact.initialize.invoke()
+        self.rigid_island.initialize.invoke()
+        if self.rigid_constraint is not None:
+            self.rigid_constraint.initialize.invoke()
+        self.rigid_dynamics.finalize.invoke()
 
     def substep_graph(self) -> None:
         """Advance one Engine-level simulation substep."""
-        if self.rigid_system is None:
+        if self.rigid_dynamics is None:
             return
-        if self.contact_system is not None:
-            self.contact_system.prepare.invoke()
-        is_forward_pos_updated, is_forward_vel_updated = self.rigid_system.get_forward_update_flags()
+        if self.rigid_rigid_contact is not None:
+            self.rigid_rigid_contact.prepare.invoke()
+        is_forward_pos_updated, is_forward_vel_updated = self.rigid_dynamics.get_forward_update_flags()
         self._dynamics_pipeline.run(is_forward_pos_updated, is_forward_vel_updated)
         self._collision_pipeline.run()
-        if self.constraint_system is not None:
-            self.constraint_system.solve.invoke()
+        if self.rigid_constraint is not None:
+            self.rigid_constraint.solve.invoke()
         self._post_pipeline.run()
-        self.rigid_system.mark_forward_updated()
+        self.rigid_dynamics.mark_forward_updated()
 
     def substep_host(self, f: int) -> None:
         """Advance through host-launched kernels.
@@ -102,13 +102,13 @@ class SimulatorEngine(Engine):
         Retained for the current Legacy/IPC coupling lifecycle and reused by backward replay. It can disappear once
         those participants join the Engine-level graph.
         """
-        rigid = self.rigid_system
+        rigid = self.rigid_dynamics
         if rigid is None:
             return
         if rigid.requires_grad and f == 0:
             rigid.save_adjoint_cache(f)
-        if self.contact_system is not None:
-            self.contact_system.prepare.invoke()
+        if self.rigid_rigid_contact is not None:
+            self.rigid_rigid_contact.prepare.invoke()
         rigid.wake_coupled_links_kernel.invoke()
         rigid.forward_dynamics_kernel.invoke(rigid.get_forward_kernel_args())
         self.constraint_force_host()
@@ -124,16 +124,16 @@ class SimulatorEngine(Engine):
 
     def constraint_force_host(self) -> None:
         """Run collision and constraint phases for the temporary host coupling/backward path."""
-        if self.rigid_system is None:
+        if self.rigid_dynamics is None:
             return
         self.assemble_constraints_host()
-        if self.constraint_system is not None:
-            self.constraint_system.solve.invoke()
+        if self.rigid_constraint is not None:
+            self.rigid_constraint.solve.invoke()
             self._post_solve_host_pipeline.run()
 
     def substep_to_velocity(self) -> None:
         """Advance to the velocity cut retained for the current SAP coupling lifecycle."""
-        rigid = self.rigid_system
+        rigid = self.rigid_dynamics
         if rigid is None:
             return
         rigid.wake_coupled_links_kernel.invoke()
@@ -142,7 +142,7 @@ class SimulatorEngine(Engine):
 
     def substep_after_velocity_coupling(self) -> None:
         """Complete integration after the velocity cut retained for the current SAP coupling lifecycle."""
-        rigid = self.rigid_system
+        rigid = self.rigid_dynamics
         if rigid is None:
             return
         rigid.update_acceleration_after_coupling()
@@ -150,16 +150,16 @@ class SimulatorEngine(Engine):
 
     def substep_backward(self, f: int) -> None:
         """Replay the composed forward phases, then reverse owner stages."""
-        rigid = self.rigid_system
+        rigid = self.rigid_dynamics
         if rigid is None:
             return
         rigid.prepare_backward_replay(f)
         self.substep_host(f)
         rigid.begin_backward(f)
-        if self.constraint_system is None:
+        if self.rigid_constraint is None:
             rigid.reverse_smooth_acceleration()
         else:
-            self.constraint_system.reverse.invoke()
+            self.rigid_constraint.reverse.invoke()
         rigid.finish_backward(f)
 
 

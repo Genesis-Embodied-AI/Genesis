@@ -22,8 +22,8 @@ from genesis.engine.solvers.rigid.constraint.solver import (
 )
 from genesis.utils.misc import assign_indexed_tensor, indices_to_mask, qd_to_torch
 
-from .rigid_island_system import RigidIslandSystem
-from .rigid_solver_system import RigidSolverSystem
+from .rigid_island import RigidIsland
+from .rigid_dynamics import RigidDynamics
 
 EnvIndex: TypeAlias = ArrayLike | torch.Tensor | None
 
@@ -43,7 +43,7 @@ class RowCategory(IntEnum):
     LIMIT = 3
 
 
-class RigidConstraintSystem(System):
+class RigidConstraint(System):
     """Own the constraint rows of the rigid solve and solve them.
 
     The constraint kinds join as participants (see on_rows): each appends its rows to the category the solve treats
@@ -69,9 +69,9 @@ class RigidConstraintSystem(System):
 
     # -------------------------------- Dependencies --------------------------------
 
-    rigid_solver_system = Require(RigidSolverSystem)
+    rigid_dynamics = Require(RigidDynamics)
 
-    island_system = Require(RigidIslandSystem)
+    rigid_island = Require(RigidIsland)
 
     def __init__(self) -> None:
         super().__init__()
@@ -156,13 +156,13 @@ class RigidConstraintSystem(System):
 
     @System.action(kind="stage")
     def assemble(self):
-        rigid = self.rigid_solver_system
+        rigid = self.rigid_dynamics
         return (
             func_assemble_constraints,
             self.data,
             rigid.data,
             rigid.rigid_config,
-            self.island_system.partition,
+            self.rigid_island.partition,
             self.equality_rows,
             self.frictionloss_rows,
             self.contact_rows,
@@ -175,14 +175,14 @@ class RigidConstraintSystem(System):
 
     @System.action(kind="stage")
     def post_solve(self):
-        rigid = self.rigid_solver_system
+        rigid = self.rigid_dynamics
         return (
             func_post_solve,
             self.data,
             rigid.data,
             rigid.rigid_config,
             self.row_post_solves,
-            self.island_system.settle,
+            self.rigid_island.settle,
         )
 
     @System.action(kind="host")
@@ -223,8 +223,8 @@ class RigidConstraintSystem(System):
                 torch.mps.synchronize()
             return
 
-        envs_idx = self.rigid_solver_system._scene._sanitize_envs_idx(envs_idx)
-        constraint_solver_kernel_reset(envs_idx, self.data.constraint_state, self.rigid_solver_system.rigid_config)
+        envs_idx = self.rigid_dynamics._scene._sanitize_envs_idx(envs_idx)
+        constraint_solver_kernel_reset(envs_idx, self.data.constraint_state, self.rigid_dynamics.rigid_config)
 
     def clear(self, envs_idx: EnvIndex = None) -> None:
         self.reset(envs_idx)
@@ -245,7 +245,7 @@ class RigidConstraintSystem(System):
                 )
             )
             qd_n_equalities = qd_to_torch(constraint_state.qd_n_equalities, copy=False)
-            n_eq = self.rigid_solver_system._n_equalities
+            n_eq = self.rigid_dynamics._n_equalities
             if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
                 for counter in counters:
                     counter.masked_fill_(envs_idx, 0)
@@ -264,7 +264,7 @@ class RigidConstraintSystem(System):
             return
 
         if not isinstance(envs_idx, torch.Tensor):
-            envs_idx = self.rigid_solver_system._scene._sanitize_envs_idx(envs_idx)
+            envs_idx = self.rigid_dynamics._scene._sanitize_envs_idx(envs_idx)
         if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
             fn = constraint_solver_kernel_masked_clear
         else:
@@ -272,8 +272,8 @@ class RigidConstraintSystem(System):
         fn(
             envs_idx,
             self.data.constraint_state,
-            self.rigid_solver_system.rigid_info,
-            self.rigid_solver_system.rigid_config,
+            self.rigid_dynamics.rigid_info,
+            self.rigid_dynamics.rigid_config,
         )
 
     def backward(self) -> None:
@@ -281,27 +281,27 @@ class RigidConstraintSystem(System):
 
         The caller must pre-populate the upstream gradient constraint_state.dL_dqacc (see
         RigidSolver._constraint_force_grad)."""
-        if not self.rigid_solver_system._requires_grad:
+        if not self.rigid_dynamics._requires_grad:
             gs.raise_exception("Please set `requires_grad` to True in SimOptions to enable differentiable mode.")
 
         # 1. We first need to find a solution to A^T * u = g system.
         backward_constraint_solver.kernel_solve_adjoint_u(
             self.data.constraint_state,
-            self.rigid_solver_system.dyn_info,
-            self.rigid_solver_system.rigid_info,
-            self.rigid_solver_system.rigid_config,
+            self.rigid_dynamics.dyn_info,
+            self.rigid_dynamics.rigid_info,
+            self.rigid_dynamics.rigid_config,
         )
 
         # 2. Using the solution u, we can compute the gradients of the input variables.
         backward_constraint_solver.kernel_compute_gradients(
-            self.data.constraint_state, self.rigid_solver_system.rigid_info
+            self.data.constraint_state, self.rigid_dynamics.rigid_info
         )
 
     # -------------------------------- Implementation --------------------------------
 
     def initialize_data(self) -> None:
         """Allocate the rows the participants reserve, once they have allocated their own Data, and the solver state."""
-        rigid = self.rigid_solver_system
+        rigid = self.rigid_dynamics
         self._row_capacity = dict.fromkeys(RowCategory, 0)
         self.initializations.invoke()
         self.len_constraints = sum(self._row_capacity.values())
@@ -322,28 +322,28 @@ class RigidConstraintSystem(System):
             len_constraints=self.len_constraints_,
             n_cone_constraints=self.n_cone_constraints_,
             sparse_solve=self.sparse_solve,
-            island_state=self.island_system.data.island,
-            qd_n_equalities=self.island_system.data.qd_n_equalities,
+            island_state=self.rigid_island.data.island,
+            qd_n_equalities=self.rigid_island.data.qd_n_equalities,
         )
         self.data.noslip = rigid._options.noslip_iterations > 0
         self.reset()
 
     def solve_constraints(self) -> None:
         """Solve the constraints of a substep, through the solver arm func_solve_body selects at run time."""
-        rigid_data = self.rigid_solver_system.data
+        rigid_data = self.rigid_dynamics.data
         func_solve_body(
             rigid_data.dyn_state,
             self.data.constraint_state,
             rigid_data.dyn_info,
             rigid_data.rigid_info,
-            self.rigid_solver_system.rigid_config,
+            self.rigid_dynamics.rigid_config,
             self.n_iterations,
         )
         self._solve_revision += 1
 
     def reverse_constraints(self) -> None:
         """Reverse the host constraint solve, then every row category through the reverses of its participants."""
-        rigid = self.rigid_solver_system
+        rigid = self.rigid_dynamics
         constraint_state = self.data.constraint_state
         if gs.use_zerocopy:
             acc_grad = qd_to_torch(rigid.dyn_state.dofs.acc.grad, copy=False)

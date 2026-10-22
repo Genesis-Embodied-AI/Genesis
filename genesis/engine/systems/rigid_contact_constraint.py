@@ -12,14 +12,14 @@ from genesis.engine.solvers.rigid.constraint.solver import (
     func_substep_update_contact_force,
 )
 
-from .rigid_constraint_system import RigidConstraintSystem, RowCategory
-from .rigid_island_system import RigidIslandSystem
-from .rigid_rigid_contact_system import RigidRigidContactSystem
-from .rigid_solver_system import RigidSolverSystem
+from .rigid_constraint import RigidConstraint, RowCategory
+from .rigid_island import RigidIsland
+from .rigid_rigid_contact import RigidRigidContact
+from .rigid_dynamics import RigidDynamics
 from ..simulator_engine import SimulatorEngine
 
 
-class RigidContactConstraintSystem(System):
+class RigidContactConstraint(System):
     """Append rows_per_contact contact rows per live contact in every env, and read the contact forces back from them.
 
     Before assembling, it lets the contact detection order the live contacts and, on the CPU skyline path, reorders
@@ -43,20 +43,20 @@ class RigidContactConstraintSystem(System):
 
     # -------------------------------- Dependencies --------------------------------
 
-    rigid_solver_system = Require(RigidSolverSystem)
+    rigid_dynamics = Require(RigidDynamics)
 
-    island_system = Require(RigidIslandSystem)
+    rigid_island = Require(RigidIsland)
 
-    contact_system = Require(RigidRigidContactSystem)
+    rigid_rigid_contact = Require(RigidRigidContact)
 
-    constraint_system = Require(RigidConstraintSystem)
+    rigid_constraint = Require(RigidConstraint)
 
     def __init__(self) -> None:
         super().__init__()
         self.data = self.Data()
 
     def build(self) -> None:
-        self.constraint_system.on_rows(
+        self.rigid_constraint.on_rows(
             RowCategory.CONTACT,
             initialize=self.initialize,
             assemble=self.assemble,
@@ -72,26 +72,26 @@ class RigidContactConstraintSystem(System):
 
     @System.action(kind="stage")
     def assemble(self):
-        rigid = self.rigid_solver_system
+        rigid = self.rigid_dynamics
         return (
             func_substep_add_contact_rows,
             self.data,
-            self.constraint_system.data,
-            self.island_system.data,
-            self.contact_system.data,
+            self.rigid_constraint.data,
+            self.rigid_island.data,
+            self.rigid_rigid_contact.data,
             rigid.data,
             rigid.rigid_config,
-            self.contact_system.order_contacts,
+            self.rigid_rigid_contact.order_contacts,
         )
 
     @System.action(kind="stage")
     def post_solve(self):
-        rigid = self.rigid_solver_system
+        rigid = self.rigid_dynamics
         return (
             func_substep_update_contact_force,
             self.data,
-            self.constraint_system.data,
-            self.contact_system.data,
+            self.rigid_constraint.data,
+            self.rigid_rigid_contact.data,
             rigid.data,
             rigid.rigid_config,
         )
@@ -112,8 +112,8 @@ class RigidContactConstraintSystem(System):
     def initialize_data(self) -> None:
         """Allocate the segment record and the reorder scratch, and reserve the rows of the most contacts the detection
         keeps, which are also the rows of the elliptic cone groups."""
-        rigid = self.rigid_solver_system
-        max_contacts = self.contact_system.get_max_contacts()
+        rigid = self.rigid_dynamics
+        max_contacts = self.rigid_rigid_contact.get_max_contacts()
         self.data.segment = array_class.get_constraint_row_segment(batch_size=rigid._B)
         self.data.reorder = array_class.get_island_reorder_state(
             batch_size=rigid._B,
@@ -121,33 +121,33 @@ class RigidContactConstraintSystem(System):
             max_contacts=max_contacts,
             rigid_config=rigid.rigid_config,
         )
-        self.constraint_system.reserve_rows(RowCategory.CONTACT, rigid.rigid_config.rows_per_contact * max_contacts)
+        self.rigid_constraint.reserve_rows(RowCategory.CONTACT, rigid.rigid_config.rows_per_contact * max_contacts)
 
     def reverse_rows(self) -> None:
         """Reverse the contact rows into the adjoints of the contacts, then the narrowphase that detected them."""
-        rigid = self.rigid_solver_system
-        self.contact_system.clear_backward_input_grads()
+        rigid = self.rigid_dynamics
+        self.rigid_rigid_contact.clear_backward_input_grads()
         kernel_manual_add_collision_constraints_bw(
             self.data.segment,
             rigid.dyn_state,
-            self.contact_system.data.collider_state,
-            self.constraint_system.data.constraint_state,
+            self.rigid_rigid_contact.data.collider_state,
+            self.rigid_constraint.data.constraint_state,
             rigid.dyn_info,
             rigid.rigid_info,
             rigid.rigid_config,
         )
-        self.contact_system.backward_narrowphase()
+        self.rigid_rigid_contact.backward_narrowphase()
 
 
 @register_system(SimulatorEngine)
-def create_rigid_contact_constraint_system(engine: SimulatorEngine) -> RigidContactConstraintSystem | None:
+def create_rigid_contact_constraint(engine: SimulatorEngine) -> RigidContactConstraint | None:
     """Create the contact rows when a Rigid scene solves constraints and detects rigid-rigid contacts."""
     from genesis.engine.entities import RigidEntity
 
     rigid_options = engine.scene.options.rigid
     has_rigid = any(isinstance(entity, RigidEntity) for entity in engine.scene.entities)
     return (
-        RigidContactConstraintSystem()
+        RigidContactConstraint()
         if has_rigid and not rigid_options.disable_constraint and rigid_options.enable_collision
         else None
     )

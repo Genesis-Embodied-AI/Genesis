@@ -26,8 +26,8 @@ from genesis.engine.solvers.rigid.collider import gjk, mpr, support_field
 from genesis.engine.solvers.rigid.constraint.island import func_substep_order_contacts, func_union_contact_edges
 from genesis.utils.misc import qd_to_numpy, qd_to_torch, qd_zero_grad
 
-from .rigid_sdf_system import RigidSdfSystem
-from .rigid_solver_system import RigidSolverSystem
+from .rigid_sdf import RigidSdf
+from .rigid_dynamics import RigidDynamics
 from ..simulator_engine import SimulatorEngine
 
 if TYPE_CHECKING:
@@ -39,7 +39,7 @@ ContactValue: TypeAlias = ContactArray | tuple[ContactArray, ...]
 ContactResult: TypeAlias = dict[str, ContactValue]
 
 
-class RigidRigidContactSystem(System):
+class RigidRigidContact(System):
     """Own the rigid-rigid collision data and detect contacts when collision is enabled.
 
     It covers every pair of rigid geoms, terrains and planes included, and hands the contacts to the constraint solve.
@@ -74,9 +74,9 @@ class RigidRigidContactSystem(System):
 
     # -------------------------------- Dependencies --------------------------------
 
-    rigid_solver_system = Require(RigidSolverSystem)
+    rigid_dynamics = Require(RigidDynamics)
 
-    rigid_sdf_system = Require(RigidSdfSystem)
+    rigid_sdf = Require(RigidSdf)
 
     def __init__(self, scene: "Scene") -> None:
         super().__init__()
@@ -99,10 +99,10 @@ class RigidRigidContactSystem(System):
         self._contact_data: dict[str, torch.Tensor] | None = None
 
     def build(self) -> None:
-        from .rigid_island_system import RigidIslandSystem
+        from .rigid_island import RigidIsland
 
-        self.island_system = self.require(RigidIslandSystem)
-        self.island_system.on_partition_edges(self.contact_edges)
+        self.rigid_island = self.require(RigidIsland)
+        self.rigid_island.on_partition_edges(self.contact_edges)
 
     # -------------------------------- Actions --------------------------------
 
@@ -116,35 +116,35 @@ class RigidRigidContactSystem(System):
 
     @System.action(kind="stage")
     def detect(self):
-        rigid = self.rigid_solver_system
+        rigid = self.rigid_dynamics
         return (
             func_substep_detection,
             rigid.data,
             rigid.rigid_config,
             self.data,
-            self.island_system.data,
+            self.rigid_island.data,
         )
 
     @System.action(kind="host")
     def detect_kernel(self):
-        rigid = self.rigid_solver_system
+        rigid = self.rigid_dynamics
         return (
             kernel_substep_detection,
             rigid.data,
             rigid.rigid_config,
             self.data,
-            self.island_system.data,
+            self.rigid_island.data,
         )
 
     @System.action(kind="inline")
     def contact_edges(self):
-        rigid = self.rigid_solver_system
-        return func_union_contact_edges, self.data, self.island_system.data, rigid.data, rigid.rigid_config
+        rigid = self.rigid_dynamics
+        return func_union_contact_edges, self.data, self.rigid_island.data, rigid.data, rigid.rigid_config
 
     @System.action(kind="stage")
     def order_contacts(self):
-        rigid = self.rigid_solver_system
-        return func_substep_order_contacts, self.data, self.island_system.data, rigid.data, rigid.rigid_config
+        rigid = self.rigid_dynamics
+        return func_substep_order_contacts, self.data, self.rigid_island.data, rigid.data, rigid.rigid_config
 
     # -------------------------------- Public get/set API --------------------------------
 
@@ -175,7 +175,7 @@ class RigidRigidContactSystem(System):
             self.data,
             self._contact_data_cache,
             self._contact_data,
-            self.rigid_solver_system.rigid_config,
+            self.rigid_dynamics.rigid_config,
             envs_idx,
             cache_only=cache_only,
         )
@@ -187,9 +187,9 @@ class RigidRigidContactSystem(System):
             self.data,
             self._contact_data_cache,
             self._contact_data,
-            self.rigid_solver_system.data,
-            self.rigid_solver_system.rigid_config,
-            self.rigid_solver_system._use_hibernation,
+            self.rigid_dynamics.data,
+            self.rigid_dynamics.rigid_config,
+            self.rigid_dynamics._use_hibernation,
             envs_idx,
         )
 
@@ -204,8 +204,8 @@ class RigidRigidContactSystem(System):
             self.data,
             self._contact_data_cache,
             self._contact_data,
-            self.rigid_solver_system.rigid_config,
-            self.rigid_solver_system.n_envs,
+            self.rigid_dynamics.rigid_config,
+            self.rigid_dynamics.n_envs,
             as_tensor,
             to_torch,
             keep_batch_dim,
@@ -223,8 +223,8 @@ class RigidRigidContactSystem(System):
     ) -> None:
         collider_backward(
             self.data,
-            self.rigid_solver_system.data,
-            self.rigid_solver_system.rigid_config,
+            self.rigid_dynamics.data,
+            self.rigid_dynamics.rigid_config,
             dL_dposition,
             dL_dnormal,
             dL_dpenetration,
@@ -233,8 +233,8 @@ class RigidRigidContactSystem(System):
     def backward_narrowphase(self) -> None:
         collider_backward_narrowphase(
             self.data,
-            self.rigid_solver_system.data,
-            self.rigid_solver_system.rigid_config,
+            self.rigid_dynamics.data,
+            self.rigid_dynamics.rigid_config,
         )
 
     def clear_backward_input_grads(self) -> None:
@@ -250,7 +250,7 @@ class RigidRigidContactSystem(System):
 
     def initialize_data(self) -> None:
         """Allocate the collision data and record the configuration the detection graph compiles against."""
-        rigid = self.rigid_solver_system
+        rigid = self.rigid_dynamics
         self._mpr = mpr.MPR(
             batch_size=rigid._B,
             enable_mujoco_compatibility=rigid._enable_mujoco_compatibility,
@@ -325,7 +325,7 @@ class RigidRigidContactSystem(System):
         initialize_collider_fields(
             self.data,
             rigid_data=rigid.data,
-            sdf_info=self.rigid_sdf_system.data.sdf_info,
+            sdf_info=self.rigid_sdf.data.sdf_info,
             mpr_info=self.data.mpr_info,
             gjk_info=self.data.gjk_info,
             support_field_info=self.data.support_field_info,
@@ -389,12 +389,12 @@ class RigidRigidContactSystem(System):
         self._contact_data_cache.clear()
 
 @register_system(SimulatorEngine)
-def create_rigid_rigid_contact_system(engine: SimulatorEngine) -> RigidRigidContactSystem | None:
+def create_rigid_rigid_contact(engine: SimulatorEngine) -> RigidRigidContact | None:
     """Create the rigid contact data owner used by the public Collider API."""
     from genesis.engine.entities import RigidEntity
 
     return (
-        RigidRigidContactSystem(engine.scene)
+        RigidRigidContact(engine.scene)
         if engine.scene.options.rigid.enable_collision
         and any(isinstance(entity, RigidEntity) for entity in engine.scene.entities)
         else None

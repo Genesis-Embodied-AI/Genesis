@@ -13,7 +13,7 @@ import quadrants as qd
 import genesis as gs
 from genesis.engine.solvers.rigid.collider.collider import kernel_detection
 from genesis.engine.solvers.rigid.constraint.solver import linear_to_lower_tri
-from genesis.engine.systems.rigid_solver_system import kernel_substep_dynamics
+from genesis.engine.simulator_engine import kernel_substep_dynamics
 from genesis.utils.misc import qd_to_numpy, qd_to_torch
 
 from ..utils.assertions import assert_allclose
@@ -117,7 +117,7 @@ def gs_static_child(args: list[str]):
 
     scene.step()
     assert qd_to_numpy(scene.rigid_solver.collider.collider_state.n_contacts) == args.expected_num_contacts
-    # RigidSolverSystem captures detection inside its phase graph. Launch the public standalone entry too because the
+    # SimulatorEngine captures detection inside its collision graph. Launch the public standalone entry too because the
     # assertions below specifically cover kernel_detection's offline cache.
     scene.rigid_solver.collider.detection()
     qd.sync()
@@ -214,7 +214,7 @@ def gs_num_envs_child(args: list[str]):
 
     scene.step()
     assert (qd_to_numpy(scene.rigid_solver.collider.collider_state.n_contacts) > 0).all()
-    # RigidSolverSystem captures collision inside its own stage graph. Launch the standalone detection graph too so
+    # SimulatorEngine captures collision inside its collision graph. Launch the standalone detection graph too so
     # this cache regression continues covering the entry point upstream added for direct Collider queries.
     scene.rigid_solver.collider.detection()
     qd.sync()

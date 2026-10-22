@@ -12,11 +12,11 @@ from genesis.engine.solvers.rigid.constraint.island import func_substep_partitio
 from genesis.engine.solvers.rigid.substep import func_substep_hibernate_settled_islands
 from genesis.utils.misc import qd_to_numpy
 
-from .rigid_solver_system import RigidSolverSystem
+from .rigid_dynamics import RigidDynamics
 from ..simulator_engine import SimulatorEngine
 
 
-class RigidIslandSystem(System):
+class RigidIsland(System):
     """Own partition data used independently of whether contact or constraint solving is enabled.
 
     The partition groups the kinematic trees into islands, the components of the trees under the edges the edge
@@ -41,7 +41,7 @@ class RigidIslandSystem(System):
 
     # -------------------------------- Dependencies --------------------------------
 
-    rigid_solver_system = Require(RigidSolverSystem)
+    rigid_dynamics = Require(RigidDynamics)
 
     def __init__(self) -> None:
         super().__init__()
@@ -76,12 +76,12 @@ class RigidIslandSystem(System):
 
     @System.action(kind="stage")
     def partition(self):
-        rigid = self.rigid_solver_system
+        rigid = self.rigid_dynamics
         return func_substep_partition_islands, self.data, rigid.data, rigid.rigid_config, self.partition_edges
 
     @System.action(kind="stage")
     def settle(self):
-        rigid = self.rigid_solver_system
+        rigid = self.rigid_dynamics
         return func_substep_hibernate_settled_islands, self.data, rigid.data, rigid.rigid_config
 
     # -------------------------------- Public get/set API --------------------------------
@@ -93,7 +93,7 @@ class RigidIslandSystem(System):
     # -------------------------------- Implementation --------------------------------
 
     def initialize_data(self) -> None:
-        rigid = self.rigid_solver_system
+        rigid = self.rigid_dynamics
         island_state = array_class.get_island_state(
             batch_size=rigid._B,
             n_trees=rigid.n_trees_,
@@ -125,11 +125,11 @@ class RigidIslandSystem(System):
 
 
 @register_system(SimulatorEngine)
-def create_rigid_island_system(engine: SimulatorEngine) -> RigidIslandSystem | None:
+def create_rigid_island(engine: SimulatorEngine) -> RigidIsland | None:
     from genesis.engine.entities import RigidEntity
 
     return (
-        RigidIslandSystem()
+        RigidIsland()
         if any(isinstance(entity, RigidEntity) for entity in engine.scene.entities)
         else None
     )

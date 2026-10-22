@@ -20,7 +20,7 @@ from .solvers import FEMSolver, KinematicSolver, MPMSolver, PBDSolver, RigidSolv
 from .solvers.base_solver import GravityMixin, TimeBasedMixin
 from .states.cache import QueriedStates
 from .states.solvers import SimState, SimulatorCheckpoint
-from .systems import RigidSolverSystem
+from .systems import RigidDynamics
 
 if TYPE_CHECKING:
     from genesis.engine.entities.base_entity import Entity, EntityDescription
@@ -110,7 +110,7 @@ class Simulator(RBC):
 
         # The compositional engine exists only when an admitted backend needs Rigid data.
         self._engine: SimulatorEngine | None = None
-        self._rigid_system: RigidSolverSystem | None = None
+        self._rigid_dynamics: RigidDynamics | None = None
 
         # states
         self._queried_states = QueriedStates()
@@ -228,12 +228,12 @@ class Simulator(RBC):
             if solver is self.rigid_solver and solver.is_active:
                 self._engine = SimulatorEngine(self.scene)
                 self._engine.build()
-                self._rigid_system = self._engine.require(RigidSolverSystem)
-                if isinstance(self._coupler, IPCCoupler) and self._engine.contact_system is not None:
+                self._rigid_dynamics = self._engine.require(RigidDynamics)
+                if isinstance(self._coupler, IPCCoupler) and self._engine.rigid_rigid_contact is not None:
                     delegated_links, exclusive_links = self._coupler.rigid_collision_exclusions(
-                        self._rigid_system.entities
+                        self._rigid_dynamics.entities
                     )
-                    self._engine.contact_system.configure_external_collision_links(
+                    self._engine.rigid_rigid_contact.configure_external_collision_links(
                         delegated_links,
                         exclusive_links,
                     )
@@ -241,11 +241,11 @@ class Simulator(RBC):
                 self.rigid_solver.wire_backend(self._engine)
 
         # A coupler exchanges state once per substep, so it is built once the rate that loop runs at is known.
-        rigid = self._rigid_system
+        rigid = self._rigid_dynamics
         rigid_active = rigid is not None
         if rigid_active and rigid._requires_grad and isinstance(self._coupler, (SAPCoupler, IPCCoupler)):
             gs.raise_exception(f"{type(self._coupler).__name__} is not supported yet when requires_grad is True.")
-        contact_data = None if self._engine is None or self._engine.contact_system is None else self._engine.contact_system.data
+        contact_data = None if self._engine is None or self._engine.rigid_rigid_contact is None else self._engine.rigid_rigid_contact.data
         if isinstance(self._coupler, LegacyCoupler):
             self._coupler.build(
                 rigid_active=rigid_active,
@@ -377,7 +377,7 @@ class Simulator(RBC):
     def reset_grad(self) -> None:
         for solver in self._active_solvers:
             if solver is self.rigid_solver:
-                self._rigid_system.reset_grad()
+                self._rigid_dynamics.reset_grad()
             else:
                 solver.reset_grad()
 
@@ -440,7 +440,7 @@ class Simulator(RBC):
                         self.save_ckpt()
 
             if self.rigid_solver.is_active:
-                self._rigid_system.clear_external_force()
+                self._rigid_dynamics.clear_external_force()
 
         with self._step_timer.phase("sensors"):
             self._sensor_manager.step()
@@ -463,14 +463,14 @@ class Simulator(RBC):
         """
         for solver in self._active_solvers:
             if solver is self.rigid_solver:
-                self._rigid_system.process_input(in_backward=in_backward)
+                self._rigid_dynamics.process_input(in_backward=in_backward)
             else:
                 solver.process_input(in_backward=in_backward)
 
     def process_input_grad(self) -> None:
         for solver in reversed(self._active_solvers):
             if solver is self.rigid_solver:
-                self._rigid_system.process_input_grad()
+                self._rigid_dynamics.process_input_grad()
             else:
                 solver.process_input_grad()
 
@@ -486,10 +486,10 @@ class Simulator(RBC):
         self.substep_pre_coupling_grad(f)
 
     def _coupler_preprocess(self, f: int) -> None:
-        rigid = self._rigid_system
+        rigid = self._rigid_dynamics
         rigid_data = None if rigid is None else rigid.data
         rigid_config = None if rigid is None else rigid.rigid_config
-        rigid_sdf = None if self._engine is None else self._engine.rigid_sdf_system.data
+        rigid_sdf = None if self._engine is None else self._engine.rigid_sdf.data
         if isinstance(self._coupler, LegacyCoupler):
             self._coupler.preprocess(
                 f,
@@ -503,9 +503,9 @@ class Simulator(RBC):
             self._coupler.preprocess(f)
 
     def _coupler_couple(self, f: int) -> None:
-        rigid = self._rigid_system
+        rigid = self._rigid_dynamics
         rigid_data = None if rigid is None else rigid.data
-        rigid_sdf = None if self._engine is None else self._engine.rigid_sdf_system.data
+        rigid_sdf = None if self._engine is None else self._engine.rigid_sdf.data
         if isinstance(self._coupler, LegacyCoupler):
             self._coupler.couple(
                 f,
@@ -525,9 +525,9 @@ class Simulator(RBC):
             )
 
     def _coupler_couple_grad(self, f: int) -> None:
-        rigid = self._rigid_system
+        rigid = self._rigid_dynamics
         rigid_data = None if rigid is None else rigid.data
-        rigid_sdf = None if self._engine is None else self._engine.rigid_sdf_system.data
+        rigid_sdf = None if self._engine is None else self._engine.rigid_sdf.data
         if isinstance(self._coupler, LegacyCoupler):
             self._coupler.couple_grad(
                 f,
@@ -543,8 +543,8 @@ class Simulator(RBC):
     def get_rigid_link_poses_for_coupling(self, links_idx: IndexLike) -> tuple[torch.Tensor, torch.Tensor]:
         """Read Rigid link poses through the Simulator's explicit coupling boundary."""
         return (
-            self._rigid_system.get_links_pos(links_idx=links_idx),
-            self._rigid_system.get_links_quat(links_idx=links_idx),
+            self._rigid_dynamics.get_links_pos(links_idx=links_idx),
+            self._rigid_dynamics.get_links_quat(links_idx=links_idx),
         )
 
     def attach_pbd_particles_to_rigid_link(self, particles_idx: IndexLike, envs_idx: IndexLike, link_idx: int) -> None:
@@ -553,7 +553,7 @@ class Simulator(RBC):
             particles_idx,
             envs_idx,
             link_idx,
-            self._rigid_system.data.dyn_state.links,
+            self._rigid_dynamics.data.dyn_state.links,
         )
 
     # -------------- pre coupling --------------
@@ -566,14 +566,14 @@ class Simulator(RBC):
                 elif not isinstance(self._coupler, IPCCoupler) or not self._coupler.has_any_rigid_coupling:
                     self._engine.substep_host(f)
             elif solver is self.mpm_solver:
-                rigid = self._rigid_system
+                rigid = self._rigid_dynamics
                 solver.substep_pre_coupling(
                     f,
                     None if rigid is None else rigid.data,
                     None
                     if self._engine is None
-                    else self._engine.rigid_sdf_system.data.sdf_config,
-                    None if self._engine is None else self._engine.rigid_sdf_system.data,
+                    else self._engine.rigid_sdf.data.sdf_config,
+                    None if self._engine is None else self._engine.rigid_sdf.data,
                 )
             else:
                 solver.substep_pre_coupling(f)
@@ -583,14 +583,14 @@ class Simulator(RBC):
             if solver is self.rigid_solver:
                 self._engine.substep_backward(f)
             elif solver is self.mpm_solver:
-                rigid = self._rigid_system
+                rigid = self._rigid_dynamics
                 solver.substep_pre_coupling_grad(
                     f,
                     None if rigid is None else rigid.data,
                     None
                     if self._engine is None
-                    else self._engine.rigid_sdf_system.data.sdf_config,
-                    None if self._engine is None else self._engine.rigid_sdf_system.data,
+                    else self._engine.rigid_sdf.data.sdf_config,
+                    None if self._engine is None else self._engine.rigid_sdf.data,
                 )
             else:
                 solver.substep_pre_coupling_grad(f)
@@ -606,7 +606,7 @@ class Simulator(RBC):
             elif solver is self.mpm_solver:
                 solver.substep_post_coupling(
                     f,
-                    None if self._rigid_system is None else self._rigid_system.data,
+                    None if self._rigid_dynamics is None else self._rigid_dynamics.data,
                 )
             else:
                 solver.substep_post_coupling(f)
@@ -618,7 +618,7 @@ class Simulator(RBC):
             if solver is self.mpm_solver:
                 solver.substep_post_coupling_grad(
                     f,
-                    None if self._rigid_system is None else self._rigid_system.data,
+                    None if self._rigid_dynamics is None else self._rigid_dynamics.data,
                 )
             else:
                 solver.substep_post_coupling_grad(f)
@@ -630,7 +630,7 @@ class Simulator(RBC):
     def add_grad_from_state(self, state: SimState) -> None:
         for solver, solver_state in zip(self._solvers, state):
             if solver is self.rigid_solver:
-                self._rigid_system.add_grad_from_state(solver_state)
+                self._rigid_dynamics.add_grad_from_state(solver_state)
             else:
                 solver.add_grad_from_state(solver_state)
 
@@ -648,7 +648,7 @@ class Simulator(RBC):
         # each solver will have their own entities, each of which stores a set of _queried_states
         for solver in self._active_solvers:
             if solver is self.rigid_solver:
-                self._rigid_system.collect_output_grads()
+                self._rigid_dynamics.collect_output_grads()
             else:
                 solver.collect_output_grads()
 
@@ -663,7 +663,7 @@ class Simulator(RBC):
 
         for solver in self._active_solvers:
             if solver is self.rigid_solver:
-                self._rigid_system.save_ckpt(ckpt_name)
+                self._rigid_dynamics.save_ckpt(ckpt_name)
             else:
                 solver.save_ckpt(ckpt_name)
 
@@ -679,7 +679,7 @@ class Simulator(RBC):
 
         for solver in self._active_solvers:
             if solver is self.rigid_solver:
-                self._rigid_system.load_ckpt(ckpt_name)
+                self._rigid_dynamics.load_ckpt(ckpt_name)
             else:
                 solver.load_ckpt(ckpt_name)
 

@@ -187,7 +187,7 @@ def func_union_contact_edges(
     i_b: int,
     tid: int,
 ):
-    """The edge source of the contacts in the island partition (see RigidIslandSystem.on_partition_edges)."""
+    """The edge source of the contacts in the island partition (see RigidIsland.on_partition_edges)."""
     func_union_live_contacts(
         i_b, tid, contact_data.collider_state, island_data.island, rigid_data.rigid_info, rigid_config
     )
@@ -475,7 +475,7 @@ def func_build_islands(
     """Build one env's island partition serially, returning whether it woke sleepers.
 
     The components of the trees come from a union-find over the edges: the ones the edge sources of the partition
-    contribute (the live contacts, see RigidIslandSystem.partition_edges), then the equality constraints and the
+    contribute (the live contacts, see RigidIsland.partition_edges), then the equality constraints and the
     hibernation chains (func_union_model_edges), labeled in ascending order of their smallest tree. Each island then
     lists its dofs (the trees in ascending order, the dofs of each in ascending order, so an island's dofs ascend) and,
     under hibernation, which alone reads them, its links, and holds its inertia (the trace of the mass matrix over its
@@ -518,7 +518,7 @@ def func_build_single_island(
     The lists are the identity and the island's inertia the trace of the mass matrix. Reserved for scenes off the CPU
     skyline path, which alone reads the tree labels the full build resolves (see func_substep_partition_islands).
     Under hibernation the island is awake and its link list, written once at build (see
-    RigidIslandSystem.initialize_data), stands. An env holding a sleeper takes the full build.
+    RigidIsland.initialize_data), stands. An env holding a sleeper takes the full build.
     """
     n_dofs = island_state.dof_id.shape[0]
     island_state.n_islands[i_b] = 1
@@ -1103,7 +1103,7 @@ def func_partition_islands(
 
     Where the cooperative kernels run, a block serves each env (func_build_islands_coop); elsewhere one thread per env
     builds it (func_build_islands). Both ways give the same partition. The edges of the contacts come from the edge
-    sources of the partition (see RigidIslandSystem.partition_edges). A single-island scene writes its partition
+    sources of the partition (see RigidIsland.partition_edges). A single-island scene writes its partition
     outright (func_build_single_island), off the CPU skyline path and in every env where nothing sleeps.
     """
     _B = dyn_state.dofs.ctrl_mode.shape[1]

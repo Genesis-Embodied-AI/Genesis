@@ -14,14 +14,14 @@ from genesis.engine.solvers.rigid.constraint.backward import kernel_manual_add_f
 from genesis.engine.solvers.rigid.constraint.solver import func_substep_add_frictionloss_rows
 from genesis.utils.misc import qd_to_torch
 
-from .rigid_constraint_system import RigidConstraintSystem, RowCategory
-from .rigid_solver_system import RigidSolverSystem
+from .rigid_constraint import RigidConstraint, RowCategory
+from .rigid_dynamics import RigidDynamics
 from ..simulator_engine import SimulatorEngine
 
 EnvIndex: TypeAlias = ArrayLike | torch.Tensor | None
 
 
-class RigidFrictionLossConstraintSystem(System):
+class RigidFrictionLossConstraint(System):
     """Append one Huber row per dof with frictionloss in every env, and own the query of their forces."""
 
     # -------------------------------- Data --------------------------------
@@ -40,16 +40,16 @@ class RigidFrictionLossConstraintSystem(System):
 
     # -------------------------------- Dependencies --------------------------------
 
-    rigid_solver_system = Require(RigidSolverSystem)
+    rigid_dynamics = Require(RigidDynamics)
 
-    constraint_system = Require(RigidConstraintSystem)
+    rigid_constraint = Require(RigidConstraint)
 
     def __init__(self) -> None:
         super().__init__()
         self.data = self.Data()
 
     def build(self) -> None:
-        self.constraint_system.on_rows(
+        self.rigid_constraint.on_rows(
             RowCategory.FRICTIONLOSS,
             initialize=self.initialize,
             assemble=self.assemble,
@@ -64,23 +64,23 @@ class RigidFrictionLossConstraintSystem(System):
 
     @System.action(kind="stage")
     def assemble(self):
-        rigid = self.rigid_solver_system
+        rigid = self.rigid_dynamics
         return (
             func_substep_add_frictionloss_rows,
             self.data,
-            self.constraint_system.data,
+            self.rigid_constraint.data,
             rigid.data,
             rigid.rigid_config,
         )
 
     @System.action(kind="host")
     def reverse(self):
-        rigid = self.rigid_solver_system
+        rigid = self.rigid_dynamics
         return (
             kernel_manual_add_frictionloss_constraints_bw,
             self.data.segment,
             rigid.dyn_state,
-            self.constraint_system.data.constraint_state,
+            self.rigid_constraint.data.constraint_state,
             rigid.dyn_info,
             rigid.rigid_info,
             rigid.rigid_config,
@@ -97,12 +97,12 @@ class RigidFrictionLossConstraintSystem(System):
 
         The rows of the dofs with frictionloss follow one another in dof order from the start of the segment.
         """
-        rigid = self.rigid_solver_system
+        rigid = self.rigid_dynamics
         if rigid._options.batch_dofs_info:
             frictionloss = qd_to_torch(rigid.data.dyn_info.dofs.frictionloss, envs_idx, transpose=True)
         else:
             frictionloss = qd_to_torch(rigid.data.dyn_info.dofs.frictionloss, transpose=True)
-        efc_force = qd_to_torch(self.constraint_system.data.constraint_state.efc_force, envs_idx, transpose=True)
+        efc_force = qd_to_torch(self.rigid_constraint.data.constraint_state.efc_force, envs_idx, transpose=True)
         row_start = qd_to_torch(self.data.segment.row_start, envs_idx)
         has_frictionloss = frictionloss > gs.EPS
         rank = torch.cumsum(has_frictionloss, dim=-1) - 1
@@ -113,20 +113,20 @@ class RigidFrictionLossConstraintSystem(System):
 
     def initialize_data(self) -> None:
         """Allocate the segment record and reserve one row per dof."""
-        rigid = self.rigid_solver_system
+        rigid = self.rigid_dynamics
         self.data.segment = array_class.get_constraint_row_segment(batch_size=rigid._B)
-        self.constraint_system.reserve_rows(RowCategory.FRICTIONLOSS, rigid.n_dofs)
+        self.rigid_constraint.reserve_rows(RowCategory.FRICTIONLOSS, rigid.n_dofs)
 
 
 @register_system(SimulatorEngine)
-def create_rigid_frictionloss_constraint_system(engine: SimulatorEngine) -> RigidFrictionLossConstraintSystem | None:
+def create_rigid_frictionloss_constraint(engine: SimulatorEngine) -> RigidFrictionLossConstraint | None:
     """Create the frictionloss rows whenever a Rigid scene solves constraints, since set_dofs_frictionloss may give any
     dof frictionloss at run time."""
     from genesis.engine.entities import RigidEntity
 
     has_rigid = any(isinstance(entity, RigidEntity) for entity in engine.scene.entities)
     return (
-        RigidFrictionLossConstraintSystem()
+        RigidFrictionLossConstraint()
         if has_rigid and not engine.scene.options.rigid.disable_constraint
         else None
     )

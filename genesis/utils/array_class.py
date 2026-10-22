@@ -979,8 +979,8 @@ def get_ik_scratch(*, options, entities, batch_size):
 class ConstraintState:
     kind: ClassVar[DataKind] = DataKind.SCRATCH
 
-    # Borrowed references owned by RigidIslandSystem: the partition is shared with dynamics/hibernation, and the
-    # equality count is shared with collision filtering. They are not allocated by RigidConstraintSystem.
+    # Borrowed references owned by RigidIsland: the partition is shared with dynamics/hibernation, and the
+    # equality count is shared with collision filtering. They are not allocated by RigidConstraint.
     island: IslandState
     # Per-island state of the solve over that partition, allocated with the rest of this state.
     island_solve: IslandSolveState
@@ -3323,7 +3323,7 @@ def island_tile_caps(cap_first, cap_last):
 class DataManager:
     """Legacy standalone KinematicSolver allocation owner.
 
-    RigidSolverSystem owns and allocates its Data directly; new Systems must not use this compatibility class.
+    RigidDynamics owns and allocates its Data directly; new Systems must not use this compatibility class.
     """
 
     def __init__(self, legacy_solver, kinematic_only):

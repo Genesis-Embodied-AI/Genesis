@@ -173,7 +173,7 @@ HostTensor: TypeAlias = NDArray[np.generic] | torch.Tensor
 IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
 
 
-class RigidSolverSystem(System):
+class RigidDynamics(System):
     """Own the Rigid model, dynamics Data, numerical Actions and ordinary backend APIs.
 
     SimulatorEngine initialization has it allocate and initialize rigid dynamics from the collected Scene model.
@@ -227,9 +227,9 @@ class RigidSolverSystem(System):
         self._ckpt = {}
 
     def build(self) -> None:
-        from .rigid_island_system import RigidIslandSystem
+        from .rigid_island import RigidIsland
 
-        self.island_system = self.require(RigidIslandSystem)
+        self.rigid_island = self.require(RigidIsland)
 
     # -------------------------------- Actions --------------------------------
 
@@ -247,19 +247,19 @@ class RigidSolverSystem(System):
 
     @System.action(kind="stage")
     def wake_coupled_links_stage(self):
-        return func_substep_wakeup_coupled_links, self.data, self.island_system.data, self.rigid_config
+        return func_substep_wakeup_coupled_links, self.data, self.rigid_island.data, self.rigid_config
 
     @System.action(kind="host")
     def wake_coupled_links_kernel(self):
-        return kernel_substep_wakeup_coupled_links, self.data, self.island_system.data, self.rigid_config
+        return kernel_substep_wakeup_coupled_links, self.data, self.rigid_island.data, self.rigid_config
 
     @System.action(kind="stage")
     def forward_dynamics_stage(self):
-        return func_step_1, self.data, self.island_system.data, self.rigid_config
+        return func_step_1, self.data, self.rigid_island.data, self.rigid_config
 
     @System.action(kind="host")
     def forward_dynamics_kernel(self):
-        return kernel_step_1, self.data, self.island_system.data, self.rigid_config
+        return kernel_step_1, self.data, self.rigid_island.data, self.rigid_config
 
     @System.action(kind="stage")
     def integrate_stage(self):
@@ -319,7 +319,7 @@ class RigidSolverSystem(System):
             jac_row,
             solve_out,
             self.dyn_state,
-            self.island_system.data.island,
+            self.rigid_island.data.island,
             self.dyn_info,
             self.rigid_info,
             self.rigid_config,
@@ -1000,7 +1000,7 @@ class RigidSolverSystem(System):
                     links_idx,
                     envs_idx,
                     self.dyn_state,
-                    self.island_system.data.island,
+                    self.rigid_island.data.island,
                     self.dyn_info,
                     self.rigid_info,
                     self.rigid_config,
@@ -1141,7 +1141,7 @@ class RigidSolverSystem(System):
                     links_idx,
                     envs_idx,
                     self.dyn_state,
-                    self.island_system.data.island,
+                    self.rigid_island.data.island,
                     self.dyn_info,
                     self.rigid_info,
                     self.rigid_config,
@@ -1264,7 +1264,7 @@ class RigidSolverSystem(System):
                 self.weight_scratch.jac_row,
                 self.weight_scratch.solve_out,
                 self.dyn_state,
-                self.island_system.data.island,
+                self.rigid_island.data.island,
                 self.dyn_info,
                 self.rigid_info,
                 self.rigid_config,
@@ -1280,7 +1280,7 @@ class RigidSolverSystem(System):
                 self.weight_scratch.jac_row,
                 self.weight_scratch.solve_out,
                 self.dyn_state,
-                self.island_system.data.island,
+                self.rigid_island.data.island,
                 self.dyn_info,
                 self.rigid_info,
                 self.rigid_config,
@@ -1295,7 +1295,7 @@ class RigidSolverSystem(System):
                 self.weight_scratch.jac_row,
                 self.weight_scratch.solve_out,
                 self.dyn_state,
-                self.island_system.data.island,
+                self.rigid_island.data.island,
                 self.dyn_info,
                 self.rigid_info,
                 self.rigid_config,
@@ -1412,7 +1412,7 @@ class RigidSolverSystem(System):
                     qs_idx,
                     envs_idx,
                     self.dyn_state,
-                    self.island_system.data.island,
+                    self.rigid_island.data.island,
                     self.dyn_info,
                     self.rigid_info,
                     self.rigid_config,
@@ -1682,7 +1682,7 @@ class RigidSolverSystem(System):
                 dofs_idx,
                 envs_idx,
                 self.dyn_state,
-                self.island_system.data.island,
+                self.rigid_island.data.island,
                 self.dyn_info,
                 self.rigid_info,
                 self.rigid_config,
@@ -2375,7 +2375,7 @@ class RigidSolverSystem(System):
     def _func_forward_dynamics(self) -> None:
         kernel_forward_dynamics(
             self.dyn_state,
-            self.island_system.data.island,
+            self.rigid_island.data.island,
             self.dyn_info,
             self.rigid_info,
             self.rigid_config,
@@ -2471,10 +2471,10 @@ class RigidSolverSystem(System):
                 geoms_hibernated_dst = qd_to_torch(self.dyn_state.geoms.is_hibernated, transpose=True, copy=False)
                 entities_hibernated_dst = qd_to_torch(self.dyn_state.entities.is_hibernated, transpose=True, copy=False)
                 islands_hibernated_dst = qd_to_torch(
-                    self.island_system.data.island.is_hibernated, transpose=True, copy=False
+                    self.rigid_island.data.island.is_hibernated, transpose=True, copy=False
                 )
                 islands_next_link_dst = qd_to_torch(
-                    self.island_system.data.island.hibernated_next_link, transpose=True, copy=False
+                    self.rigid_island.data.island.hibernated_next_link, transpose=True, copy=False
                 )
                 n_awake_dofs_dst = qd_to_torch(self.rigid_info.n_awake_dofs, copy=False)
 
@@ -2553,7 +2553,7 @@ class RigidSolverSystem(System):
                 kernel_reset_hibernation(
                     envs_idx,
                     self.dyn_state,
-                    self.island_system.data.island,
+                    self.rigid_island.data.island,
                     self.dyn_info,
                     self.rigid_info,
                     self.rigid_config,
@@ -2699,7 +2699,7 @@ class RigidSolverSystem(System):
                 links_idx,
                 envs_idx,
                 self.dyn_state,
-                self.island_system.data.island,
+                self.rigid_island.data.island,
                 self.dyn_info,
                 self.rigid_info,
                 self.rigid_config,
@@ -2792,7 +2792,7 @@ class RigidSolverSystem(System):
 
         kernel_forward_dynamics_without_qacc.grad(
             self.dyn_state,
-            self.island_system.data.island,
+            self.rigid_island.data.island,
             self.dyn_info,
             self.rigid_info,
             self.rigid_config,
@@ -4544,10 +4544,10 @@ class RigidSolverSystem(System):
 
 
 @register_system(SimulatorEngine)
-def create_rigid_solver_system(engine: SimulatorEngine) -> RigidSolverSystem | None:
+def create_rigid_dynamics(engine: SimulatorEngine) -> RigidDynamics | None:
     """Admit the Rigid owner only when the authored Scene contains a Rigid entity."""
     return (
-        RigidSolverSystem(engine.scene)
+        RigidDynamics(engine.scene)
         if any(isinstance(entity, RigidEntity) for entity in engine.scene.entities)
         else None
     )
