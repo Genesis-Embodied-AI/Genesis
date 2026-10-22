@@ -95,8 +95,8 @@ def test_fk_grad_matches_fd(model_name, request, precision, show_viewer):
             e.set_dofs_velocity(x[1:], envs_idx=[1])
 
         apply_fn = {
-            "pos": lambda e, x: e.set_pos(x),
-            "quat": lambda e, x: e.set_quat(x),
+            "pos": lambda e, x: e.set_pos(x, relative=False),
+            "quat": lambda e, x: e.set_quat(x, relative=False),
             "vel": apply_vel_per_env,
             "force": lambda e, x: e.control_dofs_force(x),
         }[setter]

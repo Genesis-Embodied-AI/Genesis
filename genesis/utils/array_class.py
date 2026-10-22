@@ -2393,6 +2393,12 @@ class LinksState:
     # assembly (the deterministic post-sort view of the contacts), consumed by the midpoint-integration eligibility;
     # the raw collider contact buffer is only valid through the contact_sort_idx indirection.
     is_constrained: qd.Tensor
+    # Midpoint angular velocity a free body eligible for midpoint integration converged to this substep, in its inertial
+    # frame, and the residual of the midpoint equation there. The integration the backward pass reverses resumes from
+    # them, since autodiff cannot reverse the Newton iteration (see func_midpoint_free_body). Allocated in differentiable
+    # mode only.
+    midpoint_ang: qd.Tensor = of_kind(DataKind.SCRATCH)
+    midpoint_res: qd.Tensor = of_kind(DataKind.SCRATCH)
     cd_ang_bw: qd.Tensor
     cd_vel_bw: qd.Tensor
     mass_sum: qd.Tensor
@@ -2442,6 +2448,8 @@ def get_links_state(solver):
         cd_ang=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         cd_vel=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         is_constrained=V(dtype=gs.qd_bool, shape=shape),
+        midpoint_ang=V(dtype=gs.qd_vec3, shape=maybe_shape(shape, requires_grad)),
+        midpoint_res=V(dtype=gs.qd_vec3, shape=maybe_shape(shape, requires_grad)),
         cd_ang_bw=V(dtype=gs.qd_vec3, shape=shape_bw, needs_grad=requires_grad),
         cd_vel_bw=V(dtype=gs.qd_vec3, shape=shape_bw, needs_grad=requires_grad),
         mass_sum=V(dtype=gs.qd_float, shape=shape, needs_grad=requires_grad),

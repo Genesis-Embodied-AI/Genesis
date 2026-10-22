@@ -55,6 +55,19 @@ def qd_k_cross_vec(vec):
 
 
 @qd.func
+def qd_vec_to_skew(vec):
+    """Return the skew-symmetric matrix of a 3D vector, whose product with another vector is their cross product."""
+    return qd.Matrix(
+        [
+            [0.0, -vec[2], vec[1]],
+            [vec[2], 0.0, -vec[0]],
+            [-vec[1], vec[0], 0.0],
+        ],
+        dt=gs.qd_float,
+    )
+
+
+@qd.func
 def qd_transform_by_quat_fast(v, quat):
     """
     Rotate a vector by a quaternion that is already normalized.

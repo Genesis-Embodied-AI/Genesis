@@ -20,9 +20,14 @@ def grad_free():
     mjcf = ET.Element("mujoco", model="free")
     worldbody = ET.SubElement(mjcf, "worldbody")
     body = ET.SubElement(worldbody, "body", name="chassis", pos="0 0 0")
-    ET.SubElement(body, "freejoint")
-    ET.SubElement(body, "inertial", mass="1.0", pos="0 0 0", diaginertia="0.1 0.1 0.1")
+    # The anisotropic inertia, the fixed child moving the center of mass off the joint origin and the armature coupling
+    # the translation to the rotation drive every path of the midpoint integration of a free body
+    ET.SubElement(body, "joint", type="free", armature="0.05")
+    ET.SubElement(body, "inertial", mass="1.0", pos="0 0 0", diaginertia="0.1 0.2 0.3")
     ET.SubElement(body, "geom", type="box", size="0.1 0.1 0.1", contype="0", conaffinity="0")
+    payload = ET.SubElement(body, "body", name="payload", pos="0.2 0.1 0")
+    ET.SubElement(payload, "inertial", mass="0.5", pos="0 0 0", diaginertia="0.01 0.02 0.03")
+    ET.SubElement(payload, "geom", type="sphere", size="0.05", contype="0", conaffinity="0")
     return ET.tostring(mjcf, encoding="unicode")
 
 
