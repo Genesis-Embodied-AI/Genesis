@@ -1431,9 +1431,10 @@ class ColliderState:
     prism: qd.Tensor
     n_contacts: qd.Tensor = of_kind(DataKind.DERIVED)
     # Kept contacts of the sleepers, at the front of the contact buffer with the identity permutation: a hibernated
-    # link's contacts against fixed bodies are carried from step to step with the force of the last solve they took
-    # part in, for the contact getters and the per-link contact force alone. Every per-step pass (prune, sort, island
-    # edges, constraint rows, noslip) walks the live contacts after them, [n_contacts_hibernated, n_contacts).
+    # link's contacts against fixed links and other sleepers are carried from step to step with the force of the last
+    # solve they took part in, for the contact getters and the per-link contact force alone. Every per-step pass
+    # (prune, sort, island edges, constraint rows, noslip) walks the live contacts after them,
+    # [n_contacts_hibernated, n_contacts).
     n_contacts_hibernated: qd.Tensor = of_kind(DataKind.DERIVED)
     first_time: qd.Tensor = of_kind(DataKind.STATE)
     contact_cache: ContactCache
