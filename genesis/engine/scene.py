@@ -1041,14 +1041,8 @@ class Scene(RBC):
         # it: the unroll winds them down step by step, and the restore below puts the physics back where they were.
         snapshot = self.get_state()
         steps = self._sim._steps.clone()
-        # The sim unroll (self._backward) re-enters the torch graph from each step's queried states, so the graph
-        # must survive the initial autograd pass.
-        if kwargs.setdefault("retain_graph", True) is not True:
-            gs.raise_exception("'retain_graph' must be left unset: scene.backward requires the graph to survive.")
-        # The functional torch.autograd.backward fills torch and queried-state grads while leaving the sim unroll to
-        # the explicit self._backward call below, keeping gs.Tensor.backward's automatic scene._backward out of it.
+        # The autograd nodes of the steps unroll the rollout within this backward pass (see genesis.grad.bridge).
         torch.autograd.backward(loss, *args, **kwargs)
-        self._backward()
         # keep_init semantics: see _reset. Restoring the snapshot puts the physics back where the forward pass left
         # it, so the clocks snapshotted above are put back with it rather than left at zero.
         self._reset(snapshot, keep_init=True)
@@ -1535,21 +1529,31 @@ class Scene(RBC):
         with self._visualizer.viewer_lock:
             self._visualizer.context.clear_debug_objects()
 
-    def _backward(self):
+    def _reverse_step(self, step: int, epoch: int) -> dict[int, torch.Tensor]:
         """
-        At this point, all the scene states the simulation run should have been filled with gradients.
-        Next, we run backward from scene state back to scene's internal# Quadrants variables, then back through time.
-        """
+        Run the reverse pass of step `step` and return the gradients of the inputs taped for it, keyed by tensor id.
 
-        if not self._backward_ready:
+        Called by the autograd node of that step (see `genesis.grad.bridge`), once the gradients of the states read at
+        that step and of every later step are in. The later steps whose node the loss does not reach have no output
+        gradient, and their reverse pass only rewinds the rollout down to `step`.
+        """
+        if epoch != self._sim._grad_epoch:
+            gs.raise_exception(
+                "Calling backward on a scene that has been reset since the rollout. Call it before 'scene.reset()'."
+            )
+        if not self._backward_ready or self._sim.cur_step_global < step:
             gs.raise_exception("Multiple backward calls not allowed.")
 
-        # backward pass through time
-        while self._sim.cur_step_global > 0:
+        while self._sim.cur_step_global > step:
             self._step_grad()
+        self._sim._inputs_grad = {}
+        self._step_grad()
+        inputs_grad, self._sim._inputs_grad = self._sim._inputs_grad, {}
 
-        self._backward_ready = False
-        self._forward_ready = False
+        if self._sim.cur_step_global == 0:
+            self._backward_ready = False
+            self._forward_ready = False
+        return inputs_grad
 
     @gs.assert_built
     def get_time(self, envs_idx=None):

@@ -12,7 +12,7 @@ from genesis.utils.geom import (
     qd_transform_quat_by_quat,
     transform_pos_quat_by_trans_quat,
 )
-from genesis.utils.misc import to_gs_tensor
+from genesis.utils.misc import assert_contiguous, to_gs_tensor
 
 from ..base_entity import Entity
 from .mesh import Mesh
@@ -418,26 +418,25 @@ class ToolEntity(Entity):
             self._tgt_buffer["quat"].append(self._tgt["quat"])
             self._tgt_buffer["vel"].append(self._tgt["vel"])
             self._tgt_buffer["ang"].append(self._tgt["ang"])
+            self._sim.record_step_inputs(self._tgt)
 
+        # Detached: the kernels only read the values, the gradient reaches each input through `process_input_grad`,
+        # and a kernel argument that tracks gradients would make Quadrants allocate a `.grad` buffer for it.
         if self._tgt["pos"] is not None:
-            self._tgt["pos"].assert_contiguous()
-            self._tgt["pos"].assert_sceneless()
-            self.set_pos(self._sim.cur_step_local, self._tgt["pos"])
+            assert_contiguous(self._tgt["pos"])
+            self.set_pos(self._sim.cur_step_local, self._tgt["pos"].detach())
 
         if self._tgt["quat"] is not None:
-            self._tgt["quat"].assert_contiguous()
-            self._tgt["quat"].assert_sceneless()
-            self.set_quat(self._sim.cur_step_local, self._tgt["quat"])
+            assert_contiguous(self._tgt["quat"])
+            self.set_quat(self._sim.cur_step_local, self._tgt["quat"].detach())
 
         if self._tgt["vel"] is not None:
-            self._tgt["vel"].assert_contiguous()
-            self._tgt["vel"].assert_sceneless()
-            self.set_vel(self._sim.cur_step_local, self._tgt["vel"])
+            assert_contiguous(self._tgt["vel"])
+            self.set_vel(self._sim.cur_step_local, self._tgt["vel"].detach())
 
         if self._tgt["ang"] is not None:
-            self._tgt["ang"].assert_contiguous()
-            self._tgt["ang"].assert_sceneless()
-            self.set_ang(self._sim.cur_step_local, self._tgt["ang"])
+            assert_contiguous(self._tgt["ang"])
+            self.set_ang(self._sim.cur_step_local, self._tgt["ang"].detach())
 
         self._tgt["pos"] = None
         self._tgt["quat"] = None
@@ -451,16 +450,16 @@ class ToolEntity(Entity):
         _tgt_ang = self._tgt_buffer["ang"].pop()
 
         if _tgt_vel is not None and _tgt_vel.requires_grad:
-            _tgt_vel._backward_from_qd(self.set_vel_grad, self._sim.cur_step_local)
+            self._sim.add_input_grad(_tgt_vel, self.set_vel_grad, self._sim.cur_step_local)
 
         if _tgt_ang is not None and _tgt_ang.requires_grad:
-            _tgt_ang._backward_from_qd(self.set_ang_grad, self._sim.cur_step_local)
+            self._sim.add_input_grad(_tgt_ang, self.set_ang_grad, self._sim.cur_step_local)
 
         if _tgt_pos is not None and _tgt_pos.requires_grad:
-            _tgt_pos._backward_from_qd(self.set_pos_grad, self._sim.cur_step_local)
+            self._sim.add_input_grad(_tgt_pos, self.set_pos_grad, self._sim.cur_step_local)
 
         if _tgt_quat is not None and _tgt_quat.requires_grad:
-            _tgt_quat._backward_from_qd(self.set_quat_grad, self._sim.cur_step_local)
+            self._sim.add_input_grad(_tgt_quat, self.set_quat_grad, self._sim.cur_step_local)
 
     def collect_output_grads(self):
         """
@@ -473,19 +472,19 @@ class ToolEntity(Entity):
 
     def add_grad_from_state(self, state):
         if state.pos.grad is not None:
-            state.pos.assert_contiguous()
+            assert_contiguous(state.pos)
             self.set_frame_add_grad_pos(self._sim.cur_substep_local, state.pos.grad)
 
         if state.quat.grad is not None:
-            state.quat.assert_contiguous()
+            assert_contiguous(state.quat)
             self.set_frame_add_grad_quat(self._sim.cur_substep_local, state.quat.grad)
 
         if state.vel.grad is not None:
-            state.vel.assert_contiguous()
+            assert_contiguous(state.vel)
             self.set_frame_add_grad_vel(self._sim.cur_substep_local, state.vel.grad)
 
         if state.ang.grad is not None:
-            state.ang.assert_contiguous()
+            assert_contiguous(state.ang)
             self.set_frame_add_grad_ang(self._sim.cur_substep_local, state.ang.grad)
 
     # ------------------------------------------------------------------------------------

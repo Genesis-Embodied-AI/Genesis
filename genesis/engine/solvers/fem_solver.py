@@ -14,7 +14,7 @@ from genesis.engine.entities.fem_entity import FEMEntity
 from genesis.engine.materials import FEM
 from genesis.engine.states.solvers import FEMSolverState
 from genesis.utils.geom import qd_transform_by_quat, qd_transform_quat_by_quat
-from genesis.utils.misc import qd_to_torch
+from genesis.utils.misc import assert_contiguous, qd_to_torch
 
 from .base_solver import GravityMixin, Solver, TimeBasedMixin
 
@@ -1055,11 +1055,11 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
     def add_grad_from_state(self, state):
         if self.is_active:
             if state.pos.grad is not None:
-                state.pos.assert_contiguous()
+                assert_contiguous(state.pos)
                 self._kernel_add_grad_from_pos(self._sim.cur_substep_local, state.pos.grad)
 
             if state.vel.grad is not None:
-                state.vel.assert_contiguous()
+                assert_contiguous(state.vel)
                 self._kernel_add_grad_from_vel(self._sim.cur_substep_local, state.vel.grad)
 
     def save_ckpt(self, ckpt_name):

@@ -16,7 +16,7 @@ from genesis.engine.couplers import SAPCoupler
 from genesis.engine.states.cache import QueriedStates
 from genesis.engine.states.entities import FEMEntityState
 from genesis.repr_base import RBC
-from genesis.utils.misc import to_gs_tensor, tensor_to_array, broadcast_tensor
+from genesis.utils.misc import assert_contiguous, to_gs_tensor, tensor_to_array, broadcast_tensor
 
 from .base_entity import Entity
 
@@ -304,7 +304,7 @@ class FEMEntity(Entity):
         # Immediately flush to the solver's internal elements_v so that the
         # visualizer can render the updated positions without scene.step().
         if is_valid and self._tgt["pos"] is not None:
-            self.set_pos(self._sim.cur_substep_local, self._tgt["pos"])
+            self.set_pos(self._sim.cur_substep_local, self._tgt["pos"].detach())
 
     def set_velocity(self, vel):
         """
@@ -719,26 +719,26 @@ class FEMEntity(Entity):
         else:
             for key in self._tgt_keys:
                 self._tgt_buffer[key].append(self._tgt[key])
+            self._sim.record_step_inputs(self._tgt)
 
         # set_pos followed by set_vel, because set_pos resets velocity.
+        # Detached: the kernels only read the values, the gradient reaches each input through `process_input_grad`,
+        # and a kernel argument that tracks gradients would make Quadrants allocate a `.grad` buffer for it.
         if self._tgt["pos"] is not None:
-            self._tgt["pos"].assert_contiguous()
-            self._tgt["pos"].assert_sceneless()
-            self.set_pos(self._sim.cur_substep_local, self._tgt["pos"])
+            assert_contiguous(self._tgt["pos"])
+            self.set_pos(self._sim.cur_substep_local, self._tgt["pos"].detach())
 
         if self._tgt["vel"] is not None:
-            self._tgt["vel"].assert_contiguous()
-            self._tgt["vel"].assert_sceneless()
-            self.set_vel(self._sim.cur_substep_local, self._tgt["vel"])
+            assert_contiguous(self._tgt["vel"])
+            self.set_vel(self._sim.cur_substep_local, self._tgt["vel"].detach())
 
         if self._tgt["act"] is not None:
             assert self._tgt["act"] in (gs.ACTIVE, gs.INACTIVE)
             self.set_active(self._sim.cur_substep_local, self._tgt["act"])
 
         if self._tgt["actu"] is not None:
-            self._tgt["actu"].assert_contiguous()
-            self._tgt["actu"].assert_sceneless()
-            self.set_actu(self._sim.cur_substep_local, self._tgt["actu"])
+            assert_contiguous(self._tgt["actu"])
+            self.set_actu(self._sim.cur_substep_local, self._tgt["actu"].detach())
 
         for key in self._tgt_keys:
             self._tgt[key] = None
@@ -757,13 +757,13 @@ class FEMEntity(Entity):
         _tgt_pos = self._tgt_buffer["pos"].pop()
 
         if _tgt_actu is not None and _tgt_actu.requires_grad:
-            _tgt_actu._backward_from_qd(self.set_actu_grad, self._sim.cur_substep_local)
+            self._sim.add_input_grad(_tgt_actu, self.set_actu_grad, self._sim.cur_substep_local)
 
         if _tgt_vel is not None and _tgt_vel.requires_grad:
-            _tgt_vel._backward_from_qd(self.set_vel_grad, self._sim.cur_substep_local)
+            self._sim.add_input_grad(_tgt_vel, self.set_vel_grad, self._sim.cur_substep_local)
 
         if _tgt_pos is not None and _tgt_pos.requires_grad:
-            _tgt_pos._backward_from_qd(self.set_pos_grad, self._sim.cur_substep_local)
+            self._sim.add_input_grad(_tgt_pos, self.set_pos_grad, self._sim.cur_substep_local)
 
         if _tgt_vel is not None or _tgt_pos is not None or _tgt_actu is not None:
             # manually zero the grad since manually setting state breaks gradient flow
@@ -786,7 +786,7 @@ class FEMEntity(Entity):
         f : int
             Current substep/frame index.
 
-        pos : gs.Tensor
+        pos : torch.Tensor
             Tensor of shape (n_envs, n_vertices, 3) containing new positions.
         """
 
@@ -806,7 +806,7 @@ class FEMEntity(Entity):
         f : int
             Current substep/frame index.
 
-        pos_grad : gs.Tensor
+        pos_grad : torch.Tensor
             Tensor of shape (n_envs, n_vertices, 3) containing gradients of positions.
         """
 
@@ -826,7 +826,7 @@ class FEMEntity(Entity):
         f : int
             Current substep/frame index.
 
-        vel : gs.Tensor
+        vel : torch.Tensor
             Tensor of shape (n_envs, n_vertices, 3) containing velocities.
         """
 
@@ -846,7 +846,7 @@ class FEMEntity(Entity):
         f : int
             Current substep/frame index.
 
-        vel_grad : gs.Tensor
+        vel_grad : torch.Tensor
             Tensor of shape (n_envs, n_vertices, 3) containing gradients of velocities.
         """
 
@@ -866,7 +866,7 @@ class FEMEntity(Entity):
         f : int
             Current substep/frame index.
 
-        actu : gs.Tensor
+        actu : torch.Tensor
             Tensor of shape (n_envs, n_groups) specifying actuation values.
         """
 
@@ -887,7 +887,7 @@ class FEMEntity(Entity):
         f : int
             Current substep/frame index.
 
-        actu_grad : gs.Tensor
+        actu_grad : torch.Tensor
             Tensor of shape (n_envs, n_groups) specifying gradients of actuation.
         """
 
@@ -1069,7 +1069,7 @@ class FEMEntity(Entity):
 
         Returns
         -------
-        el2v : gs.Tensor
+        el2v : torch.Tensor
             Tensor of shape (n_elements, 4) mapping each element to its local vertex indices.
         """
         el2v = gs.zeros((self.n_elements, 4), dtype=int, requires_grad=False, scene=self.scene)

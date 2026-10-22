@@ -5,7 +5,7 @@ import torch
 
 import genesis as gs
 from genesis.engine.states.entities import MPMEntityState
-from genesis.utils.misc import to_gs_tensor
+from genesis.utils.misc import assert_contiguous, to_gs_tensor
 
 from .particle_entity import assert_active, ParticleEntity
 
@@ -149,23 +149,23 @@ class MPMEntity(ParticleEntity):
             The state object containing gradients for physical quantities.
         """
         if state.pos.grad is not None:
-            state.pos.assert_contiguous()
+            assert_contiguous(state.pos)
             self._kernel_add_frame_particles_pos_grad(self._sim.cur_substep_local, state.pos.grad)
 
         if state.vel.grad is not None:
-            state.vel.assert_contiguous()
+            assert_contiguous(state.vel)
             self._kernel_add_frame_particles_vel_grad(self._sim.cur_substep_local, state.vel.grad)
 
         if state.C.grad is not None:
-            state.C.assert_contiguous()
+            assert_contiguous(state.C)
             self._kernel_add_frame_particles_C_grad(self._sim.cur_substep_local, state.C.grad)
 
         if state.F.grad is not None:
-            state.F.assert_contiguous()
+            assert_contiguous(state.F)
             self._kernel_add_frame_particles_F_grad(self._sim.cur_substep_local, state.F.grad)
 
         if state.Jp.grad is not None:
-            state.Jp.assert_contiguous()
+            assert_contiguous(state.Jp)
             self._kernel_add_frame_particles_Jp_grad(self._sim.cur_substep_local, state.Jp.grad)
 
     @qd.kernel
@@ -256,10 +256,11 @@ class MPMEntity(ParticleEntity):
 
     def process_input(self, in_backward=False):
         if isinstance(self.material, gs.materials.MPM.Muscle) and self._tgt["actu"] is not None:
-            self._tgt["actu"].assert_contiguous()
-            self._tgt["actu"].assert_sceneless()
+            assert_contiguous(self._tgt["actu"])
             particles_idx_local = self._sanitize_particles_idx_local(envs_idx=self._scene._envs_idx)
-            self.set_particles_actu(self._tgt["actu"], particles_idx_local)
+            # Detached: the kernel only reads the values, the gradient reaches the input through `process_input_grad`,
+            # and a kernel argument that tracks gradients would make Quadrants allocate a `.grad` buffer for it.
+            self.set_particles_actu(self._tgt["actu"].detach(), particles_idx_local)
 
         super().process_input(in_backward)
 
@@ -270,7 +271,7 @@ class MPMEntity(ParticleEntity):
         if isinstance(self.material, gs.materials.MPM.Muscle):
             _tgt_actu = self._tgt_buffer["actu"].pop()
             if _tgt_actu is not None and _tgt_actu.requires_grad:
-                _tgt_actu._backward_from_qd(self._set_particles_actu_grad)
+                self._sim.add_input_grad(_tgt_actu, self._set_particles_actu_grad)
 
         super().process_input_grad()
 

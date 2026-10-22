@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 import torch
 
 import genesis as gs
+from genesis.grad.bridge import grad_inputs, step_node
 from genesis.options.morphs import Morph
 from genesis.options.solvers import IPCCouplerOptions, LegacyCouplerOptions, SAPCouplerOptions
 from genesis.repr_base import RBC
@@ -68,6 +69,14 @@ class Simulator(RBC):
         self._steps_local: int | None = self.options._steps_local
 
         self._cur_substep_global = 0
+
+        # Differentiable mode (see genesis.grad.bridge): the token returned by the autograd node of the last step, the
+        # inputs entities taped for the coming step, the gradients the reverse pass of a step gives its inputs, and
+        # the rollout the token chain belongs to, which a reset starts anew.
+        self._grad_token = self._new_grad_token()
+        self._grad_epoch = 0
+        self._step_inputs: dict[int, torch.Tensor] = {}
+        self._inputs_grad: dict[int, torch.Tensor] = {}
 
         # solvers
         self.tool_solver = ToolSolver(self.scene, self, options.tool)
@@ -314,6 +323,33 @@ class Simulator(RBC):
         # clear up all queried scene states and free up memory
         self._queried_states.clear()
 
+        self._grad_token = self._new_grad_token()
+        self._grad_epoch += 1
+        self._step_inputs.clear()
+
+    def _new_grad_token(self):
+        if not self._requires_grad:
+            return None
+        return torch.zeros((), dtype=gs.tc_float, device=gs.device, requires_grad=True)
+
+    def record_step_inputs(self, tgt):
+        """
+        Add the inputs an entity taped for the coming step to those its autograd node takes, each tensor once however
+        many setters and entities it was given to: the node returns the gradient summed over all of them.
+        """
+        if self._requires_grad:
+            self._step_inputs.update((id(tensor), tensor) for tensor in grad_inputs(tgt))
+
+    def add_input_grad(self, tensor, qd_kernel, *args):
+        """
+        Fill with `qd_kernel(*args, grad)` the gradient the reverse pass gives the taped input `tensor`, and add it to
+        those the autograd node of its step returns.
+        """
+        grad = torch.zeros_like(tensor, requires_grad=False)
+        qd_kernel(*args, grad)
+        key = id(tensor)
+        self._inputs_grad[key] = self._inputs_grad[key] + grad if key in self._inputs_grad else grad
+
     # ------------------------------------------------------------------------------------
     # -------------------------------- step computation ----------------------------------
     # ------------------------------------------------------------------------------------
@@ -368,6 +404,16 @@ class Simulator(RBC):
                     self._cur_substep_global += 1
                     if self.cur_substep_local == 0 and not in_backward:
                         self.save_ckpt()
+
+                if self._requires_grad and not in_backward:
+                    self._grad_token = step_node(
+                        self.scene,
+                        self.cur_step_global,
+                        self._grad_epoch,
+                        self._grad_token,
+                        list(self._step_inputs.values()),
+                    )
+                    self._step_inputs.clear()
 
             if self.rigid_solver.is_active:
                 self.rigid_solver.clear_external_force()
@@ -549,6 +595,11 @@ class Simulator(RBC):
     def requires_grad(self):
         """Whether the simulator requires gradients."""
         return self._requires_grad
+
+    @property
+    def grad_token(self):
+        """The token of the current step in the autograd graph of a differentiable rollout (see genesis.grad.bridge)."""
+        return self._grad_token
 
     @property
     def n_entities(self) -> int:

@@ -6,7 +6,7 @@ import torch
 
 import genesis as gs
 
-from .tensor import Tensor
+from .bridge import scene_output as _scene_output
 
 # Ops given the requested dtype and 'device=gs.device', so that they allocate there directly and random ones draw from
 # its generator at that precision. The other ops follow the device of their input.
@@ -88,7 +88,12 @@ def torch_op_wrapper(torch_op):
 
 def from_torch(torch_tensor, dtype=None, requires_grad=False, detach=True, scene=None):
     """
-    By default, detach is True, meaning that this function returns a new leaf tensor which is not connected to torch_tensor's computation gragh.
+    Return a copy of `torch_tensor` on `gs.device`, at the dtype Genesis uses for its kind of scalar.
+
+    By default, detach is True, meaning that this function returns a new leaf tensor which is not connected to
+    torch_tensor's computation graph. Passing `scene` makes a tensor that requires grad a state of that scene's
+    differentiable rollout, read at its current step (see `genesis.grad.bridge`). Such a tensor is filled by the
+    simulator, so it cannot also stay connected to the graph of `torch_tensor`.
     """
     dtype = _to_gs_dtype(torch_tensor.dtype if dtype is None else dtype)
 
@@ -98,15 +103,23 @@ def from_torch(torch_tensor, dtype=None, requires_grad=False, detach=True, scene
         )
         requires_grad = True
 
-    gs_tensor = Tensor(torch_tensor.to(device=gs.device, dtype=dtype), scene=scene).clone()
+    tensor = torch_tensor.to(device=gs.device, dtype=dtype).clone()
 
     if detach:
-        gs_tensor = gs_tensor.detach(sceneless=False)
+        tensor = tensor.detach()
+
+    if requires_grad and scene is not None:
+        if not detach:
+            gs.raise_exception(
+                "A scene state is filled by the simulator, so it cannot stay connected to the graph of the tensor it "
+                "is created from. Pass 'detach=True', or leave 'scene' unset to keep the graph."
+            )
+        return _scene_output(tensor, scene.sim.grad_token)
 
     if requires_grad:
-        gs_tensor = gs_tensor.requires_grad_()
+        tensor = tensor.requires_grad_()
 
-    return gs_tensor
+    return tensor
 
 
 for _torch_op in _torch_ops:

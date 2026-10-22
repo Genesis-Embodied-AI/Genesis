@@ -3,6 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import quadrants as qd
+import torch
 import trimesh
 
 import genesis as gs
@@ -144,7 +145,7 @@ class HybridEntity(Entity):
                 part_soft_info.quat_local_to_global.from_numpy(np.asarray(quat_local_to_global, dtype=gs.np_float))
 
                 part_soft_init_positions = qd.field(dtype=gs.qd_vec3, shape=(part_soft.init_particles.shape[0],))
-                part_soft_init_positions.from_torch(gs.Tensor(part_soft.init_particles))
+                part_soft_init_positions.from_torch(torch.as_tensor(part_soft.init_particles))
 
                 self._part_soft_info = part_soft_info
                 self._part_soft_init_positions = part_soft_init_positions
@@ -221,7 +222,7 @@ class HybridEntity(Entity):
 
         Returns
         -------
-        gs.Tensor
+        torch.Tensor
             A tensor containing the position values of the rigid body's degrees of freedom.
         """
         return self._part_rigid.get_dofs_position(*args, **kwargs)
@@ -237,7 +238,7 @@ class HybridEntity(Entity):
 
         Returns
         -------
-        gs.Tensor
+        torch.Tensor
             A tensor containing the velocity values of the rigid body's degrees of freedom.
         """
         return self._part_rigid.get_dofs_velocity(*args, **kwargs)
@@ -253,7 +254,7 @@ class HybridEntity(Entity):
 
         Returns
         -------
-        gs.Tensor
+        torch.Tensor
             A tensor representing forces acting on the rigid body's degrees of freedom.
         """
         return self._part_rigid.get_dofs_force(*args, **kwargs)
@@ -269,7 +270,7 @@ class HybridEntity(Entity):
 
         Returns
         -------
-        gs.Tensor
+        torch.Tensor
             A tensor containing the control force values for the rigid body's degrees of freedom.
         """
         return self._part_rigid.get_dofs_control_force(*args, **kwargs)
@@ -307,7 +308,7 @@ class HybridEntity(Entity):
 
         Returns
         -------
-        gs.Tensor
+        torch.Tensor
             Control output for position adjustment of the rigid body's DOFs.
         """
         return self._part_rigid.control_dofs_position(*args, **kwargs)
@@ -323,7 +324,7 @@ class HybridEntity(Entity):
 
         Returns
         -------
-        gs.Tensor
+        torch.Tensor
             Control output for position adjustment of the rigid body's DOFs.
         """
         return self._part_rigid.control_dofs_position_velocity(*args, **kwargs)
@@ -339,7 +340,7 @@ class HybridEntity(Entity):
 
         Returns
         -------
-        gs.Tensor
+        torch.Tensor
             Control output for velocity adjustment of the rigid body's DOFs.
         """
         self._part_rigid.control_dofs_velocity(*args, **kwargs)
@@ -355,7 +356,7 @@ class HybridEntity(Entity):
 
         Returns
         -------
-        gs.Tensor
+        torch.Tensor
             Control output for force adjustment of the rigid body's DOFs.
         """
         self._part_rigid.control_dofs_force(*args, **kwargs)
