@@ -137,7 +137,7 @@ def func_is_lane_slot_seen(values, n_values: int, value: int, tid: int, block_di
         if i_k * block_dim + tid < n_values and func_lane_local_get(values, i_k, block_dim) == value:
             is_seen = True
     if qd.static(block_dim > 1):
-        is_seen = su.qd_block_min(0 if is_seen else 1) == 0
+        is_seen = su.qd_block_any(is_seen)
     return is_seen
 
 
@@ -296,8 +296,9 @@ def func_add_polytope_vertex_contacts_sdf(
             # fully through a plate), and consider only the minimum and its 1-ring, one group per seed. The early stop
             # is a convergence dedup: seeds of the same patch resolve to an already-visited closest vert or climb into
             # a known minimum, so only the first seed of each basin pays for a climb. Cost is O(basins * climb * ring),
-            # affordable for every pair including world-anchored meshes with huge vert counts.
-            n_groups = n_max + 1
+            # affordable for every pair including world-anchored meshes with huge vert counts. Only B's center and the
+            # n_prev contacts of the first scan seed a group.
+            n_groups = n_prev + 1
             band = -0.25 * margin
         seen_verts = qd.Vector.zero(gs.qd_int, N_SLOTS)
         n_seen = 0
@@ -698,11 +699,15 @@ def func_add_polytope_vertex_contacts_sdf(
                     dt=gs.qd_float,
                 )
                 contact_pos_v = gu.qd_transform_by_trans_quat(dyn_info.verts.init_pos[i_v], ga_pos, ga_quat)
+                # Each lane tests the contacts of the pair it holds the slots of
                 is_repeated = False
-                for j in range(n_added):
-                    idx_prev = func_lane_slot_read(contacts_slot, n_added - 1 - j, block_dim)
-                    if (contact_pos_v - collider_state.contact_data.pos[idx_prev, i_b]).norm() < tolerance:
-                        is_repeated = True
+                for i_k in range(N_SLOTS):
+                    if i_k * block_dim + tid < n_added:
+                        idx_prev = func_lane_local_get(contacts_slot, i_k, block_dim)
+                        if (contact_pos_v - collider_state.contact_data.pos[idx_prev, i_b]).norm() < tolerance:
+                            is_repeated = True
+                if qd.static(block_dim > 1):
+                    is_repeated = su.qd_block_any(is_repeated)
                 if not is_repeated and pen_emit > 0.0:
                     # Snap the contact position onto A's smooth surface when A is a smooth primitive
                     # (SPHERE/ELLIPSOID/CAPSULE). The tessellation vertex sits an O(tessellation chord error) inboard
