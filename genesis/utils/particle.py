@@ -177,7 +177,9 @@ def _box_to_particles(p_size, pos, size, sampler):
 
     if sampler == "random":
         n_particles = n_particles_3D(p_size, size)
-        positions = np.random.uniform(low=lower, high=upper, size=(n_particles, 3))
+        # The draws are scaled by separate numpy operations, each rounded exactly, so that every platform samples the
+        # same positions. The compiled scaling of 'np.random.uniform' rounds differently from one platform to another.
+        positions = lower + np.random.random((n_particles, 3)) * (upper - lower)
 
     elif sampler == "regular":
         n_x = n_particles_1D(p_size, size[0])

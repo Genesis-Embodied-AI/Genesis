@@ -14,6 +14,7 @@ from moviepy.video.io.ffmpeg_writer import FFMPEG_VideoWriter
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.options.sensors import RasterizerCameraOptions
+from genesis.recorders.trajectory import TRAJECTORY_FORMAT, Trajectory
 from genesis.utils.misc import tensor_to_array
 from genesis.vis.keybindings import Key, KeyAction, Keybind, KeyMod, MouseButton
 from genesis.vis.viewer_plugins.plugins.mouse_interaction import GRAB_ACC
@@ -68,8 +69,13 @@ def test_disable_defaults():
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_default_plugin(n_envs):
+def test_default_plugin(n_envs, tmp_path):
+    DT = 0.01
+
     scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+        ),
         viewer_options=gs.options.ViewerOptions(
             res=CAM_RES,
             run_in_thread=(sys.platform == "linux"),
@@ -85,14 +91,31 @@ def test_default_plugin(n_envs):
         show_viewer=True,
     )
 
+    # The ground stays within the view of the camera, which the software renderer requires to render identical frames
+    # of identical states
     scene.add_entity(
-        morph=gs.morphs.Plane(),
+        morph=gs.morphs.Plane(
+            plane_size=(1.0, 1.0),
+        ),
     )
-    scene.add_entity(
+    box = scene.add_entity(
         morph=gs.morphs.Box(
             pos=(0.0, 0.0, 0.2),
             size=(0.2, 0.2, 0.2),
             euler=(30, 40, 0),
+        )
+    )
+    cam = scene.add_camera(
+        res=CAM_RES,
+        pos=(2.0, 0.0, 1.0),
+        lookat=(0.0, 0.0, 0.0),
+        fov=30,
+    )
+    trajectory_path = tmp_path / f"run{TRAJECTORY_FORMAT}"
+    scene.start_recording(
+        gs.recorders.TrajectoryFile(
+            filename=str(trajectory_path),
+            hz=50.0,
         )
     )
     scene.build(n_envs=n_envs)
@@ -195,6 +218,74 @@ def test_default_plugin(n_envs):
     )
     assert pyrender_viewer._keybindings.get_by_name("key3_press") is None
     assert pyrender_viewer._keybindings.get_by_name("key3_release") is None
+
+    # Only the steps are paced to real time, so that a loop of setters runs at full speed, and a trajectory replays at
+    # one step of wall time per simulated step, the steps between its frames included. A slow machine only makes a loop
+    # longer, so a paced loop is checked against a lower bound, while a loop that must not be paced is checked against
+    # a period that no slowdown comes close to.
+    rgb_start, *_ = cam.render()
+    for _ in range(5):
+        scene.step()
+    scene.stop_recording()
+    trajectory = Trajectory(trajectory_path, scene=scene)
+    n_steps_replayed = round((trajectory.time(-1) - trajectory.time(0)).max() / DT)
+
+    period = 600.0
+    scene.viewer.realtime_factor = DT / period
+    time_start = time.perf_counter()
+    for _ in range(5):
+        box.set_pos((0.0, 0.0, 0.2))
+    assert time.perf_counter() - time_start < period
+    # A step hidden from the viewer is not paced, while the update showing it by hand is
+    time_start = time.perf_counter()
+    for _ in range(2):
+        scene.step(update_visualizer=False)
+    assert time.perf_counter() - time_start < period
+
+    period = 0.2
+    scene.viewer.realtime_factor = DT / period
+    time_start = time.perf_counter()
+    trajectory.play()
+    assert time.perf_counter() - time_start > (n_steps_replayed - 0.5) * period
+    time_start = time.perf_counter()
+    for _ in range(2):
+        scene.step()
+    assert time.perf_counter() - time_start > period
+    time_start = time.perf_counter()
+    for _ in range(2):
+        scene.step(update_visualizer=False)
+        scene.visualizer.update(force=False)
+    assert time.perf_counter() - time_start > period
+
+    # A window driven by the stepping loop keeps handling the user input while a step waits for its pace: a key pressed
+    # right before the step starts waiting is handled before the step returns. The pace is set at that same moment,
+    # which starts its period afresh, so that the step waits a whole period whatever its own work took, and a period
+    # longer than the refresh of the viewer holds one refresh at least.
+    class KeyPressOnStep(gs.vis.viewer_plugins.ViewerPlugin):
+        def update_on_sim_step(self):
+            self.viewer.dispatch_event("on_key_press", Key._4, 0)
+            self.scene.viewer.realtime_factor = DT / 0.5
+
+    scene.viewer.register_keybinds(
+        Keybind(
+            name="toggle_flag_2",
+            key=Key._4,
+            key_action=KeyAction.PRESS,
+            callback=lambda: toggle_flag(2),
+        ),
+    )
+    key_presser = scene.viewer.add_plugin(KeyPressOnStep())
+    scene.step()
+    scene.viewer.remove_plugin(key_presser)
+    if not pyrender_viewer.run_in_thread:
+        assert flags[2]
+
+    # The cameras draw a restored frame at once
+    rgb_moved, *_ = cam.render()
+    trajectory.seek(0)
+    rgb_seek, *_ = cam.render()
+    assert (rgb_moved != rgb_start).any()
+    assert_equal(rgb_seek, rgb_start)
 
 
 @pytest.mark.required
@@ -490,6 +581,9 @@ def test_mouse_interaction_plugin(n_envs, env_spacing, n_envs_per_row, target_en
         y += DRAG_DY
         pyrender_viewer.dispatch_event("on_mouse_drag", x, y, 0, DRAG_DY, MouseButton.LEFT, 0)
         wait_for_viewer_events(pyrender_viewer, check_event_count())
+        # A setter called during the drag, as a controller running alongside would, must not release the grab, since a
+        # setter is not a step. The kinematic entity is set where it already stands, so the drag is all that moves.
+        kinematic.set_pos((0.0, KINEMATIC_LANE_Y, BOX_LENGTH / 2))
         scene.step()
         if (i + 1) % (STEPS // 2) == 0:
             rgb_arr, *_ = pyrender_viewer.render_offscreen(

@@ -1096,8 +1096,6 @@ def test_maximum_contact_area(show_viewer, tol):
         tops_z = envs_scale * (PILLAR_HEIGHT - PENETRATION) - envs_corners_z
         top.set_pos(np.concatenate((offsets, tops_z[:, None]), axis=-1))
         top.set_quat(quats)
-        if show_viewer:
-            scene.visualizer.update()
         scene.rigid_solver.collider.clear()
         scene.rigid_solver.collider.detection()
         contacts = scene.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)

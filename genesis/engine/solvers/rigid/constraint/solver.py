@@ -20,6 +20,7 @@ from genesis.engine.solvers.rigid.abd.misc import (
 )
 from genesis.utils.misc import assign_indexed_tensor, indices_to_mask, qd_to_numpy, qd_to_torch
 
+from ..collider.contact import func_add_contacts_force_to_links
 from .island import (
     func_build_islands,
     func_build_islands_coop,
@@ -6026,20 +6027,9 @@ def func_update_contact_force(
                     i_c, i_b, n_first_contact, collider_state, constraint_state, rigid_config
                 )
 
-    # The forces of the contacts of a link are summed in contact order, which keeps the rounding of the sum fixed
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
-        for i_c in range(collider_state.n_contacts[i_b]):
-            i_col = collider_state.contact_sort_idx[i_c, i_b]
-            contact_data_link_a = collider_state.contact_data.link_a[i_col, i_b]
-            contact_data_link_b = collider_state.contact_data.link_b[i_col, i_b]
-            force = collider_state.contact_data.force[i_col, i_b]
-            dyn_state.links.contact_force[contact_data_link_a, i_b] = (
-                dyn_state.links.contact_force[contact_data_link_a, i_b] - force
-            )
-            dyn_state.links.contact_force[contact_data_link_b, i_b] = (
-                dyn_state.links.contact_force[contact_data_link_b, i_b] + force
-            )
+        func_add_contacts_force_to_links(i_b, dyn_state, collider_state)
 
         # The settled islands fall asleep here, once the solve has written the forces their contacts and dofs keep
         # reporting for as long as they sleep, and before the integration skips their dofs.

@@ -172,7 +172,12 @@ class Visualizer(RBC):
             gs.raise_exception("`add_light` is specific to batch renderer.")
 
     @gs.assert_built
-    def reset(self):
+    def reset(self, refresh_viewer=True):
+        """Drop what every renderer drew of the scene, so that each one draws it anew from its current state.
+
+        The cameras sync at their next render. 'refresh_viewer' repaints the interactive viewer right away, which
+        otherwise repaints when a refresh is due (see 'Viewer.update').
+        """
         self._t = -1
 
         self._context.reset()
@@ -184,16 +189,20 @@ class Visualizer(RBC):
             self._batch_renderer.reset()
 
         if self._viewer is not None:
-            self._viewer.update(auto_refresh=True, force=True)
+            if refresh_viewer:
+                self._viewer.update(auto_refresh=True, force=True)
+            else:
+                self._viewer.update()
 
     def build(self):
         self._context.build(self._scene)
 
         if self._viewer is not None:
-            # The interactive viewer shows the changes of state made outside of stepping, such as a setter, right away
+            # Setter changes are shown in the viewer right away. The window only repaints when a refresh is due, so that
+            # a loop of setters does not pay one repaint per call.
             viewer_subscriber = Subscriber(
                 to=frozenset((StateChange.GEOMETRY,)),
-                callback=lambda change, envs_idx: self.update(force=True),
+                callback=lambda change, envs_idx: self.sync(),
             )
             for solver in self._scene.active_solvers:
                 solver.subscribe(viewer_subscriber)
@@ -218,11 +227,41 @@ class Visualizer(RBC):
         # Make sure that the viewer is fully compiled and in a clean state
         self.reset()
 
+    def sync(self):
+        """Sync every renderer with the current state of the scene.
+
+        The renderers shared with the interactive viewer sync right away, while the raytracer and the batch renderer
+        sync at their next render. The interactive viewer then refreshes when a refresh is due (see 'Viewer.update').
+        """
+        if self._raytracer is not None:
+            self._raytracer.reset()
+        if self._batch_renderer is not None:
+            self._batch_renderer.reset()
+        self._context.update(force_render=True)
+        if self._viewer is not None:
+            self._viewer.update()
+
+    def update_on_sim_step(self, advanced, auto=None):
+        """Show a simulation step: refresh the viewer when due, run its per-step callbacks and pace the loop.
+
+        If the step 'advanced' the simulation, the loop is paced to real time, otherwise (a paused scene) to the refresh
+        rate of the viewer (see 'Viewer.update_on_sim_step'). 'auto' is passed on to 'Viewer.update'.
+        """
+        if self._viewer is not None:
+            self._viewer.update(auto_refresh=auto)
+            self._viewer.update_on_sim_step(advanced=advanced)
+
     def update(self, force=True, auto=None):
+        """Sync the visualization with the scene and refresh the interactive viewer.
+
+        With 'force', every renderer syncs and the viewer refreshes right away, which shows a change made outside of a
+        step. Without it, the call does to the viewer what a step does, for loops stepping with
+        'update_visualizer=False' (see 'update_on_sim_step'). 'auto' is passed on to 'Viewer.update'.
+        """
         if force:  # force update
             self.reset()
-        elif self._viewer is not None:
-            self._viewer.update(auto_refresh=auto, force=force)
+        else:
+            self.update_on_sim_step(advanced=True, auto=auto)
 
     def update_visual_states(self, force_render: bool = False):
         """

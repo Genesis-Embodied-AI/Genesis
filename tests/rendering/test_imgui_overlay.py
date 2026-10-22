@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 
 import numpy as np
 import pytest
@@ -232,6 +233,8 @@ def test_runtime_plugin_toggle_and_pause():
 
     scene = _build_default_scene(enable_gui=True)
     scene.build()
+    cube = scene.get_entity("cube")
+    cube_init_pos = cube.get_pos()
     viewer = scene.viewer
     pyrender_viewer = viewer._pyrender_viewer
     pyrender_viewer.switch_to()
@@ -258,9 +261,27 @@ def test_runtime_plugin_toggle_and_pause():
     scene.step()
     assert not mouse._sim_running
     assert mouse._held_link is None
+    # A paused step waits for the next refresh of the viewer, never for the simulation pace, so that the GUI stays
+    # responsive while paused. The simulation pace is set to a period that no slowdown of the machine comes close to.
+    period = 600.0
+    viewer.realtime_factor = scene.dt / period
+    time_start = time.perf_counter()
+    scene.step()
+    scene.step()
+    assert 1.0 / viewer.refresh_rate < time.perf_counter() - time_start < period
+    viewer.realtime_factor = None
     overlay.interactive_scene.resume()
     scene.step()
     assert mouse._sim_running
+
+    # A reset asked for from the GUI is applied by the next step, which puts the scene back in its initial state and
+    # does not advance it
+    cube.set_pos((0.0, 0.4, 0.5))
+    assert_allclose(cube.get_pos(), (0.0, 0.4, 0.5), tol=gs.EPS)
+    overlay.interactive_scene.reset()
+    scene.step()
+    assert_allclose(cube.get_pos(), cube_init_pos, tol=gs.EPS)
+    assert_allclose(scene.get_time(), 0.0, tol=gs.EPS)
 
     # Disabling detaches it and tears down its interaction state and debug visuals.
     viewer.remove_plugin(mouse)

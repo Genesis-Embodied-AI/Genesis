@@ -18,7 +18,6 @@ import os
 import queue
 import struct
 import threading
-import time
 import zlib
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -37,6 +36,7 @@ from genesis.options.recorders import TrajectoryFile
 from genesis.utils import serialization
 from genesis.utils.array_class import ArrayItem, ConfigItem, DataKind, ScalarItem
 from genesis.utils.misc import data_to_array, tensor_to_array
+from genesis.utils.tools import Rate
 
 from .file_writers import BaseFileWriter
 from .recorder_manager import register_recording
@@ -1262,9 +1262,9 @@ class Trajectory:
         viewer = self._scene.viewer
         if loop and viewer is None:
             gs.raise_exception("Looping a trajectory needs an interactive viewer.")
-        # The viewer holds each redraw to one step of wall time (see ViewerOptions.realtime_factor). A frame spanning
-        # more steps than one, as frames recorded every few steps do, waits for the steps beyond that one as well.
-        is_paced = viewer is not None and viewer.realtime_factor is not None
+        # Frames are paced like the simulation steps they replay (see ViewerOptions.realtime_factor). The factor is read
+        # at every frame because the user can change it from the viewer during the replay.
+        pacer = Rate(1.0 / self._manifest["dt"])
         while True:
             steps_prev = None
             for index in range(len(self)):
@@ -1272,8 +1272,10 @@ class Trajectory:
                 if viewer is not None and not viewer.is_alive():
                     return
                 steps = self.frame(index)[STEPS_FIELD]
-                if is_paced and steps_prev is not None:
-                    time.sleep(max((steps - steps_prev).max() - 1, 0) * self._manifest["dt"] / viewer.realtime_factor)
+                realtime_factor = None if viewer is None else viewer.realtime_factor
+                if realtime_factor is not None:
+                    pacer.period = self._manifest["dt"] / realtime_factor
+                    viewer.sleep(pacer.advance(n_periods=0 if steps_prev is None else (steps - steps_prev).max()))
                 self.seek(index)
                 steps_prev = steps
             if not loop:
