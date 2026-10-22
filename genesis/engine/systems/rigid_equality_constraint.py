@@ -91,10 +91,10 @@ class RigidEqualityConstraint(System):
         return (
             kernel_manual_add_equality_constraints_bw,
             self.data.segment,
-            rigid.dyn_state,
+            rigid.data.dyn_state,
             self.rigid_constraint.data.constraint_state,
-            rigid.dyn_info,
-            rigid.rigid_info,
+            rigid.data.dyn_info,
+            rigid.data.rigid_info,
             rigid.rigid_config,
         )
 
@@ -137,7 +137,7 @@ class RigidEqualityConstraint(System):
                 fout,
                 self.data.segment,
                 constraint_state,
-                self.rigid_dynamics.dyn_info,
+                self.rigid_dynamics.data.dyn_info,
                 self.rigid_dynamics.rigid_config,
                 as_tensor,
             )
@@ -201,7 +201,7 @@ class RigidEqualityConstraint(System):
 
     def add_weld_constraint(self, link1_idx: int, link2_idx: int, envs_idx: EnvIndex = None) -> None:
         rigid = self.rigid_dynamics
-        envs_idx = rigid._scene._sanitize_envs_idx(envs_idx)
+        envs_idx = rigid.scene._sanitize_envs_idx(envs_idx)
         link1_idx, link2_idx = int(link1_idx), int(link2_idx)
 
         assert link1_idx >= 0 and link2_idx >= 0
@@ -217,30 +217,30 @@ class RigidEqualityConstraint(System):
             link1_idx,
             link2_idx,
             envs_idx,
-            rigid.dyn_state,
+            rigid.data.dyn_state,
             self.rigid_constraint.data.constraint_state,
-            rigid.dyn_info,
-            rigid.rigid_info,
+            rigid.data.dyn_info,
+            rigid.data.rigid_info,
             rigid.rigid_config,
         )
         if overflow:
             gs.logger.warning(
                 "Ignoring dynamically registered weld constraint to avoid exceeding max number of equality constraints"
-                f"({rigid.rigid_info.n_candidate_equalities.to_numpy()}). Please increase the value of "
+                f"({rigid.data.rigid_info.n_candidate_equalities.to_numpy()}). Please increase the value of "
                 "RigidSolver's option 'max_dynamic_constraints'."
             )
 
     def delete_weld_constraint(self, link1_idx: int, link2_idx: int, envs_idx: EnvIndex = None) -> None:
         rigid = self.rigid_dynamics
-        envs_idx = rigid._scene._sanitize_envs_idx(envs_idx)
+        envs_idx = rigid.scene._sanitize_envs_idx(envs_idx)
         self.clear_query_cache()
         kernel_delete_weld_constraint(
             int(link1_idx),
             int(link2_idx),
             envs_idx,
             self.rigid_constraint.data.constraint_state,
-            rigid.dyn_info,
-            rigid.rigid_info,
+            rigid.data.dyn_info,
+            rigid.data.rigid_info,
             rigid.rigid_config,
         )
 
@@ -249,7 +249,7 @@ class RigidEqualityConstraint(System):
     def initialize_data(self) -> None:
         """Allocate the segment record and reserve up to 6 rows per candidate equality, a weld taking 6."""
         rigid = self.rigid_dynamics
-        self.data.segment = array_class.get_constraint_row_segment(batch_size=rigid._B)
+        self.data.segment = array_class.get_constraint_row_segment(batch_size=rigid.batch_size)
         self.rigid_constraint.reserve_rows(RowCategory.EQUALITY, 6 * rigid.n_candidate_equalities_)
         self.clear_query_cache()
 

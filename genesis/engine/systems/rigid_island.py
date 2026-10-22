@@ -158,23 +158,23 @@ class RigidIsland(System):
     def initialize_data(self) -> None:
         rigid = self.rigid_dynamics
         island_state = array_class.get_island_state(
-            batch_size=rigid._B,
+            batch_size=rigid.batch_size,
             n_trees=rigid.n_trees_,
             n_links_actual=rigid.n_links,
             n_dofs_actual=rigid.n_dofs,
             rigid_config=rigid.rigid_config,
-            use_hibernation=rigid._use_hibernation,
+            use_hibernation=rigid.use_hibernation,
         )
-        qd_n_equalities = array_class.V(dtype=gs.qd_int, shape=(rigid._B,))
-        qd_n_equalities.from_numpy(np.full((rigid._B,), rigid.n_equalities, dtype=gs.np_int))
+        qd_n_equalities = array_class.V(dtype=gs.qd_int, shape=(rigid.batch_size,))
+        qd_n_equalities.from_numpy(np.full((rigid.batch_size,), rigid.n_equalities, dtype=gs.np_int))
         self.data.island = island_state
         self.data.qd_n_equalities = qd_n_equalities
 
         island_state.links_island_idx.fill(-1)
-        if rigid._use_hibernation:
+        if rigid.use_hibernation:
             island_state.hibernated_next_link.fill(-1)
             if rigid.rigid_config.is_single_island:
-                links_idx = np.flatnonzero(qd_to_numpy(rigid.rigid_info.links_tree_idx) == 0)
+                links_idx = np.flatnonzero(qd_to_numpy(rigid.data.rigid_info.links_tree_idx) == 0)
                 link_id = qd_to_numpy(island_state.link_id)
                 link_id[: len(links_idx)] = links_idx[:, None]
                 island_state.link_id.from_numpy(link_id)

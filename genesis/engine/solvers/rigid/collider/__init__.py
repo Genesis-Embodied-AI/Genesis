@@ -4,7 +4,7 @@ Collider submodule for collision detection.
 Contains broad-phase, narrow-phase, contact management, and geometric algorithms.
 
 Modules:
-- collider: Main Collider class
+- collider: Detection pipeline and the static configuration of the contacts
 - broadphase: AABB and sweep-and-prune algorithms
 - narrowphase: SDF, convex-convex, terrain collision
 - box_contact: Specialized box collision (plane-box, box-box)
@@ -16,7 +16,6 @@ Modules:
 - mpr: Minkowski Portal Refinement
 """
 
-from .collider import Collider
 from .broadphase import *
 from .narrowphase import *
 from .box_contact import *

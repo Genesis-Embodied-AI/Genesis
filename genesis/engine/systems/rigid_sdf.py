@@ -54,7 +54,7 @@ class RigidSdf(System):
         self.data.sdf_config = array_class.SDFStaticConfig(
             has_terrain=any(geom.type == gs.GEOM_TYPE.TERRAIN for geom in geoms)
         )
-        self.data.sdf_info = SDF(geoms, rigid._para_level).sdf_info
+        self.data.sdf_info = SDF(geoms, rigid.para_level).sdf_info
 
 
 @register_system(SimulatorEngine)

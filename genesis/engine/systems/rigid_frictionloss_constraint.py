@@ -79,10 +79,10 @@ class RigidFrictionLossConstraint(System):
         return (
             kernel_manual_add_frictionloss_constraints_bw,
             self.data.segment,
-            rigid.dyn_state,
+            rigid.data.dyn_state,
             self.rigid_constraint.data.constraint_state,
-            rigid.dyn_info,
-            rigid.rigid_info,
+            rigid.data.dyn_info,
+            rigid.data.rigid_info,
             rigid.rigid_config,
         )
 
@@ -98,7 +98,7 @@ class RigidFrictionLossConstraint(System):
         The rows of the dofs with frictionloss follow one another in dof order from the start of the segment.
         """
         rigid = self.rigid_dynamics
-        if rigid._options.batch_dofs_info:
+        if rigid.options.batch_dofs_info:
             frictionloss = qd_to_torch(rigid.data.dyn_info.dofs.frictionloss, envs_idx, transpose=True)
         else:
             frictionloss = qd_to_torch(rigid.data.dyn_info.dofs.frictionloss, transpose=True)
@@ -114,7 +114,7 @@ class RigidFrictionLossConstraint(System):
     def initialize_data(self) -> None:
         """Allocate the segment record and reserve one row per dof."""
         rigid = self.rigid_dynamics
-        self.data.segment = array_class.get_constraint_row_segment(batch_size=rigid._B)
+        self.data.segment = array_class.get_constraint_row_segment(batch_size=rigid.batch_size)
         self.rigid_constraint.reserve_rows(RowCategory.FRICTIONLOSS, rigid.n_dofs)
 
 

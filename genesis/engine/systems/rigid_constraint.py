@@ -246,7 +246,7 @@ class RigidConstraint(System):
                 torch.mps.synchronize()
             return
 
-        envs_idx = self.rigid_dynamics._scene._sanitize_envs_idx(envs_idx)
+        envs_idx = self.rigid_dynamics.scene._sanitize_envs_idx(envs_idx)
         constraint_solver_kernel_reset(envs_idx, self.data.constraint_state, self.rigid_dynamics.rigid_config)
 
     def clear(self, envs_idx: EnvIndex = None) -> None:
@@ -267,7 +267,7 @@ class RigidConstraint(System):
                 )
             )
             qd_n_equalities = qd_to_torch(constraint_state.qd_n_equalities, copy=False)
-            n_eq = self.rigid_dynamics._n_equalities
+            n_eq = self.rigid_dynamics.n_equalities
             if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
                 for counter in counters:
                     counter.masked_fill_(envs_idx, 0)
@@ -286,7 +286,7 @@ class RigidConstraint(System):
             return
 
         if not isinstance(envs_idx, torch.Tensor):
-            envs_idx = self.rigid_dynamics._scene._sanitize_envs_idx(envs_idx)
+            envs_idx = self.rigid_dynamics.scene._sanitize_envs_idx(envs_idx)
         if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
             fn = constraint_solver_kernel_masked_clear
         else:
@@ -294,7 +294,7 @@ class RigidConstraint(System):
         fn(
             envs_idx,
             self.data.constraint_state,
-            self.rigid_dynamics.rigid_info,
+            self.rigid_dynamics.data.rigid_info,
             self.rigid_dynamics.rigid_config,
         )
 
@@ -303,19 +303,21 @@ class RigidConstraint(System):
 
         The caller must pre-populate the upstream gradient constraint_state.dL_dqacc (see
         RigidSolver._constraint_force_grad)."""
-        if not self.rigid_dynamics._requires_grad:
+        if not self.rigid_dynamics.requires_grad:
             gs.raise_exception("Please set `requires_grad` to True in SimOptions to enable differentiable mode.")
 
         # 1. We first need to find a solution to A^T * u = g system.
         backward_constraint_solver.kernel_solve_adjoint_u(
             self.data.constraint_state,
-            self.rigid_dynamics.dyn_info,
-            self.rigid_dynamics.rigid_info,
+            self.rigid_dynamics.data.dyn_info,
+            self.rigid_dynamics.data.rigid_info,
             self.rigid_dynamics.rigid_config,
         )
 
         # 2. Using the solution u, we can compute the gradients of the input variables.
-        backward_constraint_solver.kernel_compute_gradients(self.data.constraint_state, self.rigid_dynamics.rigid_info)
+        backward_constraint_solver.kernel_compute_gradients(
+            self.data.constraint_state, self.rigid_dynamics.data.rigid_info
+        )
 
     # -------------------------------- Implementation --------------------------------
 
@@ -329,23 +331,23 @@ class RigidConstraint(System):
         # The elliptic cone groups are the contact rows, which size its previous-residual cache
         self.n_cone_constraints_ = max(1, self._row_capacity[RowCategory.CONTACT])
         self.sparse_solve = rigid.rigid_config.sparse_solve
-        self.n_iterations = int(rigid._options.iterations)
+        self.n_iterations = int(rigid.options.iterations)
         self.data.constraint_state = array_class.get_constraint_state(
-            batch_size=rigid._B,
+            batch_size=rigid.batch_size,
             n_dofs=rigid.n_dofs_,
             n_trees=rigid.n_trees_,
             links=rigid.links,
-            requires_grad=rigid._requires_grad,
-            noslip_iterations=rigid._options.noslip_iterations,
+            requires_grad=rigid.requires_grad,
+            noslip_iterations=rigid.options.noslip_iterations,
             rigid_config=rigid.rigid_config,
-            rigid_info=rigid.rigid_info,
+            rigid_info=rigid.data.rigid_info,
             len_constraints=self.len_constraints_,
             n_cone_constraints=self.n_cone_constraints_,
             sparse_solve=self.sparse_solve,
             island_state=self.rigid_island.data.island,
             qd_n_equalities=self.rigid_island.data.qd_n_equalities,
         )
-        self.data.noslip = rigid._options.noslip_iterations > 0
+        self.data.noslip = rigid.options.noslip_iterations > 0
         self.reset()
 
     def solve_constraints(self) -> None:
@@ -365,7 +367,7 @@ class RigidConstraint(System):
         rigid = self.rigid_dynamics
         constraint_state = self.data.constraint_state
         if gs.use_zerocopy:
-            acc_grad = qd_to_torch(rigid.dyn_state.dofs.acc.grad, copy=False)
+            acc_grad = qd_to_torch(rigid.data.dyn_state.dofs.acc.grad, copy=False)
             dL_dqacc = qd_to_torch(constraint_state.dL_dqacc, copy=False)
             dL_dqacc.copy_(acc_grad)
             acc_grad.zero_()
@@ -373,7 +375,7 @@ class RigidConstraint(System):
                 torch.mps.synchronize()
         else:
             backward_constraint_solver.kernel_load_dL_dqacc_from_acc_grad(
-                rigid.dyn_state,
+                rigid.data.dyn_state,
                 constraint_state,
                 rigid.rigid_config,
             )
@@ -381,19 +383,19 @@ class RigidConstraint(System):
         self.backward()
 
         if gs.use_zerocopy:
-            force_grad = qd_to_torch(rigid.dyn_state.dofs.force.grad, copy=False)
+            force_grad = qd_to_torch(rigid.data.dyn_state.dofs.force.grad, copy=False)
             dL_dforce = qd_to_torch(constraint_state.dL_dforce, copy=False)
             force_grad.add_(dL_dforce)
-            mass_mat_grad = qd_to_torch(rigid.rigid_info.mass_mat.grad, copy=False)
+            mass_mat_grad = qd_to_torch(rigid.data.rigid_info.mass_mat.grad, copy=False)
             dL_dM = qd_to_torch(constraint_state.dL_dM, copy=False)
             mass_mat_grad.add_(dL_dM)
             if gs.backend == gs.metal:
                 torch.mps.synchronize()
         else:
             backward_constraint_solver.kernel_accumulate_constraint_solver_grads(
-                rigid.dyn_state,
+                rigid.data.dyn_state,
                 constraint_state,
-                rigid.rigid_info,
+                rigid.data.rigid_info,
                 rigid.rigid_config,
             )
 

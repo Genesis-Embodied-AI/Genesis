@@ -114,9 +114,9 @@ class RigidContactConstraint(System):
         keeps, which are also the rows of the elliptic cone groups."""
         rigid = self.rigid_dynamics
         max_contacts = self.rigid_rigid_contact.get_max_contacts()
-        self.data.segment = array_class.get_constraint_row_segment(batch_size=rigid._B)
+        self.data.segment = array_class.get_constraint_row_segment(batch_size=rigid.batch_size)
         self.data.reorder = array_class.get_island_reorder_state(
-            batch_size=rigid._B,
+            batch_size=rigid.batch_size,
             n_trees=rigid.n_trees_,
             max_contacts=max_contacts,
             rigid_config=rigid.rigid_config,
@@ -129,11 +129,11 @@ class RigidContactConstraint(System):
         self.rigid_rigid_contact.clear_backward_input_grads()
         kernel_manual_add_collision_constraints_bw(
             self.data.segment,
-            rigid.dyn_state,
+            rigid.data.dyn_state,
             self.rigid_rigid_contact.data.collider_state,
             self.rigid_constraint.data.constraint_state,
-            rigid.dyn_info,
-            rigid.rigid_info,
+            rigid.data.dyn_info,
+            rigid.data.rigid_info,
             rigid.rigid_config,
         )
         self.rigid_rigid_contact.backward_narrowphase()

@@ -238,12 +238,37 @@ class RigidDynamics(System):
     def batch_size(self) -> int:
         return self._B
 
-    def get_n_candidate_equalities(self) -> int:
-        return self.n_candidate_equalities_
+    @property
+    def para_level(self) -> int:
+        return self._para_level
 
     @property
-    def weight_scratch(self) -> array_class.WeightScratch:
-        return self.data.weight_scratch
+    def use_hibernation(self) -> bool:
+        """Whether hibernation is active: requested by the options and not disabled by differentiation."""
+        return self._use_hibernation
+
+    @property
+    def enable_heterogeneous(self) -> bool:
+        """Whether some entity simulates a different variant per environment."""
+        return self._enable_heterogeneous
+
+    @property
+    def articulated_links_idx(self) -> NDArray[np.integer]:
+        """The global indices of the links that carry a degree of freedom."""
+        return self._articulated_links_idx
+
+    @property
+    def links_parent_idx(self) -> NDArray[np.integer]:
+        """The global index of the parent of every link, -1 for a root."""
+        return self._links_parent_idx
+
+    @property
+    def vfaces_raycast_mask(self) -> torch.Tensor:
+        """The static mask of the visual faces that visual raycasting considers."""
+        return self._vfaces_raycast_mask
+
+    def get_n_candidate_equalities(self) -> int:
+        return self.n_candidate_equalities_
 
     def refresh_invweight_and_meaninertia(
         self,
@@ -267,16 +292,16 @@ class RigidDynamics(System):
             )
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
 
-        jac_row = self.weight_scratch.jac_row
-        solve_out = self.weight_scratch.solve_out
+        jac_row = self.data.weight_scratch.jac_row
+        solve_out = self.data.weight_scratch.solve_out
         kernel_refresh_invweight_and_meaninertia(
             envs_idx,
             jac_row,
             solve_out,
-            self.dyn_state,
+            self.data.dyn_state,
             self.rigid_island.data.island,
-            self.dyn_info,
-            self.rigid_info,
+            self.data.dyn_info,
+            self.data.rigid_info,
             self.rigid_config,
             force_update,
             self._is_forward_pos_updated,
@@ -288,9 +313,9 @@ class RigidDynamics(System):
             return
         kernel_forward_kinematics_links_geoms(
             self._scene._envs_idx,
-            self.dyn_state,
-            self.dyn_info,
-            self.rigid_info,
+            self.data.dyn_state,
+            self.data.dyn_info,
+            self.data.rigid_info,
             self.rigid_config,
         )
         self._is_forward_pos_updated = True
@@ -301,7 +326,7 @@ class RigidDynamics(System):
             fn = kernel_masked_forward_kinematics_links_geoms
         else:
             fn = kernel_forward_kinematics_links_geoms
-        fn(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
+        fn(envs_idx, self.data.dyn_state, self.data.dyn_info, self.data.rigid_info, self.rigid_config)
         self._is_forward_pos_updated = True
         self._is_forward_vel_updated = True
 
@@ -311,7 +336,14 @@ class RigidDynamics(System):
             fn = kernel_masked_forward_velocity
         else:
             fn = kernel_forward_velocity
-        fn(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, is_backward=False)
+        fn(
+            envs_idx,
+            self.data.dyn_state,
+            self.data.dyn_info,
+            self.data.rigid_info,
+            self.rigid_config,
+            is_backward=False,
+        )
         self._is_forward_vel_updated = True
 
     def invalidate_forward_velocity(self) -> None:
@@ -326,9 +358,9 @@ class RigidDynamics(System):
             envs_idx,
             self.data.weight_scratch.jac_row,
             self.data.weight_scratch.solve_out,
-            self.dyn_state,
-            self.dyn_info,
-            self.rigid_info,
+            self.data.dyn_state,
+            self.data.dyn_info,
+            self.data.rigid_info,
             self.rigid_config,
             self._is_forward_pos_updated,
             self._is_forward_vel_updated and moves_com,
@@ -348,10 +380,10 @@ class RigidDynamics(System):
 
     def read_errno(self) -> int:
         if gs.use_zerocopy:
-            return int(np.bitwise_or.reduce(qd_to_numpy(self._errno)))
+            return int(np.bitwise_or.reduce(qd_to_numpy(self.data.errno)))
         from genesis.engine.solvers.rigid.abd.misc import kernel_bit_reduction
 
-        return int(kernel_bit_reduction(self._errno))
+        return int(kernel_bit_reduction(self.data.errno))
 
     def add_grad_from_state(self, state: RigidSolverState) -> None:
         qpos_grad = gs.zeros_like(state.qpos)
@@ -373,8 +405,8 @@ class RigidDynamics(System):
             dofs_vel_grad,
             links_pos_grad,
             links_quat_grad,
-            self.dyn_state,
-            self.rigid_info,
+            self.data.dyn_state,
+            self.data.rigid_info,
             self.rigid_config,
         )
 
@@ -420,7 +452,13 @@ class RigidDynamics(System):
         if self.n_envs == 0:
             pos_grad_ = pos_grad_.unsqueeze(0)
         kernel_set_links_pos_grad(
-            links_idx, envs_idx, pos_grad_, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
+            links_idx,
+            envs_idx,
+            pos_grad_,
+            self.data.dyn_state,
+            self.data.dyn_info,
+            self.data.rigid_info,
+            self.rigid_config,
         )
 
     def set_base_links_quat_grad(
@@ -457,7 +495,13 @@ class RigidDynamics(System):
         if self.n_envs == 0:
             quat_grad_ = quat_grad_.unsqueeze(0)
         kernel_set_links_quat_grad(
-            links_idx, envs_idx, quat_grad_, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
+            links_idx,
+            envs_idx,
+            quat_grad_,
+            self.data.dyn_state,
+            self.data.dyn_info,
+            self.data.rigid_info,
+            self.rigid_config,
         )
 
     def set_dofs_velocity_grad(self, dofs_idx: IndexLike, envs_idx: IndexLike, velocity_grad: torch.Tensor) -> None:
@@ -466,7 +510,7 @@ class RigidDynamics(System):
         )
         if self.n_envs == 0:
             velocity_grad_ = velocity_grad_.unsqueeze(0)
-        kernel_set_dofs_velocity_grad(dofs_idx, envs_idx, velocity_grad_, self.dyn_state, self.rigid_config)
+        kernel_set_dofs_velocity_grad(dofs_idx, envs_idx, velocity_grad_, self.data.dyn_state, self.rigid_config)
 
     def set_dofs_force_grad(self, dofs_idx: IndexLike, envs_idx: IndexLike, force_grad: torch.Tensor) -> None:
         force_grad_, dofs_idx, envs_idx = sanitize_io_variables(
@@ -474,18 +518,18 @@ class RigidDynamics(System):
         )
         if self.n_envs == 0:
             force_grad_ = force_grad_.unsqueeze(0)
-        kernel_set_dofs_force_grad(dofs_idx, envs_idx, force_grad_, self.dyn_state, self.rigid_config)
+        kernel_set_dofs_force_grad(dofs_idx, envs_idx, force_grad_, self.data.dyn_state, self.rigid_config)
 
     def clear_external_force(self) -> None:
         if gs.use_zerocopy:
-            for tensor in (self.dyn_state.links.cfrc_applied_ang, self.dyn_state.links.cfrc_applied_vel):
+            for tensor in (self.data.dyn_state.links.cfrc_applied_ang, self.data.dyn_state.links.cfrc_applied_vel):
                 out = qd_to_torch(tensor, copy=False)
                 out.zero_()
             if gs.backend == gs.metal:
                 torch.mps.synchronize()
             return
 
-        kernel_clear_external_force(self.dyn_state, self.rigid_info, self.rigid_config)
+        kernel_clear_external_force(self.data.dyn_state, self.data.rigid_info, self.rigid_config)
 
     def reset_grad(self) -> None:
         # Rigid additionally owns `geoms_state`, `entities_state`, and the `*_adjoint_cache` structs written by the
@@ -493,13 +537,13 @@ class RigidDynamics(System):
         # so they must start at zero between consecutive `loss.backward()`s.
         self._reset_kinematic_grad()
         if self._requires_grad:
-            qd_zero_grad(self.dyn_state.geoms)
-            qd_zero_grad(self.dyn_state.entities)
-            qd_zero_grad(self.dyn_state_adjoint_cache.dofs)
-            qd_zero_grad(self.dyn_state_adjoint_cache.links)
-            qd_zero_grad(self.dyn_state_adjoint_cache.joints)
-            qd_zero_grad(self.dyn_state_adjoint_cache.geoms)
-            qd_zero_grad(self._rigid_adjoint_cache)
+            qd_zero_grad(self.data.dyn_state.geoms)
+            qd_zero_grad(self.data.dyn_state.entities)
+            qd_zero_grad(self.data.dyn_state_adjoint_cache.dofs)
+            qd_zero_grad(self.data.dyn_state_adjoint_cache.links)
+            qd_zero_grad(self.data.dyn_state_adjoint_cache.joints)
+            qd_zero_grad(self.data.dyn_state_adjoint_cache.geoms)
+            qd_zero_grad(self.data.rigid_adjoint_cache)
             # One flush for the zeroing batch; see qd_zero_grad in misc.py.
             if gs.use_zerocopy and gs.backend == gs.metal:
                 torch.mps.synchronize()
@@ -524,15 +568,15 @@ class RigidDynamics(System):
             state.links_pos,
             state.links_quat,
             state.friction_ratio,
-            self.dyn_state,
-            self.rigid_info,
+            self.data.dyn_state,
+            self.data.rigid_info,
             self.rigid_config,
         )
         self._queried_states.append(state)
         return state
 
     def discard_queried_state(self, state: RigidSolverState) -> None:
-        """Forget a state 'get_state' returned, once the scene state holding it is dropped."""
+        """Forget a state 'get_state' returned, which the Simulator tracks through the scene state holding it instead."""
         self._queried_states.discard(state)
 
     def set_state(
@@ -548,32 +592,34 @@ class RigidDynamics(System):
             and gs.use_zerocopy
             and (not isinstance(envs_idx, torch.Tensor) or (not IS_OLD_TORCH or envs_idx.dtype == torch.bool))
         ):
-            errno = qd_to_torch(self._errno, copy=False)
-            qpos_dst = qd_to_torch(self.rigid_info.qpos, transpose=True, copy=False)
-            vel_dst = qd_to_torch(self.dyn_state.dofs.vel, transpose=True, copy=False)
-            acc_dst = qd_to_torch(self.dyn_state.dofs.acc, transpose=True, copy=False)
-            ctrl_force_dst = qd_to_torch(self.dyn_state.dofs.ctrl_force, transpose=True, copy=False)
-            ctrl_mode_dst = qd_to_torch(self.dyn_state.dofs.ctrl_mode, transpose=True, copy=False)
-            pos_dst = qd_to_torch(self.dyn_state.links.pos, transpose=True, copy=False)
-            quat_dst = qd_to_torch(self.dyn_state.links.quat, transpose=True, copy=False)
-            cfrc_vel_dst = qd_to_torch(self.dyn_state.links.cfrc_applied_vel, transpose=True, copy=False)
-            cfrc_ang_dst = qd_to_torch(self.dyn_state.links.cfrc_applied_ang, transpose=True, copy=False)
-            fric_dst = qd_to_torch(self.dyn_state.geoms.friction_ratio, transpose=True, copy=False)
+            errno = qd_to_torch(self.data.errno, copy=False)
+            qpos_dst = qd_to_torch(self.data.rigid_info.qpos, transpose=True, copy=False)
+            vel_dst = qd_to_torch(self.data.dyn_state.dofs.vel, transpose=True, copy=False)
+            acc_dst = qd_to_torch(self.data.dyn_state.dofs.acc, transpose=True, copy=False)
+            ctrl_force_dst = qd_to_torch(self.data.dyn_state.dofs.ctrl_force, transpose=True, copy=False)
+            ctrl_mode_dst = qd_to_torch(self.data.dyn_state.dofs.ctrl_mode, transpose=True, copy=False)
+            pos_dst = qd_to_torch(self.data.dyn_state.links.pos, transpose=True, copy=False)
+            quat_dst = qd_to_torch(self.data.dyn_state.links.quat, transpose=True, copy=False)
+            cfrc_vel_dst = qd_to_torch(self.data.dyn_state.links.cfrc_applied_vel, transpose=True, copy=False)
+            cfrc_ang_dst = qd_to_torch(self.data.dyn_state.links.cfrc_applied_ang, transpose=True, copy=False)
+            fric_dst = qd_to_torch(self.data.dyn_state.geoms.friction_ratio, transpose=True, copy=False)
             # Setting the state is a discontinuity: wake every body in the affected envs (a body left hibernated would
             # stay frozen), restoring the flags and the awake-dof count alongside the other state buffers.
             if self._use_hibernation:
-                links_hibernated_dst = qd_to_torch(self.dyn_state.links.is_hibernated, transpose=True, copy=False)
-                awake_steps_dst = qd_to_torch(self.dyn_state.links.awake_steps, transpose=True, copy=False)
-                dofs_hibernated_dst = qd_to_torch(self.dyn_state.dofs.is_hibernated, transpose=True, copy=False)
-                geoms_hibernated_dst = qd_to_torch(self.dyn_state.geoms.is_hibernated, transpose=True, copy=False)
-                entities_hibernated_dst = qd_to_torch(self.dyn_state.entities.is_hibernated, transpose=True, copy=False)
+                links_hibernated_dst = qd_to_torch(self.data.dyn_state.links.is_hibernated, transpose=True, copy=False)
+                awake_steps_dst = qd_to_torch(self.data.dyn_state.links.awake_steps, transpose=True, copy=False)
+                dofs_hibernated_dst = qd_to_torch(self.data.dyn_state.dofs.is_hibernated, transpose=True, copy=False)
+                geoms_hibernated_dst = qd_to_torch(self.data.dyn_state.geoms.is_hibernated, transpose=True, copy=False)
+                entities_hibernated_dst = qd_to_torch(
+                    self.data.dyn_state.entities.is_hibernated, transpose=True, copy=False
+                )
                 islands_hibernated_dst = qd_to_torch(
                     self.rigid_island.data.island.is_hibernated, transpose=True, copy=False
                 )
                 islands_next_link_dst = qd_to_torch(
                     self.rigid_island.data.island.hibernated_next_link, transpose=True, copy=False
                 )
-                n_awake_dofs_dst = qd_to_torch(self.rigid_info.n_awake_dofs, copy=False)
+                n_awake_dofs_dst = qd_to_torch(self.data.rigid_info.n_awake_dofs, copy=False)
 
             if envs_idx is not None and not isinstance(envs_idx, torch.Tensor):
                 (envs_idx,) = indices_to_mask(envs_idx)
@@ -633,7 +679,7 @@ class RigidDynamics(System):
                 torch.mps.synchronize()
         else:
             envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-            kernel_set_zero(envs_idx, self._errno)
+            kernel_set_zero(envs_idx, self.data.errno)
             kernel_set_state(
                 envs_idx,
                 state.qpos,
@@ -642,17 +688,17 @@ class RigidDynamics(System):
                 state.links_pos,
                 state.links_quat,
                 state.friction_ratio,
-                self.dyn_state,
-                self.rigid_info,
+                self.data.dyn_state,
+                self.data.rigid_info,
                 self.rigid_config,
             )
             if self._use_hibernation:
                 kernel_reset_hibernation(
                     envs_idx,
-                    self.dyn_state,
+                    self.data.dyn_state,
                     self.rigid_island.data.island,
-                    self.dyn_info,
-                    self.rigid_info,
+                    self.data.dyn_info,
+                    self.data.rigid_info,
                     self.rigid_config,
                 )
 
@@ -663,7 +709,7 @@ class RigidDynamics(System):
                 fn = kernel_masked_forward_kinematics_links_geoms
             else:
                 fn = kernel_forward_kinematics_links_geoms
-            fn(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
+            fn(envs_idx, self.data.dyn_state, self.data.dyn_info, self.data.rigid_info, self.rigid_config)
             self._is_forward_pos_updated = True
             self._is_forward_vel_updated = True
         else:
@@ -692,18 +738,18 @@ class RigidDynamics(System):
 
             # copy=True required: with the zerocopy backend qd_to_numpy returns a view, so later substeps would
             # overwrite this ckpt's buffer in place.
-            self._ckpt[ckpt_name]["qpos"] = qd_to_numpy(self._rigid_adjoint_cache.qpos, copy=True)
-            self._ckpt[ckpt_name]["dofs_vel"] = qd_to_numpy(self._rigid_adjoint_cache.dofs_vel, copy=True)
-            self._ckpt[ckpt_name]["dofs_acc"] = qd_to_numpy(self._rigid_adjoint_cache.dofs_acc, copy=True)
+            self._ckpt[ckpt_name]["qpos"] = qd_to_numpy(self.data.rigid_adjoint_cache.qpos, copy=True)
+            self._ckpt[ckpt_name]["dofs_vel"] = qd_to_numpy(self.data.rigid_adjoint_cache.dofs_vel, copy=True)
+            self._ckpt[ckpt_name]["dofs_acc"] = qd_to_numpy(self.data.rigid_adjoint_cache.dofs_acc, copy=True)
 
             for entity in self.entities:
                 entity.save_ckpt(ckpt_name)
 
     def load_ckpt(self, ckpt_name: str) -> None:
         # Set first frame
-        self.rigid_info.qpos.from_numpy(self._ckpt[ckpt_name]["qpos"][0])
-        self.dyn_state.dofs.vel.from_numpy(self._ckpt[ckpt_name]["dofs_vel"][0])
-        self.dyn_state.dofs.acc.from_numpy(self._ckpt[ckpt_name]["dofs_acc"][0])
+        self.data.rigid_info.qpos.from_numpy(self._ckpt[ckpt_name]["qpos"][0])
+        self.data.dyn_state.dofs.vel.from_numpy(self._ckpt[ckpt_name]["dofs_vel"][0])
+        self.data.dyn_state.dofs.acc.from_numpy(self._ckpt[ckpt_name]["dofs_acc"][0])
 
         if not self._enable_mujoco_compatibility:
             # Mirror the post-integrate refresh of kernel_step_2: the replayed substeps skip their own cartesian /
@@ -711,18 +757,18 @@ class RigidDynamics(System):
             # from the restored qpos / vel. A stale link velocity would corrupt the velocity-product terms of every
             # backward primal in the window.
             kernel_update_cartesian_space(
-                self.dyn_state,
-                self.dyn_info,
-                self.rigid_info,
+                self.data.dyn_state,
+                self.data.dyn_info,
+                self.data.rigid_info,
                 self.rigid_config,
                 force_update_all_geoms=False,
                 is_backward=False,
             )
             kernel_forward_velocity(
                 self._scene._sanitize_envs_idx(None),
-                self.dyn_state,
-                self.dyn_info,
-                self.rigid_info,
+                self.data.dyn_state,
+                self.data.dyn_info,
+                self.data.rigid_info,
                 self.rigid_config,
                 is_backward=False,
             )
@@ -735,11 +781,11 @@ class RigidDynamics(System):
         self._is_backward = True
         kernel_prepare_backward_substep(
             f,
-            self.dyn_state,
-            self.dyn_state_adjoint_cache,
-            self._rigid_adjoint_cache,
-            self.dyn_info,
-            self.rigid_info,
+            self.data.dyn_state,
+            self.data.dyn_state_adjoint_cache,
+            self.data.rigid_adjoint_cache,
+            self.data.dyn_info,
+            self.data.rigid_info,
             self.rigid_config,
         )
 
@@ -749,16 +795,16 @@ class RigidDynamics(System):
         if not self._enable_mujoco_compatibility:
             # The FK backward below builds its Jacobian at the post-integrate qpos / vel, so copy the integrator's
             # _next outputs into the current slots first.
-            kernel_copy_next_to_curr_no_check(self.dyn_state, self.rigid_info, self.rigid_config)
+            kernel_copy_next_to_curr_no_check(self.data.dyn_state, self.data.rigid_info, self.rigid_config)
             self._update_cartesian_grad(envs_idx)
 
         is_grad_valid = kernel_begin_backward_substep(
             f,
-            self.dyn_state,
-            self.dyn_state_adjoint_cache,
-            self._rigid_adjoint_cache,
-            self.dyn_info,
-            self.rigid_info,
+            self.data.dyn_state,
+            self.data.dyn_state_adjoint_cache,
+            self.data.rigid_adjoint_cache,
+            self.data.dyn_info,
+            self.data.rigid_info,
             self.rigid_config,
         )
         if not is_grad_valid:
@@ -772,18 +818,18 @@ class RigidDynamics(System):
 
     def _reverse_smooth_acceleration(self) -> None:
         """Reverse the unconstrained acceleration solve when no Constraint System exists."""
-        kernel_manual_compute_qacc_bw(self.dyn_state, self.rigid_info, self.rigid_config)
+        kernel_manual_compute_qacc_bw(self.data.dyn_state, self.data.rigid_info, self.rigid_config)
 
     def _reverse_forward_dynamics(self, f: int) -> None:
         """Reverse forward dynamics and restore forward execution mode."""
         envs_idx = self._scene._sanitize_envs_idx(None)
-        kernel_copy_acc(f, self.dyn_state, self._rigid_adjoint_cache, self.rigid_config)
+        kernel_copy_acc(f, self.data.dyn_state, self.data.rigid_adjoint_cache, self.rigid_config)
 
         kernel_forward_dynamics_without_qacc.grad(
-            self.dyn_state,
+            self.data.dyn_state,
             self.rigid_island.data.island,
-            self.dyn_info,
-            self.rigid_info,
+            self.data.dyn_info,
+            self.data.rigid_info,
             self.rigid_config,
             is_backward=True,
         )
@@ -800,17 +846,17 @@ class RigidDynamics(System):
     def compute_forward_dynamics(self) -> None:
         """Compute the unconstrained accelerations on the host, outside the substep pipeline."""
         kernel_forward_dynamics(
-            self.dyn_state,
+            self.data.dyn_state,
             self.rigid_island.data.island,
-            self.dyn_info,
-            self.rigid_info,
+            self.data.dyn_info,
+            self.data.rigid_info,
             self.rigid_config,
             False,
         )
 
     def update_acceleration(self) -> None:
         """Update the cartesian accelerations from the dof accelerations on the host, outside the substep pipeline."""
-        kernel_update_acc(self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
+        kernel_update_acc(self.data.dyn_state, self.data.dyn_info, self.data.rigid_info, self.rigid_config)
 
     def _update_cartesian_grad(self, envs_idx: torch.Tensor) -> None:
         """Forward-replay the post-integrate cartesian-space update (FK -> COM -> geom poses -> velocity) under
@@ -822,22 +868,28 @@ class RigidDynamics(System):
         """
         # Forward replay in dependency order (FK -> COM -> geoms -> velocity).
         kernel_forward_kinematics_replay(
-            envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, is_backward=True
+            envs_idx, self.data.dyn_state, self.data.dyn_info, self.data.rigid_info, self.rigid_config, is_backward=True
         )
-        kernel_COM_links_replay(self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
-        kernel_update_geoms_replay(self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, is_backward=True)
+        kernel_COM_links_replay(self.data.dyn_state, self.data.dyn_info, self.data.rigid_info, self.rigid_config)
+        kernel_update_geoms_replay(
+            self.data.dyn_state, self.data.dyn_info, self.data.rigid_info, self.rigid_config, is_backward=True
+        )
         kernel_forward_velocity(
-            envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, is_backward=True
+            envs_idx, self.data.dyn_state, self.data.dyn_info, self.data.rigid_info, self.rigid_config, is_backward=True
         )
 
         # Reverse the stages: velocity first, forward kinematics last. COM and geoms both consume only FK
         # outputs, so their mutual order is free.
-        kernel_manual_forward_velocity_bw(self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
-        kernel_COM_links_replay.grad(self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
-        kernel_update_geoms_replay.grad(
-            self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, is_backward=True
+        kernel_manual_forward_velocity_bw(
+            self.data.dyn_state, self.data.dyn_info, self.data.rigid_info, self.rigid_config
         )
-        kernel_manual_forward_kinematics_bw(self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
+        kernel_COM_links_replay.grad(self.data.dyn_state, self.data.dyn_info, self.data.rigid_info, self.rigid_config)
+        kernel_update_geoms_replay.grad(
+            self.data.dyn_state, self.data.dyn_info, self.data.rigid_info, self.rigid_config, is_backward=True
+        )
+        kernel_manual_forward_kinematics_bw(
+            self.data.dyn_state, self.data.dyn_info, self.data.rigid_info, self.rigid_config
+        )
 
     def collect_model(self) -> None:
         """Collect the authored Rigid entities from Scene and compile their host self."""
@@ -968,21 +1020,14 @@ class RigidDynamics(System):
     def initialize_data(self) -> None:
         """Allocate and initialize the rigid data, which the solver forwards to from here on."""
         self._create_data()
-        self._init_dof_fields(self.dyn_state, self.dyn_info, self.rigid_info)
-        self._init_vvert_fields(self.dyn_info)
-        self._init_vgeom_fields(self.dyn_info)
-        self._init_link_fields(self.dyn_state, self.dyn_info, self.rigid_info)
-        self.qpos = self.rigid_info.qpos
-        self.qpos0 = self.rigid_info.qpos0
-        self.links_T = self.rigid_info.links_T
-        self._init_tree_fields(self.rigid_info)
-        self.mass_mat = self.rigid_info.mass_mat
-        self.mass_mat_L = self.rigid_info.mass_mat_L
-        self.mass_mat_D_inv = self.rigid_info.mass_mat_D_inv
-        self.meaninertia = self.rigid_info.meaninertia
-        self._init_entity_fields(self.dyn_state, self.dyn_info, self.rigid_info)
-        self._vfaces_raycast_mask = self._init_vfaces_raycast_mask(self.dyn_info)
-        self._init_vverts_state(self.dyn_state, self.dyn_info)
+        self._init_dof_fields(self.data.dyn_state, self.data.dyn_info, self.data.rigid_info)
+        self._init_vvert_fields(self.data.dyn_info)
+        self._init_vgeom_fields(self.data.dyn_info)
+        self._init_link_fields(self.data.dyn_state, self.data.dyn_info, self.data.rigid_info)
+        self._init_tree_fields(self.data.rigid_info)
+        self._init_entity_fields(self.data.dyn_state, self.data.dyn_info, self.data.rigid_info)
+        self._vfaces_raycast_mask = self._init_vfaces_raycast_mask(self.data.dyn_info)
+        self._init_vverts_state(self.data.dyn_state, self.data.dyn_info)
         self._init_dynamics()
 
     def get_forward_update_flags(self) -> tuple[bool, bool]:
@@ -993,7 +1038,9 @@ class RigidDynamics(System):
         self._is_forward_vel_updated = False
 
     def _save_adjoint_cache(self, f: int) -> None:
-        kernel_save_adjoint_cache(f, self.dyn_state, self._rigid_adjoint_cache, self.rigid_info, self.rigid_config)
+        kernel_save_adjoint_cache(
+            f, self.data.dyn_state, self.data.rigid_adjoint_cache, self.data.rigid_info, self.rigid_config
+        )
 
     def get_forward_kernel_args(self) -> tuple[bool, bool, bool]:
         return self._is_forward_pos_updated, self._is_forward_vel_updated, self._is_backward
@@ -1007,10 +1054,10 @@ class RigidDynamics(System):
         return self._is_backward
 
     def update_velocity_for_coupling(self) -> None:
-        update_qvel(self.dyn_state, self.rigid_info, self.rigid_config)
+        update_qvel(self.data.dyn_state, self.data.rigid_info, self.rigid_config)
 
     def update_acceleration_after_coupling(self) -> None:
-        update_qacc_from_qvel_delta(self.dyn_state, self.rigid_info, self.rigid_config)
+        update_qacc_from_qvel_delta(self.data.dyn_state, self.data.rigid_info, self.rigid_config)
 
     def _mark_forward_updated(self) -> None:
         """Record that the integration has updated the cartesian space and the velocities the next substep starts
@@ -1460,18 +1507,9 @@ class RigidDynamics(System):
         self.data.dyn_state_adjoint_cache = dyn_state_adjoint_cache
         self.data.errno = errno
 
-        self._errno = self.data.errno
-        self.rigid_info = self.data.rigid_info
-        self._rigid_adjoint_cache = self.data.rigid_adjoint_cache
-        self.dyn_info = self.data.dyn_info
-        self.dyn_state = self.data.dyn_state
-        if self._use_hibernation:
-            self.n_awake_dofs = self.rigid_info.n_awake_dofs
-        if self._requires_grad:
-            self.dyn_state_adjoint_cache = self.data.dyn_state_adjoint_cache
-
-        self._gravity = self.rigid_info.gravity
-        self._gravity.from_numpy(np.tile(np.array(self._options.gravity, dtype=gs.np_float), (self._B, 1)))
+        self.data.rigid_info.gravity.from_numpy(
+            np.tile(np.array(self._options.gravity, dtype=gs.np_float), (self._B, 1))
+        )
 
     def _init_tree_fields(self, rigid_info: array_class.RigidInfo) -> None:
         """Initialize the fields describing the kinematic trees, the structure of the joint-space mass matrix
@@ -1786,23 +1824,23 @@ class RigidDynamics(System):
 
     def _init_dynamics(self) -> None:
         """Initialize the collision geometry, equality constraints and rigid dynamics."""
-        self._init_vert_fields(self.dyn_info)
+        self._init_vert_fields(self.data.dyn_info)
         self.geoms_init_AABB = self._init_geom_fields(
-            self.dyn_state,
-            self.dyn_info,
-            self.rigid_info,
+            self.data.dyn_state,
+            self.data.dyn_info,
+            self.data.rigid_info,
         )
-        self._init_equality_fields(self.dyn_info)
-        self._init_dof_length(self.dyn_info)
+        self._init_equality_fields(self.data.dyn_info)
+        self._init_dof_length(self.data.dyn_info)
 
         # Compute the pose of every link in the neutral configuration and update the pose of all the geometries,
         # including inactive variants for a given env: the step updates the active variant alone, so this is the only
         # pose the inactive ones get (see func_update_geoms_link). The collider built next relies on these updated poses
         # to determine whether some collision pairs must be filtered out.
         kernel_update_cartesian_space(
-            self.dyn_state,
-            self.dyn_info,
-            self.rigid_info,
+            self.data.dyn_state,
+            self.data.dyn_info,
+            self.data.rigid_info,
             self.rigid_config,
             force_update_all_geoms=True,
             is_backward=False,
@@ -1838,22 +1876,22 @@ class RigidDynamics(System):
             dofs_link.extend(rotor_links)
         if dofs_idx:
             # Field layout, batch last, since the arrays are written back as fields.
-            dofs_armature = qd_to_numpy(self.dyn_info.dofs.armature, transpose=False, copy=True)
+            dofs_armature = qd_to_numpy(self.data.dyn_info.dofs.armature, transpose=False, copy=True)
             is_default = (np.atleast_2d(dofs_armature[dofs_idx].T) <= 0.0).all(axis=0)
             if is_default.any():
                 dofs_idx = np.array(dofs_idx)[is_default]
                 default_armature = np.stack(dofs_default, axis=1)[:, is_default]
                 dofs_armature[dofs_idx] = default_armature.T if self._options.batch_dofs_info else default_armature[0]
-                self.dyn_info.dofs.armature.from_numpy(dofs_armature)
+                self.data.dyn_info.dofs.armature.from_numpy(dofs_armature)
                 roots_idx = {link.root_idx for link, is_dof_default in zip(dofs_link, is_default) if is_dof_default}
                 trees_links = [link for link in self.links if link.root_idx in roots_idx]
-                dofs_invweight = qd_to_numpy(self.dyn_info.dofs.invweight, transpose=False, copy=True)
+                dofs_invweight = qd_to_numpy(self.data.dyn_info.dofs.invweight, transpose=False, copy=True)
                 dofs_invweight[[i_d for link in trees_links for i_d in range(link.dof_start, link.dof_end)]] = -1.0
-                self.dyn_info.dofs.invweight.from_numpy(dofs_invweight)
+                self.data.dyn_info.dofs.invweight.from_numpy(dofs_invweight)
                 links_idx = [link.idx for link in trees_links]
-                links_invweight = qd_to_numpy(self.dyn_info.links.invweight, transpose=False, copy=True)
+                links_invweight = qd_to_numpy(self.data.dyn_info.links.invweight, transpose=False, copy=True)
                 links_invweight[links_idx] = -1.0
-                self.dyn_info.links.invweight.from_numpy(links_invweight)
+                self.data.dyn_info.links.invweight.from_numpy(links_invweight)
                 self.refresh_invweight_and_meaninertia(force_update=False, in_place=True)
 
         # The constraint solver decides it has converged from quantities summed over the whole scene, and every DOF of
@@ -1862,7 +1900,9 @@ class RigidDynamics(System):
         # residual. The floor below follows the tolerance linearly, down to the resolution of the working precision in
         # kilograms. The scene total is summed before the loop below folds each link into its parent, after which every
         # entry holds the mass of a whole subtree, which is what the floor is compared against.
-        links_subtree_mass = np.atleast_2d(qd_to_numpy(self.dyn_info.links.inertial_mass, transpose=True, copy=True))
+        links_subtree_mass = np.atleast_2d(
+            qd_to_numpy(self.data.dyn_info.links.inertial_mass, transpose=True, copy=True)
+        )
         movable_links_idx = np.flatnonzero([link.n_dofs > 0 for link in self.links])
         if movable_links_idx.size:
             total_mass = links_subtree_mass[:, movable_links_idx].sum(axis=1)
@@ -2456,10 +2496,10 @@ class RigidDynamics(System):
         # rebuilding the scene per `loss.backward()`, which breaks training loops that call `scene.reset()` between
         # backward passes.
         if self._requires_grad:
-            qd_zero_grad(self.dyn_state.links)
-            qd_zero_grad(self.dyn_state.dofs)
-            qd_zero_grad(self.dyn_state.joints)
-            qd_zero_grad(self.rigid_info)
+            qd_zero_grad(self.data.dyn_state.links)
+            qd_zero_grad(self.data.dyn_state.dofs)
+            qd_zero_grad(self.data.dyn_state.joints)
+            qd_zero_grad(self.data.rigid_info)
             # One flush for the zeroing batch; see qd_zero_grad in misc.py.
             if gs.use_zerocopy and gs.backend == gs.metal:
                 torch.mps.synchronize()

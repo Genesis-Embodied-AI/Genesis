@@ -15,11 +15,11 @@ from genesis.engine.states import RigidSolverState
 from genesis.options.solvers import RigidOptions
 
 from ..base_solver import MutatedLinks, StateChange, Subscriber, mutates, register_subscriber
-from .collider import Collider
 from .rigid_tools import sanitize_io_variables
 
 if TYPE_CHECKING:
     from genesis.engine.core import System
+    from genesis.engine.solvers.rigid.collider import gjk, mpr
     from genesis.engine.entities.rigid_entity.rigid_equality import RigidEquality
     from genesis.engine.entities.rigid_entity.rigid_geom import RigidGeom, RigidVisGeom
     from genesis.engine.entities.rigid_entity.rigid_joint import RigidJoint
@@ -42,6 +42,84 @@ StructuredValue: TypeAlias = HostTensor | tuple[HostTensor, ...]
 StructuredResult: TypeAlias = dict[str, StructuredValue]
 
 
+class Collider:
+    """External compatibility surface of the rigid-rigid contact System, which it delegates to."""
+
+    def __init__(self, rigid_rigid_contact: "RigidRigidContact") -> None:
+        self._rigid_rigid_contact = rigid_rigid_contact
+        self._data = rigid_rigid_contact.data
+
+    @property
+    def collider_config(self) -> array_class.ColliderStaticConfig:
+        return self._data.collider_config
+
+    @property
+    def collider_info(self) -> array_class.ColliderInfo:
+        return self._data.collider_info
+
+    @property
+    def collider_state(self) -> array_class.ColliderState:
+        return self._data.collider_state
+
+    @property
+    def mpr(self) -> "mpr.MPR":
+        return self._rigid_rigid_contact.mpr
+
+    @property
+    def gjk(self) -> "gjk.GJK":
+        return self._rigid_rigid_contact.gjk
+
+    @property
+    def _mc_perturbation(self) -> float:
+        return self._rigid_rigid_contact.mc_perturbation
+
+    @property
+    def _mc_tolerance(self) -> float:
+        return self._rigid_rigid_contact.mc_tolerance
+
+    @property
+    def _collision_pair_idx(self) -> NDArray[np.integer]:
+        return self._rigid_rigid_contact.collision_pair_idx
+
+    @property
+    def _use_split_narrowphase(self) -> bool:
+        return self._data.collider_config.split_narrowphase
+
+    @property
+    def data(self) -> Iterator[array_class.DataItem | array_class.ConfigItem]:
+        """Yield every array and static config of the collider (see 'Solver.data')."""
+        return self._rigid_rigid_contact.iter_data()
+
+    def reset(self, envs_idx: IndexLike = None, *, cache_only: bool = True) -> None:
+        self._rigid_rigid_contact.reset_contacts(envs_idx, cache_only=cache_only)
+
+    def clear(self, envs_idx: IndexLike = None) -> None:
+        self._rigid_rigid_contact.clear_contacts(envs_idx)
+
+    def detection(self) -> None:
+        self._rigid_rigid_contact.detect_launching_kernels()
+
+    def detect_collision(self, env_idx: int = 0) -> NDArray[np.integer]:
+        """Run detection and return the live geometry pairs of one environment."""
+        return self._rigid_rigid_contact.get_collision_pairs(env_idx)
+
+    def get_contacts(
+        self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False, is_padded: bool = False
+    ) -> StructuredResult:
+        return self._rigid_rigid_contact.get_contacts(as_tensor, to_torch, keep_batch_dim, is_padded)
+
+    def backward(
+        self,
+        dL_dposition: NDArray[np.floating] | torch.Tensor,
+        dL_dnormal: NDArray[np.floating] | torch.Tensor,
+        dL_dpenetration: NDArray[np.floating] | torch.Tensor,
+    ) -> None:
+        self._rigid_rigid_contact.backward(dL_dposition, dL_dnormal, dL_dpenetration)
+
+    def backward_narrowphase(self) -> None:
+        self._rigid_rigid_contact.backward_narrowphase()
+
+
 def _constraint_state_property(name: str) -> property:
     return property(lambda facade: getattr(facade._rigid_constraint.data.constraint_state, name))
 
@@ -55,12 +133,12 @@ class ConstraintSolver:
 
     def __init__(
         self,
-        system: "RigidConstraint",
-        equality_system: "RigidEqualityConstraint",
+        rigid_constraint: "RigidConstraint",
+        rigid_equality_constraint: "RigidEqualityConstraint",
         participants: tuple["System", ...],
     ) -> None:
-        self._rigid_constraint = system
-        self._rigid_equality_constraint = equality_system
+        self._rigid_constraint = rigid_constraint
+        self._rigid_equality_constraint = rigid_equality_constraint
         self._participants = participants
 
     @property
@@ -166,8 +244,8 @@ class RigidSolver:
         self._rigid_island = engine.rigid_island
         self._rigid_rigid_contact = engine.rigid_rigid_contact
         self._rigid_constraint = engine.rigid_constraint
-        self._articulated_links_idx = system._articulated_links_idx
-        self._links_parent_idx = system._links_parent_idx
+        self._articulated_links_idx = system.articulated_links_idx
+        self._links_parent_idx = system.links_parent_idx
         self.collider = None if engine.rigid_rigid_contact is None else Collider(engine.rigid_rigid_contact)
         self.constraint_solver = None
         if engine.rigid_constraint is not None:
@@ -197,23 +275,23 @@ class RigidSolver:
 
     @property
     def qpos(self) -> qd.Tensor:
-        return self._rigid_dynamics.qpos
+        return self._rigid_dynamics.data.rigid_info.qpos
 
     @property
     def qpos0(self) -> qd.Tensor:
-        return self._rigid_dynamics.qpos0
+        return self._rigid_dynamics.data.rigid_info.qpos0
 
     @property
     def mass_mat(self) -> qd.Tensor:
-        return self._rigid_dynamics.mass_mat
+        return self._rigid_dynamics.data.rigid_info.mass_mat
 
     @property
     def meaninertia(self) -> qd.Tensor:
-        return self._rigid_dynamics.rigid_info.meaninertia
+        return self._rigid_dynamics.data.rigid_info.meaninertia
 
     @property
     def weight_scratch(self) -> array_class.WeightScratch:
-        return self._rigid_dynamics.weight_scratch
+        return self._rigid_dynamics.data.weight_scratch
 
     @property
     def geoms_init_AABB(self) -> qd.Tensor:
@@ -271,7 +349,7 @@ class RigidSolver:
     @property
     def _enable_heterogeneous(self) -> bool:
         if self._rigid_dynamics is not None:
-            return self._rigid_dynamics._enable_heterogeneous
+            return self._rigid_dynamics.enable_heterogeneous
         return any(entity.desc.variants for entity in self.entities)
 
     @property
@@ -300,7 +378,7 @@ class RigidSolver:
 
     @property
     def _para_level(self) -> int:
-        return self._rigid_dynamics._para_level if self._rigid_dynamics is not None else self._scene._para_level
+        return self._rigid_dynamics.para_level if self._rigid_dynamics is not None else self._scene._para_level
 
     @gs.assert_built
     @mutates(StateChange.MODEL)
@@ -414,7 +492,7 @@ class RigidSolver:
 
     @property
     def vfaces_raycast_mask(self) -> torch.Tensor:
-        return self._rigid_dynamics._vfaces_raycast_mask
+        return self._rigid_dynamics.vfaces_raycast_mask
 
     def _sanitize_io_variables(
         self,
@@ -571,13 +649,12 @@ class RigidSolver:
 
     def _kernel_detect_collision(self) -> None:
         if self._rigid_rigid_contact is not None:
-            self._rigid_rigid_contact.clear_contacts()
-            self._rigid_rigid_contact.detect_launching_kernels()
+            self._rigid_rigid_contact.redetect_contacts()
 
     def detect_collision(self, env_idx: int = 0) -> NDArray[np.integer]:
-        if self.collider is None:
+        if self._rigid_rigid_contact is None:
             return np.empty((0, 2), dtype=np.int32)
-        return self.collider.detect_collision(env_idx)
+        return self._rigid_rigid_contact.get_collision_pairs(env_idx)
 
     def _func_constraint_force(self) -> None:
         return self._sim._engine.constraint_force_host()

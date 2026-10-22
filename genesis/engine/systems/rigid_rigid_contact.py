@@ -4,7 +4,7 @@ from collections.abc import Iterable, Iterator
 from typing import TYPE_CHECKING, TypeAlias
 
 import numpy as np
-from numpy.typing import ArrayLike
+from numpy.typing import ArrayLike, NDArray
 import quadrants as qd
 import torch
 
@@ -141,6 +141,29 @@ class RigidRigidContact(System):
         """The most contacts per env the detection keeps once pruned, as resolved from 'RigidOptions.max_contacts'."""
         return int(self.data.collider_info.max_contacts[None])
 
+    @property
+    def mpr(self) -> mpr.MPR:
+        return self._mpr
+
+    @property
+    def gjk(self) -> gjk.GJK:
+        return self._gjk
+
+    @property
+    def mc_perturbation(self) -> float:
+        """The rotation by which multi-contact detection perturbs a pair to find its other contact points."""
+        return self._mc_perturbation
+
+    @property
+    def mc_tolerance(self) -> float:
+        """The relative distance below which multi-contact detection merges two contact points."""
+        return self._mc_tolerance
+
+    @property
+    def collision_pair_idx(self) -> NDArray[np.integer]:
+        """The index of every geom pair among the candidate pairs, -1 for a pair that never collides."""
+        return self._collision_pair_idx
+
     def configure_external_collision_links(
         self,
         delegated_link_idxs: Iterable[int],
@@ -157,6 +180,21 @@ class RigidRigidContact(System):
         self.clear_contact_data_cache()
         rigid = self.rigid_dynamics
         kernel_substep_detection(rigid.data, rigid.rigid_config, self.data, self.rigid_island.data)
+
+    def redetect_contacts(self) -> None:
+        """Clear the contacts of every env and detect them again, through the detection kernel alone."""
+        self.clear_contacts()
+        self.detect_launching_kernels()
+
+    def get_collision_pairs(self, env_idx: int = 0) -> NDArray[np.integer]:
+        """Detect the contacts again and return the colliding geom pairs of one env."""
+        self.redetect_contacts()
+        contact_data = self.data.collider_state.contact_data
+        n_collision = qd_to_numpy(self.data.collider_state.n_contacts)[env_idx]
+        collision_pairs = np.empty((n_collision, 2), dtype=np.int32)
+        collision_pairs[:, 0] = qd_to_numpy(contact_data.geom_a)[:n_collision, env_idx]
+        collision_pairs[:, 1] = qd_to_numpy(contact_data.geom_b)[:n_collision, env_idx]
+        return collision_pairs
 
     def reset_contacts(self, envs_idx: EnvIndex = None, *, cache_only: bool = True) -> None:
         """Restart the warm start of the detection in the given environments."""
@@ -179,7 +217,7 @@ class RigidRigidContact(System):
             self._contact_data,
             self.rigid_dynamics.data,
             self.rigid_dynamics.rigid_config,
-            self.rigid_dynamics._use_hibernation,
+            self.rigid_dynamics.use_hibernation,
             envs_idx,
         )
 
@@ -242,15 +280,15 @@ class RigidRigidContact(System):
         """Allocate the collision data and record the configuration the detection graph compiles against."""
         rigid = self.rigid_dynamics
         self._mpr = mpr.MPR(
-            batch_size=rigid._B,
-            enable_mujoco_compatibility=rigid._enable_mujoco_compatibility,
+            batch_size=rigid.batch_size,
+            enable_mujoco_compatibility=rigid.options.enable_mujoco_compatibility,
         )
         self._gjk = gjk.GJK(
-            batch_size=rigid._B,
+            batch_size=rigid.batch_size,
             rigid_config=rigid.rigid_config,
-            options=rigid._options,
-            enable_mujoco_compatibility=rigid._enable_mujoco_compatibility,
-            enable_multi_contact=rigid._enable_multi_contact,
+            options=rigid.options,
+            enable_mujoco_compatibility=rigid.options.enable_mujoco_compatibility,
+            enable_multi_contact=rigid.options.enable_multi_contact,
         )
         self._support_field = support_field.SupportField(
             geoms=rigid.geoms,
@@ -265,9 +303,9 @@ class RigidRigidContact(System):
             self._valid_collision_pairs,
             self._large_contact_pair_mask,
         ) = build_collider_static_config(
-            options=rigid._options,
+            options=rigid.options,
             rigid_config=rigid.rigid_config,
-            batch_size=rigid._B,
+            batch_size=rigid.batch_size,
             n_envs=rigid.n_envs,
             n_geoms=rigid.n_geoms,
             entities=tuple(rigid.entities),
@@ -276,11 +314,11 @@ class RigidRigidContact(System):
             equalities=tuple(rigid.equalities),
             geoms_pos=qd_to_numpy(rigid.data.dyn_state.geoms.pos, transpose=True),
             geoms_quat=qd_to_numpy(rigid.data.dyn_state.geoms.quat, transpose=True),
-            enable_mujoco_compatibility=rigid._enable_mujoco_compatibility,
-            enable_self_collision=rigid._enable_self_collision,
-            enable_adjacent_collision=rigid._enable_adjacent_collision,
-            enable_neutral_collision=rigid._enable_neutral_collision,
-            requires_grad=rigid._requires_grad,
+            enable_mujoco_compatibility=rigid.options.enable_mujoco_compatibility,
+            enable_self_collision=rigid.options.enable_self_collision,
+            enable_adjacent_collision=rigid.options.enable_adjacent_collision,
+            enable_neutral_collision=rigid.options.enable_neutral_collision,
+            requires_grad=rigid.requires_grad,
             delegated_link_idxs=self._delegated_link_idxs,
             exclusive_link_idxs=self._exclusive_link_idxs,
             box_max_contacts_per_pair=self._box_max_contacts_per_pair,
@@ -290,7 +328,7 @@ class RigidRigidContact(System):
         self._use_coop_dedup = self.data.collider_config.coop_dedup
         if self._use_split_narrowphase:
             gpu_cores = self.data.collider_config.gpu_cores
-            n_contact0_threads = rigid._B * ((gpu_cores + rigid._B - 1) // rigid._B)
+            n_contact0_threads = rigid.batch_size * ((gpu_cores + rigid.batch_size - 1) // rigid.batch_size)
             self._mpr.activate(n_contact0_threads, gpu_cores)
             self._gjk.activate(n_contact0_threads, gpu_cores)
         elif self.data.collider_config.has_non_box_plane_convex_convex:
@@ -316,17 +354,17 @@ class RigidRigidContact(System):
             mpr_info=self.data.mpr_info,
             gjk_info=self.data.gjk_info,
             support_field_info=self.data.support_field_info,
-            options=rigid._options,
+            options=rigid.options,
             rigid_config=rigid.rigid_config,
             collider_config=self.data.collider_config,
-            batch_size=rigid._B,
+            batch_size=rigid.batch_size,
             n_geoms=rigid.n_geoms,
             n_links=rigid.n_links,
             n_verts=rigid.n_verts,
             max_collision_pairs=rigid.max_collision_pairs,
             entities=tuple(rigid.entities),
             geoms=tuple(rigid.geoms),
-            requires_grad=rigid._requires_grad,
+            requires_grad=rigid.requires_grad,
             n_possible_pairs=self._n_possible_pairs,
             collision_pair_idx=self._collision_pair_idx,
             valid_collision_pairs=self._valid_collision_pairs,

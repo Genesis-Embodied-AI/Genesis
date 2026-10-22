@@ -73,10 +73,10 @@ class RigidJointLimitConstraint(System):
         return (
             kernel_manual_add_joint_limit_constraints_bw,
             self.data.segment,
-            rigid.dyn_state,
+            rigid.data.dyn_state,
             self.rigid_constraint.data.constraint_state,
-            rigid.dyn_info,
-            rigid.rigid_info,
+            rigid.data.dyn_info,
+            rigid.data.rigid_info,
             rigid.rigid_config,
         )
 
@@ -92,7 +92,7 @@ class RigidJointLimitConstraint(System):
         """Allocate the segment record and reserve one row per revolute or prismatic joint, which is at one limit at a
         time."""
         rigid = self.rigid_dynamics
-        self.data.segment = array_class.get_constraint_row_segment(batch_size=rigid._B)
+        self.data.segment = array_class.get_constraint_row_segment(batch_size=rigid.batch_size)
         n_limited_joints = sum(
             joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC) for joint in rigid.joints
         )

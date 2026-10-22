@@ -30,7 +30,6 @@ from genesis.utils.misc import (
     tensor_to_array,
 )
 
-from . import gjk, mpr, support_field
 from .broadphase import func_broad_phase
 from .constants import CCD_ALGORITHM_CODE
 from .contact import (
@@ -60,10 +59,22 @@ if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity.rigid_equality import RigidEquality
     from genesis.engine.entities.rigid_entity.rigid_geom import RigidGeom
     from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
-    from genesis.engine.systems.rigid_rigid_contact import RigidRigidContact
     from genesis.options.solvers import RigidOptions
 
-    ColliderData = RigidRigidContact.Data
+    class ColliderData(Protocol):
+        collider_config: array_class.ColliderStaticConfig
+        collider_info: array_class.ColliderInfo
+        collider_state: array_class.ColliderState
+        mpr_info: array_class.MPRInfo
+        mpr_state: array_class.MPRState
+        contact0_mpr_state: array_class.MPRState
+        multicontact_mpr_state: array_class.MPRState
+        gjk_config: array_class.GJKStaticConfig
+        gjk_info: array_class.GJKInfo
+        gjk_state: array_class.GJKState
+        contact0_gjk_state: array_class.GJKState
+        multicontact_gjk_state: array_class.GJKState
+        support_field_info: array_class.SupportFieldInfo
 
     class RigidData(Protocol):
         geoms_init_AABB: array_class.GeomsInitAABB
@@ -1185,93 +1196,6 @@ def collider_backward_narrowphase(
         rigid_config,
         rigid_data.errno,
     )
-
-
-class Collider:
-    """Read-only public collision facade backed by RigidRigidContact."""
-
-    def __init__(
-        self,
-        rigid_rigid_contact: "RigidRigidContact",
-    ) -> None:
-        self._rigid_rigid_contact = rigid_rigid_contact
-        self._data = rigid_rigid_contact.data
-
-    @property
-    def collider_config(self) -> array_class.ColliderStaticConfig:
-        return self._data.collider_config
-
-    @property
-    def collider_info(self) -> array_class.ColliderInfo:
-        return self._data.collider_info
-
-    @property
-    def collider_state(self) -> array_class.ColliderState:
-        return self._data.collider_state
-
-    @property
-    def mpr(self) -> mpr.MPR:
-        return self._rigid_rigid_contact._mpr
-
-    @property
-    def gjk(self) -> gjk.GJK:
-        return self._rigid_rigid_contact._gjk
-
-    @property
-    def _mc_perturbation(self) -> float:
-        return self._rigid_rigid_contact._mc_perturbation
-
-    @property
-    def _mc_tolerance(self) -> float:
-        return self._rigid_rigid_contact._mc_tolerance
-
-    @property
-    def _collision_pair_idx(self) -> NDArray[np.integer]:
-        return self._rigid_rigid_contact._collision_pair_idx
-
-    @property
-    def _use_split_narrowphase(self) -> bool:
-        return self._data.collider_config.split_narrowphase
-
-    @property
-    def data(self) -> Iterator[array_class.DataItem | array_class.ConfigItem]:
-        """Yield every array and static config of the collider (see 'Solver.data')."""
-        return self._rigid_rigid_contact.iter_data()
-
-    def reset(self, envs_idx: EnvIndex = None, *, cache_only: bool = True) -> None:
-        self._rigid_rigid_contact.reset_contacts(envs_idx, cache_only=cache_only)
-
-    def clear(self, envs_idx: EnvIndex = None) -> None:
-        self._rigid_rigid_contact.clear_contacts(envs_idx)
-
-    def detection(self) -> None:
-        self._rigid_rigid_contact.detect_launching_kernels()
-
-    def detect_collision(self, env_idx: int = 0) -> NDArray[np.integer]:
-        """Run detection and return the live geometry pairs of one environment."""
-        self.clear()
-        self.detection()
-        n_collision = qd_to_numpy(self.collider_state.n_contacts)[env_idx]
-        collision_pairs = np.empty((n_collision, 2), dtype=np.int32)
-        collision_pairs[:, 0] = qd_to_numpy(self.collider_state.contact_data.geom_a)[:n_collision, env_idx]
-        collision_pairs[:, 1] = qd_to_numpy(self.collider_state.contact_data.geom_b)[:n_collision, env_idx]
-        return collision_pairs
-
-    def get_contacts(
-        self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False, is_padded: bool = False
-    ) -> ContactResult:
-        return self._rigid_rigid_contact.get_contacts(as_tensor, to_torch, keep_batch_dim, is_padded)
-
-    def backward(
-        self,
-        dL_dposition: NDArray[np.floating] | torch.Tensor,
-        dL_dnormal: NDArray[np.floating] | torch.Tensor,
-        dL_dpenetration: NDArray[np.floating] | torch.Tensor,
-    ) -> None:
-        self._rigid_rigid_contact.backward(dL_dposition, dL_dnormal, dL_dpenetration)
-
-    def backward_narrowphase(self) -> None:
-        self._rigid_rigid_contact.backward_narrowphase()
 
 
 @qd.func
