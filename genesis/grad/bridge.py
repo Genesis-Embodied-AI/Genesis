@@ -42,7 +42,7 @@ class StepNode(torch.autograd.Function):
     def backward(ctx, token_grad):
         sim = ctx.sim()
         if sim is None:
-            gs.raise_exception("Differentiating a rollout whose scene was destroyed.")
+            gs.raise_exception("Calling backward on a scene that has been destroyed since the rollout.")
         inputs_grad = sim.reverse_step(ctx.step, ctx.epoch)
         return None, None, None, token_grad, *(inputs_grad.get(i) for i in ctx.inputs_id)
 

@@ -348,7 +348,7 @@ class Simulator(RBC):
         """
         if epoch != self._grad_epoch:
             gs.raise_exception(
-                "Differentiating a rollout the scene was reset from since. Call backward before 'scene.reset()'."
+                "Calling backward on a scene that has been reset since the rollout. Call it before 'scene.reset()'."
             )
         if not self._is_backward_ready or self.cur_step_global < step:
             gs.raise_exception("Multiple backward calls not allowed.")
