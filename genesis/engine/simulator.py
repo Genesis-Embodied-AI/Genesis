@@ -137,6 +137,10 @@ class Simulator(RBC):
     ):
         if desc is not None:
             material = desc.material
+        # Only a kinematic or rigid entity takes several morphs, one per variant. The other solvers resolve their
+        # description from the morph before the entity exists, so the check runs here.
+        elif not isinstance(morph, Morph) and not isinstance(material, gs.materials.Kinematic):
+            gs.raise_exception(f"An entity is created from one morph, got {type(morph).__name__}.")
         if visualize_contact and not isinstance(material, gs.materials.Rigid):
             gs.raise_exception("'visualize_contact' only applies to rigid entities.")
         if isinstance(material, gs.materials.Hybrid):
