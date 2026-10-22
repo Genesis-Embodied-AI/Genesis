@@ -112,7 +112,7 @@ def test_contact_per_step_force_grad_matches_fd(shape, grad_capsule, precision, 
     def settle(scene, obj):
         # Settling under the same base force as the grad window keeps the contact manifold in its loaded
         # configuration throughout, so the in-window contact-count guards hold.
-        obj.set_dofs_position(gs.tensor(rest_dofs, dtype=gs.tc_float).sceneless())
+        obj.set_dofs_position(gs.tensor(rest_dofs, dtype=gs.tc_float))
         for _ in range(n_settle):
             obj.control_dofs_force(base_force)
             scene.step()

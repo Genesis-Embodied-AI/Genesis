@@ -136,8 +136,8 @@ def main():
         timer.stamp("backward took: ")
         for v_i in v_list:
             print(v_i.grad)
-            v_i.zero_grad()
-        init_pos.zero_grad()
+            v_i.grad = None
+        init_pos.grad = None
         print(loss.item())
 
 

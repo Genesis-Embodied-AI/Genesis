@@ -125,3 +125,46 @@ def test_sim_vs_solver_state_grad_parity(show_viewer):
         assert_allclose(grads[-1][..., 3:], 0.0, atol=gs.EPS)
 
     assert_allclose(*grads, atol=gs.EPS)
+
+
+@pytest.mark.required
+@pytest.mark.precision("64")
+@pytest.mark.parametrize("closed_loop", [False, True])
+def test_torch_policy_grad_matches_fd(closed_loop, grad_revolute, show_viewer):
+    # The control forces are computed by a torch policy from plain torch parameters, not from tensors Genesis created.
+    # Open loop, their graph never touches the scene. Closed loop, they also read the state queried before each step:
+    # the reverse pass pushes each force's adjoint through the policy into that earlier state and collects it once it
+    # reaches that step, without starting another reverse pass, so the horizon is not bounded by any recursion depth.
+    # Finite differences over such a horizon need 64-bit precision.
+    horizon, dt = 400, 0.01
+    pair = make_diff_scene_pair(grad_revolute, n_envs=2, dt=dt, show_viewer=show_viewer)
+    target = torch.tensor([[0.4], [-0.3]], dtype=gs.tc_float, device=gs.device)
+    params = np.array([0.6, 3.0, 8.0, 0.5])
+
+    def rollout(scene, entity, params):
+        amplitude, frequency, kp, kd = torch.as_tensor(params, dtype=gs.tc_float, device=gs.device)
+        scene.reset()
+        for i_step in range(horizon):
+            force = (amplitude * torch.sin(frequency * i_step * dt)).expand(scene.n_envs, 1)
+            if closed_loop:
+                state = scene.rigid_solver.get_state()
+                force = force + kp * (target - state.qpos) - kd * state.dofs_vel
+            entity.control_dofs_force(force)
+            scene.step()
+        return ((scene.rigid_solver.get_state().qpos - target) ** 2).sum()
+
+    params_ana = torch.tensor(params, dtype=gs.tc_float, device=gs.device, requires_grad=True)
+    rollout(pair.scene_ana, pair.entity_ana, params_ana).backward()
+
+    eps = 1e-6
+    fd_grad = np.zeros_like(params)
+    for i in range(len(params)):
+        losses = []
+        for sign in (+1, -1):
+            perturbed = params.copy()
+            perturbed[i] += sign * eps
+            losses.append(float(rollout(pair.scene_fd, pair.entity_fd, perturbed)))
+        fd_grad[i] = (losses[0] - losses[1]) / (2.0 * eps)
+    n_used = len(params) if closed_loop else 2
+    assert (np.abs(fd_grad[:n_used]) > 1e-5).all()
+    assert_allclose(params_ana.grad, fd_grad, rtol=1e-6, atol=1e-9)

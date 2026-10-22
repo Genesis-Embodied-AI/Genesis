@@ -9,6 +9,7 @@ import torch
 import genesis as gs
 from genesis.constants import link_ref_frame
 from genesis.engine.states.entities import RigidEntityState
+from genesis.grad.bridge import backward_from_qd
 from genesis.typing import UnitVec4FType, Vec3FType
 from genesis.utils import geom as gu
 from genesis.utils.misc import DeprecationError, broadcast_tensor, qd_to_torch, tensor_to_array
@@ -500,32 +501,35 @@ class KinematicEntity(Entity):
             data_kwargs = self._tgt_buffer[index][key]
 
             match key[0]:
-                # We need to unpack the data_kwargs because [_backward_from_qd] only supports positional arguments.
+                # We need to unpack the data_kwargs because [backward_from_qd] only supports positional arguments.
                 # Inputs are stored on the tape as passed by the user, so scalars and array-likes (valid setter
                 # inputs that cannot carry a gradient) are filtered out with the tensor check.
                 case "set_pos":
                     pos = data_kwargs.pop("pos")
                     if isinstance(pos, torch.Tensor) and pos.requires_grad:
-                        pos._backward_from_qd(self.set_pos_grad, data_kwargs["envs_idx"], data_kwargs["relative"])
+                        backward_from_qd(pos, self.set_pos_grad, data_kwargs["envs_idx"], data_kwargs["relative"])
 
                 case "set_quat":
                     quat = data_kwargs.pop("quat")
                     if isinstance(quat, torch.Tensor) and quat.requires_grad:
-                        quat._backward_from_qd(self.set_quat_grad, data_kwargs["envs_idx"], data_kwargs["relative"])
+                        backward_from_qd(quat, self.set_quat_grad, data_kwargs["envs_idx"], data_kwargs["relative"])
 
                 case "set_dofs_velocity":
                     velocity = data_kwargs.pop("velocity")
                     # [velocity] could be None when we want to zero the velocity (see set_dofs_velocity of RigidSolver)
                     if isinstance(velocity, torch.Tensor) and velocity.requires_grad:
-                        velocity._backward_from_qd(
-                            self.set_dofs_velocity_grad, data_kwargs["dofs_idx_local"], data_kwargs["envs_idx"]
+                        backward_from_qd(
+                            velocity,
+                            self.set_dofs_velocity_grad,
+                            data_kwargs["dofs_idx_local"],
+                            data_kwargs["envs_idx"],
                         )
 
                 case "control_dofs_force":
                     force = data_kwargs.pop("force")
                     if isinstance(force, torch.Tensor) and force.requires_grad:
-                        force._backward_from_qd(
-                            self.set_dofs_force_grad, data_kwargs["dofs_idx_local"], data_kwargs["envs_idx"]
+                        backward_from_qd(
+                            force, self.set_dofs_force_grad, data_kwargs["dofs_idx_local"], data_kwargs["envs_idx"]
                         )
 
                 case "control_dofs_velocity" | "control_dofs_position" | "control_dofs_position_velocity":

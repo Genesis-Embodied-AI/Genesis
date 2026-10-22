@@ -395,16 +395,14 @@ def harmonic_mean(a, b):
     return 2 * (a * b) / (a + b)
 
 
-def assert_gs_tensor(x):
-    if not isinstance(x, gs.Tensor):
-        gs.raise_exception("Only accepts genesis.Tensor.")
+def assert_contiguous(tensor: torch.Tensor):
+    if not tensor.is_contiguous():
+        gs.raise_exception("Tensor not contiguous.")
 
 
 def to_gs_tensor(x, dtype: torch.dtype | None = None):
-    if isinstance(x, gs.Tensor):
+    if isinstance(x, torch.Tensor):
         tensor = x
-    elif isinstance(x, torch.Tensor):
-        tensor = gs.Tensor(x)
     else:
         x = np.asarray(x)
         # See broadcast_tensor for arrays with negative strides

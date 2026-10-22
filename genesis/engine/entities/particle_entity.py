@@ -11,7 +11,8 @@ import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
 from genesis.engine.states.cache import QueriedStates
-from genesis.utils.misc import to_gs_tensor, broadcast_tensor
+from genesis.grad.bridge import backward_from_qd
+from genesis.utils.misc import assert_contiguous, to_gs_tensor, broadcast_tensor
 
 from .base_entity import Entity
 
@@ -429,20 +430,19 @@ class ParticleEntity(Entity):
         if any(self._tgt[key] is not None for key in self._tgt_keys):
             particles_idx_local = self._sanitize_particles_idx_local(envs_idx=self._scene._envs_idx)
 
-        # Note that setting positions resets velocities to zero, so it must be done BEFORE setting velocities
+        # Note that setting positions resets velocities to zero, so it must be done BEFORE setting velocities.
+        # Detached: the kernels only read the values, the gradient reaches each input through `process_input_grad`,
+        # and a kernel argument that tracks gradients would make Quadrants allocate a `.grad` buffer for it.
         if self._tgt["pos"] is not None:
-            self._tgt["pos"].assert_contiguous()
-            self._tgt["pos"].assert_sceneless()
-            self.set_particles_pos(self._tgt["pos"], particles_idx_local)
+            assert_contiguous(self._tgt["pos"])
+            self.set_particles_pos(self._tgt["pos"].detach(), particles_idx_local)
 
         if self._tgt["vel"] is not None:
-            self._tgt["vel"].assert_contiguous()
-            self._tgt["vel"].assert_sceneless()
-            self.set_particles_vel(self._tgt["vel"], particles_idx_local)
+            assert_contiguous(self._tgt["vel"])
+            self.set_particles_vel(self._tgt["vel"].detach(), particles_idx_local)
 
         if self._tgt["act"] is not None:
-            self._tgt["act"].assert_contiguous()
-            self._tgt["act"].assert_sceneless()
+            assert_contiguous(self._tgt["act"])
             act_values = torch.tensor((gs.ACTIVE, gs.INACTIVE), dtype=gs.tc_int, device=gs.device)
             assert torch.isin(self._tgt["act"], act_values).all()
             self.set_particles_active(self._tgt["act"], particles_idx_local)
@@ -461,11 +461,11 @@ class ParticleEntity(Entity):
         """
         _tgt_pos = self._tgt_buffer["pos"].pop()
         if _tgt_pos is not None and _tgt_pos.requires_grad:
-            _tgt_pos._backward_from_qd(self._set_particles_pos_grad)
+            backward_from_qd(_tgt_pos, self._set_particles_pos_grad)
 
         _tgt_vel = self._tgt_buffer["vel"].pop()
         if _tgt_vel is not None and _tgt_vel.requires_grad:
-            _tgt_vel._backward_from_qd(self._set_particles_vel_grad)
+            backward_from_qd(_tgt_vel, self._set_particles_vel_grad)
 
         # Manually zero the grad since manually setting state breaks gradient flow
         if _tgt_vel is not None or _tgt_pos is not None:
