@@ -1016,7 +1016,6 @@ def test_color_overwrite(overwrite, urdf_with_external_assets, show_viewer):
         "xml/franka_emika_panda/panda.xml",
         "urdf/go2/urdf/go2.urdf",
         "urdf/panda_bullet/panda.urdf",
-        # MuJoCo cannot load its GLB collision mesh, which sends the whole file through the legacy URDF parser
         "primitive_collision_urdf",
     ],
 )
