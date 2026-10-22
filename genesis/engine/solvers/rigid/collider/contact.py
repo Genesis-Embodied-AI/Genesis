@@ -383,11 +383,14 @@ def func_add_contact(
     errno: qd.Tensor,
 ):
     """Append a contact to the buffer of an environment, returning its slot, or -1 when the buffer is full."""
-    i_c = 0
-    if qd.static(use_atomic):
-        i_c = qd.atomic_add(collider_state.n_contacts[i_b], 1)
-    else:
-        i_c = collider_state.n_contacts[i_b]
+    i_c = func_reserve_contacts(
+        i_b,
+        n_contacts=1,
+        collider_state=collider_state,
+        collider_info=collider_info,
+        use_atomic=use_atomic,
+        errno=errno,
+    )
     i_c_added = -1
     if i_c < collider_info.max_candidate_contacts[None]:
         i_c_added = i_c
@@ -407,12 +410,34 @@ def func_add_contact(
             collider_info,
             errno,
         )
+    return i_c_added
 
+
+@qd.func
+def func_reserve_contacts(
+    i_b: int,
+    n_contacts: int,
+    collider_state: array_class.ColliderState,
+    collider_info: array_class.ColliderInfo,
+    use_atomic: qd.template(),
+    errno: qd.Tensor,
+):
+    """Reserve consecutive slots of the contact buffer of an environment, returning the first of them.
+
+    The slots past the end of the buffer are flagged as an overflow, and the caller drops their contacts. Without
+    atomics, the count of the buffer only grows by slots it holds.
+    """
+    i_c = 0
+    if qd.static(use_atomic):
+        i_c = qd.atomic_add(collider_state.n_contacts[i_b], n_contacts)
+    else:
+        i_c = collider_state.n_contacts[i_b]
+    if i_c + n_contacts <= collider_info.max_candidate_contacts[None]:
         if not qd.static(use_atomic):
-            collider_state.n_contacts[i_b] = i_c + 1
+            collider_state.n_contacts[i_b] = i_c + n_contacts
     else:
         errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
-    return i_c_added
+    return i_c
 
 
 @qd.func

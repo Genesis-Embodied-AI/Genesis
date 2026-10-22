@@ -23,6 +23,7 @@ from .contact import (
     func_compute_geom_pair_scale,
     func_compute_mc_tolerance,
     func_contact_orthogonals,
+    func_reserve_contacts,
     func_rotate_frame,
     func_set_contact,
 )
@@ -786,6 +787,17 @@ def func_add_polytope_vertex_contacts_sdf(
                     i_k * block_dim + tid < n_max and func_lane_local_get(top_iv, i_k, block_dim) >= 0
                 )
                 n_emit_slots = n_emit_slots + qd.cast(qd.math.popcnt(lanes_occupied[i_k]), gs.qd_int)
+        # Where the scan cannot reach the pair budget, on GPU its contacts are decided first, each lane keeping the
+        # positions of the slots it holds for the repeated-contact check, then written at once from a single reservation
+        # of the contact buffer, one lane per contact. At the budget, a contact may displace an earlier one, so they are
+        # written one after the other.
+        is_batched = False
+        if qd.static(block_dim > 1):
+            is_batched = n_added + n_emit_slots <= n_max
+        lanes_emitted = qd.Vector.zero(qd.u32, N_SLOTS)
+        emit_pos_x = qd.Vector.zero(gs.qd_float, N_SLOTS)
+        emit_pos_y = qd.Vector.zero(gs.qd_float, N_SLOTS)
+        emit_pos_z = qd.Vector.zero(gs.qd_float, N_SLOTS)
         for i_emit in range(n_emit_slots):
             k = i_emit
             if qd.static(block_dim > 1):
@@ -810,6 +822,11 @@ def func_add_polytope_vertex_contacts_sdf(
                         if (contact_pos_v - collider_state.contact_data.pos[idx_prev, i_b]).norm() < tolerance:
                             is_repeated = True
                 if qd.static(block_dim > 1):
+                    for i_k in qd.static(range(N_SLOTS)):
+                        if (lanes_emitted[i_k] >> qd.u32(tid)) & qd.u32(1) != 0:
+                            emit_pos = qd.Vector([emit_pos_x[i_k], emit_pos_y[i_k], emit_pos_z[i_k]], dt=gs.qd_float)
+                            if (contact_pos_v - emit_pos).norm() < tolerance:
+                                is_repeated = True
                     is_repeated = su.qd_block_any(is_repeated)
                 if not is_repeated and pen_emit > 0.0:
                     # Snap the contact position onto A's smooth surface when A is a smooth primitive
@@ -829,48 +846,51 @@ def func_add_polytope_vertex_contacts_sdf(
                         dyn_info,
                         rigid_config,
                     )
-                    # The first lane writes the contacts of the block, whose slots every lane reads back.
-                    if n_added < n_max:
-                        i_c = -1
-                        if tid == 0:
-                            i_c = func_add_contact(
-                                i_ga,
-                                i_gb,
-                                i_b,
-                                i_pair,
-                                normal_v,
-                                contact_pos_v,
-                                pen_emit,
-                                dyn_state,
-                                collider_state,
-                                dyn_info,
-                                rigid_info,
-                                collider_info,
-                                use_atomic=qd.static(rigid_config.para_level >= gs.PARA_LEVEL.PARTIAL),
-                                errno=errno,
-                            )
-                        if qd.static(block_dim > 1):
-                            i_c = su.qd_block_shuffle(i_c, 0)
-                        if i_c >= 0:
-                            contacts_slot = func_lane_slot_write(contacts_slot, n_added, i_c, tid, block_dim)
-                            n_added = n_added + 1
+                    if is_batched:
+                        emit_pos_x = func_lane_slot_write(emit_pos_x, k, contact_pos_v[0], tid, block_dim)
+                        emit_pos_y = func_lane_slot_write(emit_pos_y, k, contact_pos_v[1], tid, block_dim)
+                        emit_pos_z = func_lane_slot_write(emit_pos_z, k, contact_pos_v[2], tid, block_dim)
+                        for i_k in qd.static(range(N_SLOTS)):
+                            if k // block_dim == i_k:
+                                lanes_emitted[i_k] = lanes_emitted[i_k] | (qd.u32(1) << qd.u32(k % block_dim))
                     else:
-                        # The pair budget is shared between the two scans: at the cap, a new contact may only
-                        # displace the pair's least-penetrating one, keeping the n_max deepest.
-                        i_c_weakest = -1
-                        weakest_pen = pen_emit
-                        for j in range(n_max):
-                            if j < n_added:
-                                idx_prev = func_lane_slot_read(contacts_slot, n_added - 1 - j, block_dim)
-                                if collider_state.contact_data.penetration[idx_prev, i_b] < weakest_pen:
-                                    weakest_pen = collider_state.contact_data.penetration[idx_prev, i_b]
-                                    i_c_weakest = idx_prev
-                        if i_c_weakest >= 0 and tid == 0:
+                        # The first lane writes the contacts of the block, whose slots every lane reads back. A new
+                        # contact takes a fresh slot of the buffer, and the contact it displaces at the cap otherwise,
+                        # both written by the same call.
+                        i_c = -1
+                        if n_added < n_max:
+                            if tid == 0:
+                                i_c = func_reserve_contacts(
+                                    i_b,
+                                    n_contacts=1,
+                                    collider_state=collider_state,
+                                    collider_info=collider_info,
+                                    use_atomic=qd.static(rigid_config.para_level >= gs.PARA_LEVEL.PARTIAL),
+                                    errno=errno,
+                                )
+                                if i_c >= collider_info.max_candidate_contacts[None]:
+                                    i_c = -1
+                            if qd.static(block_dim > 1):
+                                i_c = su.qd_block_shuffle(i_c, 0)
+                            if i_c >= 0:
+                                contacts_slot = func_lane_slot_write(contacts_slot, n_added, i_c, tid, block_dim)
+                                n_added = n_added + 1
+                        else:
+                            # The pair budget is shared between the two scans: at the cap, a new contact may only
+                            # displace the pair's least-penetrating one, keeping the n_max deepest.
+                            weakest_pen = pen_emit
+                            for j in range(n_max):
+                                if j < n_added:
+                                    idx_prev = func_lane_slot_read(contacts_slot, n_added - 1 - j, block_dim)
+                                    if collider_state.contact_data.penetration[idx_prev, i_b] < weakest_pen:
+                                        weakest_pen = collider_state.contact_data.penetration[idx_prev, i_b]
+                                        i_c = idx_prev
+                        if i_c >= 0 and tid == 0:
                             func_set_contact(
                                 i_ga,
                                 i_gb,
                                 i_b,
-                                i_c_weakest,
+                                i_c,
                                 i_pair,
                                 normal_v,
                                 contact_pos_v,
@@ -882,9 +902,74 @@ def func_add_polytope_vertex_contacts_sdf(
                                 collider_info,
                                 errno,
                             )
-                    # Every lane reads the contact back, for the repeated-contact check and the seeds.
-                    if qd.static(block_dim > 1):
-                        qd.simt.block.sync()
+                        # Every lane reads the contact back, for the repeated-contact check and the seeds.
+                        if qd.static(block_dim > 1):
+                            qd.simt.block.sync()
+        if is_batched:
+            n_emitted = 0
+            for i_k in qd.static(range(N_SLOTS)):
+                n_emitted = n_emitted + qd.cast(qd.math.popcnt(lanes_emitted[i_k]), gs.qd_int)
+            if n_emitted > 0:
+                i_c_base = 0
+                if tid == 0:
+                    i_c_base = func_reserve_contacts(
+                        i_b,
+                        n_emitted,
+                        collider_state,
+                        collider_info,
+                        use_atomic=qd.static(rigid_config.para_level >= gs.PARA_LEVEL.PARTIAL),
+                        errno=errno,
+                    )
+                i_c_base = su.qd_block_shuffle(i_c_base, 0)
+                max_contacts = collider_info.max_candidate_contacts[None]
+                # The contacts take the reserved slots in the order of the slots of their verts
+                n_emitted_before = 0
+                for i_k in range(N_SLOTS):
+                    lanes = func_lane_local_get(lanes_emitted, i_k, block_dim)
+                    if (lanes >> qd.u32(tid)) & qd.u32(1) != 0:
+                        i_c = i_c_base + n_emitted_before
+                        i_c = i_c + qd.cast(qd.math.popcnt(lanes & ((qd.u32(1) << qd.u32(tid)) - qd.u32(1))), gs.qd_int)
+                        if i_c < max_contacts:
+                            func_set_contact(
+                                i_ga,
+                                i_gb,
+                                i_b,
+                                i_c,
+                                i_pair,
+                                qd.Vector(
+                                    [
+                                        func_lane_local_get(emit_normal_x, i_k, block_dim),
+                                        func_lane_local_get(emit_normal_y, i_k, block_dim),
+                                        func_lane_local_get(emit_normal_z, i_k, block_dim),
+                                    ],
+                                    dt=gs.qd_float,
+                                ),
+                                qd.Vector(
+                                    [
+                                        func_lane_local_get(emit_pos_x, i_k, block_dim),
+                                        func_lane_local_get(emit_pos_y, i_k, block_dim),
+                                        func_lane_local_get(emit_pos_z, i_k, block_dim),
+                                    ],
+                                    dt=gs.qd_float,
+                                ),
+                                func_lane_local_get(emit_pen, i_k, block_dim),
+                                dyn_state,
+                                collider_state,
+                                dyn_info,
+                                rigid_info,
+                                collider_info,
+                                errno,
+                            )
+                    n_emitted_before = n_emitted_before + qd.cast(qd.math.popcnt(lanes), gs.qd_int)
+                n_stored = qd.max(qd.min(max_contacts - i_c_base, n_emitted), 0)
+                for i_k in qd.static(range(N_SLOTS)):
+                    i_added = i_k * block_dim + tid
+                    if i_added >= n_added and i_added < n_added + n_stored:
+                        contacts_slot[i_k] = i_c_base + i_added - n_added
+                n_added = n_added + n_stored
+                # Every lane reads the contacts back in the next scan of the pair, for its seeds and repeated contacts.
+                if qd.static(block_dim > 1):
+                    qd.simt.block.sync()
     return n_added, contacts_slot
 
 
