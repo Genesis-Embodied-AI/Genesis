@@ -1722,8 +1722,10 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             is_backward=True,
         )
 
-        # If it was the very first substep, we need to backpropagate through the initial update of the cartesian space
-        if self._enable_mujoco_compatibility or self._sim.cur_substep_global == 0:
+        # The first substep of a step starts from the cartesian space the inputs of the step refreshed from the state
+        # they set (the initial one for the very first step). Its adjoint belongs to that state, so it is folded in
+        # before the reverse pass of the inputs reads it, which leaves none to the post-integrate update.
+        if self._enable_mujoco_compatibility or self._sim.cur_substep_global % self._sim.substeps == 0:
             self._update_cartesian_grad(envs_idx)
 
         # Change back to forward mode
