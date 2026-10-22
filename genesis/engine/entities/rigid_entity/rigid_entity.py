@@ -472,9 +472,7 @@ class KinematicEntity(Entity):
             self._tgt = self._tgt_buffer[index].copy()
         else:
             self._tgt_buffer.append(self._tgt.copy())
-            self._sim.record_step_inputs(
-                *(value for data_kwargs in self._tgt.values() for value in data_kwargs.values())
-            )
+        inputs = tuple(value for data_kwargs in self._tgt.values() for value in data_kwargs.values())
 
         update_tgt_while_set = self._update_tgt_while_set
         # Apply targets in the order of insertion
@@ -496,47 +494,38 @@ class KinematicEntity(Entity):
 
         self._tgt = dict()
         self._update_tgt_while_set = update_tgt_while_set
+        return inputs
 
     def process_input_grad(self):
+        """Return the pairs (input, gradient) of the inputs applied at this step that track gradients."""
+        inputs_grad = []
         index = self._sim.cur_step_local - self._sim._steps_local
         for key in reversed(self._tgt_buffer[index].keys()):
             data_kwargs = self._tgt_buffer[index][key]
 
+            # Inputs are stored on the tape as passed by the user, so scalars and array-likes (valid setter inputs that
+            # cannot carry a gradient) are filtered out with the tensor check below.
             match key[0]:
-                # We need to unpack the data_kwargs because [add_input_grad] only supports positional arguments.
-                # Inputs are stored on the tape as passed by the user, so scalars and array-likes (valid setter
-                # inputs that cannot carry a gradient) are filtered out with the tensor check.
                 case "set_pos":
-                    pos = data_kwargs.pop("pos")
-                    if isinstance(pos, torch.Tensor) and pos.requires_grad:
-                        self._sim.add_input_grad(
-                            pos, self.set_pos_grad, data_kwargs["envs_idx"], data_kwargs["relative"]
-                        )
+                    tgt = data_kwargs.pop("pos")
+                    set_grad, grad_args = self.set_pos_grad, (data_kwargs["envs_idx"], data_kwargs["relative"])
 
                 case "set_quat":
-                    quat = data_kwargs.pop("quat")
-                    if isinstance(quat, torch.Tensor) and quat.requires_grad:
-                        self._sim.add_input_grad(
-                            quat, self.set_quat_grad, data_kwargs["envs_idx"], data_kwargs["relative"]
-                        )
+                    tgt = data_kwargs.pop("quat")
+                    set_grad, grad_args = self.set_quat_grad, (data_kwargs["envs_idx"], data_kwargs["relative"])
 
                 case "set_dofs_velocity":
-                    velocity = data_kwargs.pop("velocity")
                     # [velocity] could be None when we want to zero the velocity (see set_dofs_velocity of RigidSolver)
-                    if isinstance(velocity, torch.Tensor) and velocity.requires_grad:
-                        self._sim.add_input_grad(
-                            velocity,
-                            self.set_dofs_velocity_grad,
-                            data_kwargs["dofs_idx_local"],
-                            data_kwargs["envs_idx"],
-                        )
+                    tgt = data_kwargs.pop("velocity")
+                    set_grad = self.set_dofs_velocity_grad
+                    grad_args = (data_kwargs["dofs_idx_local"], data_kwargs["envs_idx"])
 
                 case "control_dofs_force":
-                    force = data_kwargs.pop("force")
-                    if isinstance(force, torch.Tensor) and force.requires_grad:
-                        self._sim.add_input_grad(
-                            force, self.set_dofs_force_grad, data_kwargs["dofs_idx_local"], data_kwargs["envs_idx"]
-                        )
+                    tgt = data_kwargs.pop("force")
+                    set_grad, grad_args = (
+                        self.set_dofs_force_grad,
+                        (data_kwargs["dofs_idx_local"], data_kwargs["envs_idx"]),
+                    )
 
                 case "control_dofs_velocity" | "control_dofs_position" | "control_dofs_position_velocity":
                     # PD control targets are replayed for primal correctness but have no input-gradient path.
@@ -546,9 +535,16 @@ class KinematicEntity(Entity):
                                 "Gradients with respect to PD control targets are not supported yet. Use "
                                 "'control_dofs_force' for differentiable control inputs."
                             )
+                    tgt = None
 
                 case _:
                     gs.raise_exception(f"Invalid target key: {key[0]} not in {self._tgt_keys}")
+
+            if isinstance(tgt, torch.Tensor) and tgt.requires_grad:
+                grad = torch.zeros_like(tgt)
+                set_grad(*grad_args, grad)
+                inputs_grad.append((tgt, grad))
+        return inputs_grad
 
     def save_ckpt(self, ckpt_name):
         if ckpt_name not in self._ckpt:

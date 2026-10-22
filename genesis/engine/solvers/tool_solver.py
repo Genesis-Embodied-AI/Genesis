@@ -84,14 +84,6 @@ class ToolSolver(TimeBasedMixin, Solver):
             for i, entity in enumerate(self._entities):
                 entity.set_state(f, state[i])
 
-    def process_input(self, in_backward=False):
-        for entity in self._entities:
-            entity.process_input(in_backward=in_backward)
-
-    def process_input_grad(self):
-        for entity in self._entities[::-1]:
-            entity.process_input_grad()
-
     def substep_pre_coupling(self, f):
         for entity in self._entities:
             entity.substep_pre_coupling(f)
@@ -111,14 +103,6 @@ class ToolSolver(TimeBasedMixin, Solver):
     def add_grad_from_state(self, state):
         # Nothing needed here, since tool_solver state is composed of tool_entity.get_state(), which has already been cached inside each tool_entity.
         pass
-
-    def collect_output_grads(self):
-        """
-        Collect gradients from downstream queried states.
-        """
-        if self.is_active:
-            for entity in self._entities:
-                entity.collect_output_grads()
 
     def save_ckpt(self, ckpt_name):
         for entity in self._entities:

@@ -907,16 +907,6 @@ class KinematicSolver(Solver):
                 self.rigid_config,
             )
 
-    def collect_output_grads(self):
-        """
-        Collect gradients from downstream queried states.
-        """
-        if self._sim.cur_step_global in self._queried_states:
-            # one step could have multiple states
-            assert len(self._queried_states[self._sim.cur_step_global]) == 1
-            state = self._queried_states[self._sim.cur_step_global][0]
-            self.add_grad_from_state(state)
-
     def reset_grad(self):
         # Zero every Quadrants-side adjoint buffer the solver owns so a subsequent backward pass does not accumulate on
         # top of stale residues from the previous one. The rigid/kinematic `.grad` pipeline writes through
@@ -1000,15 +990,6 @@ class KinematicSolver(Solver):
     # ------------------------------------------------------------------------------------
     # -------------------------------- process_input -------------------------------------
     # ------------------------------------------------------------------------------------
-
-    def process_input(self, in_backward=False):
-        """Process input for entities (set qpos from user commands)."""
-        for entity in self._entities:
-            entity.process_input()
-
-    def process_input_grad(self):
-        """No-op: kinematic solver does not support gradients."""
-        pass
 
     def save_ckpt(self, ckpt_name):
         """No-op: kinematic solver does not save checkpoints."""

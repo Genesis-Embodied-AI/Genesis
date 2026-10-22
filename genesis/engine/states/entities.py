@@ -17,7 +17,11 @@ class ToolEntityState:
         self.quat = torch.zeros((self.entity.sim._B, 4), dtype=gs.tc_float, device=gs.device)
         self.vel = torch.zeros((self.entity.sim._B, 3), dtype=gs.tc_float, device=gs.device)
         self.ang = torch.zeros((self.entity.sim._B, 3), dtype=gs.tc_float, device=gs.device)
-        self.entity.sim.track_state(self.pos, self.quat, self.vel, self.ang)
+
+    @property
+    def grad_tensors(self):
+        """The tensors of the state that carry gradients."""
+        return (self.pos, self.quat, self.vel, self.ang)
 
     # def __repr__(self):
     #     return f'{self.__repr_name__()}\n' \
@@ -43,7 +47,11 @@ class MPMEntityState(RBC):
         self._F = torch.zeros(base_shape + (3, 3), dtype=gs.tc_float, device=gs.device)
         self._Jp = torch.zeros(base_shape, dtype=gs.tc_float, device=gs.device)
         self._active = torch.zeros(base_shape, dtype=gs.tc_int, device=gs.device)
-        self.entity.sim.track_state(self._pos, self._vel, self._C, self._F, self._Jp)
+
+    @property
+    def grad_tensors(self):
+        """The tensors of the state that carry gradients."""
+        return (self._pos, self._vel, self._C, self._F, self._Jp)
 
     @property
     def entity(self):

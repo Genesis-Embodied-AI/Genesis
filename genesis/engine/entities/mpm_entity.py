@@ -262,18 +262,23 @@ class MPMEntity(ParticleEntity):
             # Detached, see ParticleEntity.process_input.
             self.set_particles_actu(self._tgt["actu"].detach(), particles_idx_local)
 
-        super().process_input(in_backward)
+        return super().process_input(in_backward)
 
     def process_input_grad(self):
         """
         Process gradients for buffered inputs and backpropagate using custom kernels.
+
+        Returns the pairs (input, gradient) of the inputs applied at this step that track gradients.
         """
+        inputs_grad = []
         if isinstance(self.material, gs.materials.MPM.Muscle):
             _tgt_actu = self._tgt_buffer["actu"].pop()
             if _tgt_actu is not None and _tgt_actu.requires_grad:
-                self._sim.add_input_grad(_tgt_actu, self._set_particles_actu_grad)
+                actu_grad = torch.zeros_like(_tgt_actu)
+                self._set_particles_actu_grad(actu_grad)
+                inputs_grad.append((_tgt_actu, actu_grad))
 
-        super().process_input_grad()
+        return inputs_grad + super().process_input_grad()
 
     @gs.assert_built
     def get_state(self):

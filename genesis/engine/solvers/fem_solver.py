@@ -336,6 +336,7 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
     def reset_grad(self):
         self.elements_v.grad.fill(0)
         self.elements_el.grad.fill(0)
+        self._queried_states.clear()
 
         for entity in self._entities:
             entity.reset_grad()
@@ -968,14 +969,6 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
     # ------------------------------------ stepping --------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def process_input(self, in_backward=False):
-        for entity in self._entities:
-            entity.process_input(in_backward=in_backward)
-
-    def process_input_grad(self):
-        for entity in self._entities[::-1]:
-            entity.process_input_grad()
-
     def substep_pre_coupling(self, f):
         if self.is_active:
             # Skip FEM solver step if using IPCCoupler (IPC handles FEM simulation)
@@ -1050,10 +1043,6 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
     # ----------------------------------- gradient ---------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def collect_output_grads(self):
-        for entity in self._entities:
-            entity.collect_output_grads()
-
     def add_grad_from_state(self, state):
         if self.is_active:
             if state.pos.grad is not None:
@@ -1108,6 +1097,7 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
         if self.is_active:
             state = FEMSolverState(self._scene)
             self._kernel_get_state(f, state.pos, state.vel, state.active)
+            self._queried_states.append(state)
         else:
             state = None
         return state

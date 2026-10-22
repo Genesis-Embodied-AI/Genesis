@@ -199,6 +199,7 @@ class MPMSolver(GravityMixin, TimeBasedMixin, Solver):
     def reset_grad(self):
         self.particles.grad.fill(0.0)
         self.grid.grad.fill(0.0)
+        self._queried_states.clear()
 
         for entity in self._entities:
             entity.reset_grad()
@@ -545,14 +546,6 @@ class MPMSolver(GravityMixin, TimeBasedMixin, Solver):
     # ------------------------------------ stepping --------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def process_input(self, in_backward=False):
-        for entity in self._entities:
-            entity.process_input(in_backward=in_backward)
-
-    def process_input_grad(self):
-        for entity in self._entities[::-1]:
-            entity.process_input_grad()
-
     def substep_pre_coupling(self, f):
         if self._sim.requires_grad:
             self.reset_grid_and_grad(f)
@@ -702,13 +695,6 @@ class MPMSolver(GravityMixin, TimeBasedMixin, Solver):
     # ------------------------------------ gradient --------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def collect_output_grads(self):
-        """
-        Collect gradients from downstream queried states.
-        """
-        for entity in self._entities:
-            entity.collect_output_grads()
-
     def add_grad_from_state(self, state):
         if self.is_active:
             if state.pos.grad is not None:
@@ -853,6 +839,7 @@ class MPMSolver(GravityMixin, TimeBasedMixin, Solver):
 
         state = MPMSolverState(self._scene)
         self._kernel_get_state(f, state.pos, state.vel, state.C, state.F, state.Jp, state.active)
+        self._queried_states.append(state)
         return state
 
     @qd.kernel

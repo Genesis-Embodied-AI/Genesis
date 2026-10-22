@@ -1945,14 +1945,6 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         super().__setstate__(state)
         self._restart()
 
-    def process_input(self, in_backward=False):
-        for entity in self._entities:
-            entity.process_input(in_backward=in_backward)
-
-    def process_input_grad(self):
-        for entity in self._entities:
-            entity.process_input_grad()
-
     def save_ckpt(self, ckpt_name):
         # Save ckpt only if we need gradients, because this operation is costly
         if self._requires_grad:

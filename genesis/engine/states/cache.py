@@ -19,28 +19,26 @@ class StateList(list):
 
 class QueriedStates:
     """
-    A dict of queried states.
+    The states queried during the current rollout of a differentiable scene, grouped by the step they were read at.
+
+    Registering a state makes the tensors it declares in 'grad_tensors' differentiable (see 'Simulator.track_state'),
+    and 'collect_output_grads' later hands their gradients to the solver or entity that registered it. A scene that is
+    not differentiable keeps nothing, since nothing will read the gradients.
     """
 
-    def __init__(self):
+    def __init__(self, sim):
+        self._sim = sim
         self.states = dict()
 
     def append(self, state):
-        if state.s_global not in self.states:
-            self.states[state.s_global] = StateList([state])
-        else:
-            self.states[state.s_global].append(state)
+        if not self._sim.requires_grad:
+            return
+        self._sim.track_state(*state.grad_tensors)
+        self.states.setdefault(self._sim.cur_step_global, StateList()).append(state)
 
-    def discard(self, state):
-        # Used by `Simulator.get_state` to lift inner solver-states owned by a `SimState` from the per-solver queue
-        # right after registration. No-op when the state is absent (e.g. solvers that never push to their queue), so
-        # the call site stays uniform across solver types.
-        for s_global, queue in self.states.items():
-            if state in queue:
-                queue.remove(state)
-                if not queue:
-                    del self.states[s_global]
-                return
+    def get(self, s_global):
+        """Return the states registered at the given global step, if any."""
+        return self.states.get(s_global, ())
 
     def clear(self):
         self.states.clear()
