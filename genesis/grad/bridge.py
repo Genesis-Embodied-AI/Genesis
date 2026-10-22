@@ -47,13 +47,13 @@ class _ReadNode(torch.autograd.Function):
 
 
 def grad_inputs(tgt: dict) -> list[torch.Tensor]:
-    """The tensors tracking gradients in an entity's taped inputs of one step, each once."""
-    inputs = {}
-    for value in tgt.values():
-        for tensor in value.values() if isinstance(value, dict) else (value,):
-            if isinstance(tensor, torch.Tensor) and tensor.requires_grad:
-                inputs[id(tensor)] = tensor
-    return list(inputs.values())
+    """The tensors tracking gradients in an entity's taped inputs of one step."""
+    return [
+        tensor
+        for value in tgt.values()
+        for tensor in (value.values() if isinstance(value, dict) else (value,))
+        if isinstance(tensor, torch.Tensor) and tensor.requires_grad
+    ]
 
 
 def step_node(scene, step: int, epoch: int, token: torch.Tensor, inputs: list[torch.Tensor]) -> torch.Tensor:

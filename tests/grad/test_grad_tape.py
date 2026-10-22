@@ -172,3 +172,40 @@ def test_torch_policy_grad_matches_fd(closed_loop, grad_revolute, show_viewer):
         fd_grad[i] = (losses[0] - losses[1]) / (2.0 * eps)
     assert (np.abs(fd_grad[:n_params]) > 1e-5).all()
     assert_allclose(params_ana.grad, fd_grad, rtol=1e-6, atol=1e-9)
+
+
+@pytest.mark.required
+@pytest.mark.precision("64")
+def test_input_shared_by_entities_grad_matches_fd(grad_revolute, show_viewer):
+    # One input tensor given to two entities in the same step is one input of that step's autograd node, which returns
+    # the gradient summed over both: counting it once per entity would double it.
+    horizon = 5
+
+    def build(requires_grad):
+        scene = gs.Scene(
+            sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0), requires_grad=requires_grad),
+            rigid_options=gs.options.RigidOptions(enable_collision=False, disable_constraint=True),
+            show_viewer=show_viewer and requires_grad,
+        )
+        arms = [scene.add_entity(gs.morphs.MJCF(file=grad_revolute, pos=(0.0, y, 0.0))) for y in (-0.3, 0.3)]
+        scene.build()
+        return scene, arms
+
+    def rollout(scene, arms, gain):
+        scene.reset()
+        for i_step in range(horizon):
+            force = gain * (i_step + 1.0)
+            for arm in arms:
+                arm.control_dofs_force(force)
+            scene.step()
+        return (scene.rigid_solver.get_state().qpos ** 2).sum()
+
+    gain = torch.tensor([0.7], dtype=gs.tc_float, device=gs.device, requires_grad=True)
+    rollout(*build(requires_grad=True), gain).backward()
+
+    eps = 1e-6
+    scene_fd, arms_fd = build(requires_grad=False)
+    losses = [float(rollout(scene_fd, arms_fd, np.array([0.7 + sign * eps]))) for sign in (+1, -1)]
+    fd_grad = (losses[0] - losses[1]) / (2.0 * eps)
+    assert abs(fd_grad) > 1e-3
+    assert_allclose(gain.grad, fd_grad, rtol=1e-6, atol=1e-9)

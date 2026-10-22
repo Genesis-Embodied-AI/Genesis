@@ -75,7 +75,7 @@ class Simulator(RBC):
         # the rollout the token chain belongs to, which a reset starts anew.
         self._grad_token = self._new_grad_token()
         self._grad_epoch = 0
-        self._step_inputs: list[torch.Tensor] = []
+        self._step_inputs: dict[int, torch.Tensor] = {}
         self._inputs_grad: dict[int, torch.Tensor] = {}
 
         # solvers
@@ -333,8 +333,12 @@ class Simulator(RBC):
         return torch.zeros((), dtype=gs.tc_float, device=gs.device, requires_grad=True)
 
     def record_step_inputs(self, tgt):
-        """Add the inputs an entity taped for the coming step to those its autograd node takes."""
-        self._step_inputs.extend(grad_inputs(tgt))
+        """
+        Add the inputs an entity taped for the coming step to those its autograd node takes, each tensor once however
+        many setters and entities it was given to: the node returns the gradient summed over all of them.
+        """
+        if self._requires_grad:
+            self._step_inputs.update((id(tensor), tensor) for tensor in grad_inputs(tgt))
 
     def add_input_grad(self, tensor, qd_kernel, *args):
         """
@@ -403,9 +407,13 @@ class Simulator(RBC):
 
                 if self._requires_grad and not in_backward:
                     self._grad_token = step_node(
-                        self.scene, self.cur_step_global, self._grad_epoch, self._grad_token, self._step_inputs
+                        self.scene,
+                        self.cur_step_global,
+                        self._grad_epoch,
+                        self._grad_token,
+                        list(self._step_inputs.values()),
                     )
-                    self._step_inputs = []
+                    self._step_inputs.clear()
 
             if self.rigid_solver.is_active:
                 self.rigid_solver.clear_external_force()
