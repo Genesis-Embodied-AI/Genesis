@@ -69,11 +69,12 @@ def func_contact_sphere_sdf(
 
 @qd.func
 def func_lane_local_get(values, i_k: int, block_dim: qd.template()):
-    """Read entry i_k of the share of a buffer spread over the lanes of a block that this lane holds.
+    """Read an entry of the share of a buffer spread over the lanes of a block that this lane holds.
 
-    Slot k of the buffer sits at entry k // block_dim of lane k % block_dim, so that each lane holds a block_dim-th of
-    it. On GPU the entry is selected among the few entries of the share by a static unroll, which keeps the share in
-    registers where a runtime index would place it in local memory. A single lane holds the whole buffer and indexes it.
+    The entry read is i_k. Slot k of the buffer sits at entry k // block_dim of lane k % block_dim, so that each lane
+    holds a block_dim-th of it. On GPU the entry is selected among the few entries of the share by a static unroll,
+    which keeps the share in registers where a runtime index would place it in local memory. A single lane holds the
+    whole buffer and indexes it.
     """
     value = values[0]
     if qd.static(block_dim > 1):
@@ -87,9 +88,9 @@ def func_lane_local_get(values, i_k: int, block_dim: qd.template()):
 
 @qd.func
 def func_lane_local_set(values, i_k: int, value, block_dim: qd.template()):
-    """Return the share of a lane-spread buffer this lane holds, with its entry i_k set to value.
+    """Return the share of a lane-spread buffer this lane holds, with one of its entries replaced.
 
-    See func_lane_local_get for the layout and the selection.
+    Entry i_k takes value. See func_lane_local_get for the layout and the selection.
     """
     if qd.static(block_dim > 1):
         for k in qd.static(range(values.n)):
@@ -102,9 +103,9 @@ def func_lane_local_set(values, i_k: int, value, block_dim: qd.template()):
 
 @qd.func
 def func_lane_slot_read(values, k: int, block_dim: qd.template()):
-    """Read slot k of a buffer spread over the lanes of a block, every lane of the block receiving it.
+    """Read a slot of a buffer spread over the lanes of a block, every lane of the block receiving it.
 
-    See func_lane_local_get for the layout. Every lane of the block must call it with the same k.
+    The slot read is k. See func_lane_local_get for the layout. Every lane of the block must call it with the same k.
     """
     value = values[0]
     if qd.static(block_dim > 1):
@@ -116,9 +117,9 @@ def func_lane_slot_read(values, k: int, block_dim: qd.template()):
 
 @qd.func
 def func_lane_slot_write(values, k: int, value, tid: int, block_dim: qd.template()):
-    """Return the share of a lane-spread buffer this lane holds, with slot k set to value where this lane holds it.
+    """Return the share of a lane-spread buffer this lane holds, with one slot replaced where this lane holds it.
 
-    See func_lane_local_get for the layout.
+    Slot k takes value. See func_lane_local_get for the layout.
     """
     if k % block_dim == tid:
         values = func_lane_local_set(values, k // block_dim, value, block_dim)
@@ -143,9 +144,10 @@ def func_lane_slot_min(k: int, n_slots: int, n_slot_rows: qd.template(), block_d
 
 @qd.func
 def func_lane_mask_pop_first(masks, n_slots: int, block_dim: qd.template()):
-    """Lowest slot a mask of lane-spread slots holds, n_slots if none, and the mask without it.
+    """Lowest slot a mask of lane-spread slots holds, and the mask without it.
 
-    Bit i of row r of the mask stands for slot r * block_dim + i, see func_lane_local_get for the layout.
+    Bit i of row r of the mask stands for slot r * block_dim + i, see func_lane_local_get for the layout. The slot is
+    n_slots when the mask holds none.
     """
     k = n_slots
     for i_k in qd.static(range(masks.n)):
@@ -157,9 +159,10 @@ def func_lane_mask_pop_first(masks, n_slots: int, block_dim: qd.template()):
 
 @qd.func
 def func_is_lane_slot_seen(values, n_values: int, value: int, tid: int, block_dim: qd.template()):
-    """Whether a value is among the first n_values slots of a buffer spread over the lanes of a block.
+    """Whether a value is among the leading slots of a buffer spread over the lanes of a block.
 
-    See func_lane_local_get for the layout. Every lane of the block must call it with the same arguments but tid.
+    The first n_values slots are searched. See func_lane_local_get for the layout. Every lane of the block must call it
+    with the same arguments but tid.
     """
     n_slots = qd.static(values.n)
     is_seen = False
@@ -210,7 +213,7 @@ def func_add_polytope_vertex_contacts_sdf(
     # and the count and slots of its contacts once this scan emitted its own are returned. The block_dim lanes of a
     # block detect the pair together, lane tid of the block being this thread, every lane returning the same result.
     # The per-pair buffers (kept verts, visited minima, contact slots) are spread over the lanes (see
-    # func_lane_local_get), which keeps a 32nd of each in every lane instead of a full copy in local memory.
+    # func_lane_local_get), which keeps a block_dim-th of each in every lane instead of a full copy in local memory.
     n_max = qd.static(collider_static_config.n_contacts_per_nonconvex_pair if rigid_config.enable_multi_contact else 1)
     N_SLOTS = qd.static((n_max + block_dim - 1) // block_dim)
     EPS = rigid_info.EPS[None]
@@ -276,13 +279,15 @@ def func_add_polytope_vertex_contacts_sdf(
         for i_k in qd.static(range(N_SLOTS)):
             top_pen[i_k] = -gs.qd_float(1e30)
             top_iv[i_k] = -1
-        # Both passes walk groups of candidate verts of A, each group a contiguous vert range, and pick the group and
-        # the vert in runtime branches, so that the SDF query and the insertion below are inlined once. This trades
-        # some runtime for compile time: the per-vert branches on 'seeded' make the scan slower than two dedicated
-        # loops, each with its own copy of the query and the insertion.
+        # Both passes walk groups of candidate verts of A (all the columns of cells as one group for the full scan, a
+        # 1-ring per seed for the verification) and pick the group and the vert in runtime branches, so that the SDF
+        # query and the insertion below are inlined once. This trades some runtime for compile time: the per-vert
+        # branches on 'seeded' make the scan slower than two dedicated loops, each with its own copy of the query and
+        # the insertion.
         n_cells_per_axis = qd.static(8)
         cell_min = qd.Vector.zero(gs.qd_int, 3)
         cell_max = qd.Vector.zero(gs.qd_int, 3)
+        n_columns = 0
         n_groups = 0
         # The full scan keeps the verts within one SDF cell of B's surface. The verification only keeps UNAMBIGUOUS
         # penetrations: the first scan already supplies the near-surface approach band from the other side, and
@@ -315,9 +320,9 @@ def func_add_polytope_vertex_contacts_sdf(
             if (cell_max >= 0).all() and (cell_min <= n_cells_per_axis - 1).all():
                 cell_min = qd.max(cell_min, 0)
                 cell_max = qd.min(cell_max, n_cells_per_axis - 1)
-                # One group per xy column of cells: cells along z are contiguous in the cell-range layout, so the whole
-                # z-run is one vert range.
-                n_groups = (cell_max[0] - cell_min[0] + 1) * (cell_max[1] - cell_min[1] + 1)
+                # One column per xy cell: cells along z are contiguous in the cell-range layout, so the whole z-run is
+                # one vert range.
+                n_columns = (cell_max[0] - cell_min[0] + 1) * (cell_max[1] - cell_min[1] + 1)
         else:
             # Seeded verification: what the pair's first scan cannot see is a feature of A (rim, edge) crossing one
             # of B's faces BETWEEN B's verts; any such feature lies in B's near-surface band, connected on A's vertex
@@ -341,13 +346,11 @@ def func_add_polytope_vertex_contacts_sdf(
         columns_vert_start = qd.Vector.zero(gs.qd_int, N_COLUMN_SLOTS)
         columns_vert_end = qd.Vector.zero(gs.qd_int, N_COLUMN_SLOTS)
         n_cells_y = cell_max[1] - cell_min[1] + 1
-        n_columns = 0
         n_scan_verts = 0
         if not seeded:
-            n_columns = n_groups
             for i_k in range(N_COLUMN_SLOTS):
                 i_column = i_k * block_dim + tid
-                if i_column < n_groups:
+                if i_column < n_columns:
                     i_cell = (
                         i_ga * (n_cells_per_axis**3 + 1)
                         + (
@@ -799,7 +802,7 @@ def func_add_polytope_vertex_contacts_sdf(
                     dt=gs.qd_float,
                 )
                 contact_pos_v = gu.qd_transform_by_trans_quat(dyn_info.verts.init_pos[i_v], ga_pos, ga_quat)
-                # Each lane tests the contacts of the pair it holds the slots of
+                # Each lane tests the contacts of the pair whose slots it holds, the block combining the answers
                 is_repeated = False
                 for i_k in range(N_SLOTS):
                     if i_k * block_dim + tid < n_added:
