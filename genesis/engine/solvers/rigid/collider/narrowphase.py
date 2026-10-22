@@ -707,7 +707,25 @@ def func_add_polytope_vertex_contacts_sdf(
                 emit_normal_x = func_lane_local_set(emit_normal_x, i_k, normal_v[0], block_dim)
                 emit_normal_y = func_lane_local_set(emit_normal_y, i_k, normal_v[1], block_dim)
                 emit_normal_z = func_lane_local_set(emit_normal_z, i_k, normal_v[2], block_dim)
-        for k in range(n_max):
+        # Most slots are left empty by the scan, so on GPU the emission only visits the occupied ones, taken in slot
+        # order from a ballot of the lanes per row of slots.
+        n_emit_slots = n_max
+        lanes_occupied = qd.Vector.zero(qd.u32, N_SLOTS)
+        if qd.static(block_dim > 1):
+            n_emit_slots = 0
+            for i_k in qd.static(range(N_SLOTS)):
+                lanes_occupied[i_k] = su.qd_block_ballot(
+                    i_k * block_dim + tid < n_max and func_lane_local_get(top_iv, i_k, block_dim) >= 0
+                )
+                n_emit_slots = n_emit_slots + qd.cast(qd.math.popcnt(lanes_occupied[i_k]), gs.qd_int)
+        for i_emit in range(n_emit_slots):
+            k = i_emit
+            if qd.static(block_dim > 1):
+                k = n_max
+                for i_k in qd.static(range(N_SLOTS)):
+                    if k == n_max and lanes_occupied[i_k] != 0:
+                        k = i_k * block_dim + qd.cast(qd.math.ffs(lanes_occupied[i_k]), gs.qd_int) - 1
+                        lanes_occupied[i_k] = lanes_occupied[i_k] & (lanes_occupied[i_k] - 1)
             i_v = func_lane_slot_read(top_iv, k, block_dim)
             if i_v >= 0:
                 pen_emit = func_lane_slot_read(emit_pen, k, block_dim)
