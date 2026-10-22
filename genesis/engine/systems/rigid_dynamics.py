@@ -269,18 +269,6 @@ class RigidDynamics(System):
     def integrate_kernel(self):
         return kernel_step_2, self.data, self.rigid_config
 
-    @System.action(kind="host")
-    def coupling_set_qpos(self):
-        return self.set_coupling_qpos
-
-    @System.action(kind="host")
-    def coupling_set_dofs_velocity(self):
-        return self.set_coupling_dofs_velocity
-
-    @System.action(kind="host")
-    def coupling_apply_wrench(self):
-        return self.apply_coupling_wrench
-
     # -------------------------------- Public get/set API --------------------------------
 
     def get_n_candidate_equalities(self) -> int:
@@ -2967,15 +2955,6 @@ class RigidDynamics(System):
     def finalize_data(self) -> None:
         """Finish initialization after island, contact and optional constraint owners have allocated their data."""
         self._finalize_dynamics()
-
-    def set_coupling_qpos(self, qpos: TensorLike, qs_idx: IndexLike, skip_forward: bool) -> None:
-        self.set_qpos(qpos, qs_idx=qs_idx, skip_forward=skip_forward)
-
-    def set_coupling_dofs_velocity(self, velocity: TensorLike, dofs_idx: IndexLike, skip_forward: bool) -> None:
-        self.set_dofs_velocity(velocity, dofs_idx=dofs_idx, skip_forward=skip_forward)
-
-    def apply_coupling_wrench(self, force: TensorLike, torque: TensorLike, links_idx: IndexLike) -> None:
-        self.apply_links_external_wrench(force, torque, links_idx=links_idx)
 
     def get_forward_update_flags(self) -> tuple[bool, bool]:
         return self._is_forward_pos_updated, self._is_forward_vel_updated

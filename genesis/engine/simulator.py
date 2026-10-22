@@ -242,43 +242,18 @@ class Simulator(RBC):
 
         # A coupler exchanges state once per substep, so it is built once the rate that loop runs at is known.
         rigid = self._rigid_dynamics
-        rigid_active = rigid is not None
-        if rigid_active and rigid._requires_grad and isinstance(self._coupler, (SAPCoupler, IPCCoupler)):
+        if rigid is not None and rigid.requires_grad and isinstance(self._coupler, (SAPCoupler, IPCCoupler)):
             gs.raise_exception(f"{type(self._coupler).__name__} is not supported yet when requires_grad is True.")
-        contact_data = None if self._engine is None or self._engine.rigid_rigid_contact is None else self._engine.rigid_rigid_contact.data
-        if isinstance(self._coupler, LegacyCoupler):
+        if isinstance(self._coupler, SAPCoupler):
+            # The SAP kernels take the Rigid Data explicitly: the facade is not a Data root a kernel can reach through.
+            contact = None if self._engine is None else self._engine.rigid_rigid_contact
             self._coupler.build(
-                rigid_active=rigid_active,
-                n_rigid_geoms=self.rigid_solver.n_geoms,
-                n_rigid_geoms_padded=max(1, self.rigid_solver.n_geoms),
-                rigid_batch_links_info=self.rigid_solver._options.batch_links_info,
-                rigid_substep_dt=self.rigid_solver._substep_dt,
-            )
-        elif isinstance(self._coupler, SAPCoupler):
-            self._coupler.build(
-                rigid_active=rigid_active,
-                n_rigid_dofs=self.rigid_solver.n_dofs,
-                n_rigid_entities=self.rigid_solver.n_entities,
-                n_rigid_equalities=self.rigid_solver.n_equalities,
-                n_rigid_faces=self.rigid_solver.n_faces,
-                n_rigid_free_verts=self.rigid_solver.n_free_verts,
-                n_rigid_verts=self.rigid_solver.n_verts,
-                rigid_batch_links_info=self.rigid_solver._options.batch_links_info,
-                equalities=self.rigid_solver.equalities,
-                geoms=self.rigid_solver.geoms,
                 rigid_data=None if rigid is None else rigid.data,
                 rigid_config=None if rigid is None else rigid.rigid_config,
-                contact_data=contact_data,
+                contact_data=None if contact is None else contact.data,
             )
         else:
-            self._coupler.build(
-                rigid_active=rigid_active,
-                rigid_options=self.rigid_solver._options,
-                rigid_entities=self.rigid_solver.entities,
-                rigid_links=self.rigid_solver.links,
-                rigid_data=None if rigid is None else rigid.data,
-                rigid_config=None if rigid is None else rigid.rigid_config,
-            )
+            self._coupler.build()
 
         if self.n_envs > 0 and self.sf_solver.is_active:
             gs.raise_exception("Batching is not supported for SF solver as of now.")
@@ -347,12 +322,7 @@ class Simulator(RBC):
             )
         return SimulatorCheckpoint(
             steps=self._steps.clone(),
-            solvers={
-                type(solver).__name__: (
-                    solver.__getstate__()
-                )
-                for solver in self._active_solvers
-            },
+            solvers={type(solver).__name__: (solver.__getstate__()) for solver in self._active_solvers},
         )
 
     def __setstate__(self, state: SimulatorCheckpoint) -> None:
@@ -516,13 +486,7 @@ class Simulator(RBC):
         elif isinstance(self._coupler, SAPCoupler):
             self._coupler.couple(f, rigid_data)
         else:
-            self._coupler.couple(
-                f,
-                rigid_data,
-                None if rigid is None else rigid.coupling_set_qpos,
-                None if rigid is None else rigid.coupling_set_dofs_velocity,
-                None if rigid is None else rigid.coupling_apply_wrench,
-            )
+            self._coupler.couple(f)
 
     def _coupler_couple_grad(self, f: int) -> None:
         rigid = self._rigid_dynamics
@@ -535,26 +499,8 @@ class Simulator(RBC):
                 None if rigid_sdf is None else rigid_sdf.sdf_config,
                 rigid_sdf,
             )
-        elif isinstance(self._coupler, SAPCoupler):
-            self._coupler.couple_grad(f)
         else:
             self._coupler.couple_grad(f)
-
-    def get_rigid_link_poses_for_coupling(self, links_idx: IndexLike) -> tuple[torch.Tensor, torch.Tensor]:
-        """Read Rigid link poses through the Simulator's explicit coupling boundary."""
-        return (
-            self._rigid_dynamics.get_links_pos(links_idx=links_idx),
-            self._rigid_dynamics.get_links_quat(links_idx=links_idx),
-        )
-
-    def attach_pbd_particles_to_rigid_link(self, particles_idx: IndexLike, envs_idx: IndexLike, link_idx: int) -> None:
-        """Attach PBD particles using explicit Rigid link state owned by the backend."""
-        self._coupler.kernel_attach_pbd_to_rigid_link(
-            particles_idx,
-            envs_idx,
-            link_idx,
-            self._rigid_dynamics.data.dyn_state.links,
-        )
 
     # -------------- pre coupling --------------
 
@@ -570,9 +516,7 @@ class Simulator(RBC):
                 solver.substep_pre_coupling(
                     f,
                     None if rigid is None else rigid.data,
-                    None
-                    if self._engine is None
-                    else self._engine.rigid_sdf.data.sdf_config,
+                    None if self._engine is None else self._engine.rigid_sdf.data.sdf_config,
                     None if self._engine is None else self._engine.rigid_sdf.data,
                 )
             else:
@@ -587,9 +531,7 @@ class Simulator(RBC):
                 solver.substep_pre_coupling_grad(
                     f,
                     None if rigid is None else rigid.data,
-                    None
-                    if self._engine is None
-                    else self._engine.rigid_sdf.data.sdf_config,
+                    None if self._engine is None else self._engine.rigid_sdf.data.sdf_config,
                     None if self._engine is None else self._engine.rigid_sdf.data,
                 )
             else:

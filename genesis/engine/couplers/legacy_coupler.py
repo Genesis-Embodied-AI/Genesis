@@ -33,30 +33,18 @@ class LegacyCoupler(RBC):
         self.options = options
 
         self.tool_solver = self.sim.tool_solver
+        self.rigid_solver = self.sim.rigid_solver
         self.mpm_solver = self.sim.mpm_solver
         self.sph_solver = self.sim.sph_solver
         self.pbd_solver = self.sim.pbd_solver
         self.fem_solver = self.sim.fem_solver
         self.sf_solver = self.sim.sf_solver
 
-    def build(
-        self,
-        *,
-        rigid_active,
-        n_rigid_geoms,
-        n_rigid_geoms_padded,
-        rigid_batch_links_info,
-        rigid_substep_dt,
-    ) -> None:
-        self._rigid_active = rigid_active
-        self._n_rigid_geoms = n_rigid_geoms
-        self._n_rigid_geoms_padded = n_rigid_geoms_padded
-        self._rigid_batch_links_info = rigid_batch_links_info
-        self._rigid_substep_dt = rigid_substep_dt
-        self._rigid_mpm = rigid_active and self.mpm_solver.is_active and self.options.rigid_mpm
-        self._rigid_sph = rigid_active and self.sph_solver.is_active and self.options.rigid_sph
-        self._rigid_pbd = rigid_active and self.pbd_solver.is_active and self.options.rigid_pbd
-        self._rigid_fem = rigid_active and self.fem_solver.is_active and self.options.rigid_fem
+    def build(self) -> None:
+        self._rigid_mpm = self.rigid_solver.is_active and self.mpm_solver.is_active and self.options.rigid_mpm
+        self._rigid_sph = self.rigid_solver.is_active and self.sph_solver.is_active and self.options.rigid_sph
+        self._rigid_pbd = self.rigid_solver.is_active and self.pbd_solver.is_active and self.options.rigid_pbd
+        self._rigid_fem = self.rigid_solver.is_active and self.fem_solver.is_active and self.options.rigid_fem
         self._mpm_sph = self.mpm_solver.is_active and self.sph_solver.is_active and self.options.mpm_sph
         self._mpm_pbd = self.mpm_solver.is_active and self.pbd_solver.is_active and self.options.mpm_pbd
         self._fem_mpm = self.fem_solver.is_active and self.mpm_solver.is_active and self.options.fem_mpm
@@ -68,24 +56,24 @@ class LegacyCoupler(RBC):
             self.mpm_rigid_normal = qd.Vector.field(
                 3,
                 dtype=gs.qd_float,
-                shape=(self.mpm_solver.n_particles, self._n_rigid_geoms_padded, self.mpm_solver._B),
+                shape=(self.mpm_solver.n_particles, max(1, self.rigid_solver.n_geoms), self.mpm_solver._B),
             )
 
         if self._rigid_sph:
             self.sph_rigid_normal = qd.Vector.field(
                 3,
                 dtype=gs.qd_float,
-                shape=(self.sph_solver.n_particles, self._n_rigid_geoms_padded, self.sph_solver._B),
+                shape=(self.sph_solver.n_particles, max(1, self.rigid_solver.n_geoms), self.sph_solver._B),
             )
             self.sph_rigid_normal_reordered = qd.Vector.field(
                 3,
                 dtype=gs.qd_float,
-                shape=(self.sph_solver.n_particles, self._n_rigid_geoms_padded, self.sph_solver._B),
+                shape=(self.sph_solver.n_particles, max(1, self.rigid_solver.n_geoms), self.sph_solver._B),
             )
 
         if self._rigid_pbd:
             self.pbd_rigid_normal_reordered = qd.Vector.field(
-                3, dtype=gs.qd_float, shape=(self.pbd_solver.n_particles, self.pbd_solver._B, self._n_rigid_geoms)
+                3, dtype=gs.qd_float, shape=(self.pbd_solver.n_particles, self.pbd_solver._B, self.rigid_solver.n_geoms)
             )
 
             struct_particle_attach_info = qd.types.struct(link_idx=gs.qd_int, local_pos=gs.qd_vec3)
@@ -123,12 +111,12 @@ class LegacyCoupler(RBC):
 
     @qd.kernel
     def _kernel_reset_mpm(self, envs_idx: qd.types.ndarray()):
-        for i_p, i_g, i_b_ in qd.ndrange(self.mpm_solver.n_particles, self._n_rigid_geoms, envs_idx.shape[0]):
+        for i_p, i_g, i_b_ in qd.ndrange(self.mpm_solver.n_particles, self.rigid_solver.n_geoms, envs_idx.shape[0]):
             self.mpm_rigid_normal[i_p, i_g, envs_idx[i_b_]] = 0.0
 
     @qd.kernel
     def _kernel_reset_sph(self, envs_idx: qd.types.ndarray()):
-        for i_p, i_g, i_b_ in qd.ndrange(self.sph_solver.n_particles, self._n_rigid_geoms, envs_idx.shape[0]):
+        for i_p, i_g, i_b_ in qd.ndrange(self.sph_solver.n_particles, self.rigid_solver.n_geoms, envs_idx.shape[0]):
             self.sph_rigid_normal[i_p, i_g, envs_idx[i_b_]] = 0.0
 
     @qd.func
@@ -146,7 +134,7 @@ class LegacyCoupler(RBC):
         sdf_info: array_class.SDFInfo,
         collider_static_config: qd.template(),
     ):
-        for i_g in range(self._n_rigid_geoms):
+        for i_g in range(self.rigid_solver.n_geoms):
             if geoms_info.needs_coup[i_g]:
                 vel = self._func_collide_with_rigid_geom(
                     pos_world,
@@ -239,7 +227,7 @@ class LegacyCoupler(RBC):
         # respond to the force, and the reaction is a conservative stiff kick that keeps fluid resting on them
         # ringing forever, pumped by the acoustic pressure fluctuations of the fluid.
         link_idx = geoms_info.link_idx[geom_idx]
-        I_l = [link_idx, batch_idx] if qd.static(self._rigid_batch_links_info) else link_idx
+        I_l = [link_idx, batch_idx] if qd.static(self.rigid_solver._options.batch_links_info) else link_idx
         if signed_dist < self.sph_solver._support_radius and pressure > 0 and not links_info.is_fixed[I_l]:
             pressure_force = (
                 -2.0
@@ -480,7 +468,7 @@ class LegacyCoupler(RBC):
     ):
         for i_p, i_b in qd.ndrange(self.mpm_solver.n_particles, self.mpm_solver._B):
             if self.mpm_solver.particles_ng[f, i_p, i_b].active:
-                for i_g in range(self._n_rigid_geoms):
+                for i_g in range(self.rigid_solver.n_geoms):
                     if geoms_info.needs_coup[i_g]:
                         sdf_normal = sdf.sdf_func_normal_world(
                             i_g,
@@ -497,7 +485,7 @@ class LegacyCoupler(RBC):
                             self.mpm_rigid_normal[i_p, i_g, i_b] = sdf_normal
 
     def fem_rigid_link_constraints(self, links_state):
-        if self.fem_solver._constraints_initialized and self._rigid_active:
+        if self.fem_solver._constraints_initialized and self.rigid_solver.is_active:
             self.fem_solver._kernel_update_linked_vertex_constraints(links_state)
 
     @qd.kernel
@@ -681,7 +669,7 @@ class LegacyCoupler(RBC):
     ):
         for i_p, i_b in qd.ndrange(self.sph_solver._n_particles, self.sph_solver._B):
             if self.sph_solver.particles_ng_reordered[i_p, i_b].active:
-                for i_g in range(self._n_rigid_geoms):
+                for i_g in range(self.rigid_solver.n_geoms):
                     if geoms_info.needs_coup[i_g]:
                         (
                             self.sph_solver.particles_reordered[i_p, i_b].vel,
@@ -716,7 +704,7 @@ class LegacyCoupler(RBC):
         for i_p, i_b in qd.ndrange(self.pbd_solver._n_particles, self.sph_solver._B):
             if self.pbd_solver.particles_ng_reordered[i_p, i_b].active:
                 # NOTE: Couldn't figure out a good way to handle collision with non-free particle. Such collision is not phsically plausible anyway.
-                for i_g in range(self._n_rigid_geoms):
+                for i_g in range(self.rigid_solver.n_geoms):
                     if geoms_info.needs_coup[i_g]:
                         (
                             self.pbd_solver.particles_reordered[i_p, i_b].pos,
@@ -868,7 +856,7 @@ class LegacyCoupler(RBC):
 
             #################### particle -> rigid ####################
             delta_mv = mass * (new_vel - vel)
-            force = (-delta_mv / self._rigid_substep_dt) * (1 - energy_loss)
+            force = (-delta_mv / self.rigid_solver._substep_dt) * (1 - energy_loss)
 
             func_apply_coupling_force(geoms_info.link_idx[geom_idx], batch_idx, pos_world, force, links_state)
 
