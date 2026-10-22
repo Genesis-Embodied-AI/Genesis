@@ -1,5 +1,52 @@
 # Genesis Release Note
 
+## 1.4.5
+
+The release significantly rigid body simulation for scenes with fine convex decomposition or non-convex geometries. Besides, the overhead of trajectory recording has been dramatically reduced (<20% in most cases). Finally, caching has been improved across the board, avoiding recompilation more reliably and reloading assets much faster.
+
+### Breaking
+
+* [BUG FIX] Support plain torch tensors and closed-loop policies in differentiable simulation. (@Kashu7100) (#3586)
+* [MISC] Get rid of custom Genesis tensor used for differentiable simulation. (@duburcqa) (#3592)
+
+### New Features
+
+* Add analytical screw constraints between links at runtime. (@Milotrince) (#3511)
+
+### Bug Fixes
+
+* Fix the incremental Hessian update of the rigid constraint solver on AMDGPU.  (@yugeng-tju) (#3537)
+* Fix scene build and shared memory occupancy model on AMD GPUs. (@LuoShaoyinn) (#3545)
+* Fix random crash on CUDA when rebuilding a scene with the viewer open. (@duburcqa) (#3553)
+* Fix rendered views depending on the precision of the simulation. (@duburcqa) (#3571)
+* Fix flickering of the ground plane texture. (@duburcqa) (#3576)
+* Fix rigid simulation crashing or hanging on AMD RDNA4 GPUs. (@duburcqa) (#3580)
+* Fix wrong armature handling for hibernated links. Speed up the rigid simulation on GPU. (@duburcqa) (#3582)
+* Fix setters paced at simulation rate when the interactive viewer is open. (@duburcqa) (#3591)
+* Fall back from MPR to GJK only when MPR fails. (@duburcqa) (#3541)
+* Push MPR contacts along the minimum separation more reliably. (@duburcqa) (#3539)
+* Scale primitive geometry correctly by legacy URDF parser. (@Milotrince) (#3465)
+* Drop torch compile that is causing side-effects without performance benefits. (@duburcqa) (#3527)
+
+### Miscellaneous
+
+* Speed up collision detection on scenes with many collision geometries. (@duburcqa) (#3579)
+* Speed up collision detection of non-convex meshes. (@duburcqa) (#3583, #3584, #3587, #3588)
+* Speed up compilation of rigid collision detection. (@duburcqa) (#3555, #3556)
+* Speed up trajectory recording on CPU and GPU. (@duburcqa) (#3538)
+* Speed up rebuilding a scene from the same assets. (@Milotrince) (#3392)
+* Speed up rebuilding an interactive scene. (@Milotrince) (#3501)
+* Improve contact accuracy and reduce collision overhead. (@duburcqa) (#3546, #3554)
+* Reduce memory footprint of scenes loading the same asset multiple times. (@duburcqa) (#3568)
+* Persistent compiled kernels across sessions. (@duburcqa) (#3551)
+* Record trajectories without stalling the simulation, with the timings of every step. (@duburcqa) (#3528)
+* Support exporting python scalar in checkpoints and trajectories.  (@duburcqa) (#3531)
+* Add new fast trajectory recording mode for batched GPU simulation. (@duburcqa) (#3534)
+* Compute the signed distance field of rigid geoms 8x faster and once per geometry. (@duburcqa) (#3569)
+* Keep the cached data of a scene across an interactive rebuild. (@duburcqa) (#3575)
+* Fix spurious warning on scene reset with threaded recorders. (@Nas01010101) (#3574)
+* Show warning instead of error for build-time checks. (@Milotrince) (#3578)
+
 ## 1.4.4
 
 The minor release speeds up rigid body simulation on GPU while significantly improving the robustness of perturbation-based multi-contact without extra runtime cost.
