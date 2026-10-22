@@ -1,6 +1,9 @@
-import quadrants as qd
 import numpy as np
+import torch
+
 import trimesh
+
+import quadrants as qd
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -383,7 +386,9 @@ class PBD2DEntity(PBDTetEntity):
         self._mass = self._vmesh.area * self.material.rho
 
         self._particles = np.asarray(self._mesh.verts, dtype=gs.np_float)
-        self._init_particles_offset = gs.tensor(self._particles) - gs.tensor(self._sampled_pos)
+        self._init_particles_offset = torch.tensor(
+            self._particles - self._sampled_pos, dtype=gs.tc_float, device=gs.device
+        )
 
         self._edges = np.asarray(self._mesh.get_unique_edges(), dtype=gs.np_int)
 
@@ -518,7 +523,9 @@ class PBD3DEntity(PBDTetEntity):
         tet_cfg = mu.generate_tetgen_config_from_morph(self.morph)
         particles, elems, *_ = self._mesh.tetrahedralize(tet_cfg)
         self._particles = particles.astype(gs.np_float, copy=False)
-        self._init_particles_offset = gs.tensor(self._particles) - gs.tensor(self._sampled_pos)
+        self._init_particles_offset = torch.tensor(
+            self._particles - self._sampled_pos, dtype=gs.tc_float, device=gs.device
+        )
 
         self._elems = elems.astype(gs.np_int, copy=False)
         self._edges = np.array(

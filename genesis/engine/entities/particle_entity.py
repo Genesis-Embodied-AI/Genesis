@@ -2,16 +2,17 @@ import functools
 from pathlib import Path
 
 import numpy as np
-import quadrants as qd
 import torch
+
 import trimesh
+
+import quadrants as qd
 
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
-from genesis.engine.states.cache import QueriedStates
-from genesis.utils.misc import assert_contiguous, to_gs_tensor, broadcast_tensor
+from genesis.utils.misc import broadcast_tensor, to_gs_tensor
 
 from .base_entity import Entity
 
@@ -109,7 +110,6 @@ class ParticleEntity(Entity):
 
         self.init_tgt_vars()
         self.init_ckpt()
-        self._queried_states = QueriedStates()
 
         # Note that this attribute must only be used in forward pass
         self.active = False
@@ -337,7 +337,7 @@ class ParticleEntity(Entity):
             origin = pos
 
         self._particles = np.asarray(particles, dtype=gs.np_float, order="C")
-        self._init_particles_offset = gs.tensor(self._particles) - gs.tensor(origin)
+        self._init_particles_offset = torch.tensor(self._particles - origin, dtype=gs.tc_float, device=gs.device)
         self._n_particles = len(self._particles)
 
         gs.logger.info(f"Sampled ~<{self._n_particles:,}>~ particles.")
@@ -416,6 +416,11 @@ class ParticleEntity(Entity):
         ----------
         in_backward : bool, default=False
             Whether the simulation is in the backward gradient pass.
+
+        Returns
+        -------
+        inputs : tuple
+            The inputs applied at this step, of any type, for the simulator to tape.
         """
         if in_backward:
             # use negative index because buffer length might not be full
@@ -425,59 +430,65 @@ class ParticleEntity(Entity):
         else:
             for key in self._tgt_keys:
                 self._tgt_buffer[key].append(self._tgt[key])
-            self._sim.record_step_inputs(self._tgt)
+        inputs = tuple(self._tgt.values())
 
         if any(self._tgt[key] is not None for key in self._tgt_keys):
             particles_idx_local = self._sanitize_particles_idx_local(envs_idx=self._scene._envs_idx)
 
         # Note that setting positions resets velocities to zero, so it must be done BEFORE setting velocities.
-        # Detached: the kernels only read the values, the gradient reaches each input through `process_input_grad`,
-        # and a kernel argument that tracks gradients would make Quadrants allocate a `.grad` buffer for it.
+        # The setter kernels of every deformable entity take detached inputs: they only read the values, the gradient
+        # reaches each input through `process_input_grad`, and a gradient-tracking kernel argument makes Quadrants
+        # allocate a `.grad` buffer for it.
         if self._tgt["pos"] is not None:
-            assert_contiguous(self._tgt["pos"])
+            assert self._tgt["pos"].is_contiguous()
             self.set_particles_pos(self._tgt["pos"].detach(), particles_idx_local)
 
         if self._tgt["vel"] is not None:
-            assert_contiguous(self._tgt["vel"])
+            assert self._tgt["vel"].is_contiguous()
             self.set_particles_vel(self._tgt["vel"].detach(), particles_idx_local)
 
         if self._tgt["act"] is not None:
-            assert_contiguous(self._tgt["act"])
+            assert self._tgt["act"].is_contiguous()
             act_values = torch.tensor((gs.ACTIVE, gs.INACTIVE), dtype=gs.tc_int, device=gs.device)
             assert torch.isin(self._tgt["act"], act_values).all()
             self.set_particles_active(self._tgt["act"], particles_idx_local)
 
+        # Only the entities of a muscle material tape an actuation (see init_tgt_keys)
+        if "actu" in self._tgt_keys and self._tgt["actu"] is not None:
+            assert self._tgt["actu"].is_contiguous()
+            self.set_particles_actu(self._tgt["actu"].detach(), particles_idx_local)
+
         for key in self._tgt_keys:
             self._tgt[key] = None
+        return inputs
 
     def process_input_grad(self):
         """
         Process gradients of input states and propagate them backward.
 
+        Returns
+        -------
+        inputs_grad : list of tuple
+            The pairs (input, gradient) of the inputs applied at this step that track gradients.
+
         Notes
         -----
-        Automatically applies the backward hooks for position, velocity, and actuation tensors.
         Clears the gradients in the solver to avoid double accumulation.
         """
         _tgt_pos = self._tgt_buffer["pos"].pop()
-        if _tgt_pos is not None and _tgt_pos.requires_grad:
-            self._sim.add_input_grad(_tgt_pos, self._set_particles_pos_grad)
-
         _tgt_vel = self._tgt_buffer["vel"].pop()
-        if _tgt_vel is not None and _tgt_vel.requires_grad:
-            self._sim.add_input_grad(_tgt_vel, self._set_particles_vel_grad)
+
+        inputs_grad = []
+        for tgt, set_grad in ((_tgt_pos, self._set_particles_pos_grad), (_tgt_vel, self._set_particles_vel_grad)):
+            if tgt is not None and tgt.requires_grad:
+                grad = torch.zeros_like(tgt)
+                set_grad(grad)
+                inputs_grad.append((tgt, grad))
 
         # Manually zero the grad since manually setting state breaks gradient flow
         if _tgt_vel is not None or _tgt_pos is not None:
             self._reset_grad()
-
-    def collect_output_grads(self):
-        """
-        Collect gradients from external queried states.
-        """
-        if self._sim.cur_step_global in self._queried_states:
-            for state in self._queried_states[self._sim.cur_step_global]:
-                self.add_grad_from_state(state)
+        return inputs_grad
 
     # ------------------------------------------------------------------------------------
     # ---------------------------------- io & control ------------------------------------
@@ -485,7 +496,8 @@ class ParticleEntity(Entity):
 
     @assert_active
     def _set_particles_target_state(self, key, name, element_shape, dtype, tensor, envs_idx=None):
-        if self.sim.requires_grad and self.sim.cur_t > 0.0:
+        # Overwriting the position or velocity of the particles cuts the gradient of everything that led to them
+        if key in ("pos", "vel") and self.sim.requires_grad and self.sim.cur_t > 0.0:
             gs.logger.warning(
                 f"Manually setting particle '{name}'. This is not recommended because it breaks gradient flow."
             )

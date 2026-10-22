@@ -3,9 +3,11 @@
 from typing import TYPE_CHECKING
 
 import numpy as np
-import igl
-import quadrants as qd
 import torch
+
+import igl
+
+import quadrants as qd
 
 import genesis as gs
 import genesis.utils.array_class as array_class
@@ -14,7 +16,7 @@ from genesis.engine.entities.fem_entity import FEMEntity
 from genesis.engine.materials import FEM
 from genesis.engine.states.solvers import FEMSolverState
 from genesis.utils.geom import qd_transform_by_quat, qd_transform_quat_by_quat
-from genesis.utils.misc import assert_contiguous, qd_to_torch
+from genesis.utils.misc import qd_to_torch
 
 from .base_solver import GravityMixin, Solver, TimeBasedMixin
 
@@ -334,6 +336,7 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
     def reset_grad(self):
         self.elements_v.grad.fill(0)
         self.elements_el.grad.fill(0)
+        self._queried_states.clear()
 
         for entity in self._entities:
             entity.reset_grad()
@@ -966,14 +969,6 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
     # ------------------------------------ stepping --------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def process_input(self, in_backward=False):
-        for entity in self._entities:
-            entity.process_input(in_backward=in_backward)
-
-    def process_input_grad(self):
-        for entity in self._entities[::-1]:
-            entity.process_input_grad()
-
     def substep_pre_coupling(self, f):
         if self.is_active:
             # Skip FEM solver step if using IPCCoupler (IPC handles FEM simulation)
@@ -1048,18 +1043,14 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
     # ----------------------------------- gradient ---------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def collect_output_grads(self):
-        for entity in self._entities:
-            entity.collect_output_grads()
-
     def add_grad_from_state(self, state):
         if self.is_active:
             if state.pos.grad is not None:
-                assert_contiguous(state.pos)
+                assert state.pos.grad.is_contiguous()
                 self._kernel_add_grad_from_pos(self._sim.cur_substep_local, state.pos.grad)
 
             if state.vel.grad is not None:
-                assert_contiguous(state.vel)
+                assert state.vel.grad.is_contiguous()
                 self._kernel_add_grad_from_vel(self._sim.cur_substep_local, state.vel.grad)
 
     def save_ckpt(self, ckpt_name):
@@ -1106,6 +1097,7 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
         if self.is_active:
             state = FEMSolverState(self._scene)
             self._kernel_get_state(f, state.pos, state.vel, state.active)
+            self._queried_states.append(state)
         else:
             state = None
         return state

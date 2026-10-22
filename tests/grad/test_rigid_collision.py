@@ -112,7 +112,7 @@ def test_contact_per_step_force_grad_matches_fd(shape, grad_capsule, precision, 
     def settle(scene, obj):
         # Settling under the same base force as the grad window keeps the contact manifold in its loaded
         # configuration throughout, so the in-window contact-count guards hold.
-        obj.set_dofs_position(gs.tensor(rest_dofs, dtype=gs.tc_float))
+        obj.set_dofs_position(torch.tensor(rest_dofs, dtype=gs.tc_float, device=gs.device))
         for _ in range(n_settle):
             obj.control_dofs_force(base_force)
             scene.step()
@@ -122,7 +122,9 @@ def test_contact_per_step_force_grad_matches_fd(shape, grad_capsule, precision, 
     settle(scene_ana, obj_ana)
     nc = _n_contacts(scene_ana)
     assert nc > 0, f"setup error: {shape} not in contact after settle (n_contacts={nc})"
-    forces = [gs.tensor(init_force[t], dtype=gs.tc_float, requires_grad=True) for t in range(n_steps)]
+    forces = [
+        torch.tensor(init_force[t], dtype=gs.tc_float, device=gs.device, requires_grad=True) for t in range(n_steps)
+    ]
     for t in range(n_steps):
         obj_ana.control_dofs_force(forces[t])
         scene_ana.step()

@@ -883,10 +883,10 @@ class KinematicSolver(Solver):
 
     def add_grad_from_state(self, state):
         if self.is_active:
-            qpos_grad = gs.zeros_like(state.qpos)
-            dofs_vel_grad = gs.zeros_like(state.dofs_vel)
-            links_pos_grad = gs.zeros_like(state.links_pos)
-            links_quat_grad = gs.zeros_like(state.links_quat)
+            qpos_grad = torch.zeros_like(state.qpos)
+            dofs_vel_grad = torch.zeros_like(state.dofs_vel)
+            links_pos_grad = torch.zeros_like(state.links_pos)
+            links_quat_grad = torch.zeros_like(state.links_quat)
 
             if state.qpos.grad is not None:
                 qpos_grad = state.qpos.grad
@@ -906,16 +906,6 @@ class KinematicSolver(Solver):
                 self.rigid_info,
                 self.rigid_config,
             )
-
-    def collect_output_grads(self):
-        """
-        Collect gradients from downstream queried states.
-        """
-        if self._sim.cur_step_global in self._queried_states:
-            # one step could have multiple states
-            assert len(self._queried_states[self._sim.cur_step_global]) == 1
-            state = self._queried_states[self._sim.cur_step_global][0]
-            self.add_grad_from_state(state)
 
     def reset_grad(self):
         # Zero every Quadrants-side adjoint buffer the solver owns so a subsequent backward pass does not accumulate on
@@ -943,11 +933,7 @@ class KinematicSolver(Solver):
 
     def get_state(self, f=None):
         if self.is_active:
-            s_global = self.sim.cur_step_global
-            if s_global in self._queried_states:
-                return self._queried_states[s_global][0]
-
-            state = KinematicSolverState(self._scene, s_global)
+            state = KinematicSolverState(self._scene, self.sim.cur_step_global)
 
             kernel_get_kinematic_state(
                 state.qpos,
@@ -1000,15 +986,6 @@ class KinematicSolver(Solver):
     # ------------------------------------------------------------------------------------
     # -------------------------------- process_input -------------------------------------
     # ------------------------------------------------------------------------------------
-
-    def process_input(self, in_backward=False):
-        """Process input for entities (set qpos from user commands)."""
-        for entity in self._entities:
-            entity.process_input()
-
-    def process_input_grad(self):
-        """No-op: kinematic solver does not support gradients."""
-        pass
 
     def save_ckpt(self, ckpt_name):
         """No-op: kinematic solver does not save checkpoints."""

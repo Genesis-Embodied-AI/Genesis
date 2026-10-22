@@ -2,6 +2,7 @@ import math
 
 import numpy as np
 import pytest
+import torch
 
 import genesis as gs
 from genesis.utils.misc import qd_to_torch, tensor_to_array
@@ -82,7 +83,7 @@ def test_joint_limit_grad_matches_fd(grad_slider_limit, precision, show_viewer):
     grads = {}
     for pair, key in ((off_solver, "off"), (on, "on")):
         pair.scene_ana.reset()
-        v = gs.tensor([[0.5], [0.3]], dtype=gs.tc_float, requires_grad=True)
+        v = torch.tensor([[0.5], [0.3]], dtype=gs.tc_float, device=gs.device, requires_grad=True)
         pair.entity_ana.set_dofs_velocity(v)
         pair.scene_ana.step()
         loss = (pair.scene_ana.rigid_solver.get_state().qpos[:, 0] ** 2).sum()

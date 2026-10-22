@@ -1754,12 +1754,8 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
     # ------------------------------------------------------------------------------------
 
     def get_state(self, f=None):
-        s_global = self.sim.cur_step_global
         if self.is_active:
-            if s_global in self._queried_states:
-                return self._queried_states[s_global][0]
-
-            state = RigidSolverState(self._scene, s_global)
+            state = RigidSolverState(self._scene, self.sim.cur_step_global)
 
             # A captured state must be self-consistent: links_pos / links_quat have to be the Cartesian pose implied by
             # the qpos captured alongside them, otherwise restoring it does not reproduce the configuration it was taken
@@ -1944,14 +1940,6 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
     def __setstate__(self, state: SolverCheckpoint) -> None:
         super().__setstate__(state)
         self._restart()
-
-    def process_input(self, in_backward=False):
-        for entity in self._entities:
-            entity.process_input(in_backward=in_backward)
-
-    def process_input_grad(self):
-        for entity in self._entities:
-            entity.process_input_grad()
 
     def save_ckpt(self, ckpt_name):
         # Save ckpt only if we need gradients, because this operation is costly

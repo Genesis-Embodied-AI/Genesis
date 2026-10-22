@@ -247,7 +247,7 @@ class SFSolver(TimeBasedMixin, Solver):
     # ------------------------------------------------------------------------------------
 
     def process_input(self, in_backward):
-        return None
+        return []
 
     def substep_pre_coupling(self, f):
         self.advect_and_impulse(f, self.t)

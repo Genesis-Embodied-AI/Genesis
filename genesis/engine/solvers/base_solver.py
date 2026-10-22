@@ -13,7 +13,8 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.materials.base import Material
-from genesis.engine.states import QueriedStates, SolverCheckpoint
+from genesis.engine.states import SolverCheckpoint
+from genesis.grad.bridge import QueriedStates
 from genesis.repr_base import RBC
 from genesis.utils.misc import (
     assign_indexed_tensor,
@@ -324,11 +325,8 @@ class Solver(RBC):
         self._options = options
         self._entities: list[Entity] = gs.List()
 
-        # Queue of solver-level states queried during the current backward window. Solvers that surface solver-state
-        # (kinematic, rigid) push into it from `get_state`; others leave it empty. `Simulator.get_state` calls `discard`
-        # here to lift entries owned by a `SimState`, preventing `collect_output_grads` from accumulating adjoints twice
-        # through both the simulator-level and the per-solver loop.
-        self._queried_states = QueriedStates()
+        # The solver states queried during the current rollout, registered by 'get_state' (see QueriedStates)
+        self._queried_states = QueriedStates(sim)
 
         # force fields
         self._ffs = list()
@@ -360,6 +358,29 @@ class Solver(RBC):
 
     def build(self):
         self._B = self._sim._B
+
+    def process_input(self, in_backward=False):
+        """
+        Apply the inputs the entities taped for the coming step.
+
+        Returns the inputs applied, of any type, for the simulator to tape on the step.
+        """
+        return [value for entity in self._entities for value in entity.process_input(in_backward=in_backward)]
+
+    def process_input_grad(self):
+        """
+        Run the reverse pass of the inputs the entities applied at the current step.
+
+        Returns the pairs (input, gradient) of those that track gradients.
+        """
+        return [pair for entity in reversed(self._entities) for pair in entity.process_input_grad()]
+
+    def collect_output_grads(self):
+        """Hand the gradients of the states queried at the current step to the solver, then to its entities."""
+        for state in self._queried_states.get(self._sim.cur_step_global):
+            self.add_grad_from_state(state)
+        for entity in self._entities:
+            entity.collect_output_grads()
 
     @property
     def data(self) -> Iterator[array_class.DataItem | array_class.ConfigItem]:

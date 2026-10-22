@@ -713,14 +713,6 @@ class SPHSolver(GravityMixin, TimeBasedMixin, Solver):
     # ------------------------------------ stepping --------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def process_input(self, in_backward=False):
-        for entity in self.entities:
-            entity.process_input(in_backward=in_backward)
-
-    def process_input_grad(self):
-        for entity in self.entities[::-1]:
-            entity.process_input_grad()
-
     def substep_pre_coupling(self, f):
         if self.is_active:
             self._kernel_reorder_particles(f)

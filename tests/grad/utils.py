@@ -90,7 +90,7 @@ def assert_grad_matches_fd(
     x_anas = []
     for i_step in range(total_steps):
         if i_step < len(base):
-            x = gs.tensor(base[i_step], dtype=gs.tc_float, requires_grad=True)
+            x = torch.tensor(base[i_step], dtype=gs.tc_float, device=gs.device, requires_grad=True)
             x_anas.append(x)
             apply_fn(pair.entity_ana, x)
         if step_fn is not None:

@@ -1,18 +1,18 @@
 from pathlib import Path
 
 import numpy as np
-import quadrants as qd
 import torch
 
+import quadrants as qd
+
 import genesis as gs
-from genesis.engine.states.cache import QueriedStates
 from genesis.engine.states.entities import ToolEntityState
 from genesis.utils.geom import (
     qd_rotvec_to_quat,
     qd_transform_quat_by_quat,
     transform_pos_quat_by_trans_quat,
 )
-from genesis.utils.misc import assert_contiguous, to_gs_tensor
+from genesis.utils.misc import to_gs_tensor
 
 from ..base_entity import Entity
 from .mesh import Mesh
@@ -48,7 +48,6 @@ class ToolEntity(Entity):
         )
         self.init_tgt_vars()
         self.init_ckpt()
-        self._queried_states = QueriedStates()
 
         # for rendering purpose only
         self.latest_pos = qd.Vector.field(3, dtype=gs.qd_float, shape=(1))
@@ -418,73 +417,66 @@ class ToolEntity(Entity):
             self._tgt_buffer["quat"].append(self._tgt["quat"])
             self._tgt_buffer["vel"].append(self._tgt["vel"])
             self._tgt_buffer["ang"].append(self._tgt["ang"])
-            self._sim.record_step_inputs(self._tgt)
+        inputs = tuple(self._tgt.values())
 
-        # Detached: the kernels only read the values, the gradient reaches each input through `process_input_grad`,
-        # and a kernel argument that tracks gradients would make Quadrants allocate a `.grad` buffer for it.
+        # Detached, see ParticleEntity.process_input.
         if self._tgt["pos"] is not None:
-            assert_contiguous(self._tgt["pos"])
+            assert self._tgt["pos"].is_contiguous()
             self.set_pos(self._sim.cur_step_local, self._tgt["pos"].detach())
 
         if self._tgt["quat"] is not None:
-            assert_contiguous(self._tgt["quat"])
+            assert self._tgt["quat"].is_contiguous()
             self.set_quat(self._sim.cur_step_local, self._tgt["quat"].detach())
 
         if self._tgt["vel"] is not None:
-            assert_contiguous(self._tgt["vel"])
+            assert self._tgt["vel"].is_contiguous()
             self.set_vel(self._sim.cur_step_local, self._tgt["vel"].detach())
 
         if self._tgt["ang"] is not None:
-            assert_contiguous(self._tgt["ang"])
+            assert self._tgt["ang"].is_contiguous()
             self.set_ang(self._sim.cur_step_local, self._tgt["ang"].detach())
 
         self._tgt["pos"] = None
         self._tgt["quat"] = None
         self._tgt["vel"] = None
         self._tgt["ang"] = None
+        return inputs
 
     def process_input_grad(self):
+        """Return the pairs (input, gradient) of the inputs applied at this step that track gradients."""
         _tgt_pos = self._tgt_buffer["pos"].pop()
         _tgt_quat = self._tgt_buffer["quat"].pop()
         _tgt_vel = self._tgt_buffer["vel"].pop()
         _tgt_ang = self._tgt_buffer["ang"].pop()
 
-        if _tgt_vel is not None and _tgt_vel.requires_grad:
-            self._sim.add_input_grad(_tgt_vel, self.set_vel_grad, self._sim.cur_step_local)
-
-        if _tgt_ang is not None and _tgt_ang.requires_grad:
-            self._sim.add_input_grad(_tgt_ang, self.set_ang_grad, self._sim.cur_step_local)
-
-        if _tgt_pos is not None and _tgt_pos.requires_grad:
-            self._sim.add_input_grad(_tgt_pos, self.set_pos_grad, self._sim.cur_step_local)
-
-        if _tgt_quat is not None and _tgt_quat.requires_grad:
-            self._sim.add_input_grad(_tgt_quat, self.set_quat_grad, self._sim.cur_step_local)
-
-    def collect_output_grads(self):
-        """
-        Collect gradients from external queried states.
-        """
-        if self._sim.cur_step_global in self._queried_states:
-            # one step could have multiple states
-            for state in self._queried_states[self._sim.cur_step_global]:
-                self.add_grad_from_state(state)
+        inputs_grad = []
+        for tgt, set_grad in (
+            (_tgt_vel, self.set_vel_grad),
+            (_tgt_ang, self.set_ang_grad),
+            (_tgt_pos, self.set_pos_grad),
+            (_tgt_quat, self.set_quat_grad),
+        ):
+            if tgt is not None and tgt.requires_grad:
+                grad = torch.zeros_like(tgt)
+                set_grad(self._sim.cur_step_local, grad)
+                inputs_grad.append((tgt, grad))
+        return inputs_grad
 
     def add_grad_from_state(self, state):
         if state.pos.grad is not None:
-            assert_contiguous(state.pos)
+            assert state.pos.grad.is_contiguous()
             self.set_frame_add_grad_pos(self._sim.cur_substep_local, state.pos.grad)
 
         if state.quat.grad is not None:
-            assert_contiguous(state.quat)
+            assert state.quat.grad.is_contiguous()
             self.set_frame_add_grad_quat(self._sim.cur_substep_local, state.quat.grad)
 
         if state.vel.grad is not None:
-            assert_contiguous(state.vel)
+            assert state.vel.grad.is_contiguous()
             self.set_frame_add_grad_vel(self._sim.cur_substep_local, state.vel.grad)
 
         if state.ang.grad is not None:
-            assert_contiguous(state.ang)
+            assert state.ang.grad.is_contiguous()
             self.set_frame_add_grad_ang(self._sim.cur_substep_local, state.ang.grad)
 
     # ------------------------------------------------------------------------------------

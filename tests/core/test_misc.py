@@ -378,8 +378,6 @@ def test_indices_to_mask_selects_the_cross_product(as_boolean):
 def test_init_preserves_torch_defaults():
     assert torch.get_default_device() == torch.device("cpu")
     assert torch.get_default_dtype() == torch.float32
-    for tensor in (gs.tensor((1.0, 2.0)), gs.zeros(3), gs.arange(3), gs.rand(3), gs.zeros_like(gs.zeros(3))):
-        assert tensor.device.type == gs.device.type
 
 
 @pytest.mark.required

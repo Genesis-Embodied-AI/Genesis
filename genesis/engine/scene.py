@@ -268,9 +268,6 @@ class Scene(RBC):
         # emitters
         self._emitters = gs.List()
 
-        self._backward_ready = False
-        self._forward_ready = False
-
         self._uid = gs.UID()
         self._is_built = False
         self._pre_step_callbacks: list = []
@@ -1000,13 +997,10 @@ class Scene(RBC):
         self._restart()
 
     def _restart(self, refresh_viewer=True):
-        """Restart what surrounds the state: the gradient tape, the cache of the visualizer and the emitters.
+        """Restart what surrounds the state: the cache of the visualizer and the emitters.
 
         'refresh_viewer' repaints the interactive viewer right away (see 'Visualizer.reset').
         """
-        self._forward_ready = True
-        self._reset_grad()
-
         # Clear the entire cache of the visualizer.
         # TODO: Could be optimized to only clear cache associated the the environments being reset.
         if self._visualizer.is_built:
@@ -1015,9 +1009,6 @@ class Scene(RBC):
         # TODO: sets _next_particle = 0; not sure this is env isolation safe
         for emitter in self._emitters:
             emitter.reset()
-
-    def _reset_grad(self):
-        self._backward_ready = True
 
     @gs.assert_built
     def backward(self, loss: torch.Tensor, *args, **kwargs):
@@ -1087,7 +1078,7 @@ class Scene(RBC):
         advance = not any([callback() for callback in tuple(self._pre_step_callbacks)])
 
         if advance:
-            if not self._forward_ready:
+            if not self._sim.is_forward_ready:
                 gs.raise_exception("Forward simulation not allowed after backward pass. Please reset scene state.")
             # The recorders read the state a step starts from, with the inputs the step consumes: 'Simulator.step'
             # zeroes the applied forces at its end. The pre-step callbacks ran, so their inputs are read as well.
@@ -1132,10 +1123,6 @@ class Scene(RBC):
             self._recorder_manager.record(self._sim.cur_step_global)
         finally:
             self._recorder_manager.stop()
-
-    def _step_grad(self):
-        self._sim.collect_output_grads()
-        self._sim._step_grad()
 
     @gs.assert_built
     def draw_debug_line(self, start, end, radius=0.002, color=(1.0, 0.0, 0.0, 0.5)):
@@ -1548,32 +1535,6 @@ class Scene(RBC):
         """
         with self._visualizer.viewer_lock:
             self._visualizer.context.clear_debug_objects()
-
-    def _reverse_step(self, step: int, epoch: int) -> dict[int, torch.Tensor]:
-        """
-        Run the reverse pass of step `step` and return the gradients of the inputs taped for it, keyed by tensor id.
-
-        Called by the autograd node of that step (see `genesis.grad.bridge`), once the gradients of the states read at
-        that step and of every later step are in. The later steps whose node the loss does not reach have no output
-        gradient, and their reverse pass only rewinds the rollout down to `step`.
-        """
-        if epoch != self._sim._grad_epoch:
-            gs.raise_exception(
-                "Calling backward on a scene that has been reset since the rollout. Call it before 'scene.reset()'."
-            )
-        if not self._backward_ready or self._sim.cur_step_global < step:
-            gs.raise_exception("Multiple backward calls not allowed.")
-
-        while self._sim.cur_step_global > step:
-            self._step_grad()
-        self._sim._inputs_grad = {}
-        self._step_grad()
-        inputs_grad, self._sim._inputs_grad = self._sim._inputs_grad, {}
-
-        if self._sim.cur_step_global == 0:
-            self._backward_ready = False
-            self._forward_ready = False
-        return inputs_grad
 
     @gs.assert_built
     def get_time(self, envs_idx=None):

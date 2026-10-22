@@ -130,10 +130,6 @@ class SPHEntity(ParticleEntity):
         """
         state = SPHEntityState(self, self.sim.cur_step_global)
         self.get_frame(self.sim.cur_substep_local, state.pos, state.vel)
-
-        # we store all queried states to track gradient flow
-        self._queried_states.append(state)
-
         return state
 
     # ------------------------------------------------------------------------------------

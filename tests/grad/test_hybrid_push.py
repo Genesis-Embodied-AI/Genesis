@@ -1,7 +1,10 @@
+import numpy as np
 import pytest
 import torch
 
 import genesis as gs
+
+from ..utils.assertions import assert_allclose
 
 
 @pytest.mark.slow  # ~350s
@@ -54,15 +57,17 @@ def test_mpm_tool_push_grad(show_viewer):
     )
     scene.build(n_envs=2)
 
-    stick.set_position(gs.tensor([[0.3, 0.1, 0.28], [0.3, 0.1, 0.5]], requires_grad=True))
-    obj.set_position(gs.tensor([0.3, 0.3, 0.1], requires_grad=True))
-    obj.set_velocity(gs.tensor([0.0, -1.0, 0.0], requires_grad=True))
-    goal = gs.tensor([0.5, 0.8, 0.05])
+    stick.set_position(
+        torch.tensor([[0.3, 0.1, 0.28], [0.3, 0.1, 0.5]], dtype=gs.tc_float, device=gs.device, requires_grad=True)
+    )
+    obj.set_position(torch.tensor([0.3, 0.3, 0.1], dtype=gs.tc_float, device=gs.device, requires_grad=True))
+    obj.set_velocity(torch.tensor([0.0, -1.0, 0.0], dtype=gs.tc_float, device=gs.device, requires_grad=True))
+    goal = torch.tensor([0.5, 0.8, 0.05], dtype=gs.tc_float, device=gs.device)
 
     loss = 0.0
     v_list = []
     for i in range(HORIZON):
-        v_i = gs.tensor([[0.0, 1.0, 0.0], [0.0, 1.0, 0.0]], requires_grad=True)
+        v_i = torch.tensor([[0.0, 1.0, 0.0], [0.0, 1.0, 0.0]], dtype=gs.tc_float, device=gs.device, requires_grad=True)
         stick.set_velocity(vel=v_i)
         v_list.append(v_i)
         scene.step()
@@ -78,3 +83,82 @@ def test_mpm_tool_push_grad(show_viewer):
     for v_i in v_list[:-1]:
         assert (v_i.grad.abs() > gs.EPS).any()
     assert v_list[-1].grad is None
+
+
+@pytest.mark.required
+def test_muscle_actuation_grad_matches_fd(precision, show_viewer):
+    # With checkpoint windows of two steps, the backward pass replays the second and third actuations within a window,
+    # and restores the second from a checkpoint at the start of the next window, over which it holds.
+    scenes, boxes = [], []
+    for requires_grad in (True, False):
+        scene = gs.Scene(
+            sim_options=gs.options.SimOptions(
+                dt=4e-3,
+                substeps=2,
+                substeps_local=4,
+                requires_grad=requires_grad,
+            ),
+            mpm_options=gs.options.MPMOptions(
+                lower_bound=(-0.5, -0.5, -0.1),
+                upper_bound=(0.5, 0.5, 0.5),
+                grid_density=32,
+            ),
+            viewer_options=gs.options.ViewerOptions(
+                camera_pos=(0.6, -0.6, 0.4),
+                camera_lookat=(0.0, 0.0, 0.15),
+            ),
+            show_viewer=show_viewer and requires_grad,
+        )
+        box = scene.add_entity(
+            morph=gs.morphs.Box(
+                lower=(-0.1, -0.1, 0.1),
+                upper=(0.1, 0.1, 0.2),
+            ),
+            material=gs.materials.MPM.Muscle(
+                E=5e4,
+                nu=0.3,
+                rho=1000.0,
+                sampler="regular",
+                n_groups=2,
+            ),
+        )
+        scene.build(n_envs=2)
+        # One muscle group on each side of the box
+        muscle_group = (box.init_particles[:, 0] > 0.0).astype(np.int32)
+        box.set_muscle(muscle_group=muscle_group)
+        scenes.append(scene)
+        boxes.append(box)
+
+    def rollout(scene, box, actus):
+        scene.reset()
+        box.set_actuation(actus[0])
+        scene.step()
+        box.set_actuation(actus[1])
+        scene.step()
+        scene.step()
+        box.set_actuation(actus[2])
+        scene.step()
+        return (box.get_state().pos[..., 2] ** 2).sum()
+
+    actus = np.array([[0.5, 0.2], [0.1, 0.4], [0.3, 0.6]])
+    # Every substep of a step reads the actuation set last
+    for scene, box in zip(scenes, boxes):
+        rollout(scene, box, actus)
+        assert_allclose(box.get_particles_actu(), actus[2][muscle_group], tol=gs.EPS)
+
+    actus_ana = [torch.tensor(actu, dtype=gs.tc_float, device=gs.device, requires_grad=True) for actu in actus]
+    rollout(scenes[0], boxes[0], actus_ana).backward()
+
+    # fp32 needs a large step to clear the state-noise floor. fp64 needs a small step to bound truncation error.
+    eps = 1e-5 if precision == "64" else 1e-2
+    fd_grad = np.zeros_like(actus)
+    for i, j in np.ndindex(actus.shape):
+        losses = []
+        for sign in (+1, -1):
+            perturbed = actus.copy()
+            perturbed[i, j] += sign * eps
+            losses.append(float(rollout(scenes[1], boxes[1], perturbed)))
+        fd_grad[i, j] = (losses[0] - losses[1]) / (2.0 * eps)
+    assert (np.abs(fd_grad) > 1e-3).all()
+    tol = 5e-10 if precision == "64" else 2e-4
+    assert_allclose(torch.stack([actu.grad for actu in actus_ana]), fd_grad, rtol=tol, atol=tol)

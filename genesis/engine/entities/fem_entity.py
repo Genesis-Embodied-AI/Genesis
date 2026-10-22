@@ -1,22 +1,23 @@
 from functools import wraps
 from pathlib import Path
 
-import igl
 import numpy as np
-import quadrants as qd
 import torch
+
+import igl
 import trimesh
+
+import quadrants as qd
 
 import genesis as gs
 import genesis.utils.element as eu
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
-from genesis.engine.entities.rigid_entity import RigidLink
 from genesis.engine.couplers import SAPCoupler
-from genesis.engine.states.cache import QueriedStates
+from genesis.engine.entities.rigid_entity import RigidLink
 from genesis.engine.states.entities import FEMEntityState
 from genesis.repr_base import RBC
-from genesis.utils.misc import assert_contiguous, to_gs_tensor, tensor_to_array, broadcast_tensor
+from genesis.utils.misc import broadcast_tensor, tensor_to_array, to_gs_tensor
 
 from .base_entity import Entity
 
@@ -218,8 +219,6 @@ class FEMEntity(Entity):
 
         self.init_tgt_vars()
         self.init_ckpt()
-
-        self._queried_states = QueriedStates()
 
         self.active = False  # This attribute is only used in forward pass. It should NOT be used during backward pass.
 
@@ -427,10 +426,6 @@ class FEMEntity(Entity):
     def get_state(self):
         state = FEMEntityState(self, self._sim.cur_step_global)
         self.get_frame(self._sim.cur_substep_local, state.pos, state.vel, state.active)
-
-        # we store all queried states to track gradient flow
-        self._queried_states.append(state)
-
         return state
 
     def deactivate(self):
@@ -483,8 +478,10 @@ class FEMEntity(Entity):
         if not init_positions.shape[0] > 0:
             gs.raise_exception("Entity has zero vertices.")
 
-        self.init_positions = gs.tensor(init_positions)
-        self.init_positions_COM_offset = self.init_positions - gs.tensor(verts_COM + offset_shift)
+        self.init_positions = torch.tensor(init_positions, dtype=gs.tc_float, device=gs.device)
+        self.init_positions_COM_offset = torch.tensor(
+            init_positions - (verts_COM + offset_shift), dtype=gs.tc_float, device=gs.device
+        )
 
         self.elems = elems
 
@@ -692,14 +689,11 @@ class FEMEntity(Entity):
 
     def reset_grad(self):
         """
-        Clear all stored gradient-related buffers.
-
-        This resets the target buffer and clears any queried states used for gradient tracking.
+        Clear the target buffer.
         """
 
         for key in self._tgt_keys:
             self._tgt_buffer[key].clear()
-        self._queried_states.clear()
 
     def process_input(self, in_backward=False):
         """
@@ -709,6 +703,11 @@ class FEMEntity(Entity):
         ----------
         in_backward : bool, default=False
             Whether the simulation is in the backward (gradient) pass.
+
+        Returns
+        -------
+        inputs : tuple
+            The inputs applied at this step, of any type, for the simulator to tape.
         """
         if in_backward:
             # use negative index because buffer length might not be full
@@ -719,17 +718,16 @@ class FEMEntity(Entity):
         else:
             for key in self._tgt_keys:
                 self._tgt_buffer[key].append(self._tgt[key])
-            self._sim.record_step_inputs(self._tgt)
+        inputs = tuple(self._tgt.values())
 
         # set_pos followed by set_vel, because set_pos resets velocity.
-        # Detached: the kernels only read the values, the gradient reaches each input through `process_input_grad`,
-        # and a kernel argument that tracks gradients would make Quadrants allocate a `.grad` buffer for it.
+        # Detached, see ParticleEntity.process_input.
         if self._tgt["pos"] is not None:
-            assert_contiguous(self._tgt["pos"])
+            assert self._tgt["pos"].is_contiguous()
             self.set_pos(self._sim.cur_substep_local, self._tgt["pos"].detach())
 
         if self._tgt["vel"] is not None:
-            assert_contiguous(self._tgt["vel"])
+            assert self._tgt["vel"].is_contiguous()
             self.set_vel(self._sim.cur_substep_local, self._tgt["vel"].detach())
 
         if self._tgt["act"] is not None:
@@ -737,37 +735,45 @@ class FEMEntity(Entity):
             self.set_active(self._sim.cur_substep_local, self._tgt["act"])
 
         if self._tgt["actu"] is not None:
-            assert_contiguous(self._tgt["actu"])
+            assert self._tgt["actu"].is_contiguous()
             self.set_actu(self._sim.cur_substep_local, self._tgt["actu"].detach())
 
         for key in self._tgt_keys:
             self._tgt[key] = None
+        return inputs
 
     def process_input_grad(self):
         """
         Process gradients of input states and propagate them backward.
 
+        Returns
+        -------
+        inputs_grad : list of tuple
+            The pairs (input, gradient) of the inputs applied at this step that track gradients.
+
         Notes
         -----
-        Automatically applies the backward hooks for position, velocity, and actuation tensors.
         Clears the gradients in the solver to avoid double accumulation.
         """
         _tgt_actu = self._tgt_buffer["actu"].pop()
         _tgt_vel = self._tgt_buffer["vel"].pop()
         _tgt_pos = self._tgt_buffer["pos"].pop()
 
-        if _tgt_actu is not None and _tgt_actu.requires_grad:
-            self._sim.add_input_grad(_tgt_actu, self.set_actu_grad, self._sim.cur_substep_local)
-
-        if _tgt_vel is not None and _tgt_vel.requires_grad:
-            self._sim.add_input_grad(_tgt_vel, self.set_vel_grad, self._sim.cur_substep_local)
-
-        if _tgt_pos is not None and _tgt_pos.requires_grad:
-            self._sim.add_input_grad(_tgt_pos, self.set_pos_grad, self._sim.cur_substep_local)
+        inputs_grad = []
+        for tgt, set_grad in (
+            (_tgt_actu, self.set_actu_grad),
+            (_tgt_vel, self.set_vel_grad),
+            (_tgt_pos, self.set_pos_grad),
+        ):
+            if tgt is not None and tgt.requires_grad:
+                grad = torch.zeros_like(tgt)
+                set_grad(self._sim.cur_substep_local, grad)
+                inputs_grad.append((tgt, grad))
 
         if _tgt_vel is not None or _tgt_pos is not None or _tgt_actu is not None:
             # manually zero the grad since manually setting state breaks gradient flow
             self.clear_grad(self._sim.cur_substep_local)
+        return inputs_grad
 
     def _assert_active(self):
         if not self.active:
@@ -1072,7 +1078,7 @@ class FEMEntity(Entity):
         el2v : torch.Tensor
             Tensor of shape (n_elements, 4) mapping each element to its local vertex indices.
         """
-        el2v = gs.zeros((self.n_elements, 4), dtype=int, requires_grad=False, scene=self.scene)
+        el2v = torch.zeros((self.n_elements, 4), dtype=gs.tc_int, device=gs.device)
         self._solver._kernel_get_el2v(
             element_el_start=self._el_start, element_v_start=self._v_start, el2v=el2v, n_elements=self.n_elements
         )

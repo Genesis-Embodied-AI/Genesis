@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 import torch
 
 import genesis as gs
-from genesis.grad.bridge import grad_inputs, step_node
+from genesis.grad.bridge import ReadNode, StepNode
 from genesis.options.morphs import Morph
 from genesis.options.solvers import IPCCouplerOptions, LegacyCouplerOptions, SAPCouplerOptions
 from genesis.repr_base import RBC
@@ -26,7 +26,6 @@ from .solvers import (
     ToolSolver,
 )
 from .solvers.base_solver import GravityMixin, TimeBasedMixin
-from .states.cache import QueriedStates
 from .states.solvers import SimState, SimulatorCheckpoint
 
 if TYPE_CHECKING:
@@ -70,13 +69,15 @@ class Simulator(RBC):
 
         self._cur_substep_global = 0
 
-        # Differentiable mode (see genesis.grad.bridge): the token returned by the autograd node of the last step, the
-        # inputs entities taped for the coming step, the gradients the reverse pass of a step gives its inputs, and
-        # the rollout the token chain belongs to, which a reset starts anew.
-        self._grad_token = self._new_grad_token()
+        # Gradient tape (see genesis.grad.bridge): the token returned by the autograd node of the last step, and the
+        # rollout the token chain belongs to, which a reset starts anew. A backward pass that rewinds the rollout to its
+        # start consumes it, which forbids stepping forward and differentiating again until the next reset.
+        self._grad_token = (
+            torch.zeros((), dtype=gs.tc_float, device=gs.device, requires_grad=True) if self._requires_grad else None
+        )
         self._grad_epoch = 0
-        self._step_inputs: dict[int, torch.Tensor] = {}
-        self._inputs_grad: dict[int, torch.Tensor] = {}
+        self._is_forward_ready = True
+        self._is_backward_ready = True
 
         # solvers
         self.tool_solver = ToolSolver(self.scene, self, options.tool)
@@ -115,9 +116,6 @@ class Simulator(RBC):
                 f"Coupler options {options.coupler} not supported. Please use SAPCouplerOptions, "
                 "LegacyCouplerOptions, or IPCCouplerOptions."
             )
-
-        # states
-        self._queried_states = QueriedStates()
 
         # entities
         self._entities: list["Entity"] = gs.List()
@@ -320,35 +318,57 @@ class Simulator(RBC):
         for solver in self._active_solvers:
             solver.reset_grad()
 
-        # clear up all queried scene states and free up memory
-        self._queried_states.clear()
-
-        self._grad_token = self._new_grad_token()
+        if self._requires_grad:
+            self._grad_token = torch.zeros((), dtype=gs.tc_float, device=gs.device, requires_grad=True)
         self._grad_epoch += 1
-        self._step_inputs.clear()
+        self._is_forward_ready = True
+        self._is_backward_ready = True
 
-    def _new_grad_token(self):
-        if not self._requires_grad:
-            return None
-        return torch.zeros((), dtype=gs.tc_float, device=gs.device, requires_grad=True)
-
-    def record_step_inputs(self, tgt):
+    def track_state(self, *tensors: torch.Tensor):
         """
-        Add the inputs an entity taped for the coming step to those its autograd node takes, each tensor once however
-        many setters and entities it was given to: the node returns the gradient summed over all of them.
+        Make the gradient-carrying tensors of a state queried at the current step differentiable.
+
+        In a differentiable scene, the tensors become the outputs of one read node of the current step (see
+        `genesis.grad.bridge`) and retain their gradient, which `collect_output_grads` hands to the solvers. They stay
+        the same tensor objects, so the solver may fill them afterwards. Called by 'QueriedStates' on registration.
         """
         if self._requires_grad:
-            self._step_inputs.update((id(tensor), tensor) for tensor in grad_inputs(tgt))
+            ReadNode.apply(self._grad_token, tensors)
+            for tensor in tensors:
+                tensor.retain_grad()
 
-    def add_input_grad(self, tensor, qd_kernel, *args):
+    def reverse_step(self, step: int, epoch: int) -> dict[int, torch.Tensor]:
         """
-        Fill with `qd_kernel(*args, grad)` the gradient the reverse pass gives the taped input `tensor`, and add it to
-        those the autograd node of its step returns.
+        Run the reverse pass of one step and return the gradients of the inputs taped for it, keyed by tensor id.
+
+        `step` is the global index of the step, and `epoch` the rollout it belongs to (see `genesis.grad.bridge`). The
+        autograd node of the step calls this once the gradients of the states read at that step and of every later step
+        are in. The reverse pass of the later steps whose node the loss does not reach only rewinds the rollout. The
+        gradient of an input given to several setters is summed over all of them.
         """
-        grad = torch.zeros_like(tensor, requires_grad=False)
-        qd_kernel(*args, grad)
-        key = id(tensor)
-        self._inputs_grad[key] = self._inputs_grad[key] + grad if key in self._inputs_grad else grad
+        if epoch != self._grad_epoch:
+            gs.raise_exception(
+                "Calling backward on a scene that has been reset since the rollout. Call it before 'scene.reset()'."
+            )
+        if not self._is_backward_ready or self.cur_step_global < step:
+            gs.raise_exception("Multiple backward calls not allowed.")
+
+        while self.cur_step_global >= step:
+            self.collect_output_grads()
+            inputs_grad_pairs = self._step_grad()
+
+        if self.cur_step_global == 0:
+            self._is_forward_ready = False
+            self._is_backward_ready = False
+
+        inputs_grad: dict[int, torch.Tensor] = {}
+        for tensor, grad in inputs_grad_pairs:
+            input_grad = inputs_grad.get(id(tensor))
+            if input_grad is None:
+                inputs_grad[id(tensor)] = grad
+            else:
+                input_grad += grad
+        return inputs_grad
 
     # ------------------------------------------------------------------------------------
     # -------------------------------- step computation ----------------------------------
@@ -397,7 +417,7 @@ class Simulator(RBC):
                     self.rigid_solver.substep(self.cur_substep_local)
                     self._cur_substep_global += 1
             else:
-                self.process_input(in_backward=in_backward)
+                inputs = self.process_input(in_backward=in_backward)
                 for _ in range(self._substeps):
                     self.substep(self.cur_substep_local)
 
@@ -406,14 +426,14 @@ class Simulator(RBC):
                         self.save_ckpt()
 
                 if self._requires_grad and not in_backward:
-                    self._grad_token = step_node(
-                        self.scene,
-                        self.cur_step_global,
-                        self._grad_epoch,
-                        self._grad_token,
-                        list(self._step_inputs.values()),
+                    # Each tensor is one input of the node however many setters it was given to: the node returns its
+                    # gradient summed over all of them (see reverse_step).
+                    step_inputs = {
+                        id(value): value for value in inputs if isinstance(value, torch.Tensor) and value.requires_grad
+                    }
+                    self._grad_token = StepNode.apply(
+                        self, self.cur_step_global, self._grad_epoch, self._grad_token, *step_inputs.values()
                     )
-                    self._step_inputs.clear()
 
             if self.rigid_solver.is_active:
                 self.rigid_solver.clear_external_force()
@@ -430,19 +450,19 @@ class Simulator(RBC):
 
             self.sub_step_grad(self.cur_substep_local)
 
-        self.process_input_grad()
+        return self.process_input_grad()
 
     def process_input(self, in_backward=False):
         """
-        setting _tgt state using external commands
-        note that external inputs are given at step level, not substep
+        Apply the inputs the entities taped for the coming step, given at step level rather than substep level.
+
+        Returns the inputs applied, of any type.
         """
-        for solver in self._active_solvers:
-            solver.process_input(in_backward=in_backward)
+        return [value for solver in self._active_solvers for value in solver.process_input(in_backward=in_backward)]
 
     def process_input_grad(self):
-        for solver in reversed(self._active_solvers):
-            solver.process_input_grad()
+        """Run the reverse pass of the inputs applied at the current step, and return their (input, gradient) pairs."""
+        return [pair for solver in reversed(self._active_solvers) for pair in solver.process_input_grad()]
 
     def substep(self, f):
         self._coupler.preprocess(f)
@@ -477,22 +497,8 @@ class Simulator(RBC):
     # ------------------------------------ gradient --------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def add_grad_from_state(self, state):
-        for solver, solver_state in zip(self._solvers, state):
-            solver.add_grad_from_state(solver_state)
-
     def collect_output_grads(self):
-        """
-        Collect gradients from downstream queried states.
-        """
-
-        # simulator-level states
-        if self.cur_step_global in self._queried_states:
-            # one step could have multiple states
-            for state in self._queried_states[self.cur_step_global]:
-                self.add_grad_from_state(state)
-
-        # each solver will have their own entities, each of which stores a set of _queried_states
+        """Hand the gradients of the states queried at the current step to the solvers that registered them."""
         for solver in self._active_solvers:
             solver.collect_output_grads()
 
@@ -542,19 +548,6 @@ class Simulator(RBC):
             solvers=self._solvers,
         )
 
-        # `SimState.__init__` calls `solver.get_state` on every solver, and solvers that maintain a per-solver queue
-        # (kinematic/rigid) push the returned state there as a within-step cache. The SimState itself is registered just
-        # below for grad collection at the simulator level, so the per-solver entry would cause `collect_output_grads`
-        # to dispatch `kernel_get_state_grad` twice on the same state and double the adjoint via atomic_add. Lift those
-        # entries here. Solvers without solver-state registration (mpm, fem, sph, pbd, sf, tool) leave their queue
-        # empty, so `discard` is a no-op for them.
-        for solver, solver_state in zip(self._solvers, state.solvers_state):
-            if solver_state is not None:
-                solver._queried_states.discard(solver_state)
-
-        # store all queried states to track gradient flow
-        self._queried_states.append(state)
-
         return state
 
     def set_gravity(self, gravity, envs_idx=None):
@@ -597,9 +590,9 @@ class Simulator(RBC):
         return self._requires_grad
 
     @property
-    def grad_token(self):
-        """The token of the current step in the autograd graph of a differentiable rollout (see genesis.grad.bridge)."""
-        return self._grad_token
+    def is_forward_ready(self) -> bool:
+        """Whether the simulation may step forward, which a backward pass rewinding it to its start forbids until reset."""
+        return self._is_forward_ready
 
     @property
     def n_entities(self) -> int:
