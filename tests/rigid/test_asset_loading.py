@@ -1033,7 +1033,6 @@ def test_robot_scale_and_dofs_armature(xml_path, monkeypatch, request, tol):
         show_viewer=False,
         show_FPS=False,
     )
-    # An asset without a file extension names a fixture
     files = [xml_path if os.path.splitext(xml_path)[1] else request.getfixturevalue(xml_path)]
     if xml_path.endswith(".urdf"):
         # The asset is also loaded as one in-memory model shared by an entity at every scale, which parsing must leave
