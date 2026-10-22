@@ -111,7 +111,7 @@ class RigidRigidContact(System):
         return self.initialize_data
 
     @System.action(kind="host")
-    def prepare(self):
+    def clear_readback(self):
         return self.clear_contact_data_cache
 
     @System.action(kind="stage")
@@ -119,17 +119,6 @@ class RigidRigidContact(System):
         rigid = self.rigid_dynamics
         return (
             func_substep_detection,
-            rigid.data,
-            rigid.rigid_config,
-            self.data,
-            self.rigid_island.data,
-        )
-
-    @System.action(kind="host")
-    def detect_kernel(self):
-        rigid = self.rigid_dynamics
-        return (
-            kernel_substep_detection,
             rigid.data,
             rigid.rigid_config,
             self.data,
@@ -166,7 +155,8 @@ class RigidRigidContact(System):
     def detect_launching_kernels(self) -> None:
         """Detect the contacts between rigid geoms of a substep through the detection kernel alone."""
         self.clear_contact_data_cache()
-        self.detect_kernel.invoke()
+        rigid = self.rigid_dynamics
+        kernel_substep_detection(rigid.data, rigid.rigid_config, self.data, self.rigid_island.data)
 
     def reset_contacts(self, envs_idx: EnvIndex, *, cache_only: bool = True) -> None:
         """Restart the warm start of the detection in the given environments."""

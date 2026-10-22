@@ -306,7 +306,7 @@ def kernel_accumulate_constraint_solver_grads(
 # accumulates into its own differentiable inputs.
 #
 # n_con row layout: each constraint kind appends one contiguous segment of rows and records where it starts (see
-# ConstraintRowSegment in array_class.py and func_assemble_constraints in solver.py). All three equality sub-types
+# ConstraintRowSegment in array_class.py and func_assemble_equality_rows in solver.py). All three equality sub-types
 # (JOINT, CONNECT, WELD) are differentiated by kernel_manual_add_equality_constraints_bw. The manual reverses re-walk
 # the same forward loops deterministically from the start of their own segment to recover their own n_con:
 #   equality, frictionloss, joint-limit : seed counter at segment.row_start

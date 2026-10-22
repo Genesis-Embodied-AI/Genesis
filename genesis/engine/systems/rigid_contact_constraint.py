@@ -61,7 +61,7 @@ class RigidContactConstraint(System):
             initialize=self.initialize,
             assemble=self.assemble,
             reverse=self.reverse,
-            post_solve=self.post_solve,
+            read_back_forces=self.read_back_forces,
         )
 
     # -------------------------------- Actions --------------------------------
@@ -85,7 +85,7 @@ class RigidContactConstraint(System):
         )
 
     @System.action(kind="stage")
-    def post_solve(self):
+    def read_back_forces(self):
         rigid = self.rigid_dynamics
         return (
             func_substep_update_contact_force,

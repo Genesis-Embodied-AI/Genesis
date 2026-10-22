@@ -60,7 +60,6 @@ class RigidEqualityConstraint(System):
         super().__init__()
         self.data = self.Data()
         self._eq_const_info_cache: dict[tuple[bool, bool], ConstraintResult] = {}
-        self._eq_const_info_revision = -1
 
     def build(self) -> None:
         self.rigid_constraint.on_rows(
@@ -68,6 +67,7 @@ class RigidEqualityConstraint(System):
             initialize=self.initialize,
             assemble=self.assemble,
             reverse=self.reverse,
+            clear_readback=self.clear_readback,
         )
 
     # -------------------------------- Actions --------------------------------
@@ -75,6 +75,10 @@ class RigidEqualityConstraint(System):
     @System.action(kind="host")
     def initialize(self):
         return self.initialize_data
+
+    @System.action(kind="host")
+    def clear_readback(self):
+        return self.clear_query_cache
 
     @System.action(kind="stage")
     def assemble(self):
@@ -105,12 +109,6 @@ class RigidEqualityConstraint(System):
         self._eq_const_info_cache.clear()
 
     def get_equality_constraints(self, as_tensor: bool = True, to_torch: bool = True) -> ConstraintResult:
-        # The equalities read back stand until the next solve or clear rewrites the forces or the equality count
-        revision = self.rigid_constraint.get_solve_revision()
-        if revision != self._eq_const_info_revision:
-            self._eq_const_info_cache.clear()
-            self._eq_const_info_revision = revision
-
         # Early return if already pre-computed
         eq_const_info = self._eq_const_info_cache.get((as_tensor, to_torch))
         if eq_const_info is not None:

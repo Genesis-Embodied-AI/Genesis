@@ -1017,7 +1017,7 @@ def func_add_equality_constraints(
 
 
 @qd.func
-def func_prepare_island_solve(constraint_state: array_class.ConstraintState, rigid_config: qd.template()):
+def func_build_factor_worklists(constraint_state: array_class.ConstraintState, rigid_config: qd.template()):
     """List the awake islands of every env on the factor work-lists of their size class (see
     func_append_factor_worklist), by the lanes of a block per env where the cooperative kernels run.
 
@@ -5036,7 +5036,7 @@ def func_solve_init(
         rigid_config=rigid_config,
     )
 
-    # The island partition itself (links_island_idx / dof_id) is built earlier, in func_assemble_constraints, before
+    # The island partition itself (links_island_idx / dof_id) is built earlier, in func_assemble_inequality_rows, before
     # the constraints are assembled; grouping the constraints by island needs the assembled jac, so it rides
     # this per-env loop, ahead of every per-island consumer below: by the lanes of the env's block where the
     # cooperative kernels run, serially otherwise.
@@ -5370,37 +5370,48 @@ def func_update_contact_force(
 
 
 @qd.func(requires_top_level=True)
-def func_assemble_constraints(
+def func_assemble_equality_rows(
+    constraint_data: qd.template(),
+    rigid_data: qd.template(),
+    rigid_config: qd.template(),
+    equality_rows: qd.template(),
+):
+    """Begin the constraint rows of a substep with the equality category.
+
+    The row categories append their segments at the row cursor in the order the solve classifies the rows by (see the
+    category counters of ConstraintState): equality, frictionloss, contact, then limit rows. Each category reads the
+    cursor the previous one left; the equality rows come first, in the dynamics phase, before the collision detection
+    the other categories follow (see func_assemble_inequality_rows). The Actions of one category are peers.
+    """
+    func_begin_rows(rigid_data.dyn_state, constraint_data.constraint_state, rigid_config)
+    equality_rows.invoke()
+
+
+@qd.func(requires_top_level=True)
+def func_assemble_inequality_rows(
     constraint_data: qd.template(),
     rigid_data: qd.template(),
     rigid_config: qd.template(),
     partition: qd.template(),
-    equality_rows: qd.template(),
     frictionloss_rows: qd.template(),
     contact_rows: qd.template(),
     limit_rows: qd.template(),
 ):
-    """Assemble the constraint rows of a substep over the island partition it builds first.
-
-    The row categories append their segments at the row cursor in the order the solve classifies the rows by (see the
-    category counters of ConstraintState): equality, frictionloss, contact, then limit rows. Each category reads the
-    cursor the previous one left, so the categories run one after the other; the Actions of one category are peers.
-    """
-    func_begin_rows(rigid_data.dyn_state, constraint_data.constraint_state, rigid_config)
+    """Append the frictionloss, contact and limit rows of a substep after the equality rows, over the island partition
+    it builds first from the contacts of the collision detection."""
     partition.invoke()
-    func_prepare_island_solve(constraint_data.constraint_state, rigid_config)
-    equality_rows.invoke()
+    func_build_factor_worklists(constraint_data.constraint_state, rigid_config)
     frictionloss_rows.invoke()
     contact_rows.invoke()
     limit_rows.invoke()
 
 
 @qd.func(requires_top_level=True)
-def func_post_solve(
+def func_apply_forces(
     constraint_data: qd.template(),
     rigid_data: qd.template(),
     rigid_config: qd.template(),
-    row_post_solves: qd.template(),
+    force_readbacks: qd.template(),
     settle: qd.template(),
 ):
     """Update the accelerations from the solved constraint forces, refine the friction forces by the noslip pass, let
@@ -5411,7 +5422,7 @@ def func_post_solve(
         constraint_noslip.func_noslip(
             rigid_data.dyn_state, constraint_data.constraint_state, rigid_data.rigid_info, rigid_config
         )
-    row_post_solves.invoke()
+    force_readbacks.invoke()
     settle.invoke()
 
 

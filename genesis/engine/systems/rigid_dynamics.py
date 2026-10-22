@@ -177,8 +177,8 @@ class RigidDynamics(System):
         return self.initialize_data
 
     @System.action(kind="host")
-    def finalize(self):
-        return self.finalize_data
+    def initialize_inverse_weights(self):
+        return self._initialize_inverse_weights
 
     @System.action(kind="stage")
     def wake_coupled_links_stage(self):
@@ -203,6 +203,30 @@ class RigidDynamics(System):
     @System.action(kind="host")
     def integrate_kernel(self):
         return kernel_step_2, self.data, self.rigid_config
+
+    @System.action(kind="host")
+    def mark_forward_updated(self):
+        return self._mark_forward_updated
+
+    @System.action(kind="host")
+    def save_adjoint_cache(self):
+        return self._save_adjoint_cache
+
+    @System.action(kind="host")
+    def restore_substep_inputs(self):
+        return self._restore_substep_inputs
+
+    @System.action(kind="host")
+    def reverse_integration(self):
+        return self._reverse_integration
+
+    @System.action(kind="host")
+    def reverse_smooth_acceleration(self):
+        return self._reverse_smooth_acceleration
+
+    @System.action(kind="host")
+    def reverse_forward_dynamics(self):
+        return self._reverse_forward_dynamics
 
     # -------------------------------- Public get/set API --------------------------------
 
@@ -702,7 +726,7 @@ class RigidDynamics(System):
         for entity in self.entities:
             entity.load_ckpt(ckpt_name)
 
-    def prepare_backward_replay(self, f: int) -> None:
+    def _restore_substep_inputs(self, f: int) -> None:
         """Restore the substep inputs and switch owner kernels to backward replay mode."""
         self._is_backward = True
         kernel_prepare_backward_substep(
@@ -715,7 +739,7 @@ class RigidDynamics(System):
             self.rigid_config,
         )
 
-    def begin_backward(self, f: int) -> None:
+    def _reverse_integration(self, f: int) -> None:
         """Reverse integration after Engine has replayed the composed forward substep."""
         envs_idx = self._scene._sanitize_envs_idx(None)
         if not self._enable_mujoco_compatibility:
@@ -742,11 +766,11 @@ class RigidDynamics(System):
             is_backward=True,
         )
 
-    def reverse_smooth_acceleration(self) -> None:
+    def _reverse_smooth_acceleration(self) -> None:
         """Reverse the unconstrained acceleration solve when no Constraint System exists."""
         kernel_manual_compute_qacc_bw(self.dyn_state, self.rigid_info, self.rigid_config)
 
-    def finish_backward(self, f: int) -> None:
+    def _reverse_forward_dynamics(self, f: int) -> None:
         """Reverse forward dynamics and restore forward execution mode."""
         envs_idx = self._scene._sanitize_envs_idx(None)
         kernel_copy_acc(f, self.dyn_state, self._rigid_adjoint_cache, self.rigid_config)
@@ -957,10 +981,6 @@ class RigidDynamics(System):
         self._init_vverts_state(self.dyn_state, self.dyn_info)
         self._init_dynamics()
 
-    def finalize_data(self) -> None:
-        """Finish initialization after island, contact and optional constraint owners have allocated their data."""
-        self._finalize_dynamics()
-
     def get_forward_update_flags(self) -> tuple[bool, bool]:
         return self._is_forward_pos_updated, self._is_forward_vel_updated
 
@@ -968,7 +988,7 @@ class RigidDynamics(System):
         self._is_forward_pos_updated = False
         self._is_forward_vel_updated = False
 
-    def save_adjoint_cache(self, f: int) -> None:
+    def _save_adjoint_cache(self, f: int) -> None:
         kernel_save_adjoint_cache(f, self.dyn_state, self._rigid_adjoint_cache, self.rigid_info, self.rigid_config)
 
     def get_forward_kernel_args(self) -> tuple[bool, bool, bool]:
@@ -988,7 +1008,7 @@ class RigidDynamics(System):
     def update_acceleration_after_coupling(self) -> None:
         update_qacc_from_qvel_delta(self.dyn_state, self.rigid_info, self.rigid_config)
 
-    def mark_forward_updated(self) -> None:
+    def _mark_forward_updated(self) -> None:
         """Record that the integration has updated the cartesian space and the velocities the next substep starts
         from, which the MuJoCo-compatible mode recomputes at the start of every substep instead."""
         self._is_forward_pos_updated = not self._enable_mujoco_compatibility
@@ -1784,7 +1804,7 @@ class RigidDynamics(System):
             is_backward=False,
         )
 
-    def _finalize_dynamics(self) -> None:
+    def _initialize_inverse_weights(self) -> None:
         """Settle inverse weights and default rotor inertia after contact and constraint data exist."""
         self.refresh_invweight_and_meaninertia(force_update=False, in_place=True)
 

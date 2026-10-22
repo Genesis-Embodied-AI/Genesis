@@ -16,8 +16,9 @@ from genesis.engine.solvers.rigid.constraint.solver import (
     constraint_solver_kernel_clear,
     constraint_solver_kernel_masked_clear,
     constraint_solver_kernel_reset,
-    func_assemble_constraints,
-    func_post_solve,
+    func_apply_forces,
+    func_assemble_equality_rows,
+    func_assemble_inequality_rows,
     func_solve_body,
 )
 from genesis.utils.misc import assign_indexed_tensor, indices_to_mask, qd_to_torch
@@ -47,9 +48,10 @@ class RigidConstraint(System):
     """Own the constraint rows of the rigid solve and solve them.
 
     The constraint kinds join as participants (see on_rows): each appends its rows to the category the solve treats
-    them as, may read its solved forces back, and reverses its rows. Every substep the manager assembles the categories
-    in their layout order over the island partition, solves them on the host, then turns the solved forces into
-    accelerations. Only the Require of a participant admits it, so a scene whose constraints are disabled has neither.
+    them as, may read its solved forces back or cache what it reads back from them, and reverses its rows. Every
+    substep the manager begins the rows with the equality category in the dynamics phase, appends the other categories
+    over the island partition after the collision detection, solves them on the host, then applies the solved forces.
+    Only the Require of a participant admits it, so a scene whose constraints are disabled has neither.
     """
 
     # -------------------------------- Data --------------------------------
@@ -77,13 +79,65 @@ class RigidConstraint(System):
         super().__init__()
         self.data = self.Data()
         self._row_capacity = dict.fromkeys(RowCategory, 0)
-        self._solve_revision = 0
+
+    # -------------------------------- Actions --------------------------------
+
+    @System.action(kind="host")
+    def initialize(self):
+        return self.initialize_data
+
+    @System.action(kind="host")
+    def clear_readbacks(self):
+        return self.clear_readback_caches
+
+    @System.action(kind="stage")
+    def assemble_equality_rows(self):
+        rigid = self.rigid_dynamics
+        return func_assemble_equality_rows, self.data, rigid.data, rigid.rigid_config, self.equality_rows
+
+    @System.action(kind="stage")
+    def assemble_inequality_rows(self):
+        rigid = self.rigid_dynamics
+        return (
+            func_assemble_inequality_rows,
+            self.data,
+            rigid.data,
+            rigid.rigid_config,
+            self.rigid_island.partition,
+            self.frictionloss_rows,
+            self.contact_rows,
+            self.limit_rows,
+        )
+
+    @System.action(kind="host")
+    def solve(self):
+        return self.solve_constraints
+
+    @System.action(kind="stage")
+    def apply_forces(self):
+        rigid = self.rigid_dynamics
+        return (
+            func_apply_forces,
+            self.data,
+            rigid.data,
+            rigid.rigid_config,
+            self.force_readbacks,
+            self.rigid_island.settle,
+        )
+
+    @System.action(kind="host")
+    def reverse(self):
+        return self.reverse_constraints
 
     # -------------------------------- Action collections --------------------------------
 
     @System.action_collection(kind="host")
     def initializations(self):
         """The initialize Actions of the participants, see on_rows."""
+
+    @System.action_collection(kind="host")
+    def readback_clears(self):
+        """The clear_readback Actions of the participants, see on_rows."""
 
     @System.action_collection(kind="stage")
     def equality_rows(self):
@@ -102,8 +156,8 @@ class RigidConstraint(System):
         """The assemble Actions of the limit rows, see on_rows."""
 
     @System.action_collection(kind="stage")
-    def row_post_solves(self):
-        """The post_solve Actions of the participants, see on_rows."""
+    def force_readbacks(self):
+        """The read_back_forces Actions of the participants, see on_rows."""
 
     @System.action_collection(kind="host")
     def row_reverses(self):
@@ -119,20 +173,24 @@ class RigidConstraint(System):
         initialize: HostAction,
         assemble: StageAction,
         reverse: HostAction,
-        post_solve: StageAction | None = None,
+        read_back_forces: StageAction | None = None,
+        clear_readback: HostAction | None = None,
     ) -> None:
         """Join the constraint rows with rows of the given category.
 
-        Signature  initialize(), assemble(), post_solve() and reverse(), every argument bound.
-        Invoked    initialize once, before the manager allocates the rows. assemble every substep, after the island
-                   partition, once the categories before this one have appended their rows; the assemble Actions of
-                   one category are peers. post_solve every substep, once the accelerations and the noslip pass have
-                   taken the solved forces, before the settled islands fall asleep. reverse in the backward pass, once
+        Signature  initialize(), assemble(), read_back_forces(), clear_readback() and reverse(), every argument bound.
+        Invoked    initialize once, before the manager allocates the rows. assemble every substep: the equality
+                   category in the dynamics phase, the others after the island partition, once the categories before
+                   this one have appended their rows; the assemble Actions of one category are peers. read_back_forces
+                   every substep, once the accelerations and the noslip pass have taken the solved forces, before the
+                   settled islands fall asleep. clear_readback whenever the rows or their forces are recomputed or
+                   restored: at the start of every substep, and on reset and clear. reverse in the backward pass, once
                    the adjoint solve has written the adjoints of the rows, after the reverses of the categories before.
         Must       initialize reserves the most rows assemble appends per env (see reserve_rows). assemble appends one
                    contiguous segment per env at the row cursor n_constraints, records where it starts in the Data of
                    its participant and adds its rows to the counter of its category, reserving the whole segment
-                   atomically if the category has peers. reverse accumulates into the shared gradients.
+                   atomically if the category has peers. clear_readback drops what the participant read back from its
+                   rows. reverse accumulates into the shared gradients.
         Must not   derive its rows from the counters of another category, or read the rows of another participant.
         """
         category_rows = {
@@ -143,51 +201,12 @@ class RigidConstraint(System):
         }
         self.initializations += initialize
         category_rows[category] += assemble
-        if post_solve is not None:
-            self.row_post_solves += post_solve
+        if read_back_forces is not None:
+            self.force_readbacks += read_back_forces
+        if clear_readback is not None:
+            self.readback_clears += clear_readback
         # The reverses accumulate into shared gradients: ranking them by category fixes their rounding alone
         self.row_reverses.add(reverse, rank=category)
-
-    # -------------------------------- Actions --------------------------------
-
-    @System.action(kind="host")
-    def initialize(self):
-        return self.initialize_data
-
-    @System.action(kind="stage")
-    def assemble(self):
-        rigid = self.rigid_dynamics
-        return (
-            func_assemble_constraints,
-            self.data,
-            rigid.data,
-            rigid.rigid_config,
-            self.rigid_island.partition,
-            self.equality_rows,
-            self.frictionloss_rows,
-            self.contact_rows,
-            self.limit_rows,
-        )
-
-    @System.action(kind="host")
-    def solve(self):
-        return self.solve_constraints
-
-    @System.action(kind="stage")
-    def post_solve(self):
-        rigid = self.rigid_dynamics
-        return (
-            func_post_solve,
-            self.data,
-            rigid.data,
-            rigid.rigid_config,
-            self.row_post_solves,
-            self.rigid_island.settle,
-        )
-
-    @System.action(kind="host")
-    def reverse(self):
-        return self.reverse_constraints
 
     # -------------------------------- Public get/set API --------------------------------
 
@@ -205,10 +224,9 @@ class RigidConstraint(System):
         """The dof accelerations of the last solve, batch first."""
         return qd_to_torch(self.data.constraint_state.qacc, envs_idx, transpose=True)
 
-    def get_solve_revision(self) -> int:
-        """The count of the host-side changes of the solved forces and of the equality count: one per solve and per
-        clear, by which the participants invalidate what they read back from the rows."""
-        return self._solve_revision
+    def clear_readback_caches(self) -> None:
+        """Drop what the participants read back from the rows, which the next query reads again."""
+        self.readback_clears.invoke()
 
     def iter_data(self) -> Iterator[array_class.DataItem | array_class.ConfigItem]:
         for item in array_class.iter_data(self.data, "constraint_state"):
@@ -216,6 +234,7 @@ class RigidConstraint(System):
                 yield item
 
     def reset(self, envs_idx: EnvIndex = None) -> None:
+        self.clear_readback_caches()
         if gs.use_zerocopy:
             envs_mask = indices_to_mask(envs_idx)
             dofs_mask = (slice(None), *envs_mask)
@@ -232,7 +251,6 @@ class RigidConstraint(System):
 
     def clear(self, envs_idx: EnvIndex = None) -> None:
         self.reset(envs_idx)
-        self._solve_revision += 1
 
         if gs.use_zerocopy and (
             not isinstance(envs_idx, torch.Tensor) or (not IS_OLD_TORCH or envs_idx.dtype == torch.bool)
@@ -341,7 +359,6 @@ class RigidConstraint(System):
             self.rigid_dynamics.rigid_config,
             self.n_iterations,
         )
-        self._solve_revision += 1
 
     def reverse_constraints(self) -> None:
         """Reverse the host constraint solve, then every row category through the reverses of its participants."""
