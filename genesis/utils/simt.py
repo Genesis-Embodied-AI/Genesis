@@ -57,6 +57,18 @@ def qd_block_shuffle(value, i_lane):
 
 
 @qd.func
+def qd_block_ballot(predicate):
+    """Mask of the lanes of a block that a predicate holds on, every lane of the block receiving it.
+
+    Bit i of the mask stands for lane i of the block, see qd_block_sum for the blocks. Every lane of the subgroup takes
+    part in the vote.
+    """
+    lane_base = qd.simt.subgroup.invocation_id() >> 5 << 5
+    ballot = qd.simt.subgroup.ballot(qd.cast(predicate, qd.i32))
+    return qd.u32((ballot >> qd.u64(lane_base)) & qd.u64(0xFFFFFFFF))
+
+
+@qd.func
 def qd_block_all(predicate):
     """Whether a predicate holds on every one of the 32 lanes of a block, every lane of the block receiving the answer.
 

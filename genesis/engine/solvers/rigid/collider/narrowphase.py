@@ -437,16 +437,19 @@ def func_add_polytope_vertex_contacts_sdf(
                         # Insertions only ever deepen the buffer, so a vert failing this test at the start of its batch
                         # fails it at its turn as well.
                         is_inserted = is_in_band and pen_v > pen_weakest
+                # The lanes holding a vert to insert, taken in lane order, which is vert order
                 n_inserted = qd.cast(is_inserted, gs.qd_int)
-                i_inserted = n_inserted
+                lanes_inserted = qd.u32(0)
                 if qd.static(block_dim > 1):
-                    i_inserted, n_inserted = su.qd_block_scan(n_inserted)
+                    lanes_inserted = su.qd_block_ballot(is_inserted)
+                    n_inserted = qd.math.popcnt(lanes_inserted)
                 for i_rank in range(n_inserted):
                     i_v_new = i_v
                     pos_new = vertex_pos
                     pen_new = pen_v
                     if qd.static(block_dim > 1):
-                        i_lane = su.qd_block_min(tid if is_inserted and i_inserted == i_rank + 1 else block_dim)
+                        i_lane = qd.math.ffs(lanes_inserted) - 1
+                        lanes_inserted = lanes_inserted & (lanes_inserted - 1)
                         i_v_new = su.qd_block_shuffle(i_v, i_lane)
                         pen_new = su.qd_block_shuffle(pen_v, i_lane)
                         for j in qd.static(range(3)):
