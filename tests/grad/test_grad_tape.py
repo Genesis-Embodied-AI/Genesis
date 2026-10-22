@@ -1,3 +1,6 @@
+import gc
+import weakref
+
 import numpy as np
 import pytest
 import torch
@@ -172,6 +175,12 @@ def test_torch_policy_grad_matches_fd(closed_loop, grad_revolute, show_viewer):
         fd_grad[i] = (losses[0] - losses[1]) / (2.0 * eps)
     assert (np.abs(fd_grad[:n_params]) > 1e-5).all()
     assert_allclose(params_ana.grad, fd_grad, rtol=1e-6, atol=1e-9)
+
+    # A differentiable scene is freed once the user drops it, whatever rollout it recorded
+    scene_ref = weakref.ref(pair.scene_ana)
+    del pair
+    gc.collect()
+    assert scene_ref() is None
 
 
 @pytest.mark.required

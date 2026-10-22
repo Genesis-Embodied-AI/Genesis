@@ -16,6 +16,8 @@ a policy, an earlier state) within the same backward pass, so neither `retain_gr
 needed, and `torch.autograd.grad` works as well as `loss.backward()`.
 """
 
+import weakref
+
 import torch
 
 import genesis as gs
@@ -24,13 +26,19 @@ import genesis as gs
 class _StepNode(torch.autograd.Function):
     @staticmethod
     def forward(ctx, scene, step, epoch, token, *inputs):
-        ctx.scene, ctx.step, ctx.epoch = scene, step, epoch
+        # The scene owns the token chain, so a strong reference would make a cycle that crosses the C++ autograd graph,
+        # which the garbage collector cannot traverse: the scene would never be freed.
+        ctx.scene = weakref.ref(scene)
+        ctx.step, ctx.epoch = step, epoch
         ctx.inputs_id = tuple(id(tensor) for tensor in inputs)
         return token.detach().clone()
 
     @staticmethod
     def backward(ctx, token_grad):
-        inputs_grad = ctx.scene._reverse_step(ctx.step, ctx.epoch)
+        scene = ctx.scene()
+        if scene is None:
+            gs.raise_exception("Calling backward on a scene that has been destroyed since the rollout.")
+        inputs_grad = scene._reverse_step(ctx.step, ctx.epoch)
         return None, None, None, torch.zeros_like(token_grad), *(inputs_grad.get(i) for i in ctx.inputs_id)
 
 
