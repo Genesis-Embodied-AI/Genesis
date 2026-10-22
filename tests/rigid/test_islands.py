@@ -735,15 +735,28 @@ def test_hibernation_wakes_on_user_input(show_viewer, n_envs, tol):
             pos=(8.0, 0.0, 0.1),
         )
     )
+    box_base_pos = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(9.0, 0.0, 0.1),
+        )
+    )
+    box_on_platform = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(10.0, 0.0, 0.35),
+        )
+    )
+    platform = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.3, 0.3, 0.1),
+            pos=(10.0, 0.0, 0.25),
+            fixed=True,
+        )
+    )
     scene.build(n_envs=n_envs)
 
     solver = scene.rigid_solver
-
-    def asleep(entity):
-        return qd_to_numpy(solver.dyn_state.entities.is_hibernated, entity.idx).all()
-
-    def z_of(entity):
-        return entity.get_pos()[..., 2]
 
     # The forced box carries an armature while it sleeps, which its mass matrix must hold once, whatever the time spent
     # asleep, when the force wakes it.
@@ -760,69 +773,122 @@ def test_hibernation_wakes_on_user_input(show_viewer, n_envs, tol):
 
     for _ in range(90):
         scene.step()
-    assert all(
-        map(asleep, (box_force, box_pos, box_vel, box_qpos, box_cforce, box_cvel, box_cpos, box_mass, box_armature))
-    )
+    # Every box sleeps, the plane and the platform aside
+    assert qd_to_numpy(solver.dyn_state.entities.is_hibernated, [box.idx for box in scene.entities[1:-1]]).all()
 
-    z0 = z_of(box_force)
+    z0 = box_force.get_pos()[..., 2]
     for _ in range(6):
         solver.apply_links_external_wrench([0.0, 0.0, 40.0], links_idx=box_force.base_link_idx)
         scene.step()
-    assert not asleep(box_force) and (z_of(box_force) > z0 + 0.02).all()
-    assert all(map(asleep, (box_pos, box_vel, box_qpos, box_cforce, box_cvel, box_cpos)))
+    assert (
+        not qd_to_numpy(solver.dyn_state.entities.is_hibernated, box_force.idx).all()
+        and (box_force.get_pos()[..., 2] > z0 + 0.02).all()
+    )
+    assert qd_to_numpy(
+        solver.dyn_state.entities.is_hibernated,
+        [box.idx for box in (box_pos, box_vel, box_qpos, box_cforce, box_cvel, box_cpos)],
+    ).all()
 
     box_pos.set_dofs_position([1.0, 0.0, 0.5, 0.0, 0.0, 0.0])
-    assert not asleep(box_pos)
-    z0 = z_of(box_pos)
+    assert not qd_to_numpy(solver.dyn_state.entities.is_hibernated, box_pos.idx).all()
+    # A body moved by a setter loses the contacts found at its previous pose, with their forces, while a body still
+    # asleep keeps those it rests on
+    assert not box_pos.get_contacts(is_padded=True)["valid_mask"].any()
+    assert_allclose(box_pos.get_links_net_contact_force(), 0.0, tol=gs.EPS)
+    assert box_vel.get_contacts(is_padded=True)["valid_mask"].any()
+    assert (box_vel.get_links_net_contact_force()[..., 2] > 0.5 * box_vel.get_mass() * G).all()
+    z0 = box_pos.get_pos()[..., 2]
     for _ in range(n_fall):
         scene.step()
-    assert_allclose(z0 - z_of(box_pos), free_fall_drop, rtol=0.2)
-    assert all(map(asleep, (box_vel, box_qpos, box_cforce, box_cvel, box_cpos)))
+    assert_allclose(z0 - box_pos.get_pos()[..., 2], free_fall_drop, rtol=0.2)
+    assert qd_to_numpy(
+        solver.dyn_state.entities.is_hibernated,
+        [box.idx for box in (box_vel, box_qpos, box_cforce, box_cvel, box_cpos)],
+    ).all()
 
     box_vel.set_dofs_velocity([0.0, 0.0, 2.0, 0.0, 0.0, 0.0])
-    assert not asleep(box_vel)
-    z0 = z_of(box_vel)
+    assert not qd_to_numpy(solver.dyn_state.entities.is_hibernated, box_vel.idx).all()
+    z0 = box_vel.get_pos()[..., 2]
     for _ in range(5):
         scene.step()
-    assert (z_of(box_vel) > z0 + 0.05).all()
-    assert all(map(asleep, (box_qpos, box_cforce, box_cvel, box_cpos)))
+    assert (box_vel.get_pos()[..., 2] > z0 + 0.05).all()
+    assert qd_to_numpy(
+        solver.dyn_state.entities.is_hibernated, [box.idx for box in (box_qpos, box_cforce, box_cvel, box_cpos)]
+    ).all()
 
     box_qpos.set_qpos([3.0, 0.0, 0.6, 1.0, 0.0, 0.0, 0.0])
-    assert not asleep(box_qpos)
-    z0 = z_of(box_qpos)
+    assert not qd_to_numpy(solver.dyn_state.entities.is_hibernated, box_qpos.idx).all()
+    assert not box_qpos.get_contacts(is_padded=True)["valid_mask"].any()
+    assert_allclose(box_qpos.get_links_net_contact_force(), 0.0, tol=gs.EPS)
+    assert (box_base_pos.get_links_net_contact_force()[..., 2] > 0.5 * box_base_pos.get_mass() * G).all()
+    z0 = box_qpos.get_pos()[..., 2]
     for _ in range(n_fall):
         scene.step()
-    assert_allclose(z0 - z_of(box_qpos), free_fall_drop, rtol=0.2)
-    assert all(map(asleep, (box_cforce, box_cvel, box_cpos)))
+    assert_allclose(z0 - box_qpos.get_pos()[..., 2], free_fall_drop, rtol=0.2)
+    assert qd_to_numpy(
+        solver.dyn_state.entities.is_hibernated, [box.idx for box in (box_cforce, box_cvel, box_cpos)]
+    ).all()
 
-    z0 = z_of(box_cforce)
+    box_base_pos.set_pos([9.0, 0.0, 0.6])
+    assert not qd_to_numpy(solver.dyn_state.entities.is_hibernated, box_base_pos.idx).all()
+    assert not box_base_pos.get_contacts(is_padded=True)["valid_mask"].any()
+    assert_allclose(box_base_pos.get_links_net_contact_force(), 0.0, tol=gs.EPS)
+    z0 = box_base_pos.get_pos()[..., 2]
+    for _ in range(n_fall):
+        scene.step()
+    assert_allclose(z0 - box_base_pos.get_pos()[..., 2], free_fall_drop, rtol=0.2)
+    assert qd_to_numpy(
+        solver.dyn_state.entities.is_hibernated, [box.idx for box in (box_cforce, box_cvel, box_cpos)]
+    ).all()
+
+    # A fixed link has no state to wake, but a body resting on it wakes when it moves rather than float where it was
+    platform.set_pos((10.0, 0.0, -0.15))
+    assert not qd_to_numpy(solver.dyn_state.entities.is_hibernated, box_on_platform.idx).all()
+    z0 = box_on_platform.get_pos()[..., 2]
+    for _ in range(n_fall):
+        scene.step()
+    assert_allclose(z0 - box_on_platform.get_pos()[..., 2], free_fall_drop, rtol=0.2)
+    assert qd_to_numpy(
+        solver.dyn_state.entities.is_hibernated, [box.idx for box in (box_cforce, box_cvel, box_cpos)]
+    ).all()
+
+    z0 = box_cforce.get_pos()[..., 2]
     for _ in range(8):
         box_cforce.control_dofs_force([0.0, 0.0, 30.0, 0.0, 0.0, 0.0])
         scene.step()
-    assert not asleep(box_cforce) and (z_of(box_cforce) > z0 + 0.02).all()
+    assert (
+        not qd_to_numpy(solver.dyn_state.entities.is_hibernated, box_cforce.idx).all()
+        and (box_cforce.get_pos()[..., 2] > z0 + 0.02).all()
+    )
     mass = float(box_cforce.get_mass())
     assert_allclose(box_cforce.get_dofs_velocity()[..., 2], 8 * DT * (30.0 - mass * G) / (mass + ARMATURE), tol=tol)
-    assert all(map(asleep, (box_cvel, box_cpos)))
+    assert qd_to_numpy(solver.dyn_state.entities.is_hibernated, [box.idx for box in (box_cvel, box_cpos)]).all()
 
-    z0 = z_of(box_cvel)
+    z0 = box_cvel.get_pos()[..., 2]
     for _ in range(8):
         box_cvel.control_dofs_velocity([0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
         scene.step()
-    assert not asleep(box_cvel) and (z_of(box_cvel) > z0 + 0.02).all()
-    assert asleep(box_cpos)
+    assert (
+        not qd_to_numpy(solver.dyn_state.entities.is_hibernated, box_cvel.idx).all()
+        and (box_cvel.get_pos()[..., 2] > z0 + 0.02).all()
+    )
+    assert qd_to_numpy(solver.dyn_state.entities.is_hibernated, box_cpos.idx).all()
 
-    z0 = z_of(box_cpos)
+    z0 = box_cpos.get_pos()[..., 2]
     for _ in range(12):
         box_cpos.control_dofs_position([6.0, 0.0, 0.6, 0.0, 0.0, 0.0])
         scene.step()
-    assert not asleep(box_cpos) and (z_of(box_cpos) > z0 + 0.05).all()
+    assert (
+        not qd_to_numpy(solver.dyn_state.entities.is_hibernated, box_cpos.idx).all()
+        and (box_cpos.get_pos()[..., 2] > z0 + 0.05).all()
+    )
 
     # A body its controller holds at the target stays awake for as long as the hold lasts, since the actuation pass
     # wakes any sleeping link it actuates. It settles where the controller's stiffness carries its weight.
     for _ in range(40):
         scene.step()
-        assert not asleep(box_cpos)
-    assert_allclose(z_of(box_cpos), 0.6 - box_cpos.get_mass() * G / 400.0, atol=0.01)
+        assert not qd_to_numpy(solver.dyn_state.entities.is_hibernated, box_cpos.idx).all()
+    assert_allclose(box_cpos.get_pos()[..., 2], 0.6 - box_cpos.get_mass() * G / 400.0, atol=0.01)
 
     # A mass or an armature written moves the equilibrium a resting body found, so a body it is written on must wake
     # to settle into the new one. Both writes are made while the body sleeps, and the weight they land on is the
@@ -830,7 +896,7 @@ def test_hibernation_wakes_on_user_input(show_viewer, n_envs, tol):
     MASS = 4.0
     invweight_before = solver.get_links_invweight(box_mass.base_link_idx)
     box_mass.set_mass(MASS)
-    assert not asleep(box_mass)
+    assert not qd_to_numpy(solver.dyn_state.entities.is_hibernated, box_mass.idx).all()
     assert_allclose(solver.get_links_invweight(box_mass.base_link_idx)[..., 0], 1.0 / MASS, tol=gs.EPS)
     assert ((invweight_before - solver.get_links_invweight(box_mass.base_link_idx)).abs() > 1e-3).all()
 
@@ -842,7 +908,7 @@ def test_hibernation_wakes_on_user_input(show_viewer, n_envs, tol):
 
     invweight_before = box_armature.get_dofs_invweight()
     box_armature.set_dofs_armature([ARMATURE] * 6)
-    assert not asleep(box_armature)
+    assert not qd_to_numpy(solver.dyn_state.entities.is_hibernated, box_armature.idx).all()
     # An armature adds to the mass matrix without belonging to any link, so a translational degree of freedom of a
     # free body weighs the mass it carries plus the armature on it.
     mass_armature = float(box_armature.get_mass()) + ARMATURE

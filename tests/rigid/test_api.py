@@ -738,27 +738,17 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
     pos_delta = np.random.rand(2, 3)
     with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
         robot.set_pos(pos_delta, relative=False)
-        if show_viewer:
-            scene.visualizer.update()
     with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
         robot.set_pos(pos_delta[[0]], envs_idx=[0], relative=False)
-        if show_viewer:
-            scene.visualizer.update()
     cube.set_pos(pos_delta[[0]] + (0.0, 0.0, 0.16), envs_idx=[0], relative=False)
     cube.set_pos(pos_delta[[1]] + (0.0, 0.0, 0.11), envs_idx=1, relative=False)
     sphere.set_pos(np.tile(pos_delta[[0]], (2, 1)) + 1.0, relative=False)
     quat_delta = np.random.rand(2, 4)
     with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
         robot.set_quat(quat_delta, relative=False)
-        if show_viewer:
-            scene.visualizer.update()
     with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
         robot.set_quat(quat_delta[[0]], envs_idx=[0], relative=False)
-        if show_viewer:
-            scene.visualizer.update()
     cube.set_quat(quat_delta, relative=False)
-    if show_viewer:
-        scene.visualizer.update()
 
     sphere_aabb, sphere_base_aabb = sphere.get_AABB(), sphere.geoms[0].get_AABB()
     assert_allclose(sphere_aabb.mean(dim=-2), pos_delta[0] + 1.0, tol=tol)

@@ -368,8 +368,6 @@ def test_inverse_kinematics_multilink(show_viewer, tol):
     assert_allclose(err, 0.0, atol=tol)
 
     robot.set_qpos(qpos, envs_idx=(1,))
-    if show_viewer:
-        scene.visualizer.update(force=True)
     assert_allclose(index_finger_distal.get_pos(envs_idx=(1,)), index_finger_pos, tol=tol)
     assert_allclose(middle_finger_distal.get_pos(envs_idx=(1,)), middle_finger_pos, tol=tol)
     assert_allclose(wrist.get_pos(envs_idx=(1,)), wrist_pos, tol=tol)
@@ -516,9 +514,6 @@ def test_inverse_kinematics_local_point(n_envs, show_viewer, tol):
     fk_actual_point_pos = fk_link_pos + fk_world_offset
     assert_allclose(fk_actual_point_pos, target_pos, tol=tol)
 
-    if show_viewer:
-        scene.visualizer.update()
-
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
@@ -562,8 +557,6 @@ def test_inverse_kinematics_multilink_local_points(show_viewer, tol):
 
     # Apply solution
     robot.set_qpos(qpos)
-    if show_viewer:
-        scene.visualizer.update(force=True)
 
     # Verify each offset point is at its target
     for link, local_offset, target in [
@@ -683,7 +676,6 @@ def test_path_planning_avoidance(backend, n_envs, batch_dofs_info, show_viewer, 
     qpos_goal = franka.inverse_kinematics(hand, pos=hand_pos_ref, quat=hand_quat_ref)
     qpos_goal[..., -2:] = 0.04
     franka.set_qpos(qpos_goal)
-    scene.visualizer.update()
     scene.rigid_solver.collider.detection()
     assert not collider_state.n_contacts.to_numpy().any()
     franka.set_qpos(torch.zeros_like(qpos_goal))
@@ -730,7 +722,6 @@ def test_path_planning_avoidance(backend, n_envs, batch_dofs_info, show_viewer, 
         max_penetration = float("-inf")
         for waypoint in path:
             franka.set_qpos(waypoint)
-            scene.visualizer.update()
 
             # Check if the cube is colliding with the robot
             scene.rigid_solver.collider.detection()

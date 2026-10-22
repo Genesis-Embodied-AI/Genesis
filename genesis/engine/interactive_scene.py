@@ -8,7 +8,7 @@ from genesis.utils.misc import with_lock
 from genesis.vis.viewer_plugins.plugins import DefaultControlsPlugin
 
 if TYPE_CHECKING:
-    from genesis.engine.entities.rigid_entity import RigidEntity
+    from genesis.engine.entities.rigid_entity import KinematicEntity
     from genesis.engine.scene import Scene
     from genesis.options.sensors.options import SensorOptions
 
@@ -111,7 +111,7 @@ class InteractiveScene:
             return True
         if self._reset_pending:
             self._reset_pending = False
-            self._apply_reset()
+            self.scene.reset()
             return True
         if self._pending_steps > 0:
             self._pending_steps -= 1
@@ -158,20 +158,6 @@ class InteractiveScene:
     def _ctx(self):
         return self.scene.viewer.context
 
-    @with_lock
-    def refresh_visual_transforms(self):
-        """Refresh the visual geom poses and the drawn nodes so visuals reflect the latest qpos. Idempotent."""
-        self._refresh_visual_transforms_unlocked()
-
-    def _refresh_visual_transforms_unlocked(self):
-        rigid_solver = self.scene.rigid_solver
-        if not rigid_solver.is_active:
-            return
-        rigid_solver.update_vgeoms()
-        ctx = self._ctx
-        ctx.update_link_frame()
-        ctx.update_rigid()
-
     def reset(self):
         """Queue a reset of the wrapped scene to its initial state.
 
@@ -181,28 +167,7 @@ class InteractiveScene:
         self._reset_pending = True
 
     @with_lock
-    def _apply_reset(self):
-        """Reset the wrapped scene and refresh visuals, on the stepping thread.
-
-        Clears contact arrows and other transient render nodes."""
-        self.scene.reset()
-        self._ctx.clear_dynamic_nodes(only_outdated=False)
-        self._refresh_visual_transforms_unlocked()
-
-    @with_lock
-    def set_entity_qpos(self, entity: "RigidEntity", qpos, env_idx: int | None = None):
-        """Set the entity's qpos and refresh visuals."""
-        entity.set_qpos(qpos, envs_idx=env_idx)
-        self._refresh_visual_transforms_unlocked()
-
-    @with_lock
-    def set_entity_dofs_position(self, entity: "RigidEntity", dofs_position, env_idx: int | None = None):
-        """Set the entity's DOF positions and refresh visuals."""
-        entity.set_dofs_position(dofs_position, envs_idx=env_idx)
-        self._refresh_visual_transforms_unlocked()
-
-    @with_lock
-    def set_entity_vis_mode(self, entity: "RigidEntity", mode: str):
+    def set_entity_vis_mode(self, entity: "KinematicEntity", mode: str):
         """Switch entity rendering between ``"visual"`` and ``"collision"``."""
         if not isinstance(entity.surface, gs.surfaces.Surface):
             return
@@ -211,18 +176,18 @@ class InteractiveScene:
             return
 
         ctx = self._ctx
-        rigid_solver = self.scene.rigid_solver
+        solver = entity.solver
 
         old_geoms = entity.vgeoms if old_mode == "visual" else entity.geoms
         for geom in old_geoms:
             ctx.remove_rigid_node(geom)
 
         entity.surface.vis_mode = mode
-        rigid_solver.update_vgeoms()
+        solver.update_vgeoms()
 
         is_visual = mode == "visual"
         geoms = entity.vgeoms if is_visual else entity.geoms
-        geoms_T = ctx.rigid_geoms_T(rigid_solver, is_visual)
+        geoms_T = ctx.rigid_geoms_T(solver, is_visual)
         for geom in geoms:
             ctx.add_geom_node(geom, geoms_T)
 

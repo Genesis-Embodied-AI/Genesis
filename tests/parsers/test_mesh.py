@@ -896,11 +896,31 @@ def test_mjcf_2d_texture_mapping(textured_mjcf):
 
 @pytest.mark.required
 def test_splashsurf_surface_reconstruction(show_viewer):
-    scene = gs.Scene(show_viewer=show_viewer)
-    scene.add_entity(
+    # The particle size differs from the one of MPM, so that each solver must reconstruct its liquid at its own size
+    scene = gs.Scene(
+        sph_options=gs.options.SPHOptions(
+            particle_size=0.04,
+        ),
+        pbd_options=gs.options.PBDOptions(
+            particle_size=0.04,
+        ),
+        show_viewer=show_viewer,
+    )
+    sph_liquid = scene.add_entity(
         material=gs.materials.SPH.Liquid(),
         morph=gs.morphs.Box(
-            pos=(0.15, 0.15, 0.22),
+            pos=(0.0, 0.3, 0.2),
+            size=(0.25, 0.25, 0.4),
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.2, 0.6, 1.0, 1.0),
+            vis_mode="recon",
+        ),
+    )
+    pbd_liquid = scene.add_entity(
+        material=gs.materials.PBD.Liquid(),
+        morph=gs.morphs.Box(
+            pos=(0.0, -0.3, 0.2),
             size=(0.25, 0.25, 0.4),
         ),
         surface=gs.surfaces.Default(
@@ -909,12 +929,18 @@ def test_splashsurf_surface_reconstruction(show_viewer):
         ),
     )
     cam = scene.add_camera(
-        pos=(1.3, 1.3, 0.8),
+        pos=(2.0, 0.0, 0.2),
         lookat=(0.0, 0.0, 0.2),
         GUI=show_viewer,
     )
     scene.build()
-    cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
+
+    # Both liquids fill the same box, so their surfaces cover the same area of the image, up to the particle sampling
+    _, _, seg, _ = cam.render(rgb=False, depth=False, segmentation=True, colorize_seg=False, normal=False)
+    seg_idx = {seg_key: idx for idx, seg_key in scene.segmentation_idx_dict.items()}
+    n_pbd_pixels, n_sph_pixels = (seg == seg_idx[pbd_liquid.idx]).sum(), (seg == seg_idx[sph_liquid.idx]).sum()
+    assert n_sph_pixels > 0
+    assert_allclose(n_pbd_pixels, n_sph_pixels, rtol=0.15)
 
 
 # ==================== Mesh Processing/Caching Tests ====================

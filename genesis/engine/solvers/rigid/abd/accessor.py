@@ -262,6 +262,42 @@ def kernel_wake_up_entities_by_links(
 
 
 @qd.kernel(fastcache=True)
+def kernel_wake_up_entities_resting_on_links(
+    links_idx: qd.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+):
+    """Wake up the hibernated islands resting on the specified links, found through the contacts the sleepers keep.
+
+    A fixed link never sleeps, so moving it wakes nothing by itself, while the bodies resting on it would stay asleep
+    where it was. Their contacts with it are among those a sleeper keeps (see n_contacts_hibernated in array_class.py).
+    """
+    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
+        for i_c_ in range(collider_state.n_contacts_hibernated[i_b]):
+            i_c = collider_state.contact_sort_idx[i_c_, i_b]
+            i_la = collider_state.contact_data.link_a[i_c, i_b]
+            i_lb = collider_state.contact_data.link_b[i_c, i_b]
+            for i_l_ in range(links_idx.shape[0]):
+                i_l = links_idx[i_l_]
+                i_sleeper = -1
+                if i_la == i_l:
+                    i_sleeper = i_lb
+                elif i_lb == i_l:
+                    i_sleeper = i_la
+                if i_sleeper >= 0:
+                    if dyn_state.links.is_hibernated[i_sleeper, i_b]:
+                        i_is = constraint_state.island.links_island_idx[i_sleeper, i_b]
+                        func_wakeup_island(i_is, i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
+
+
+@qd.kernel(fastcache=True)
 def kernel_wake_up_entities_by_dofs(
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),

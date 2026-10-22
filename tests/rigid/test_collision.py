@@ -362,8 +362,6 @@ def test_no_drift(gjk_collision, entity_kind, entity_type, ground_type, show_vie
 
     entity.set_pos(smooth_pos_world)
     entity.set_quat(smooth_quat_world)
-    if show_viewer:
-        scene.visualizer.update()
 
     for i_step in range(400):
         scene.step()
@@ -578,8 +576,6 @@ def test_box_contact_minimal_separation(detection, show_viewer, tol):
                         box.set_dofs_velocity(np.concatenate((vel_lin, np.random.normal(size=(N_ENVS, 3))), axis=-1))
                 boxes_pos[..., 1, :] = np.stack([tensor_to_array(box_b.get_pos()) for _, box_b in pairs_boxes], axis=1)
 
-                if show_viewer:
-                    scene.visualizer.update()
                 scene.rigid_solver.collider.clear()
                 scene.rigid_solver.collider.detection()
             else:
@@ -1583,9 +1579,6 @@ def test_contact_pruning_degenerated_hull(model_name, xml_path, show_viewer):
     angle_yaw = np.random.uniform(low=-np.pi, high=np.pi, size=(N_ENVS, 1))
     smooth_quat = gu.xyz_to_quat(np.concatenate([np.zeros((N_ENVS, 2)), angle_yaw], axis=-1), rpy=True)
     entity.set_quat(smooth_quat)
-
-    if show_viewer:
-        scene.visualizer.update()
 
     for _ in range(20):
         scene.step()

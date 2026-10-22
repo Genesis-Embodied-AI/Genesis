@@ -167,26 +167,46 @@ def create_timer(name=None, new=False, level=0, qd_sync=False, skip_first_call=F
 class Rate:
     """Fixed-frequency loop limiter: call ``sleep`` once per iteration to hold the loop at ``rate`` Hz.
 
-    Each wake-up is scheduled against an ideal clock advanced by exactly one period per tick, rather than from the
-    actual (over-slept) wake time, so ``time.sleep`` overshoot does not accumulate and the average rate stays on target.
-    When an iteration runs longer than one period the limiter does not sleep and resets its schedule from the current
-    time, so a loop that cannot keep up simply runs as fast as it can without building a sleep debt to burn off
-    afterwards.
+    Each wake-up is scheduled against an ideal clock advanced by exactly the periods slept per tick, rather than from
+    the actual (over-slept) wake time, so ``time.sleep`` overshoot does not accumulate and the average rate stays on
+    target. When an iteration runs longer than the periods it sleeps, the limiter does not sleep and resets its schedule
+    from the current time, so a loop that cannot keep up simply runs as fast as it can without building a sleep debt to
+    burn off afterwards. ``period`` may be changed between two ticks, the next one following the new value.
     """
 
     def __init__(self, rate):
-        self.rate = rate
         self.period = 1.0 / rate
-        self.next_time = time.perf_counter() + self.period
+        self.last_time = time.perf_counter()
 
-    def sleep(self):
+    @property
+    def rate(self):
+        """The frequency in Hz the loop is held at."""
+        return 1.0 / self.period
+
+    @rate.setter
+    def rate(self, rate):
+        self.period = 1.0 / rate
+
+    def advance(self, n_periods=1):
+        """Schedule the next tick 'n_periods' periods after the previous one, and return the time left until it.
+
+        The time left is 0 when the loop is behind, and the schedule then starts anew from the current time. A caller
+        that waits the time left in a way of its own, such as keeping a window responsive (see 'Viewer.sleep'), uses it
+        in place of 'sleep'.
+        """
         now = time.perf_counter()
-        sleep_duration = self.next_time - now
-        if sleep_duration > 0:
-            time.sleep(sleep_duration)
-            self.next_time += self.period
-        else:
-            self.next_time = now + self.period
+        next_time = self.last_time + n_periods * self.period
+        if next_time > now:
+            self.last_time = next_time
+            return next_time - now
+        self.last_time = now
+        return 0.0
+
+    def sleep(self, n_periods=1):
+        """Sleep until 'n_periods' periods have passed since the previous tick, or not at all if they already have."""
+        duration = self.advance(n_periods)
+        if duration > 0.0:
+            time.sleep(duration)
 
 
 class RunningMean:

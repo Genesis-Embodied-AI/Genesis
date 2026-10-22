@@ -2,7 +2,7 @@ import importlib
 import pkgutil
 import sys
 import traceback
-from typing import TYPE_CHECKING, ForwardRef, get_args, get_origin
+from typing import ForwardRef, get_args, get_origin
 
 import torch
 
@@ -12,9 +12,6 @@ from genesis.options.sensors.options import SensorOptions
 from genesis.utils.ring_buffer import TensorRingBuffer
 
 from .base_sensor import Sensor, SharedSensorContext, SharedSensorMetadata
-
-if TYPE_CHECKING:
-    from genesis.vis.rasterizer_context import RasterizerContext
 
 
 class SensorManager:
@@ -393,11 +390,6 @@ class SensorManager:
             sensor_cls._apply_delay(metadata, measured_return_ring, self._return_cache[sensor_cls])
 
         step_timer.stop_phase()
-
-    def draw_debug(self, context: "RasterizerContext"):
-        for sensor in self.sensors:
-            if sensor._options.draw_debug:
-                sensor._draw_debug(context)
 
     def get_cloned_from_cache(self, sensor: "Sensor", is_ground_truth: bool = False) -> torch.Tensor:
         sensor_cls = type(sensor)

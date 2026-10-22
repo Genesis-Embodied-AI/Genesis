@@ -79,6 +79,7 @@ from .abd.accessor import (
     kernel_wake_up_entities_by_dofs,
     kernel_wake_up_entities_by_links,
     kernel_wake_up_entities_by_qs,
+    kernel_wake_up_entities_resting_on_links,
 )
 from .abd.diff import (
     func_copy_next_to_curr,
@@ -2007,6 +2008,9 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
 
     @mutates(StateChange.GEOMETRY, links="links_idx")
     def set_base_links_pos(self, pos, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False):
+        if self.constraint_solver is not None:
+            self.constraint_solver.reset(envs_idx)
+
         if links_idx is None:
             links_idx = self._base_links_idx
 
@@ -2096,17 +2100,30 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                     "option 'batch_fixed_verts=True'."
                 )
 
-            # Wake up hibernated entities before setting position (fixed links don't need wake-up)
-            if self._use_hibernation and not all(self.links[i_l].is_fixed for i_l in links_idx):
-                kernel_wake_up_entities_by_links(
-                    links_idx,
-                    envs_idx,
-                    self.dyn_state,
-                    self.constraint_solver.constraint_state,
-                    self.dyn_info,
-                    self.rigid_info,
-                    self.rigid_config,
-                )
+            # Wake up the entities of the links before moving them, and for a fixed link, which never sleeps, the bodies
+            # resting on it, which would stay asleep where it was otherwise
+            if self._use_hibernation:
+                if not all(self.links[i_l].is_fixed for i_l in links_idx):
+                    kernel_wake_up_entities_by_links(
+                        links_idx,
+                        envs_idx,
+                        self.dyn_state,
+                        self.constraint_solver.constraint_state,
+                        self.dyn_info,
+                        self.rigid_info,
+                        self.rigid_config,
+                    )
+                if any(self.links[i_l].is_fixed for i_l in links_idx):
+                    kernel_wake_up_entities_resting_on_links(
+                        links_idx,
+                        envs_idx,
+                        self.dyn_state,
+                        self.collider.collider_state,
+                        self.constraint_solver.constraint_state,
+                        self.dyn_info,
+                        self.rigid_info,
+                        self.rigid_config,
+                    )
 
             kernel_set_links_pos(
                 links_idx, envs_idx, pos, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
@@ -2126,11 +2143,18 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
 
+        # See 'set_qpos'
+        if self.collider is not None:
+            self.collider.clear(envs_idx)
+
     def set_links_quat(self, quat, links_idx=None, envs_idx=None):
         raise DeprecationError("This method has been removed. Please use 'set_base_links_quat' instead.")
 
     @mutates(StateChange.GEOMETRY, links="links_idx")
     def set_base_links_quat(self, quat, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False):
+        if self.constraint_solver is not None:
+            self.constraint_solver.reset(envs_idx)
+
         if links_idx is None:
             links_idx = self._base_links_idx
 
@@ -2230,17 +2254,29 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             if has_fixed_verts and not (set_all_envs and (torch.diff(quat, dim=0).abs() < gs.EPS).all()):
                 gs.raise_exception("Impossible to set env-specific quat for fixed links with at least one geometry.")
 
-            # Wake up hibernated entities before setting quaternion (fixed links don't need wake-up)
-            if self._use_hibernation and not all(self.links[i_l].is_fixed for i_l in links_idx):
-                kernel_wake_up_entities_by_links(
-                    links_idx,
-                    envs_idx,
-                    self.dyn_state,
-                    self.constraint_solver.constraint_state,
-                    self.dyn_info,
-                    self.rigid_info,
-                    self.rigid_config,
-                )
+            # Wake up the entities of the links before rotating them (see 'set_base_links_pos')
+            if self._use_hibernation:
+                if not all(self.links[i_l].is_fixed for i_l in links_idx):
+                    kernel_wake_up_entities_by_links(
+                        links_idx,
+                        envs_idx,
+                        self.dyn_state,
+                        self.constraint_solver.constraint_state,
+                        self.dyn_info,
+                        self.rigid_info,
+                        self.rigid_config,
+                    )
+                if any(self.links[i_l].is_fixed for i_l in links_idx):
+                    kernel_wake_up_entities_resting_on_links(
+                        links_idx,
+                        envs_idx,
+                        self.dyn_state,
+                        self.collider.collider_state,
+                        self.constraint_solver.constraint_state,
+                        self.dyn_info,
+                        self.rigid_info,
+                        self.rigid_config,
+                    )
 
             kernel_set_links_quat(
                 links_idx, envs_idx, quat, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
@@ -2259,6 +2295,10 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         else:
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
+
+        # See 'set_qpos'
+        if self.collider is not None:
+            self.collider.clear(envs_idx)
 
     @mutates(StateChange.MODEL)
     def _set_links_info(self, values, links_idx, name, envs_idx=None, *, scale_inertia=False):
@@ -2444,8 +2484,6 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
 
     @mutates(StateChange.GEOMETRY, links=MutatedLinks.ARTICULATED)
     def set_qpos(self, qpos, qs_idx=None, envs_idx=None, *, skip_forward=False):
-        if self.collider is not None:
-            self.collider.reset(envs_idx)
         if self.constraint_solver is not None:
             self.constraint_solver.reset(envs_idx)
 
@@ -2514,6 +2552,11 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         else:
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
+
+        # The contacts and their forces were found at the previous pose, so they are cleared, the sleepers alone keeping
+        # theirs (see 'Collider.clear')
+        if self.collider is not None:
+            self.collider.clear(envs_idx)
 
     @mutates(StateChange.MODEL)
     def set_global_sol_params(self, sol_params):
@@ -2696,7 +2739,6 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
 
     @mutates(StateChange.GEOMETRY, links=MutatedLinks.ARTICULATED)
     def set_dofs_position(self, position, dofs_idx=None, envs_idx=None):
-        self.collider.reset(envs_idx)
         self.constraint_solver.reset(envs_idx)
 
         position, dofs_idx, envs_idx = self._sanitize_io_variables(
@@ -2724,6 +2766,10 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         )
         self._is_forward_pos_updated = True
         self._is_forward_vel_updated = True
+
+        # See 'set_qpos'
+        if self.collider is not None:
+            self.collider.clear(envs_idx)
 
     def _wake_dofs(self, dofs_idx, envs_idx):
         # Revive any hibernated entity owning these (already sanitized) dofs before a state is written to them;

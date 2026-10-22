@@ -16,7 +16,9 @@ dependencies = [
     "numpy>=1.26.4",
     "frozendict",
     # * 4.8.2 fixed linear/sRGB color conversion in `to_color()`.
-    "trimesh>=4.8.2",
+    # * 5.0 transforms a mesh without drawing from the global random generator of numpy, which the particle samplers
+    #   draw from, so that a seed gives the same particles whatever the mesh processing.
+    "trimesh>=5.0.0",
     # Used for preprocessing .urdf.xacro files into plain URDF
     "xacro",
     # * No pre-compiled wheels are distributed for LibIGL v2.6.2 on Windows OS

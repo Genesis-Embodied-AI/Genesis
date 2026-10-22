@@ -1475,6 +1475,12 @@ def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer, force_show
         pyrender_viewer.on_draw()
         viewer_rgb_forced = pyrender_viewer._renderer.jit.read_color_buf(*pyrender_viewer._viewport_size, rgba=False)
         assert_equal(viewer_rgb_set, viewer_rgb_forced)
+        # The contacts of the last step no longer hold once a setter moved the arms, so their markers go away until the
+        # next step, as after a reset to the same state
+        scene.reset(scene.get_state())
+        pyrender_viewer.on_draw()
+        viewer_rgb_reset = pyrender_viewer._renderer.jit.read_color_buf(*pyrender_viewer._viewport_size, rgba=False)
+        assert_equal(viewer_rgb_set, viewer_rgb_reset)
         franka.set_dofs_position(dofs_pos)
         scene.step()
 
