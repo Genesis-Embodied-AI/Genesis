@@ -137,7 +137,7 @@ def func_lane_slot_min(k: int, n_slots: int, n_slot_rows: qd.template(), block_d
     for i_k in qd.static(range(n_slot_rows)):
         lanes = su.qd_block_ballot(k < n_slots and k // block_dim == i_k)
         if k_min == n_slots and lanes != 0:
-            k_min = i_k * block_dim + qd.math.ffs(lanes) - 1
+            k_min = i_k * block_dim + qd.cast(qd.math.ffs(lanes), gs.qd_int) - 1
     return k_min
 
 
@@ -458,7 +458,7 @@ def func_add_polytope_vertex_contacts_sdf(
                 lanes_inserted = qd.u32(0)
                 if qd.static(block_dim > 1):
                     lanes_inserted = su.qd_block_ballot(is_inserted)
-                    n_inserted = qd.math.popcnt(lanes_inserted)
+                    n_inserted = qd.cast(qd.math.popcnt(lanes_inserted), gs.qd_int)
                 for i_rank in range(n_inserted):
                     i_v_new = i_v
                     pos_new = vertex_pos
