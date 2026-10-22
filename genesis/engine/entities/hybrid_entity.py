@@ -306,29 +306,19 @@ class HybridEntity(Entity):
         ----------
         *args, **kwargs
             Passed directly to the rigid entity's control_dofs_position method.
-
-        Returns
-        -------
-        torch.Tensor
-            Control output for position adjustment of the rigid body's DOFs.
         """
-        return self._part_rigid.control_dofs_position(*args, **kwargs)
+        self._part_rigid.control_dofs_position(*args, **kwargs)
 
     def control_dofs_position_velocity(self, *args, **kwargs):
         """
-        Apply position control to the rigid part of the hybrid entity.
+        Apply position and velocity control to the rigid part of the hybrid entity.
 
         Parameters
         ----------
         *args, **kwargs
-            Passed directly to the rigid entity's control_dofs_position method.
-
-        Returns
-        -------
-        torch.Tensor
-            Control output for position adjustment of the rigid body's DOFs.
+            Passed directly to the rigid entity's control_dofs_position_velocity method.
         """
-        return self._part_rigid.control_dofs_position_velocity(*args, **kwargs)
+        self._part_rigid.control_dofs_position_velocity(*args, **kwargs)
 
     def control_dofs_velocity(self, *args, **kwargs):
         """
@@ -338,11 +328,6 @@ class HybridEntity(Entity):
         ----------
         *args, **kwargs
             Passed directly to the rigid entity's control_dofs_velocity method.
-
-        Returns
-        -------
-        torch.Tensor
-            Control output for velocity adjustment of the rigid body's DOFs.
         """
         self._part_rigid.control_dofs_velocity(*args, **kwargs)
 
@@ -354,11 +339,6 @@ class HybridEntity(Entity):
         ----------
         *args, **kwargs
             Passed directly to the rigid entity's control_dofs_force method.
-
-        Returns
-        -------
-        torch.Tensor
-            Control output for force adjustment of the rigid body's DOFs.
         """
         self._part_rigid.control_dofs_force(*args, **kwargs)
 

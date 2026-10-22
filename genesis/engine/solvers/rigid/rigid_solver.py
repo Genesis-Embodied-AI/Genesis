@@ -1941,6 +1941,31 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         super().__setstate__(state)
         self._restart()
 
+    def process_input_grad(self):
+        # The setters of a step overwriting the state refreshed the cartesian space the step starts from, so its adjoint
+        # goes back to that state before they take the adjoint of what they overwrote. Otherwise it would flow on to the
+        # state they overwrote. The very first substep, and every substep with mujoco compatibility, already reverse it
+        # in 'substep_pre_coupling_grad'.
+        if (
+            not self._enable_mujoco_compatibility
+            and self._sim.cur_substep_global > 0
+            and any(entity.has_state_input for entity in self._entities)
+        ):
+            self._update_cartesian_grad(self._scene._sanitize_envs_idx(None))
+        return super().process_input_grad()
+
+    def process_input(self, in_backward=False):
+        # A control stays in force until the next one replaces it, so the steps of a checkpoint window replay from the
+        # controls in force as it starts (restored by 'load_ckpt'), which the setters of its first step overwrite. The
+        # checkpoint is named after the substep the window starts at (see Simulator.save_ckpt).
+        if self._requires_grad and not in_backward and self._sim.cur_substep_local == 0:
+            ckpt = self._ckpt.setdefault(f"{self._sim.cur_substep_global}", {})
+            ckpt["ctrl_mode"] = qd_to_numpy(self.dyn_state.dofs.ctrl_mode, copy=True)
+            ckpt["ctrl_force"] = qd_to_numpy(self.dyn_state.dofs.ctrl_force, copy=True)
+            ckpt["ctrl_pos"] = qd_to_numpy(self.dyn_state.dofs.ctrl_pos, copy=True)
+            ckpt["ctrl_vel"] = qd_to_numpy(self.dyn_state.dofs.ctrl_vel, copy=True)
+        return super().process_input(in_backward=in_backward)
+
     def save_ckpt(self, ckpt_name):
         # Save ckpt only if we need gradients, because this operation is costly
         if self._requires_grad:
@@ -1961,6 +1986,10 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         self.rigid_info.qpos.from_numpy(self._ckpt[ckpt_name]["qpos"][0])
         self.dyn_state.dofs.vel.from_numpy(self._ckpt[ckpt_name]["dofs_vel"][0])
         self.dyn_state.dofs.acc.from_numpy(self._ckpt[ckpt_name]["dofs_acc"][0])
+        self.dyn_state.dofs.ctrl_mode.from_numpy(self._ckpt[ckpt_name]["ctrl_mode"])
+        self.dyn_state.dofs.ctrl_force.from_numpy(self._ckpt[ckpt_name]["ctrl_force"])
+        self.dyn_state.dofs.ctrl_pos.from_numpy(self._ckpt[ckpt_name]["ctrl_pos"])
+        self.dyn_state.dofs.ctrl_vel.from_numpy(self._ckpt[ckpt_name]["ctrl_vel"])
 
         if not self._enable_mujoco_compatibility:
             # Mirror the post-integrate refresh of kernel_step_2: the replayed substeps skip their own cartesian /

@@ -496,54 +496,63 @@ class KinematicEntity(Entity):
         self._update_tgt_while_set = update_tgt_while_set
         return inputs
 
+    @property
+    def has_state_input(self) -> bool:
+        """Whether the inputs applied at the current step of the reverse pass overwrite the pose or the velocity."""
+        index = self._sim.cur_step_local - self._sim._steps_local
+        return any(key[0] in ("set_pos", "set_quat", "set_dofs_velocity") for key in self._tgt_buffer[index])
+
     def process_input_grad(self):
-        """Return the pairs (input, gradient) of the inputs applied at this step that track gradients."""
+        """
+        Return the pairs (input, gradient) of the inputs applied at this step that track gradients.
+
+        Every setter applied at this step overwrote some slots of the state or of the controls, so the reverse pass
+        takes the adjoint of those slots whatever the input, which keeps it from flowing on to the values they held
+        before. An input tracking gradients receives it, and any other input drops it.
+        """
         inputs_grad = []
         index = self._sim.cur_step_local - self._sim._steps_local
         for key in reversed(self._tgt_buffer[index].keys()):
             data_kwargs = self._tgt_buffer[index][key]
+            envs_idx = data_kwargs["envs_idx"]
 
-            # Inputs are stored on the tape as passed by the user, so scalars and array-likes (valid setter inputs that
-            # cannot carry a gradient) are filtered out with the tensor check below.
+            # The triplets (input, gradient setter, arguments) of the slots overwritten by the setter
             match key[0]:
                 case "set_pos":
-                    tgt = data_kwargs.pop("pos")
-                    set_grad, grad_args = self.set_pos_grad, (data_kwargs["envs_idx"], data_kwargs["relative"])
+                    tgts_grad = ((data_kwargs["pos"], self.set_pos_grad, (envs_idx, data_kwargs["relative"])),)
 
                 case "set_quat":
-                    tgt = data_kwargs.pop("quat")
-                    set_grad, grad_args = self.set_quat_grad, (data_kwargs["envs_idx"], data_kwargs["relative"])
+                    tgts_grad = ((data_kwargs["quat"], self.set_quat_grad, (envs_idx, data_kwargs["relative"])),)
 
                 case "set_dofs_velocity":
-                    # [velocity] could be None when we want to zero the velocity (see set_dofs_velocity of RigidSolver)
-                    tgt = data_kwargs.pop("velocity")
-                    set_grad = self.set_dofs_velocity_grad
-                    grad_args = (data_kwargs["dofs_idx_local"], data_kwargs["envs_idx"])
+                    # [velocity] is None when the velocity is zeroed (see set_dofs_velocity of RigidSolver)
+                    dofs_args = (data_kwargs["dofs_idx_local"], envs_idx)
+                    tgts_grad = ((data_kwargs["velocity"], self.set_dofs_velocity_grad, dofs_args),)
 
                 case "control_dofs_force":
-                    tgt = data_kwargs.pop("force")
-                    set_grad, grad_args = (
-                        self.set_dofs_force_grad,
-                        (data_kwargs["dofs_idx_local"], data_kwargs["envs_idx"]),
-                    )
+                    dofs_args = (data_kwargs["dofs_idx_local"], envs_idx)
+                    tgts_grad = ((data_kwargs["force"], self.set_dofs_force_grad, dofs_args),)
 
                 case "control_dofs_velocity" | "control_dofs_position" | "control_dofs_position_velocity":
-                    # PD control targets are replayed for primal correctness but have no input-gradient path.
-                    for target in (data_kwargs.get("position"), data_kwargs.get("velocity")):
-                        if isinstance(target, torch.Tensor) and target.requires_grad:
-                            gs.raise_exception(
-                                "Gradients with respect to PD control targets are not supported yet. Use "
-                                "'control_dofs_force' for differentiable control inputs."
-                            )
-                    tgt = None
+                    # Each of them sets both targets, the one it is not given to zero
+                    dofs_args = (data_kwargs["dofs_idx_local"], envs_idx)
+                    tgts_grad = (
+                        (data_kwargs.get("position"), self.set_dofs_position_target_grad, dofs_args),
+                        (data_kwargs.get("velocity"), self.set_dofs_velocity_target_grad, dofs_args),
+                    )
 
                 case _:
                     gs.raise_exception(f"Invalid target key: {key[0]} not in {self._tgt_keys}")
 
-            if isinstance(tgt, torch.Tensor) and tgt.requires_grad:
-                grad = torch.zeros_like(tgt)
-                set_grad(*grad_args, grad)
-                inputs_grad.append((tgt, grad))
+            # Inputs are stored on the tape as passed by the user, so scalars and array-likes (valid setter inputs that
+            # cannot carry a gradient) are told apart by the tensor check.
+            for tgt, set_grad, grad_args in tgts_grad:
+                if isinstance(tgt, torch.Tensor) and tgt.requires_grad:
+                    grad = torch.zeros_like(tgt)
+                    set_grad(*grad_args, grad)
+                    inputs_grad.append((tgt, grad))
+                else:
+                    set_grad(*grad_args, None)
         return inputs_grad
 
     def save_ckpt(self, ckpt_name):
@@ -967,7 +976,7 @@ class KinematicEntity(Entity):
 
     @gs.assert_built
     def set_pos_grad(self, envs_idx, relative, pos_grad):
-        self._solver.set_base_links_pos_grad(self.base_link_idx, envs_idx, relative, pos_grad.data)
+        self._solver.set_base_links_pos_grad(self.base_link_idx, envs_idx, relative, pos_grad)
 
     @gs.assert_built
     @tracked
@@ -1000,7 +1009,7 @@ class KinematicEntity(Entity):
 
     @gs.assert_built
     def set_quat_grad(self, envs_idx, relative, quat_grad):
-        self._solver.set_base_links_quat_grad(self.base_link_idx, envs_idx, relative, quat_grad.data)
+        self._solver.set_base_links_quat_grad(self.base_link_idx, envs_idx, relative, quat_grad)
 
     @gs.assert_built
     def set_qpos(self, qpos, qs_idx_local=None, envs_idx=None, *, zero_velocity=False, skip_forward=False):
@@ -2448,7 +2457,7 @@ class RigidEntity(KinematicEntity):
 
     @gs.assert_built
     def set_pos_grad(self, envs_idx, relative, pos_grad):
-        self._solver.set_base_links_pos_grad(self.base_link_idx, envs_idx, relative, pos_grad.data)
+        self._solver.set_base_links_pos_grad(self.base_link_idx, envs_idx, relative, pos_grad)
 
     @gs.assert_built
     @tracked
@@ -2482,7 +2491,7 @@ class RigidEntity(KinematicEntity):
 
     @gs.assert_built
     def set_quat_grad(self, envs_idx, relative, quat_grad):
-        self._solver.set_base_links_quat_grad(self.base_link_idx, envs_idx, relative, quat_grad.data)
+        self._solver.set_base_links_quat_grad(self.base_link_idx, envs_idx, relative, quat_grad)
 
     @gs.assert_built
     def get_verts(self):
@@ -2696,12 +2705,22 @@ class RigidEntity(KinematicEntity):
     @gs.assert_built
     def set_dofs_velocity_grad(self, dofs_idx_local, envs_idx, velocity_grad):
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
-        self._solver.set_dofs_velocity_grad(dofs_idx, envs_idx, velocity_grad.data)
+        self._solver.set_dofs_velocity_grad(dofs_idx, envs_idx, velocity_grad)
 
     @gs.assert_built
     def set_dofs_force_grad(self, dofs_idx_local, envs_idx, force_grad):
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
-        self._solver.set_dofs_force_grad(dofs_idx, envs_idx, force_grad.data)
+        self._solver.set_dofs_force_grad(dofs_idx, envs_idx, force_grad)
+
+    @gs.assert_built
+    def set_dofs_position_target_grad(self, dofs_idx_local, envs_idx, position_grad):
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        self._solver.set_dofs_position_target_grad(dofs_idx, envs_idx, position_grad)
+
+    @gs.assert_built
+    def set_dofs_velocity_target_grad(self, dofs_idx_local, envs_idx, velocity_grad):
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        self._solver.set_dofs_velocity_target_grad(dofs_idx, envs_idx, velocity_grad)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------- DOF property setters ---------------------------------
