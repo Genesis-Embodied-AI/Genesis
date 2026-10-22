@@ -2223,7 +2223,7 @@ class RigidAPI(System):
 
     @property
     def _ik_scratch(self) -> array_class.IKScratch:
-        """The scratch of inverse kinematics, allocated on the first call as upstream does."""
+        """The scratch of inverse kinematics, allocated on the first call."""
         if self._ik_scratch_cache is None:
             dynamics = self.rigid_dynamics
             self._ik_scratch_cache = array_class.get_ik_scratch(

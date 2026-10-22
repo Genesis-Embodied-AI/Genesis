@@ -214,8 +214,8 @@ def gs_num_envs_child(args: list[str]):
 
     scene.step()
     assert (qd_to_numpy(scene.rigid_solver.collider.collider_state.n_contacts) > 0).all()
-    # SimulatorEngine captures collision inside its collision graph. Launch the standalone detection graph too so
-    # this cache regression continues covering the entry point upstream added for direct Collider queries.
+    # SimulatorEngine captures collision inside its collision graph. Launch the standalone detection too, whose
+    # kernel the assertions below cover.
     scene.rigid_solver.collider.detection()
     qd.sync()
 

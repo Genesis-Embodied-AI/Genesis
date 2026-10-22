@@ -255,8 +255,8 @@ class RigidSolver:
                 engine.rigid_constraint_participants,
             )
 
-    # Explicit compatibility exports of Rigid-owned data. These replace the former inheritance/__getattr__ surface:
-    # the facade never owns or reimplements the fields, and adding a new backend field requires an intentional export.
+    # Explicit compatibility exports of Rigid-owned data: the facade never owns or reimplements the fields, and a new
+    # backend field reaches it only through an intentional export.
     @property
     def dyn_state(self) -> array_class.DynState:
         return self._rigid_dynamics.data.dyn_state
