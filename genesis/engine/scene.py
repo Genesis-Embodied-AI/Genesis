@@ -270,10 +270,6 @@ class Scene(RBC):
 
         self._backward_ready = False
         self._forward_ready = False
-        # Whether the reverse pass is scheduled for the end of the running torch backward pass, and whether it is
-        # running (see _queue_backward).
-        self._backward_queued = False
-        self._in_backward = False
 
         self._uid = gs.UID()
         self._is_built = False
@@ -1045,12 +1041,7 @@ class Scene(RBC):
         # it: the unroll winds them down step by step, and the restore below puts the physics back where they were.
         snapshot = self.get_state()
         steps = self._sim._steps.clone()
-        # The sim unroll (self._backward) re-enters the torch graph from each step's queried states, so the graph
-        # must survive the initial autograd pass.
-        if kwargs.setdefault("retain_graph", True) is not True:
-            gs.raise_exception("'retain_graph' must be left unset: scene.backward requires the graph to survive.")
-        # Fills the torch and queried-state grads, then runs the sim unroll (self._backward), which the queried states
-        # schedule for the end of this backward pass.
+        # The autograd nodes of the steps unroll the rollout within this backward pass (see genesis.grad.bridge).
         torch.autograd.backward(loss, *args, **kwargs)
         # keep_init semantics: see _reset. Restoring the snapshot puts the physics back where the forward pass left
         # it, so the clocks snapshotted above are put back with it rather than left at zero.
@@ -1538,41 +1529,31 @@ class Scene(RBC):
         with self._visualizer.viewer_lock:
             self._visualizer.context.clear_debug_objects()
 
-    def _queue_backward(self):
+    def _reverse_step(self, step: int, epoch: int) -> dict[int, torch.Tensor]:
         """
-        Schedule the reverse pass for the end of the running torch backward pass.
+        Run the reverse pass of step `step` and return the gradients of the inputs taped for it, keyed by tensor id.
 
-        Called by every queried-state tensor once torch has accumulated a gradient into it (see
-        `genesis.grad.bridge.track_scene_output`), so a plain `loss.backward()` reaching any of them unrolls the
-        rollout once, after the gradients of all of them are in. During the reverse pass, the input gradients pushed
-        into a tensor computed from an earlier queried state (closed-loop control) reach that state too: its gradient
-        is collected when the reverse pass gets to its step, so it must not start another pass.
+        Called by the autograd node of that step (see `genesis.grad.bridge`), once the gradients of the states read at
+        that step and of every later step are in. The later steps whose node the loss does not reach have no output
+        gradient, and their reverse pass only rewinds the rollout down to `step`.
         """
-        if self._in_backward or self._backward_queued:
-            return
-        self._backward_queued = True
-        torch.autograd.Variable._execution_engine.queue_callback(self._backward)
-
-    def _backward(self):
-        """
-        At this point, all the scene states the simulation run should have been filled with gradients.
-        Next, we run backward from scene state back to scene's internal# Quadrants variables, then back through time.
-        """
-        self._backward_queued = False
-
-        if not self._backward_ready:
+        if epoch != self._sim._grad_epoch:
+            gs.raise_exception(
+                "Differentiating a rollout the scene was reset from since. Call backward before 'scene.reset()'."
+            )
+        if not self._backward_ready or self._sim.cur_step_global < step:
             gs.raise_exception("Multiple backward calls not allowed.")
 
-        # backward pass through time
-        self._in_backward = True
-        try:
-            while self._sim.cur_step_global > 0:
-                self._step_grad()
-        finally:
-            self._in_backward = False
+        while self._sim.cur_step_global > step:
+            self._step_grad()
+        self._sim._inputs_grad = {}
+        self._step_grad()
+        inputs_grad, self._sim._inputs_grad = self._sim._inputs_grad, {}
 
-        self._backward_ready = False
-        self._forward_ready = False
+        if self._sim.cur_step_global == 0:
+            self._backward_ready = False
+            self._forward_ready = False
+        return inputs_grad
 
     @gs.assert_built
     def get_time(self, envs_idx=None):

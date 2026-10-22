@@ -6,7 +6,7 @@ import torch
 
 import genesis as gs
 
-from .bridge import track_scene_output as _track_scene_output
+from .bridge import scene_output as _scene_output
 
 # Ops given the requested dtype and 'device=gs.device', so that they allocate there directly and random ones draw from
 # its generator at that precision. The other ops follow the device of their input.
@@ -91,9 +91,9 @@ def from_torch(torch_tensor, dtype=None, requires_grad=False, detach=True, scene
     Return a copy of `torch_tensor` on `gs.device`, at the dtype Genesis uses for its kind of scalar.
 
     By default, detach is True, meaning that this function returns a new leaf tensor which is not connected to
-    torch_tensor's computation graph. Passing `scene` makes a tensor that requires grad an output of that scene's
-    differentiable rollout: the scene's reverse pass runs at the end of any backward pass that reaches it (see
-    `genesis.grad.bridge`).
+    torch_tensor's computation graph. Passing `scene` makes a tensor that requires grad a state of that scene's
+    differentiable rollout, read at its current step (see `genesis.grad.bridge`). Such a tensor is filled by the
+    simulator, so it cannot also stay connected to the graph of `torch_tensor`.
     """
     dtype = _to_gs_dtype(torch_tensor.dtype if dtype is None else dtype)
 
@@ -108,10 +108,16 @@ def from_torch(torch_tensor, dtype=None, requires_grad=False, detach=True, scene
     if detach:
         tensor = tensor.detach()
 
+    if requires_grad and scene is not None:
+        if not detach:
+            gs.raise_exception(
+                "A scene state is filled by the simulator, so it cannot stay connected to the graph of the tensor it "
+                "is created from. Pass 'detach=True', or leave 'scene' unset to keep the graph."
+            )
+        return _scene_output(tensor, scene.sim.grad_token)
+
     if requires_grad:
         tensor = tensor.requires_grad_()
-        if scene is not None:
-            _track_scene_output(tensor, scene)
 
     return tensor
 

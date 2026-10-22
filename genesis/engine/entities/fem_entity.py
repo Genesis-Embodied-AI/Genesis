@@ -15,7 +15,6 @@ from genesis.engine.entities.rigid_entity import RigidLink
 from genesis.engine.couplers import SAPCoupler
 from genesis.engine.states.cache import QueriedStates
 from genesis.engine.states.entities import FEMEntityState
-from genesis.grad.bridge import backward_from_qd
 from genesis.repr_base import RBC
 from genesis.utils.misc import assert_contiguous, to_gs_tensor, tensor_to_array, broadcast_tensor
 
@@ -720,6 +719,7 @@ class FEMEntity(Entity):
         else:
             for key in self._tgt_keys:
                 self._tgt_buffer[key].append(self._tgt[key])
+            self._sim.record_step_inputs(self._tgt)
 
         # set_pos followed by set_vel, because set_pos resets velocity.
         # Detached: the kernels only read the values, the gradient reaches each input through `process_input_grad`,
@@ -757,13 +757,13 @@ class FEMEntity(Entity):
         _tgt_pos = self._tgt_buffer["pos"].pop()
 
         if _tgt_actu is not None and _tgt_actu.requires_grad:
-            backward_from_qd(_tgt_actu, self.set_actu_grad, self._sim.cur_substep_local)
+            self._sim.add_input_grad(_tgt_actu, self.set_actu_grad, self._sim.cur_substep_local)
 
         if _tgt_vel is not None and _tgt_vel.requires_grad:
-            backward_from_qd(_tgt_vel, self.set_vel_grad, self._sim.cur_substep_local)
+            self._sim.add_input_grad(_tgt_vel, self.set_vel_grad, self._sim.cur_substep_local)
 
         if _tgt_pos is not None and _tgt_pos.requires_grad:
-            backward_from_qd(_tgt_pos, self.set_pos_grad, self._sim.cur_substep_local)
+            self._sim.add_input_grad(_tgt_pos, self.set_pos_grad, self._sim.cur_substep_local)
 
         if _tgt_vel is not None or _tgt_pos is not None or _tgt_actu is not None:
             # manually zero the grad since manually setting state breaks gradient flow

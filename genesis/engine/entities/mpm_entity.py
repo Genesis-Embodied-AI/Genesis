@@ -5,7 +5,6 @@ import torch
 
 import genesis as gs
 from genesis.engine.states.entities import MPMEntityState
-from genesis.grad.bridge import backward_from_qd
 from genesis.utils.misc import assert_contiguous, to_gs_tensor
 
 from .particle_entity import assert_active, ParticleEntity
@@ -272,7 +271,7 @@ class MPMEntity(ParticleEntity):
         if isinstance(self.material, gs.materials.MPM.Muscle):
             _tgt_actu = self._tgt_buffer["actu"].pop()
             if _tgt_actu is not None and _tgt_actu.requires_grad:
-                backward_from_qd(_tgt_actu, self._set_particles_actu_grad)
+                self._sim.add_input_grad(_tgt_actu, self._set_particles_actu_grad)
 
         super().process_input_grad()
 

@@ -11,7 +11,6 @@ import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
 from genesis.engine.states.cache import QueriedStates
-from genesis.grad.bridge import backward_from_qd
 from genesis.utils.misc import assert_contiguous, to_gs_tensor, broadcast_tensor
 
 from .base_entity import Entity
@@ -426,6 +425,7 @@ class ParticleEntity(Entity):
         else:
             for key in self._tgt_keys:
                 self._tgt_buffer[key].append(self._tgt[key])
+            self._sim.record_step_inputs(self._tgt)
 
         if any(self._tgt[key] is not None for key in self._tgt_keys):
             particles_idx_local = self._sanitize_particles_idx_local(envs_idx=self._scene._envs_idx)
@@ -461,11 +461,11 @@ class ParticleEntity(Entity):
         """
         _tgt_pos = self._tgt_buffer["pos"].pop()
         if _tgt_pos is not None and _tgt_pos.requires_grad:
-            backward_from_qd(_tgt_pos, self._set_particles_pos_grad)
+            self._sim.add_input_grad(_tgt_pos, self._set_particles_pos_grad)
 
         _tgt_vel = self._tgt_buffer["vel"].pop()
         if _tgt_vel is not None and _tgt_vel.requires_grad:
-            backward_from_qd(_tgt_vel, self._set_particles_vel_grad)
+            self._sim.add_input_grad(_tgt_vel, self._set_particles_vel_grad)
 
         # Manually zero the grad since manually setting state breaks gradient flow
         if _tgt_vel is not None or _tgt_pos is not None:

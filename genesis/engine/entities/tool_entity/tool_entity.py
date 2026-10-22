@@ -7,7 +7,6 @@ import torch
 import genesis as gs
 from genesis.engine.states.cache import QueriedStates
 from genesis.engine.states.entities import ToolEntityState
-from genesis.grad.bridge import backward_from_qd
 from genesis.utils.geom import (
     qd_rotvec_to_quat,
     qd_transform_quat_by_quat,
@@ -419,6 +418,7 @@ class ToolEntity(Entity):
             self._tgt_buffer["quat"].append(self._tgt["quat"])
             self._tgt_buffer["vel"].append(self._tgt["vel"])
             self._tgt_buffer["ang"].append(self._tgt["ang"])
+            self._sim.record_step_inputs(self._tgt)
 
         # Detached: the kernels only read the values, the gradient reaches each input through `process_input_grad`,
         # and a kernel argument that tracks gradients would make Quadrants allocate a `.grad` buffer for it.
@@ -450,16 +450,16 @@ class ToolEntity(Entity):
         _tgt_ang = self._tgt_buffer["ang"].pop()
 
         if _tgt_vel is not None and _tgt_vel.requires_grad:
-            backward_from_qd(_tgt_vel, self.set_vel_grad, self._sim.cur_step_local)
+            self._sim.add_input_grad(_tgt_vel, self.set_vel_grad, self._sim.cur_step_local)
 
         if _tgt_ang is not None and _tgt_ang.requires_grad:
-            backward_from_qd(_tgt_ang, self.set_ang_grad, self._sim.cur_step_local)
+            self._sim.add_input_grad(_tgt_ang, self.set_ang_grad, self._sim.cur_step_local)
 
         if _tgt_pos is not None and _tgt_pos.requires_grad:
-            backward_from_qd(_tgt_pos, self.set_pos_grad, self._sim.cur_step_local)
+            self._sim.add_input_grad(_tgt_pos, self.set_pos_grad, self._sim.cur_step_local)
 
         if _tgt_quat is not None and _tgt_quat.requires_grad:
-            backward_from_qd(_tgt_quat, self.set_quat_grad, self._sim.cur_step_local)
+            self._sim.add_input_grad(_tgt_quat, self.set_quat_grad, self._sim.cur_step_local)
 
     def collect_output_grads(self):
         """

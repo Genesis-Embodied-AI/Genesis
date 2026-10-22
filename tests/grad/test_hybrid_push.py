@@ -73,7 +73,8 @@ def test_mpm_tool_push_grad(show_viewer):
             loss += torch.pow(obj.get_state().pos - goal, 2).sum()
     loss.backward()
 
-    # Every step but the last must move the object (non-zero velocity gradient); the last step cannot affect the loss.
+    # Every step but the last must move the object (non-zero velocity gradient). The last step comes after every state
+    # the loss reads, so the loss does not depend on its input, which gets no gradient, as in torch.
     for v_i in v_list[:-1]:
         assert (v_i.grad.abs() > gs.EPS).any()
-    assert (v_list[-1].grad.abs() < gs.EPS).all()
+    assert v_list[-1].grad is None
