@@ -453,6 +453,11 @@ class ParticleEntity(Entity):
             assert torch.isin(self._tgt["act"], act_values).all()
             self.set_particles_active(self._tgt["act"], particles_idx_local)
 
+        # Only the entities of a muscle material tape an actuation (see init_tgt_keys)
+        if "actu" in self._tgt_keys and self._tgt["actu"] is not None:
+            assert self._tgt["actu"].is_contiguous()
+            self.set_particles_actu(self._tgt["actu"].detach(), particles_idx_local)
+
         for key in self._tgt_keys:
             self._tgt[key] = None
         return inputs
@@ -491,7 +496,8 @@ class ParticleEntity(Entity):
 
     @assert_active
     def _set_particles_target_state(self, key, name, element_shape, dtype, tensor, envs_idx=None):
-        if self.sim.requires_grad and self.sim.cur_t > 0.0:
+        # Overwriting the position or velocity of the particles cuts the gradient of everything that led to them
+        if key in ("pos", "vel") and self.sim.requires_grad and self.sim.cur_t > 0.0:
             gs.logger.warning(
                 f"Manually setting particle '{name}'. This is not recommended because it breaks gradient flow."
             )

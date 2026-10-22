@@ -166,6 +166,7 @@ class MPMSolverState(RBC):
             (scene.sim._B, scene.sim.mpm_solver.n_particles, 3, 3), dtype=gs.tc_float, device=gs.device
         )
         self._Jp = torch.zeros((scene.sim._B, scene.sim.mpm_solver.n_particles), dtype=gs.tc_float, device=gs.device)
+        self._actu = torch.zeros((scene.sim._B, scene.sim.mpm_solver.n_particles), dtype=gs.tc_float, device=gs.device)
         self._active = torch.zeros((scene.sim._B, scene.sim.mpm_solver.n_particles), dtype=gs.tc_bool, device=gs.device)
 
     @property
@@ -196,6 +197,10 @@ class MPMSolverState(RBC):
     @property
     def Jp(self):
         return self._Jp
+
+    @property
+    def actu(self):
+        return self._actu
 
     @property
     def active(self):
