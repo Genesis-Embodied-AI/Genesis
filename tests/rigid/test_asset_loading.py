@@ -1009,13 +1009,13 @@ def test_color_overwrite(overwrite, urdf_with_external_assets, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize(
-    "xml_path",
+    "model_name",
     [
         "xml/franka_emika_panda/panda.xml",
         "urdf/go2/urdf/go2.urdf",
         "urdf/panda_bullet/panda.urdf",
+        "urdf_with_legacy_parsed_primitives",
     ],
 )
 def test_robot_scale_and_dofs_armature(xml_path, monkeypatch, tol):
