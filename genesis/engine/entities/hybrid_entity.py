@@ -10,6 +10,7 @@ import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 import genesis.utils.urdf as uu
 from genesis.ext.urdfpy.urdf import URDF
+
 from genesis.utils.hybrid import (
     check_graph,
     compute_graph_attribute,
@@ -152,12 +153,12 @@ class HybridEntity(Entity):
 
             # set coupling func
             def wrap_func(func, before=False):
-                def wrapper(f, rigid_data, *coupling_args):
+                def wrapper(f, *args):
                     if before:
-                        self.update_soft_part(f, rigid_data.dyn_info.geoms, rigid_data.dyn_state.links)
-                    func(f, rigid_data, *coupling_args)
+                        self.update_soft_part(f)
+                    func(f, *args)
                     if not before:
-                        self.update_soft_part(f, rigid_data.dyn_info.geoms, rigid_data.dyn_state.links)
+                        self.update_soft_part(f)
 
                 return wrapper
 
@@ -374,12 +375,7 @@ class HybridEntity(Entity):
                 # no muscle direction as the soft body is actuated by rigid parts
             )
 
-    def update_soft_part(
-        self,
-        f: int,
-        geoms_info: array_class.GeomsInfo,
-        links_state: array_class.LinksState,
-    ) -> None:
+    def update_soft_part(self, f):
         """
         Update the state of the soft part of the hybrid entity based on the current simulation frame.
 
@@ -390,9 +386,7 @@ class HybridEntity(Entity):
         """
         if isinstance(self._part_soft, MPMEntity):
             self._kernel_update_soft_part_mpm(
-                f=f,
-                geoms_info=geoms_info,
-                links_state=links_state,
+                f=f, geoms_info=self._solver_rigid.dyn_info.geoms, links_state=self._solver_rigid.dyn_state.links
             )
         else:
             raise NotImplementedError

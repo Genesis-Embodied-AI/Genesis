@@ -552,7 +552,7 @@ class MPMSolver(GravityMixin, TimeBasedMixin, Solver):
         for entity in self._entities[::-1]:
             entity.process_input_grad()
 
-    def substep_pre_coupling(self, f, rigid_data, collider_config, rigid_sdf):
+    def substep_pre_coupling(self, f, rigid_data, sdf_config, rigid_sdf):
         if self._sim.requires_grad:
             self.reset_grid_and_grad(f)
             # Keep F_tmp and svd as separate kernels so their backward passes (compute_F_tmp.grad and svd_grad) remain
@@ -575,10 +575,10 @@ class MPMSolver(GravityMixin, TimeBasedMixin, Solver):
             None if rigid_data is None else rigid_data.dyn_state.links,
             None if rigid_data is None else rigid_data.rigid_info,
             None if rigid_sdf is None else rigid_sdf.sdf_info,
-            collider_config,
+            sdf_config,
         )
 
-    def substep_pre_coupling_grad(self, f, rigid_data, collider_config, rigid_sdf):
+    def substep_pre_coupling_grad(self, f, rigid_data, sdf_config, rigid_sdf):
         self.p2g.grad(
             f,
             None if rigid_data is None else rigid_data.dyn_state.geoms,
@@ -586,7 +586,7 @@ class MPMSolver(GravityMixin, TimeBasedMixin, Solver):
             None if rigid_data is None else rigid_data.dyn_state.links,
             None if rigid_data is None else rigid_data.rigid_info,
             None if rigid_sdf is None else rigid_sdf.sdf_info,
-            collider_config,
+            sdf_config,
         )
         self.svd_grad(f)
         self.compute_F_tmp.grad(f)

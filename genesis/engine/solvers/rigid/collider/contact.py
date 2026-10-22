@@ -458,7 +458,7 @@ def func_set_contact(
     collider_state.contact_data.friction_torsional[i_c, i_b] = qd.max(friction_torsional_a, friction_torsional_b)
     collider_state.contact_data.friction_rolling[i_c, i_b] = qd.max(friction_rolling_a, friction_rolling_b)
     # The constraint time constant is floored on the mixed value rather than on each geom's own (see the geom
-    # sanitize site in rigid_solver.py); 2.0 is TIME_CONSTANT_SAFETY_FACTOR (rigid_solver.py).
+    # sanitize site in rigid_dynamics.py); 2.0 is TIME_CONSTANT_SAFETY_FACTOR (rigid_dynamics.py).
     sol_params = 0.5 * (dyn_info.geoms.sol_params[i_ga] + dyn_info.geoms.sol_params[i_gb])
     sol_params[0] = qd.max(sol_params[0], 2.0 * rigid_info.substep_dt[None])
     collider_state.contact_data.sol_params[i_c, i_b] = sol_params

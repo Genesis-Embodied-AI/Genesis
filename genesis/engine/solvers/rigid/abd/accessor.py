@@ -5,7 +5,7 @@ This module contains Quadrants kernel functions for controlling rigid body simul
 including state getters/setters, link position/quaternion manipulation, DOF control,
 and drone-specific operations.
 
-These functions are used by the RigidSolver class to interface with the Quadrants
+These functions are used by the Rigid Systems to interface with the Quadrants
 data structures for rigid body dynamics simulation.
 """
 

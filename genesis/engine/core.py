@@ -130,7 +130,7 @@ class Action:
     def _bind(self, binder: "_ActionBinder | None" = None) -> "_BoundAction":
         return (binder or _ActionBinder()).bind_action(self)
 
-    def invoke(self, call_args: qd.template() = ()):
+    def invoke(self, call_args: qd.template() = ()) -> None:
         return self._bind().invoke(call_args)
 
 
@@ -206,7 +206,7 @@ class ActionCollection:
     def _bind(self, binder: "_ActionBinder | None" = None) -> _BoundActionCollection:
         return (binder or _ActionBinder()).bind_collection(self)
 
-    def invoke(self, call_args: qd.template() = ()):
+    def invoke(self, call_args: qd.template() = ()) -> None:
         """Invoke without exposing the inner Action tuple."""
         return self._bind().invoke(call_args)
 

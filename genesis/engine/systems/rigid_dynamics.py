@@ -110,6 +110,9 @@ HostTensor: TypeAlias = NDArray[np.generic] | torch.Tensor
 
 IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
 
+# Minimum ratio between simulation timestep `_substep_dt` and time constant of constraints
+TIME_CONSTANT_SAFETY_FACTOR = 2.0
+
 
 class RigidDynamics(System):
     """Own the Rigid model, dynamics Data, numerical Actions and ordinary backend APIs.
@@ -154,10 +157,6 @@ class RigidDynamics(System):
         self._enable_multi_contact = self._options.enable_multi_contact
         self._enable_mujoco_compatibility = self._options.enable_mujoco_compatibility
         self._enable_joint_limit = self._options.enable_joint_limit
-        self._enable_self_collision = self._options.enable_self_collision
-        self._enable_neutral_collision = self._options.enable_neutral_collision
-        self._enable_adjacent_collision = self._options.enable_adjacent_collision
-        self._disable_constraint = self._options.disable_constraint
         self._queried_states = QueriedStates()
         self._ckpt = {}
 
@@ -267,6 +266,14 @@ class RigidDynamics(System):
         """The static mask of the visual faces that visual raycasting considers."""
         return self._vfaces_raycast_mask
 
+    @property
+    def requires_grad(self) -> bool:
+        return self._requires_grad
+
+    @property
+    def is_backward(self) -> bool:
+        return self._is_backward
+
     def get_n_candidate_equalities(self) -> int:
         return self.n_candidate_equalities_
 
@@ -348,6 +355,16 @@ class RigidDynamics(System):
 
     def invalidate_forward_velocity(self) -> None:
         self._is_forward_vel_updated = False
+
+    def get_forward_update_flags(self) -> tuple[bool, bool]:
+        return self._is_forward_pos_updated, self._is_forward_vel_updated
+
+    def invalidate_forward_state(self) -> None:
+        self._is_forward_pos_updated = False
+        self._is_forward_vel_updated = False
+
+    def get_forward_kernel_args(self) -> tuple[bool, bool, bool]:
+        return self._is_forward_pos_updated, self._is_forward_vel_updated, self._is_backward
 
     def refresh_links_inertial_weights(
         self, links_idx: torch.Tensor, envs_idx: torch.Tensor, *, moves_com: bool
@@ -776,6 +793,29 @@ class RigidDynamics(System):
         for entity in self.entities:
             entity.load_ckpt(ckpt_name)
 
+    def compute_forward_dynamics(self) -> None:
+        """Compute the unconstrained accelerations on the host, outside the substep pipeline."""
+        kernel_forward_dynamics(
+            self.data.dyn_state,
+            self.rigid_island.data.island,
+            self.data.dyn_info,
+            self.data.rigid_info,
+            self.rigid_config,
+            False,
+        )
+
+    def update_acceleration(self) -> None:
+        """Update the cartesian accelerations from the dof accelerations on the host, outside the substep pipeline."""
+        kernel_update_acc(self.data.dyn_state, self.data.dyn_info, self.data.rigid_info, self.rigid_config)
+
+    def update_velocity_for_coupling(self) -> None:
+        update_qvel(self.data.dyn_state, self.data.rigid_info, self.rigid_config)
+
+    def update_acceleration_after_coupling(self) -> None:
+        update_qacc_from_qvel_delta(self.data.dyn_state, self.data.rigid_info, self.rigid_config)
+
+    # -------------------------------- Implementation --------------------------------
+
     def _restore_substep_inputs(self, f: int) -> None:
         """Restore the substep inputs and switch owner kernels to backward replay mode."""
         self._is_backward = True
@@ -840,23 +880,6 @@ class RigidDynamics(System):
 
         # Change back to forward mode
         self._is_backward = False
-
-    # -------------------------------- Implementation --------------------------------
-
-    def compute_forward_dynamics(self) -> None:
-        """Compute the unconstrained accelerations on the host, outside the substep pipeline."""
-        kernel_forward_dynamics(
-            self.data.dyn_state,
-            self.rigid_island.data.island,
-            self.data.dyn_info,
-            self.data.rigid_info,
-            self.rigid_config,
-            False,
-        )
-
-    def update_acceleration(self) -> None:
-        """Update the cartesian accelerations from the dof accelerations on the host, outside the substep pipeline."""
-        kernel_update_acc(self.data.dyn_state, self.data.dyn_info, self.data.rigid_info, self.rigid_config)
 
     def _update_cartesian_grad(self, envs_idx: torch.Tensor) -> None:
         """Forward-replay the post-integrate cartesian-space update (FK -> COM -> geom poses -> velocity) under
@@ -962,14 +985,6 @@ class RigidDynamics(System):
         ):
             self.geoms_offset_pos = torch.from_numpy(geoms_offset_pos).to(device=gs.device, dtype=gs.tc_float)
             self.geoms_offset_quat = torch.from_numpy(geoms_offset_quat).to(device=gs.device, dtype=gs.tc_float)
-        self._enable_collision = self._options.enable_collision
-        self._enable_multi_contact = self._options.enable_multi_contact
-        self._enable_mujoco_compatibility = self._options.enable_mujoco_compatibility
-        self._enable_joint_limit = self._options.enable_joint_limit
-        self._enable_self_collision = self._options.enable_self_collision
-        self._enable_neutral_collision = self._options.enable_neutral_collision
-        self._enable_adjacent_collision = self._options.enable_adjacent_collision
-        self._disable_constraint = self._options.disable_constraint
         self._max_collision_pairs = self._options.max_collision_pairs
         self.max_collision_pairs = self._max_collision_pairs
         self._integrator = self._options.integrator
@@ -980,7 +995,7 @@ class RigidDynamics(System):
         else:
             self._hibernation_thresh_vel = self._options.hibernation_thresh_vel
         self._substep_dt = self.sim._substep_dt
-        self.sol_min_timeconst = 2.0 * self._substep_dt
+        self.sol_min_timeconst = TIME_CONSTANT_SAFETY_FACTOR * self._substep_dt
         self.sol_default_timeconst = (
             None
             if self._options.constraint_timeconst is None
@@ -1030,34 +1045,10 @@ class RigidDynamics(System):
         self._init_vverts_state(self.data.dyn_state, self.data.dyn_info)
         self._init_dynamics()
 
-    def get_forward_update_flags(self) -> tuple[bool, bool]:
-        return self._is_forward_pos_updated, self._is_forward_vel_updated
-
-    def invalidate_forward_state(self) -> None:
-        self._is_forward_pos_updated = False
-        self._is_forward_vel_updated = False
-
     def _save_adjoint_cache(self, f: int) -> None:
         kernel_save_adjoint_cache(
             f, self.data.dyn_state, self.data.rigid_adjoint_cache, self.data.rigid_info, self.rigid_config
         )
-
-    def get_forward_kernel_args(self) -> tuple[bool, bool, bool]:
-        return self._is_forward_pos_updated, self._is_forward_vel_updated, self._is_backward
-
-    @property
-    def requires_grad(self) -> bool:
-        return self._requires_grad
-
-    @property
-    def is_backward(self) -> bool:
-        return self._is_backward
-
-    def update_velocity_for_coupling(self) -> None:
-        update_qvel(self.data.dyn_state, self.data.rigid_info, self.rigid_config)
-
-    def update_acceleration_after_coupling(self) -> None:
-        update_qacc_from_qvel_delta(self.data.dyn_state, self.data.rigid_info, self.rigid_config)
 
     def _mark_forward_updated(self) -> None:
         """Record that the integration has updated the cartesian space and the velocities the next substep starts

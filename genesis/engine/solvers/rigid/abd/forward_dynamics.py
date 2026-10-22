@@ -10,7 +10,7 @@ simulation, including:
 - Integration schemes (Euler, implicit damping)
 - Cartesian space updates
 
-These functions are used by the RigidSolver class to perform physics simulation
+These functions are used by the Rigid Systems to perform physics simulation
 of articulated rigid body systems.
 """
 

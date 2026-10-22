@@ -25,6 +25,12 @@ class RigidSdf(System):
 
     @qd.data_oriented
     class Data(Data):
+        """The static configuration and the device fields of the signed distance fields.
+
+        ``@qd.data_oriented`` is a QD discovery workaround: ``GlobalDataContext`` can expose this root only in a form
+        QD traverses. Remove it when QD derives ndarray parameters through ordinary non-data-oriented objects.
+        """
+
         sdf_config: array_class.SDFStaticConfig
         sdf_info: array_class.SDFInfo
 

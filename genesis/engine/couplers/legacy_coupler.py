@@ -862,7 +862,7 @@ class LegacyCoupler(RBC):
 
         return new_pos, new_vel, contact_normal
 
-    def preprocess(self, f, rigid_data, collider_config, rigid_sdf):
+    def preprocess(self, f, rigid_data, sdf_config, rigid_sdf):
         # preprocess for MPM CPIC
         if self._rigid_mpm and self.mpm_solver.enable_CPIC:
             self.mpm_surface_to_particle(
@@ -871,10 +871,10 @@ class LegacyCoupler(RBC):
                 rigid_data.dyn_info.geoms,
                 rigid_sdf.sdf_info,
                 rigid_data.rigid_info,
-                collider_config,
+                sdf_config,
             )
 
-    def couple(self, f, rigid_data, collider_config, rigid_sdf):
+    def couple(self, f, rigid_data, sdf_config, rigid_sdf):
         # MPM <-> all others
         if self.mpm_solver.is_active:
             self.mpm_grid_op(
@@ -885,7 +885,7 @@ class LegacyCoupler(RBC):
                 links_state=None if rigid_data is None else rigid_data.dyn_state.links,
                 rigid_info=None if rigid_data is None else rigid_data.rigid_info,
                 sdf_info=None if rigid_sdf is None else rigid_sdf.sdf_info,
-                collider_static_config=collider_config,
+                collider_static_config=sdf_config,
             )
 
         # SPH <-> Rigid
@@ -898,7 +898,7 @@ class LegacyCoupler(RBC):
                 rigid_data.dyn_info.links,
                 rigid_data.rigid_info,
                 rigid_sdf.sdf_info,
-                collider_config,
+                sdf_config,
             )
 
         # PBD <-> Rigid
@@ -909,7 +909,7 @@ class LegacyCoupler(RBC):
                 links_state=rigid_data.dyn_state.links,
                 sdf_info=rigid_sdf.sdf_info,
                 rigid_info=rigid_data.rigid_info,
-                collider_static_config=collider_config,
+                collider_static_config=sdf_config,
             )
 
             # 1-way: animate particles by links, over the substep interval and no faster than the clamp allows.
@@ -925,11 +925,11 @@ class LegacyCoupler(RBC):
                 rigid_data.dyn_state.links,
                 rigid_data.rigid_info,
                 rigid_sdf.sdf_info,
-                collider_config,
+                sdf_config,
             )
             self.fem_rigid_link_constraints(rigid_data.dyn_state.links)
 
-    def couple_grad(self, f, rigid_data, collider_config, rigid_sdf):
+    def couple_grad(self, f, rigid_data, sdf_config, rigid_sdf):
         if self._rigid_fem:
             self.fem_surface_force.grad(
                 f,
@@ -938,7 +938,7 @@ class LegacyCoupler(RBC):
                 rigid_data.dyn_state.links,
                 rigid_data.rigid_info,
                 rigid_sdf.sdf_info,
-                collider_config,
+                sdf_config,
             )
         if self.mpm_solver.is_active:
             self.mpm_grid_op.grad(
@@ -949,7 +949,7 @@ class LegacyCoupler(RBC):
                 links_state=None if rigid_data is None else rigid_data.dyn_state.links,
                 rigid_info=None if rigid_data is None else rigid_data.rigid_info,
                 sdf_info=None if rigid_sdf is None else rigid_sdf.sdf_info,
-                collider_static_config=collider_config,
+                collider_static_config=sdf_config,
             )
 
     @property

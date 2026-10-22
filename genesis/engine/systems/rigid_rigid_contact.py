@@ -221,6 +221,10 @@ class RigidRigidContact(System):
             envs_idx,
         )
 
+    def clear_contact_data_cache(self) -> None:
+        """Drop the contacts read back during the previous substep, which the detection is about to replace."""
+        self._contact_data_cache.clear()
+
     def get_contacts(
         self,
         as_tensor: bool = True,
@@ -408,10 +412,6 @@ class RigidRigidContact(System):
                 )
         except ValueError:
             self._contact_data = None
-
-    def clear_contact_data_cache(self) -> None:
-        """Drop the contacts read back during the previous substep, which the detection is about to replace."""
-        self._contact_data_cache.clear()
 
 
 @register_system(SimulatorEngine)

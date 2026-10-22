@@ -1,10 +1,11 @@
 import dataclasses
 import math
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from enum import IntEnum
-from typing import Any, ClassVar, NamedTuple
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
 import numpy as np
+from numpy.typing import NDArray
 import quadrants as qd
 import torch
 from quadrants.lang import impl
@@ -12,6 +13,12 @@ from typing_extensions import dataclass_transform  # Made it into standard lib f
 
 import genesis as gs
 from genesis.utils.misc import data_to_array
+
+if TYPE_CHECKING:
+    from genesis.engine.entities import RigidEntity
+    from genesis.engine.entities.rigid_entity.rigid_geom import RigidGeom
+    from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
+    from genesis.options.solvers import RigidOptions
 
 
 def _tensor_backend():
@@ -420,24 +427,24 @@ def _is_tensor_addressable(shape, dtype) -> bool:
 
 def get_rigid_info(
     *,
-    batch_size,
-    requires_grad,
-    n_dofs,
-    rigid_config,
-    n_trees,
-    n_roots,
-    n_links,
-    substep_dt,
-    n_equalities,
-    n_candidate_equalities,
-    hibernation_thresh_vel,
-    links_tree_root_idx,
-    links_parent_idx,
-    n_qs,
-    n_geoms,
-    options,
-    kinematic_only,
-):
+    batch_size: int,
+    requires_grad: bool,
+    n_dofs: int,
+    rigid_config: "RigidSimStaticConfig",
+    n_trees: int,
+    n_roots: int,
+    n_links: int,
+    substep_dt: float,
+    n_equalities: int,
+    n_candidate_equalities: int,
+    hibernation_thresh_vel: float,
+    links_tree_root_idx: NDArray[np.integer],
+    links_parent_idx: NDArray[np.integer],
+    n_qs: int,
+    n_geoms: int,
+    options: "RigidOptions",
+    kinematic_only: bool,
+) -> RigidInfo:
     _B = batch_size
 
     mass_mat_shape = (n_dofs, n_dofs, _B)
@@ -596,7 +603,9 @@ class IslandSlices:
     start: qd.Tensor
 
 
-def get_slices(*, batch_size, n_trees, layout, is_active=True):
+def get_slices(
+    *, batch_size: int, n_trees: int, layout: tuple[int, ...] | None, is_active: bool = True
+) -> IslandSlices:
     _B = batch_size
     n_trees = n_trees
 
@@ -644,7 +653,15 @@ class IslandState:
     inertia: qd.Tensor
 
 
-def get_island_state(*, batch_size, n_trees, n_links_actual, n_dofs_actual, rigid_config, use_hibernation):
+def get_island_state(
+    *,
+    batch_size: int,
+    n_trees: int,
+    n_links_actual: int,
+    n_dofs_actual: int,
+    rigid_config: "RigidSimStaticConfig",
+    use_hibernation: bool,
+) -> IslandState:
     _B = batch_size
     n_links = max(n_links_actual, 1)
     n_dofs = max(n_dofs_actual, 1)
@@ -698,7 +715,9 @@ class IslandReorderState:
     rcm_tree_order: qd.Tensor
 
 
-def get_island_reorder_state(*, batch_size, n_trees, max_contacts, rigid_config):
+def get_island_reorder_state(
+    *, batch_size: int, n_trees: int, max_contacts: int, rigid_config: "RigidSimStaticConfig"
+) -> IslandReorderState:
     _B = batch_size
     is_active = rigid_config.sparse_solve
     # Same layout as the partition it reorders (see get_island_state)
@@ -723,7 +742,7 @@ class ConstraintRowSegment:
     row_start: qd.Tensor
 
 
-def get_constraint_row_segment(*, batch_size):
+def get_constraint_row_segment(*, batch_size: int) -> ConstraintRowSegment:
     return ConstraintRowSegment(row_start=V(dtype=gs.qd_int, shape=(batch_size,)))
 
 
@@ -758,7 +777,9 @@ class IslandSolveState:
     ls_improvement: qd.Tensor
 
 
-def get_island_solve_state(*, batch_size, n_trees, n_dofs, rigid_config, len_constraints_):
+def get_island_solve_state(
+    *, batch_size: int, n_trees: int, n_dofs: int, rigid_config: "RigidSimStaticConfig", len_constraints_: int
+) -> IslandSolveState:
     _B = batch_size
     # The (env, island) work-lists of the tiled seed are read where an env can hold several islands (see
     # func_island_tiled_factor_solve_all in solver.py)
@@ -919,7 +940,9 @@ class KinematicsScratch:
     qpos_cache: qd.Tensor
 
 
-def get_kinematics_scratch(*, entities, batch_size, n_qs_actual):
+def get_kinematics_scratch(
+    *, entities: "Sequence[RigidEntity]", batch_size: int, n_qs_actual: int
+) -> KinematicsScratch:
     n_dofs = max((entity.n_dofs for entity in entities), default=0)
     is_active = n_dofs > 0
 
@@ -941,7 +964,7 @@ class WeightScratch(NamedTuple):
     solve_out: qd.Tensor
 
 
-def get_weight_scratch(*, n_dofs, batch_size):
+def get_weight_scratch(*, n_dofs: int, batch_size: int) -> WeightScratch:
     return WeightScratch(
         jac_row=V(dtype=gs.qd_float, shape=(n_dofs, batch_size)),
         solve_out=V(dtype=gs.qd_float, shape=(n_dofs, batch_size)),
@@ -961,7 +984,7 @@ class IKScratch(NamedTuple):
     targets: IKTargets
 
 
-def get_ik_scratch(*, options, entities, batch_size):
+def get_ik_scratch(*, options: "RigidOptions", entities: "Sequence[RigidEntity]", batch_size: int) -> IKScratch:
     n_qs = max(entity.n_qs for entity in entities)
     n_dofs = max(entity.n_dofs for entity in entities)
     n_links = max(entity.n_links for entity in entities)
@@ -1093,20 +1116,20 @@ class ConstraintState:
 
 def get_constraint_state(
     *,
-    batch_size,
-    n_dofs,
-    n_trees,
-    links,
-    requires_grad,
-    noslip_iterations,
-    rigid_config,
-    rigid_info,
-    len_constraints,
-    n_cone_constraints,
-    sparse_solve,
-    island_state,
-    qd_n_equalities,
-):
+    batch_size: int,
+    n_dofs: int,
+    n_trees: int,
+    links: "Sequence[RigidLink]",
+    requires_grad: bool,
+    noslip_iterations: int,
+    rigid_config: "RigidSimStaticConfig",
+    rigid_info: RigidInfo,
+    len_constraints: int,
+    n_cone_constraints: int,
+    sparse_solve: bool,
+    island_state: IslandState,
+    qd_n_equalities: qd.Tensor,
+) -> ConstraintState:
     _B = batch_size
     len_constraints_ = len_constraints
 
@@ -1177,7 +1200,7 @@ def get_constraint_state(
 
     if not _is_tensor_addressable(jac_shape, gs.np_float):
         gs.raise_exception(
-            f"Jacobian shape (n_constraints={len_constraints_}, n_dofs={n_dofs}, " f"n_envs={_B}) is too large."
+            f"Jacobian shape (n_constraints={len_constraints_}, n_dofs={n_dofs}, n_envs={_B}) is too large."
         )
 
     # /!\ Changing allocation order of these tensors may reduce runtime speed by >10%  /!\
@@ -1348,7 +1371,7 @@ class ContactData:
     pair_idx: qd.Tensor
 
 
-def get_contact_data(batch_size, max_candidate_contacts, requires_grad):
+def get_contact_data(batch_size: int, max_candidate_contacts: int, requires_grad: bool) -> ContactData:
     max_candidate_contacts_ = max(max_candidate_contacts, 1)
 
     return ContactData(
@@ -1427,7 +1450,7 @@ class SortBuffer:
     is_max: qd.Tensor
 
 
-def get_sort_buffer(batch_size, n_geoms):
+def get_sort_buffer(batch_size: int, n_geoms: int) -> SortBuffer:
     n_geoms_alloc = max(n_geoms, 1)
     return SortBuffer(
         value=V(dtype=gs.qd_float, shape=(2 * n_geoms_alloc, batch_size)),
@@ -1445,7 +1468,7 @@ class ContactCache:
     penetration: qd.Tensor
 
 
-def get_contact_cache(batch_size, n_possible_pairs, active):
+def get_contact_cache(batch_size: int, n_possible_pairs: int, active: bool) -> ContactCache:
     # Only the convex-convex detection reads the cache, so the other scenes keep it empty
     shape = maybe_shape((max(n_possible_pairs, 1), batch_size), active)
     return ContactCache(
@@ -1542,15 +1565,15 @@ class ColliderState:
 
 
 def get_collider_state(
-    batch_size,
-    n_geoms,
-    rigid_config,
-    n_possible_pairs,
-    collider_info,
-    collider_static_config,
-    split_narrowphase,
-    enable_contact_patch,
-):
+    batch_size: int,
+    n_geoms: int,
+    rigid_config: "RigidSimStaticConfig",
+    n_possible_pairs: int,
+    collider_info: "ColliderInfo",
+    collider_static_config: "ColliderStaticConfig",
+    split_narrowphase: bool,
+    enable_contact_patch: bool,
+) -> ColliderState:
     n_geoms_alloc = max(n_geoms, 1)
     # Collider._init_max_contacts, which runs before this, sizes the contacts per regime (convex vs nonconvex) and the
     # broad phase candidates within the possible pairs.
@@ -1638,7 +1661,7 @@ class VertsSpatialGrid:
     geoms_inv_cell_size: qd.Tensor
 
 
-def get_verts_spatial_grid(n_verts, n_geoms):
+def get_verts_spatial_grid(n_verts: int, n_geoms: int) -> VertsSpatialGrid:
     n_verts_alloc = max(n_verts, 1)
     n_geoms_alloc = max(n_geoms, 1)
     return VertsSpatialGrid(
@@ -2302,17 +2325,17 @@ class ColliderInfo:
 
 
 def get_collider_info(
-    geoms,
-    n_verts,
-    n_vert_neighbors,
-    n_valid_pairs,
-    collider_static_config,
-    mpr_info,
-    gjk_info,
-    support_field_info,
-    sdf_info,
-    **kwargs,
-):
+    geoms: "Sequence[RigidGeom]",
+    n_verts: int,
+    n_vert_neighbors: int,
+    n_valid_pairs: int,
+    collider_static_config: ColliderStaticConfig,
+    mpr_info: MPRInfo,
+    gjk_info: GJKInfo,
+    support_field_info: SupportFieldInfo,
+    sdf_info: SDFInfo,
+    **kwargs: float,
+) -> ColliderInfo:
     n_geoms = len(geoms)
     n_geoms_alloc = max(n_geoms, 1)
     n_verts_alloc = max(n_verts, 1)
@@ -2375,7 +2398,7 @@ class DofsInfo:
     dof_length: qd.Tensor
 
 
-def get_dofs_info(*, options, n_dofs, batch_size):
+def get_dofs_info(*, options: "RigidOptions", n_dofs: int, batch_size: int) -> DofsInfo:
     shape = (n_dofs, batch_size) if options.batch_dofs_info else (n_dofs,)
 
     return DofsInfo(
@@ -2431,7 +2454,7 @@ class DofsState:
     is_hibernated: qd.Tensor = of_kind(DataKind.STATE)
 
 
-def get_dofs_state(*, requires_grad, n_dofs, batch_size):
+def get_dofs_state(*, requires_grad: bool, n_dofs: int, batch_size: int) -> DofsState:
     shape = (n_dofs, batch_size)
     requires_grad = requires_grad
     shape_bw = maybe_shape((2, *shape), requires_grad)
@@ -2518,7 +2541,9 @@ class LinksState:
     awake_steps: qd.Tensor = of_kind(DataKind.STATE)
 
 
-def get_links_state(*, requires_grad, n_links, batch_size, n_links_actual, links):
+def get_links_state(
+    *, requires_grad: bool, n_links: int, batch_size: int, n_links_actual: int, links: "Sequence[RigidLink]"
+) -> LinksState:
     shape = (n_links, batch_size)
     requires_grad = requires_grad
     # The backward joint buffers hold one slot per joint of a link plus the link itself; collapsed when grad is off.
@@ -2594,7 +2619,7 @@ class LinksInfo:
     vgeom_end: qd.Tensor
 
 
-def get_links_info(*, n_links, options, batch_size):
+def get_links_info(*, n_links: int, options: "RigidOptions", batch_size: int) -> LinksInfo:
     links_info_shape = (n_links, batch_size) if options.batch_links_info else n_links
 
     return LinksInfo(
@@ -2641,7 +2666,7 @@ class JointsInfo:
     pos: qd.Tensor
 
 
-def get_joints_info(*, options, n_joints, batch_size):
+def get_joints_info(*, options: "RigidOptions", n_joints: int, batch_size: int) -> JointsInfo:
     shape = (n_joints, batch_size) if options.batch_joints_info else (n_joints,)
 
     return JointsInfo(
@@ -2664,7 +2689,7 @@ class JointsState:
     xaxis: qd.Tensor
 
 
-def get_joints_state(*, requires_grad, n_joints, batch_size):
+def get_joints_state(*, requires_grad: bool, n_joints: int, batch_size: int) -> JointsState:
     shape = (n_joints, batch_size)
     requires_grad = requires_grad
 
@@ -2714,7 +2739,7 @@ class GeomsInfo:
     coup_restitution: qd.Tensor
 
 
-def get_geoms_info(*, n_geoms, is_active=True):
+def get_geoms_info(*, n_geoms: int, is_active: bool = True) -> GeomsInfo:
     shape = (n_geoms,) if is_active else ()
 
     return GeomsInfo(
@@ -2765,7 +2790,9 @@ class GeomsState:
     friction_ratio: qd.Tensor = of_kind(DataKind.INFO)
 
 
-def get_geoms_state(*, rigid_config, n_geoms, batch_size, is_active=True):
+def get_geoms_state(
+    *, rigid_config: "RigidSimStaticConfig", n_geoms: int, batch_size: int, is_active: bool = True
+) -> GeomsState:
     shape = (n_geoms, batch_size) if is_active else ()
     requires_grad = rigid_config.requires_grad
 
@@ -2795,7 +2822,7 @@ class VertsInfo:
     is_fixed: qd.Tensor
 
 
-def get_verts_info(*, n_verts, is_active=True):
+def get_verts_info(*, n_verts: int, is_active: bool = True) -> VertsInfo:
     shape = (n_verts,) if is_active else ()
 
     return VertsInfo(
@@ -2819,7 +2846,7 @@ class FacesInfo:
     geom_idx: qd.Tensor
 
 
-def get_faces_info(*, n_faces, is_active=True):
+def get_faces_info(*, n_faces: int, is_active: bool = True) -> FacesInfo:
     shape = (n_faces,) if is_active else ()
 
     return FacesInfo(verts_idx=V(dtype=gs.qd_ivec3, shape=shape), geom_idx=V(dtype=gs.qd_int, shape=shape))
@@ -2837,7 +2864,7 @@ class EdgesInfo:
     length: qd.Tensor
 
 
-def get_edges_info(*, n_edges, is_active=True):
+def get_edges_info(*, n_edges: int, is_active: bool = True) -> EdgesInfo:
     shape = (n_edges,) if is_active else ()
 
     return EdgesInfo(
@@ -2855,11 +2882,11 @@ class VertsState:
     pos: qd.Tensor
 
 
-def get_free_verts_state(*, n_free_verts, batch_size, is_active=True):
+def get_free_verts_state(*, n_free_verts: int, batch_size: int, is_active: bool = True) -> VertsState:
     return VertsState(pos=V(dtype=gs.qd_vec3, shape=(n_free_verts, batch_size) if is_active else ()))
 
 
-def get_fixed_verts_state(*, n_fixed_verts, is_active=True):
+def get_fixed_verts_state(*, n_fixed_verts: int, is_active: bool = True) -> VertsState:
     return VertsState(pos=V(dtype=gs.qd_vec3, shape=(n_fixed_verts,) if is_active else ()))
 
 
@@ -2876,7 +2903,7 @@ class VVertsInfo:
     vverts_state_idx: qd.Tensor
 
 
-def get_vverts_info(*, n_vverts):
+def get_vverts_info(*, n_vverts: int) -> VVertsInfo:
     shape = (n_vverts,)
 
     return VVertsInfo(
@@ -2897,7 +2924,7 @@ class VVertsState:
     pos: qd.Tensor
 
 
-def get_vverts_state(*, n_custom_vverts, batch_size, is_active=True):
+def get_vverts_state(*, n_custom_vverts: int, batch_size: int, is_active: bool = True) -> VVertsState:
     if not is_active:
         return VVertsState(pos=V(dtype=gs.qd_vec3, shape=()))
     if not _is_tensor_addressable((n_custom_vverts, batch_size, 3), gs.np_float):
@@ -2919,7 +2946,7 @@ class VFacesInfo:
     vgeom_idx: qd.Tensor
 
 
-def get_vfaces_info(*, n_vfaces):
+def get_vfaces_info(*, n_vfaces: int) -> VFacesInfo:
     shape = (n_vfaces,)
 
     return VFacesInfo(vverts_idx=V(dtype=gs.qd_ivec3, shape=shape), vgeom_idx=V(dtype=gs.qd_int, shape=shape))
@@ -2944,7 +2971,7 @@ class VGeomsInfo:
     color: qd.Tensor
 
 
-def get_vgeoms_info(*, n_vgeoms):
+def get_vgeoms_info(*, n_vgeoms: int) -> VGeomsInfo:
     shape = (n_vgeoms,)
 
     return VGeomsInfo(
@@ -2972,7 +2999,7 @@ class VGeomsState:
     quat: qd.Tensor
 
 
-def get_vgeoms_state(*, n_vgeoms, batch_size, is_active=True):
+def get_vgeoms_state(*, n_vgeoms: int, batch_size: int, is_active: bool = True) -> VGeomsState:
     shape = (n_vgeoms, batch_size) if is_active else ()
 
     return VGeomsState(pos=V(dtype=gs.qd_vec3, shape=shape), quat=V(dtype=gs.qd_vec4, shape=shape))
@@ -2992,7 +3019,7 @@ class EqualitiesInfo:
     sol_params: qd.Tensor
 
 
-def get_equalities_info(*, n_candidate_equalities, batch_size, is_active=True):
+def get_equalities_info(*, n_candidate_equalities: int, batch_size: int, is_active: bool = True) -> EqualitiesInfo:
     shape = (n_candidate_equalities, batch_size) if is_active else ()
 
     return EqualitiesInfo(
@@ -3024,7 +3051,7 @@ class EntitiesInfo:
     is_local_collision_mask: qd.Tensor
 
 
-def get_entities_info(*, n_entities):
+def get_entities_info(*, n_entities: int) -> EntitiesInfo:
     shape = (n_entities,)
 
     return EntitiesInfo(
@@ -3052,7 +3079,7 @@ class EntitiesState:
     is_hibernated: qd.Tensor
 
 
-def get_entities_state(*, n_entities, batch_size, is_active=True):
+def get_entities_state(*, n_entities: int, batch_size: int, is_active: bool = True) -> EntitiesState:
     return EntitiesState(is_hibernated=V(dtype=gs.qd_int, shape=(n_entities, batch_size) if is_active else ()))
 
 
@@ -3071,7 +3098,9 @@ class RigidAdjointCache:
     dofs_acc: qd.Tensor
 
 
-def get_rigid_adjoint_cache(*, requires_grad, substeps_local, n_qs, batch_size, n_dofs):
+def get_rigid_adjoint_cache(
+    *, requires_grad: bool, substeps_local: int, n_qs: int, batch_size: int, n_dofs: int
+) -> RigidAdjointCache:
     requires_grad = requires_grad
 
     qs_shape = maybe_shape((substeps_local + 1, n_qs, batch_size), requires_grad)
@@ -3129,21 +3158,21 @@ class DynState:
 
 def get_dyn_state_adjoint_cache(
     *,
-    batch_size,
-    requires_grad,
-    rigid_config,
-    links,
-    n_entities,
-    n_links,
-    n_links_actual,
-    n_joints,
-    n_dofs,
-    n_geoms,
-    n_free_verts,
-    n_fixed_verts,
-    n_custom_vverts,
-    n_vgeoms,
-):
+    batch_size: int,
+    requires_grad: bool,
+    rigid_config: "RigidSimStaticConfig",
+    links: "Sequence[RigidLink]",
+    n_entities: int,
+    n_links: int,
+    n_links_actual: int,
+    n_joints: int,
+    n_dofs: int,
+    n_geoms: int,
+    n_free_verts: int,
+    n_fixed_verts: int,
+    n_custom_vverts: int,
+    n_vgeoms: int,
+) -> DynState:
     return DynState(
         dofs=get_dofs_state(requires_grad=requires_grad, n_dofs=n_dofs, batch_size=batch_size),
         links=get_links_state(

@@ -173,7 +173,7 @@ def kernel_begin_backward_substep(
 
         if not rigid_config.enable_mujoco_compatibility:
             # Restore the cartesian space that was overwritten by the post-integrate forward replay in the backward
-            # substep (see _update_cartesian_grad in rigid_solver.py).
+            # substep (see _update_cartesian_grad in rigid_dynamics.py).
             func_copy_cartesian_space(dyn_state_adjoint_cache, dyn_state, rigid_config)
 
     return is_grad_valid

@@ -54,6 +54,22 @@ class RigidIsland(System):
         super().__init__()
         self.data = self.Data()
 
+    # -------------------------------- Actions --------------------------------
+
+    @System.action(kind="host")
+    def initialize(self):
+        return self.initialize_data
+
+    @System.action(kind="stage")
+    def partition(self):
+        rigid = self.rigid_dynamics
+        return func_substep_partition_islands, self.data, rigid.data, rigid.rigid_config, self.partition_edges
+
+    @System.action(kind="stage")
+    def settle(self):
+        rigid = self.rigid_dynamics
+        return func_substep_hibernate_settled_islands, self.data, rigid.data, rigid.rigid_config
+
     # -------------------------------- Action collections --------------------------------
 
     @System.action_collection(kind="inline", call_args=("i_b", "tid"))
@@ -74,22 +90,6 @@ class RigidIsland(System):
         Must not   write the partition otherwise, or read it beyond the roots func_union_link_trees resolves.
         """
         self.partition_edges += edges
-
-    # -------------------------------- Actions --------------------------------
-
-    @System.action(kind="host")
-    def initialize(self):
-        return self.initialize_data
-
-    @System.action(kind="stage")
-    def partition(self):
-        rigid = self.rigid_dynamics
-        return func_substep_partition_islands, self.data, rigid.data, rigid.rigid_config, self.partition_edges
-
-    @System.action(kind="stage")
-    def settle(self):
-        rigid = self.rigid_dynamics
-        return func_substep_hibernate_settled_islands, self.data, rigid.data, rigid.rigid_config
 
     # -------------------------------- Public get/set API --------------------------------
 

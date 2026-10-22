@@ -301,8 +301,7 @@ class RigidConstraint(System):
     def backward(self) -> None:
         """Adjoint solve of the constraint force computation.
 
-        The caller must pre-populate the upstream gradient constraint_state.dL_dqacc (see
-        RigidSolver._constraint_force_grad)."""
+        The caller must pre-populate the upstream gradient constraint_state.dL_dqacc (see reverse_constraints)."""
         if not self.rigid_dynamics.requires_grad:
             gs.raise_exception("Please set `requires_grad` to True in SimOptions to enable differentiable mode.")
 
