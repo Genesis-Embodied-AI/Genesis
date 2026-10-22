@@ -1,4 +1,4 @@
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, TypeAlias
 
 import numpy as np
@@ -14,11 +14,11 @@ from genesis.engine.materials import Rigid
 from genesis.engine.states import RigidSolverState, SolverCheckpoint
 from genesis.engine.states.cache import QueriedStates
 from genesis.options.solvers import RigidOptions
-from genesis.utils.misc import data_to_array, indices_to_mask, qd_to_torch
+from genesis.utils.misc import data_to_array
 
 from ..base_solver import MutatedLinks, StateChange, Subscriber, mutates, register_subscriber
 from .collider import Collider
-from .rigid_tools import sanitize_sol_params as _sanitize_sol_params
+from .rigid_tools import sanitize_io_variables
 
 if TYPE_CHECKING:
     from genesis.engine.core import System
@@ -31,10 +31,10 @@ if TYPE_CHECKING:
     from genesis.engine.simulator import Simulator
     from genesis.engine.simulator_engine import SimulatorEngine
     from genesis.engine.systems.rigid_constraint import RigidConstraint
-    from genesis.engine.systems.rigid_equality_constraint import RigidEqualityConstraint
-    from genesis.engine.systems.rigid_frictionloss_constraint import RigidFrictionLossConstraint
-    from genesis.engine.systems.rigid_island import RigidIsland
+    from genesis.engine.systems.rigid_api import RigidAPI
     from genesis.engine.systems.rigid_dynamics import RigidDynamics
+    from genesis.engine.systems.rigid_equality_constraint import RigidEqualityConstraint
+    from genesis.engine.systems.rigid_island import RigidIsland
 
 TensorLike: TypeAlias = ArrayLike | torch.Tensor
 IndexLike: TypeAlias = ArrayLike | torch.Tensor | None
@@ -150,8 +150,8 @@ class RigidSolver:
 
         # An admitted Rigid backend owns simulation state. Scenes without Rigid entities keep this facade unwired.
         self._rigid_dynamics: "RigidDynamics | None" = None
+        self._rigid_api: "RigidAPI | None" = None
         self._rigid_island: "RigidIsland | None" = None
-        self._rigid_frictionloss_constraint: "RigidFrictionLossConstraint | None" = None
 
         self.collider = None
         self.constraint_solver = None
@@ -164,19 +164,20 @@ class RigidSolver:
     def wire_backend(self, engine: "SimulatorEngine") -> None:
         """Connect the public facade to the owner APIs of the Systems of the Engine after initialization."""
         from genesis.engine.systems import (
+            RigidAPI,
             RigidContactConstraint,
+            RigidDynamics,
             RigidEqualityConstraint,
             RigidFrictionLossConstraint,
             RigidJointLimitConstraint,
-            RigidDynamics,
         )
 
         system = engine.require(RigidDynamics)
         self._rigid_dynamics = system
+        self._rigid_api = engine.require(RigidAPI)
         self._rigid_island = engine.rigid_island
         self._articulated_links_idx = system._articulated_links_idx
         self._links_parent_idx = system._links_parent_idx
-        self._rigid_frictionloss_constraint = engine.find(RigidFrictionLossConstraint)
         self.collider = None if engine.rigid_rigid_contact is None else Collider(engine.rigid_rigid_contact)
         self.constraint_solver = None
         if engine.rigid_constraint is not None:
@@ -241,11 +242,11 @@ class RigidSolver:
 
     @property
     def _sol_min_timeconst(self) -> float:
-        return self._rigid_dynamics._sol_min_timeconst
+        return self._rigid_dynamics.sol_min_timeconst
 
     @property
     def _sol_default_timeconst(self) -> float | None:
-        return self._rigid_dynamics._sol_default_timeconst
+        return self._rigid_dynamics.sol_default_timeconst
 
     def build(self) -> None:
         """Scene owns authoring; RigidDynamics collects and builds the backend model."""
@@ -321,10 +322,10 @@ class RigidSolver:
     @gs.assert_built
     @mutates(StateChange.MODEL)
     def set_gravity(self, gravity: TensorLike, envs_idx: IndexLike = None) -> None:
-        return self._rigid_dynamics.set_gravity(gravity, envs_idx)
+        return self._rigid_api.set_gravity(gravity, envs_idx)
 
     def get_gravity(self, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_gravity(envs_idx)
+        return self._rigid_api.get_gravity(envs_idx)
 
     @property
     def links(self) -> list["RigidLink"]:
@@ -368,11 +369,19 @@ class RigidSolver:
 
     @property
     def n_qs(self) -> int:
-        return self._rigid_dynamics.n_qs if self._rigid_dynamics is not None else sum(entity.n_qs for entity in self.entities)
+        return (
+            self._rigid_dynamics.n_qs
+            if self._rigid_dynamics is not None
+            else sum(entity.n_qs for entity in self.entities)
+        )
 
     @property
     def n_dofs(self) -> int:
-        return self._rigid_dynamics.n_dofs if self._rigid_dynamics is not None else sum(entity.n_dofs for entity in self.entities)
+        return (
+            self._rigid_dynamics.n_dofs
+            if self._rigid_dynamics is not None
+            else sum(entity.n_dofs for entity in self.entities)
+        )
 
     @property
     def n_vgeoms(self) -> int:
@@ -380,11 +389,19 @@ class RigidSolver:
 
     @property
     def n_vverts(self) -> int:
-        return self._rigid_dynamics.n_vverts if self._rigid_dynamics is not None else sum(entity.n_vverts for entity in self.entities)
+        return (
+            self._rigid_dynamics.n_vverts
+            if self._rigid_dynamics is not None
+            else sum(entity.n_vverts for entity in self.entities)
+        )
 
     @property
     def n_vfaces(self) -> int:
-        return self._rigid_dynamics.n_vfaces if self._rigid_dynamics is not None else sum(entity.n_vfaces for entity in self.entities)
+        return (
+            self._rigid_dynamics.n_vfaces
+            if self._rigid_dynamics is not None
+            else sum(entity.n_vfaces for entity in self.entities)
+        )
 
     @property
     def n_custom_vverts(self) -> int:
@@ -428,7 +445,8 @@ class RigidSolver:
         batched: bool = True,
         skip_allocation: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        return self._rigid_dynamics._sanitize_io_variables(
+        return sanitize_io_variables(
+            self._scene,
             tensor,
             inputs_idx,
             input_size,
@@ -470,55 +488,56 @@ class RigidSolver:
         return self._rigid_dynamics.set_dofs_force_grad(dofs_idx, envs_idx, force_grad)
 
     def get_terrain_height(self, positions: TensorLike, link_idx: int, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_terrain_height(positions, link_idx, envs_idx)
+        return self._rigid_api.get_terrain_height(positions, link_idx, envs_idx)
 
     def get_links_quat(
         self, links_idx: IndexLike = None, envs_idx: IndexLike = None, *, relative: bool = False
     ) -> torch.Tensor:
-        return self._rigid_dynamics.get_links_quat(links_idx, envs_idx, relative=relative)
+        return self._rigid_api.get_links_quat(links_idx, envs_idx, relative=relative)
 
     def get_joints_anchor_pos(self, joints_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_joints_anchor_pos(joints_idx, envs_idx)
+        return self._rigid_api.get_joints_anchor_pos(joints_idx, envs_idx)
 
     def get_joints_anchor_axis(self, joints_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_joints_anchor_axis(joints_idx, envs_idx)
+        return self._rigid_api.get_joints_anchor_axis(joints_idx, envs_idx)
 
     def get_vgeoms_pos(
         self, vgeoms_idx: IndexLike = None, envs_idx: IndexLike = None, *, relative: bool = False
     ) -> torch.Tensor:
-        return self._rigid_dynamics.get_vgeoms_pos(vgeoms_idx, envs_idx, relative=relative)
+        return self._rigid_api.get_vgeoms_pos(vgeoms_idx, envs_idx, relative=relative)
 
     def get_vgeoms_quat(
         self, vgeoms_idx: IndexLike = None, envs_idx: IndexLike = None, *, relative: bool = False
     ) -> torch.Tensor:
-        return self._rigid_dynamics.get_vgeoms_quat(vgeoms_idx, envs_idx, relative=relative)
+        return self._rigid_api.get_vgeoms_quat(vgeoms_idx, envs_idx, relative=relative)
 
     def get_links_ang(self, links_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_links_ang(links_idx, envs_idx)
+        return self._rigid_api.get_links_ang(links_idx, envs_idx)
 
     def get_links_net_contact_force(self, links_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_links_net_contact_force(links_idx, envs_idx)
+        return self._rigid_api.get_links_net_contact_force(links_idx, envs_idx)
 
     def get_qpos(self, qs_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_qpos(qs_idx, envs_idx)
+        return self._rigid_api.get_qpos(qs_idx, envs_idx)
 
     def get_dofs_velocity(self, dofs_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_dofs_velocity(dofs_idx, envs_idx)
+        return self._rigid_api.get_dofs_velocity(dofs_idx, envs_idx)
 
     def get_dofs_position(self, dofs_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_dofs_position(dofs_idx, envs_idx)
+        return self._rigid_api.get_dofs_position(dofs_idx, envs_idx)
 
     def get_dofs_limit(
         self, dofs_idx: IndexLike = None, envs_idx: IndexLike = None
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        return self._rigid_dynamics.get_dofs_limit(dofs_idx, envs_idx)
+        return self._rigid_api.get_dofs_limit(dofs_idx, envs_idx)
 
     def update_vgeoms(self) -> None:
-        return self._rigid_dynamics.update_vgeoms()
+        return self._rigid_api.update_vgeoms()
 
     def update_vverts_for_vgeoms(self, vgeoms_idx: IndexLike) -> None:
-        return self._rigid_dynamics.update_vverts_for_vgeoms(vgeoms_idx)
+        return self._rigid_api.update_vverts_for_vgeoms(vgeoms_idx)
 
+    @mutates(StateChange.GEOMETRY)
     def set_vverts(
         self,
         custom_vvert_start: int,
@@ -527,19 +546,19 @@ class RigidSolver:
         vverts: TensorLike | None,
         envs_idx: IndexLike = None,
     ) -> None:
-        return self._rigid_dynamics.set_vverts(custom_vvert_start, custom_vvert_end, vgeoms_idx, vverts, envs_idx)
+        return self._rigid_api.set_vverts(custom_vvert_start, custom_vvert_end, vgeoms_idx, vverts, envs_idx)
 
     def get_vverts(self, custom_vvert_start: int, custom_vvert_end: int, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_vverts(custom_vvert_start, custom_vvert_end, envs_idx)
+        return self._rigid_api.get_vverts(custom_vvert_start, custom_vvert_end, envs_idx)
 
     def get_fixed_collision_verts(self, verts_idx: IndexLike) -> torch.Tensor:
-        return self._rigid_dynamics.get_fixed_collision_verts(verts_idx)
+        return self._rigid_api.get_fixed_collision_verts(verts_idx)
 
     def get_free_collision_verts(self, verts_idx: IndexLike) -> torch.Tensor:
-        return self._rigid_dynamics.get_free_collision_verts(verts_idx)
+        return self._rigid_api.get_free_collision_verts(verts_idx)
 
     def get_vgeom_transforms_batched(self, envs_idx: IndexLike = None) -> tuple[torch.Tensor, torch.Tensor]:
-        return self._rigid_dynamics.get_vgeom_transforms_batched(envs_idx)
+        return self._rigid_api.get_vgeom_transforms_batched(envs_idx)
 
     def get_links_jacobian(
         self,
@@ -548,21 +567,21 @@ class RigidSolver:
         n_dofs: int,
         local_point: TensorLike | None = None,
     ) -> torch.Tensor:
-        return self._rigid_dynamics.get_links_jacobian(link_idx, dof_start, n_dofs, local_point)
+        return self._rigid_api.get_links_jacobian(link_idx, dof_start, n_dofs, local_point)
 
     def forward_kinematics_query(
         self, entity: RigidEntity, qpos: TensorLike, envs_idx: IndexLike = None
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        return self._rigid_dynamics.forward_kinematics_query(entity, qpos, envs_idx)
+        return self._rigid_api.forward_kinematics_query(entity, qpos, envs_idx)
 
     def inverse_kinematics(self, *args: object, **kwargs: object) -> tuple[torch.Tensor, torch.Tensor]:
-        return self._rigid_dynamics.inverse_kinematics(*args, **kwargs)
+        return self._rigid_api.inverse_kinematics(*args, **kwargs)
 
     def update_forward_pos(self) -> None:
         return self._rigid_dynamics.update_forward_pos()
 
     def get_error_envs_mask(self) -> torch.Tensor:
-        return self._rigid_dynamics.get_error_envs_mask()
+        return self._rigid_api.get_error_envs_mask()
 
     def check_errno(self) -> None:
         errno = self._rigid_dynamics.read_errno()
@@ -604,19 +623,10 @@ class RigidSolver:
         return self._sim._engine.constraint_force_host()
 
     def _func_forward_dynamics(self) -> None:
-        return self._rigid_dynamics._func_forward_dynamics()
+        return self._rigid_dynamics.compute_forward_dynamics()
 
     def _func_update_acc(self) -> None:
-        return self._rigid_dynamics._func_update_acc()
-
-    def _func_integrate_dq_entity(
-        self,
-        dq: qd.template(),
-        i_e: int,
-        i_b: int,
-        respect_joint_limit: bool,
-    ) -> None:
-        return self._rigid_dynamics._func_integrate_dq_entity(dq, i_e, i_b, respect_joint_limit)
+        return self._rigid_dynamics.update_acceleration()
 
     def apply_links_external_wrench(
         self,
@@ -629,15 +639,12 @@ class RigidSolver:
         ref: link_ref_frame = link_ref_frame.link_origin,
         local: bool = False,
     ) -> None:
-        return self._rigid_dynamics.apply_links_external_wrench(
+        return self._rigid_api.apply_links_external_wrench(
             force, torque, links_idx, envs_idx, pos=pos, ref=ref, local=local
         )
 
     def reset_grad(self) -> None:
         return self._rigid_dynamics.reset_grad()
-
-    def _update_cartesian_grad(self, envs_idx: torch.Tensor) -> None:
-        return self._rigid_dynamics._update_cartesian_grad(envs_idx)
 
     # ------------------------------------------------------------------------------------
     # -------------------------------- state get/set -------------------------------------
@@ -707,9 +714,7 @@ class RigidSolver:
 
     @mutates(StateChange.GEOMETRY, StateChange.DYNAMICS)
     def __setstate__(self, state: SolverCheckpoint) -> None:
-        items = (
-            item for item in self.data if isinstance(item, array_class.DataItem) and item.kind in state.kinds
-        )
+        items = (item for item in self.data if isinstance(item, array_class.DataItem) and item.kind in state.kinds)
         array_class.fill_data(items, state.arrays)
         if array_class.DataKind.DERIVED not in state.kinds:
             self._rigid_dynamics.invalidate_forward_state()
@@ -733,7 +738,7 @@ class RigidSolver:
     # ------------------------------------------------------------------------------------
 
     def set_links_pos(self, pos: TensorLike, links_idx: IndexLike = None, envs_idx: IndexLike = None) -> None:
-        return self._rigid_dynamics.set_links_pos(pos, links_idx, envs_idx)
+        return self._rigid_api.set_links_pos(pos, links_idx, envs_idx)
 
     @mutates(StateChange.GEOMETRY, links="links_idx")
     def set_base_links_pos(
@@ -745,10 +750,12 @@ class RigidSolver:
         relative: bool = False,
         skip_forward: bool = False,
     ) -> None:
-        return self._rigid_dynamics.set_base_links_pos(pos, links_idx, envs_idx, relative=relative, skip_forward=skip_forward)
+        return self._rigid_api.set_base_links_pos(
+            pos, links_idx, envs_idx, relative=relative, skip_forward=skip_forward
+        )
 
     def set_links_quat(self, quat: TensorLike, links_idx: IndexLike = None, envs_idx: IndexLike = None) -> None:
-        return self._rigid_dynamics.set_links_quat(quat, links_idx, envs_idx)
+        return self._rigid_api.set_links_quat(quat, links_idx, envs_idx)
 
     @mutates(StateChange.GEOMETRY, links="links_idx")
     def set_base_links_quat(
@@ -760,20 +767,11 @@ class RigidSolver:
         relative: bool = False,
         skip_forward: bool = False,
     ) -> None:
-        return self._rigid_dynamics.set_base_links_quat(quat, links_idx, envs_idx, relative=relative, skip_forward=skip_forward)
+        return self._rigid_api.set_base_links_quat(
+            quat, links_idx, envs_idx, relative=relative, skip_forward=skip_forward
+        )
 
     @mutates(StateChange.MODEL)
-    def _set_links_info(
-        self,
-        values: TensorLike,
-        links_idx: IndexLike,
-        name: str,
-        envs_idx: IndexLike = None,
-        *,
-        scale_inertia: bool = False,
-    ) -> None:
-        return self._rigid_dynamics._set_links_info(values, links_idx, name, envs_idx, scale_inertia=scale_inertia)
-
     def set_links_mass(
         self,
         mass: TensorLike,
@@ -781,19 +779,21 @@ class RigidSolver:
         envs_idx: IndexLike = None,
         scale_inertia: bool = False,
     ) -> None:
-        return self._rigid_dynamics.set_links_mass(mass, links_idx, envs_idx, scale_inertia)
+        return self._rigid_api.set_links_mass(mass, links_idx, envs_idx, scale_inertia)
 
+    @mutates(StateChange.MODEL)
     def set_links_inertia(self, inertia: TensorLike, links_idx: IndexLike = None, envs_idx: IndexLike = None) -> None:
-        return self._rigid_dynamics.set_links_inertia(inertia, links_idx, envs_idx)
+        return self._rigid_api.set_links_inertia(inertia, links_idx, envs_idx)
 
+    @mutates(StateChange.MODEL)
     def set_links_COM(self, com: TensorLike, links_idx: IndexLike = None, envs_idx: IndexLike = None) -> None:
-        return self._rigid_dynamics.set_links_COM(com, links_idx, envs_idx)
+        return self._rigid_api.set_links_COM(com, links_idx, envs_idx)
 
     @mutates(StateChange.MODEL)
     def set_geoms_friction_ratio(
         self, friction_ratio: TensorLike, geoms_idx: IndexLike = None, envs_idx: IndexLike = None
     ) -> None:
-        return self._rigid_dynamics.set_geoms_friction_ratio(friction_ratio, geoms_idx, envs_idx)
+        return self._rigid_api.set_geoms_friction_ratio(friction_ratio, geoms_idx, envs_idx)
 
     @mutates(StateChange.GEOMETRY, links=MutatedLinks.ARTICULATED)
     def set_qpos(
@@ -805,11 +805,11 @@ class RigidSolver:
         skip_forward: bool = False,
     ) -> None:
         self._reset_dependents(envs_idx)
-        return self._rigid_dynamics.set_qpos(qpos, qs_idx, envs_idx, skip_forward=skip_forward)
+        return self._rigid_api.set_qpos(qpos, qs_idx, envs_idx, skip_forward=skip_forward)
 
     @mutates(StateChange.MODEL)
     def set_global_sol_params(self, sol_params: TensorLike) -> None:
-        return self._rigid_dynamics.set_global_sol_params(sol_params)
+        return self._rigid_api.set_global_sol_params(sol_params)
 
     @mutates(StateChange.MODEL)
     def set_sol_params(
@@ -821,27 +821,21 @@ class RigidSolver:
         joints_idx: IndexLike = None,
         eqs_idx: IndexLike = None,
     ) -> None:
-        return self._rigid_dynamics.set_sol_params(sol_params, geoms_idx, envs_idx, joints_idx=joints_idx, eqs_idx=eqs_idx)
+        return self._rigid_api.set_sol_params(sol_params, geoms_idx, envs_idx, joints_idx=joints_idx, eqs_idx=eqs_idx)
 
     @mutates(StateChange.MODEL)
-    def _set_dofs_info(
-        self,
-        tensor_list: Sequence[TensorLike],
-        dofs_idx: IndexLike,
-        name: str,
-        envs_idx: IndexLike = None,
-    ) -> None:
-        return self._rigid_dynamics._set_dofs_info(tensor_list, dofs_idx, name, envs_idx)
-
     def set_dofs_kp(self, kp: TensorLike, dofs_idx: IndexLike = None, envs_idx: IndexLike = None) -> None:
-        return self._rigid_dynamics.set_dofs_kp(kp, dofs_idx, envs_idx)
+        return self._rigid_api.set_dofs_kp(kp, dofs_idx, envs_idx)
 
+    @mutates(StateChange.MODEL)
     def set_dofs_kv(self, kv: TensorLike, dofs_idx: IndexLike = None, envs_idx: IndexLike = None) -> None:
-        return self._rigid_dynamics.set_dofs_kv(kv, dofs_idx, envs_idx)
+        return self._rigid_api.set_dofs_kv(kv, dofs_idx, envs_idx)
 
+    @mutates(StateChange.MODEL)
     def set_dofs_act_gain(self, act_gain: TensorLike, dofs_idx: IndexLike = None, envs_idx: IndexLike = None) -> None:
-        return self._rigid_dynamics.set_dofs_act_gain(act_gain, dofs_idx, envs_idx)
+        return self._rigid_api.set_dofs_act_gain(act_gain, dofs_idx, envs_idx)
 
+    @mutates(StateChange.MODEL)
     def set_dofs_act_bias(
         self,
         bias0: TensorLike,
@@ -850,8 +844,9 @@ class RigidSolver:
         dofs_idx: IndexLike = None,
         envs_idx: IndexLike = None,
     ) -> None:
-        return self._rigid_dynamics.set_dofs_act_bias(bias0, bias1, bias2, dofs_idx, envs_idx)
+        return self._rigid_api.set_dofs_act_bias(bias0, bias1, bias2, dofs_idx, envs_idx)
 
+    @mutates(StateChange.MODEL)
     def set_dofs_force_range(
         self,
         lower: TensorLike,
@@ -859,22 +854,27 @@ class RigidSolver:
         dofs_idx: IndexLike = None,
         envs_idx: IndexLike = None,
     ) -> None:
-        return self._rigid_dynamics.set_dofs_force_range(lower, upper, dofs_idx, envs_idx)
+        return self._rigid_api.set_dofs_force_range(lower, upper, dofs_idx, envs_idx)
 
+    @mutates(StateChange.MODEL)
     def set_dofs_stiffness(self, stiffness: TensorLike, dofs_idx: IndexLike = None, envs_idx: IndexLike = None) -> None:
-        return self._rigid_dynamics.set_dofs_stiffness(stiffness, dofs_idx, envs_idx)
+        return self._rigid_api.set_dofs_stiffness(stiffness, dofs_idx, envs_idx)
 
+    @mutates(StateChange.MODEL)
     def set_dofs_armature(self, armature: TensorLike, dofs_idx: IndexLike = None, envs_idx: IndexLike = None) -> None:
-        return self._rigid_dynamics.set_dofs_armature(armature, dofs_idx, envs_idx)
+        return self._rigid_api.set_dofs_armature(armature, dofs_idx, envs_idx)
 
+    @mutates(StateChange.MODEL)
     def set_dofs_damping(self, damping: TensorLike, dofs_idx: IndexLike = None, envs_idx: IndexLike = None) -> None:
-        return self._rigid_dynamics.set_dofs_damping(damping, dofs_idx, envs_idx)
+        return self._rigid_api.set_dofs_damping(damping, dofs_idx, envs_idx)
 
+    @mutates(StateChange.MODEL)
     def set_dofs_frictionloss(
         self, frictionloss: TensorLike, dofs_idx: IndexLike = None, envs_idx: IndexLike = None
     ) -> None:
-        return self._rigid_dynamics.set_dofs_frictionloss(frictionloss, dofs_idx, envs_idx)
+        return self._rigid_api.set_dofs_frictionloss(frictionloss, dofs_idx, envs_idx)
 
+    @mutates(StateChange.MODEL)
     def set_dofs_limit(
         self,
         lower: TensorLike,
@@ -882,16 +882,14 @@ class RigidSolver:
         dofs_idx: IndexLike = None,
         envs_idx: IndexLike = None,
     ) -> None:
-        return self._rigid_dynamics.set_dofs_limit(lower, upper, dofs_idx, envs_idx)
+        return self._rigid_api.set_dofs_limit(lower, upper, dofs_idx, envs_idx)
 
     @mutates(StateChange.GEOMETRY, links=MutatedLinks.ARTICULATED)
     def set_dofs_position(self, position: TensorLike, dofs_idx: IndexLike = None, envs_idx: IndexLike = None) -> None:
         self._reset_dependents(envs_idx)
-        return self._rigid_dynamics.set_dofs_position(position, dofs_idx, envs_idx)
+        return self._rigid_api.set_dofs_position(position, dofs_idx, envs_idx)
 
-    def _wake_dofs(self, dofs_idx: torch.Tensor, envs_idx: torch.Tensor) -> None:
-        return self._rigid_dynamics._wake_dofs(dofs_idx, envs_idx)
-
+    @mutates(StateChange.DYNAMICS, links=MutatedLinks.ARTICULATED)
     def set_dofs_velocity(
         self,
         velocity: TensorLike,
@@ -900,20 +898,20 @@ class RigidSolver:
         *,
         skip_forward: bool = False,
     ) -> None:
-        return self._rigid_dynamics.set_dofs_velocity(velocity, dofs_idx, envs_idx, skip_forward=skip_forward)
+        return self._rigid_api.set_dofs_velocity(velocity, dofs_idx, envs_idx, skip_forward=skip_forward)
 
     def control_dofs_force(self, force: TensorLike, dofs_idx: IndexLike = None, envs_idx: IndexLike = None) -> None:
-        return self._rigid_dynamics.control_dofs_force(force, dofs_idx, envs_idx)
+        return self._rigid_api.control_dofs_force(force, dofs_idx, envs_idx)
 
     def control_dofs_velocity(
         self, velocity: TensorLike, dofs_idx: IndexLike = None, envs_idx: IndexLike = None
     ) -> None:
-        return self._rigid_dynamics.control_dofs_velocity(velocity, dofs_idx, envs_idx)
+        return self._rigid_api.control_dofs_velocity(velocity, dofs_idx, envs_idx)
 
     def control_dofs_position(
         self, position: TensorLike, dofs_idx: IndexLike = None, envs_idx: IndexLike = None
     ) -> None:
-        return self._rigid_dynamics.control_dofs_position(position, dofs_idx, envs_idx)
+        return self._rigid_api.control_dofs_position(position, dofs_idx, envs_idx)
 
     def control_dofs_position_velocity(
         self,
@@ -922,7 +920,7 @@ class RigidSolver:
         dofs_idx: IndexLike = None,
         envs_idx: IndexLike = None,
     ) -> None:
-        return self._rigid_dynamics.control_dofs_position_velocity(position, velocity, dofs_idx, envs_idx)
+        return self._rigid_api.control_dofs_position_velocity(position, velocity, dofs_idx, envs_idx)
 
     def get_sol_params(
         self,
@@ -932,7 +930,7 @@ class RigidSolver:
         joints_idx: IndexLike = None,
         eqs_idx: IndexLike = None,
     ) -> torch.Tensor:
-        return self._rigid_dynamics.get_sol_params(geoms_idx, envs_idx, joints_idx=joints_idx, eqs_idx=eqs_idx)
+        return self._rigid_api.get_sol_params(geoms_idx, envs_idx, joints_idx=joints_idx, eqs_idx=eqs_idx)
 
     def get_links_pos(
         self,
@@ -942,7 +940,7 @@ class RigidSolver:
         ref: link_ref_frame = link_ref_frame.link_origin,
         relative: bool = False,
     ) -> torch.Tensor:
-        return self._rigid_dynamics.get_links_pos(links_idx, envs_idx, ref=ref, relative=relative)
+        return self._rigid_api.get_links_pos(links_idx, envs_idx, ref=ref, relative=relative)
 
     def get_links_vel(
         self,
@@ -952,112 +950,93 @@ class RigidSolver:
         ref: link_ref_frame = link_ref_frame.link_origin,
         relative: bool = False,
     ) -> torch.Tensor:
-        return self._rigid_dynamics.get_links_vel(links_idx, envs_idx, ref=ref, relative=relative)
+        return self._rigid_api.get_links_vel(links_idx, envs_idx, ref=ref, relative=relative)
 
     def get_links_acc(
         self, links_idx: IndexLike = None, envs_idx: IndexLike = None, *, relative: bool = False
     ) -> torch.Tensor:
-        return self._rigid_dynamics.get_links_acc(links_idx, envs_idx, relative=relative)
+        return self._rigid_api.get_links_acc(links_idx, envs_idx, relative=relative)
 
     def get_links_acc_ang(self, links_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_links_acc_ang(links_idx, envs_idx)
+        return self._rigid_api.get_links_acc_ang(links_idx, envs_idx)
 
     def get_links_root_COM(self, links_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_links_root_COM(links_idx, envs_idx)
+        return self._rigid_api.get_links_root_COM(links_idx, envs_idx)
 
     def get_links_COM(self, links_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_links_COM(links_idx, envs_idx)
+        return self._rigid_api.get_links_COM(links_idx, envs_idx)
 
     @property
     def is_links_info_batched(self) -> bool:
-        return self._rigid_dynamics.is_links_info_batched()
+        return self._rigid_api.is_links_info_batched()
 
     def get_links_mass(self, links_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_links_mass(links_idx, envs_idx)
+        return self._rigid_api.get_links_mass(links_idx, envs_idx)
 
     def get_links_inertia(self, links_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_links_inertia(links_idx, envs_idx)
+        return self._rigid_api.get_links_inertia(links_idx, envs_idx)
 
     def get_links_invweight(self, links_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_links_invweight(links_idx, envs_idx)
+        return self._rigid_api.get_links_invweight(links_idx, envs_idx)
 
     def get_geoms_friction_ratio(self, geoms_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_geoms_friction_ratio(geoms_idx, envs_idx)
+        return self._rigid_api.get_geoms_friction_ratio(geoms_idx, envs_idx)
 
     def get_geoms_pos(
         self, geoms_idx: IndexLike = None, envs_idx: IndexLike = None, *, relative: bool = False
     ) -> torch.Tensor:
-        return self._rigid_dynamics.get_geoms_pos(geoms_idx, envs_idx, relative=relative)
+        return self._rigid_api.get_geoms_pos(geoms_idx, envs_idx, relative=relative)
 
     def get_geoms_quat(
         self, geoms_idx: IndexLike = None, envs_idx: IndexLike = None, *, relative: bool = False
     ) -> torch.Tensor:
-        return self._rigid_dynamics.get_geoms_quat(geoms_idx, envs_idx, relative=relative)
+        return self._rigid_api.get_geoms_quat(geoms_idx, envs_idx, relative=relative)
 
     def get_dofs_control_force(self, dofs_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_dofs_control_force(dofs_idx, envs_idx)
+        return self._rigid_api.get_dofs_control_force(dofs_idx, envs_idx)
 
     def get_dofs_actuator_force(self, dofs_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        rigid = self._rigid_dynamics
-        qf_applied = qd_to_torch(rigid.data.dyn_state.dofs.qf_applied, envs_idx, transpose=True)
-        constraint_state = None if self.constraint_solver is None else self.constraint_solver.constraint_state
-        qacc_source = rigid.data.dyn_state.dofs.acc if constraint_state is None else constraint_state.qacc
-        qacc = qd_to_torch(qacc_source, envs_idx, transpose=True)
-        qf_passive = qd_to_torch(rigid.data.dyn_state.dofs.qf_passive, envs_idx, transpose=True)
-        if self._options.batch_dofs_info:
-            armature = qd_to_torch(rigid.data.dyn_info.dofs.armature, envs_idx, transpose=True)
-        else:
-            armature = qd_to_torch(rigid.data.dyn_info.dofs.armature, transpose=True)
-
-        if self._rigid_frictionloss_constraint is None:
-            qf_frictionloss = torch.zeros_like(qf_applied)
-        else:
-            qf_frictionloss = self._rigid_frictionloss_constraint.get_dofs_frictionloss_force(envs_idx)
-
-        actuator_force = qf_applied - armature * qacc + qf_frictionloss + qf_passive
-        if dofs_idx is not None:
-            actuator_force = actuator_force[indices_to_mask(None, dofs_idx)]
-        return actuator_force[0] if self.n_envs == 0 else actuator_force
+        return self._rigid_api.get_dofs_actuator_force(dofs_idx, envs_idx)
 
     def get_dofs_force(self, dofs_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_dofs_force(dofs_idx, envs_idx)
+        return self._rigid_api.get_dofs_force(dofs_idx, envs_idx)
 
     def get_dofs_acc(self, dofs_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_dofs_acc(dofs_idx, envs_idx)
+        return self._rigid_api.get_dofs_acc(dofs_idx, envs_idx)
 
     def get_dofs_kp(self, dofs_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_dofs_kp(dofs_idx, envs_idx)
+        return self._rigid_api.get_dofs_kp(dofs_idx, envs_idx)
 
     def get_dofs_kv(self, dofs_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_dofs_kv(dofs_idx, envs_idx)
+        return self._rigid_api.get_dofs_kv(dofs_idx, envs_idx)
 
     def get_dofs_act_gain(self, dofs_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_dofs_act_gain(dofs_idx, envs_idx)
+        return self._rigid_api.get_dofs_act_gain(dofs_idx, envs_idx)
 
     def get_dofs_act_bias(
         self, dofs_idx: IndexLike = None, envs_idx: IndexLike = None
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        return self._rigid_dynamics.get_dofs_act_bias(dofs_idx, envs_idx)
+        return self._rigid_api.get_dofs_act_bias(dofs_idx, envs_idx)
 
     def get_dofs_force_range(
         self, dofs_idx: IndexLike = None, envs_idx: IndexLike = None
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        return self._rigid_dynamics.get_dofs_force_range(dofs_idx, envs_idx)
+        return self._rigid_api.get_dofs_force_range(dofs_idx, envs_idx)
 
     def get_dofs_stiffness(self, dofs_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_dofs_stiffness(dofs_idx, envs_idx)
+        return self._rigid_api.get_dofs_stiffness(dofs_idx, envs_idx)
 
     def get_dofs_invweight(self, dofs_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_dofs_invweight(dofs_idx, envs_idx)
+        return self._rigid_api.get_dofs_invweight(dofs_idx, envs_idx)
 
     def get_dofs_armature(self, dofs_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_dofs_armature(dofs_idx, envs_idx)
+        return self._rigid_api.get_dofs_armature(dofs_idx, envs_idx)
 
     def get_dofs_damping(self, dofs_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_dofs_damping(dofs_idx, envs_idx)
+        return self._rigid_api.get_dofs_damping(dofs_idx, envs_idx)
 
     def get_dofs_frictionloss(self, dofs_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_dofs_frictionloss(dofs_idx, envs_idx)
+        return self._rigid_api.get_dofs_frictionloss(dofs_idx, envs_idx)
 
     def get_mass_mat(
         self,
@@ -1065,7 +1044,7 @@ class RigidSolver:
         envs_idx: IndexLike = None,
         decompose: bool = False,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
-        return self._rigid_dynamics.get_mass_mat(dofs_idx, envs_idx, decompose)
+        return self._rigid_api.get_mass_mat(dofs_idx, envs_idx, decompose)
 
     def get_kinetic_energy(
         self,
@@ -1073,7 +1052,7 @@ class RigidSolver:
         dofs_idx: IndexLike = None,
         envs_idx: IndexLike = None,
     ) -> torch.Tensor:
-        return self._rigid_dynamics.get_kinetic_energy(links_idx, dofs_idx, envs_idx)
+        return self._rigid_api.get_kinetic_energy(links_idx, dofs_idx, envs_idx)
 
     def get_potential_energy(
         self,
@@ -1081,50 +1060,50 @@ class RigidSolver:
         dofs_idx: IndexLike = None,
         envs_idx: IndexLike = None,
     ) -> torch.Tensor:
-        return self._rigid_dynamics.get_potential_energy(links_idx, dofs_idx, envs_idx)
+        return self._rigid_api.get_potential_energy(links_idx, dofs_idx, envs_idx)
 
     def get_total_energy(self, envs_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_total_energy(envs_idx)
+        return self._rigid_api.get_total_energy(envs_idx)
 
     def get_geoms_friction(self, geoms_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_geoms_friction(geoms_idx)
+        return self._rigid_api.get_geoms_friction(geoms_idx)
 
     def get_geoms_friction_torsional(self, geoms_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_geoms_friction_torsional(geoms_idx)
+        return self._rigid_api.get_geoms_friction_torsional(geoms_idx)
 
     def get_geoms_friction_rolling(self, geoms_idx: IndexLike = None) -> torch.Tensor:
-        return self._rigid_dynamics.get_geoms_friction_rolling(geoms_idx)
+        return self._rigid_api.get_geoms_friction_rolling(geoms_idx)
 
     def get_AABB(self, entities_idx: IndexLike = None, envs_idx: IndexLike = None) -> torch.Tensor:
         from genesis.engine.couplers import LegacyCoupler
 
         if not isinstance(self._sim.coupler, LegacyCoupler):
             gs.raise_exception("Method only supported when using 'LegacyCoupler' coupler type.")
-        return self._rigid_dynamics.get_AABB(entities_idx, envs_idx)
+        return self._rigid_api.get_AABB(entities_idx, envs_idx)
 
     @mutates(StateChange.MODEL)
     def set_geom_friction(self, friction: TensorLike, geoms_idx: IndexLike) -> None:
-        return self._rigid_dynamics.set_geom_friction(friction, geoms_idx)
+        return self._rigid_api.set_geom_friction(friction, geoms_idx)
 
     @mutates(StateChange.MODEL)
     def set_geom_friction_torsional(self, friction_torsional: TensorLike, geoms_idx: IndexLike) -> None:
-        return self._rigid_dynamics.set_geom_friction_torsional(friction_torsional, geoms_idx)
+        return self._rigid_api.set_geom_friction_torsional(friction_torsional, geoms_idx)
 
     @mutates(StateChange.MODEL)
     def set_geom_friction_rolling(self, friction_rolling: TensorLike, geoms_idx: IndexLike) -> None:
-        return self._rigid_dynamics.set_geom_friction_rolling(friction_rolling, geoms_idx)
+        return self._rigid_api.set_geom_friction_rolling(friction_rolling, geoms_idx)
 
     @mutates(StateChange.MODEL)
     def set_geoms_friction(self, friction: TensorLike, geoms_idx: IndexLike = None) -> None:
-        return self._rigid_dynamics.set_geoms_friction(friction, geoms_idx)
+        return self._rigid_api.set_geoms_friction(friction, geoms_idx)
 
     @mutates(StateChange.MODEL)
     def set_geoms_friction_torsional(self, friction_torsional: TensorLike, geoms_idx: IndexLike = None) -> None:
-        return self._rigid_dynamics.set_geoms_friction_torsional(friction_torsional, geoms_idx)
+        return self._rigid_api.set_geoms_friction_torsional(friction_torsional, geoms_idx)
 
     @mutates(StateChange.MODEL)
     def set_geoms_friction_rolling(self, friction_rolling: TensorLike, geoms_idx: IndexLike = None) -> None:
-        return self._rigid_dynamics.set_geoms_friction_rolling(friction_rolling, geoms_idx)
+        return self._rigid_api.set_geoms_friction_rolling(friction_rolling, geoms_idx)
 
     @mutates(StateChange.MODEL)
     def add_weld_constraint(self, link1_idx: int, link2_idx: int, envs_idx: IndexLike = None) -> None:
@@ -1161,7 +1140,7 @@ class RigidSolver:
         propellers_revs: TensorLike,
         propellers_spin: TensorLike,
     ) -> None:
-        return self._rigid_dynamics.update_drone_propeller_vgeoms(propellers_vgeom_idxs, propellers_revs, propellers_spin)
+        return self._rigid_api.update_drone_propeller_vgeoms(propellers_vgeom_idxs, propellers_revs, propellers_spin)
 
     def set_drone_rpm(
         self,
@@ -1172,10 +1151,10 @@ class RigidSolver:
         propellers_spin: TensorLike,
         invert: bool,
     ) -> None:
-        return self._rigid_dynamics.set_drone_rpm(propellers_link_idx, kf, km, propellers_rpm, propellers_spin, invert)
+        return self._rigid_api.set_drone_rpm(propellers_link_idx, kf, km, propellers_rpm, propellers_spin, invert)
 
     def update_verts_for_geoms(self, geoms_idx: IndexLike) -> None:
-        return self._rigid_dynamics.update_verts_for_geoms(geoms_idx)
+        return self._rigid_api.update_verts_for_geoms(geoms_idx)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
@@ -1219,7 +1198,11 @@ class RigidSolver:
 
     @property
     def max_collision_pairs(self) -> int:
-        return self._rigid_dynamics.max_collision_pairs if self._rigid_dynamics is not None else self._options.max_collision_pairs
+        return (
+            self._rigid_dynamics.max_collision_pairs
+            if self._rigid_dynamics is not None
+            else self._options.max_collision_pairs
+        )
 
     @property
     def n_equalities(self) -> int:

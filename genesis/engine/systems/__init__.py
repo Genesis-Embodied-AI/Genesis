@@ -1,6 +1,7 @@
 # Each module registers its System for SimulatorEngine on import
 from .rigid_sdf import RigidSdf
 from .rigid_dynamics import RigidDynamics
+from .rigid_api import RigidAPI
 from .rigid_island import RigidIsland
 from .rigid_rigid_contact import RigidRigidContact
 from .rigid_constraint import RigidConstraint

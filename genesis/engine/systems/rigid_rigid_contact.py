@@ -305,10 +305,7 @@ class RigidRigidContact(System):
             self._gjk.activate(n_contact0_threads, gpu_cores)
         elif self.data.collider_config.has_non_box_plane_convex_convex:
             self._gjk.activate()
-        if (
-            self.data.collider_config.has_terrain
-            or self.data.collider_config.has_non_box_plane_convex_convex
-        ):
+        if self.data.collider_config.has_terrain or self.data.collider_config.has_non_box_plane_convex_convex:
             self._support_field.activate()
 
         self.data.mpr_info = self._mpr._mpr_info
@@ -387,6 +384,7 @@ class RigidRigidContact(System):
     def clear_contact_data_cache(self) -> None:
         """Drop the contacts read back during the previous substep, which the detection is about to replace."""
         self._contact_data_cache.clear()
+
 
 @register_system(SimulatorEngine)
 def create_rigid_rigid_contact(engine: SimulatorEngine) -> RigidRigidContact | None:

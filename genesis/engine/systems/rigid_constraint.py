@@ -201,6 +201,10 @@ class RigidConstraint(System):
     def get_n_iterations(self) -> int:
         return self.n_iterations
 
+    def get_constrained_acc(self, envs_idx: EnvIndex = None) -> torch.Tensor:
+        """The dof accelerations of the last solve, batch first."""
+        return qd_to_torch(self.data.constraint_state.qacc, envs_idx, transpose=True)
+
     def get_solve_revision(self) -> int:
         """The count of the host-side changes of the solved forces and of the equality count: one per solve and per
         clear, by which the participants invalidate what they read back from the rows."""
@@ -293,9 +297,7 @@ class RigidConstraint(System):
         )
 
         # 2. Using the solution u, we can compute the gradients of the input variables.
-        backward_constraint_solver.kernel_compute_gradients(
-            self.data.constraint_state, self.rigid_dynamics.rigid_info
-        )
+        backward_constraint_solver.kernel_compute_gradients(self.data.constraint_state, self.rigid_dynamics.rigid_info)
 
     # -------------------------------- Implementation --------------------------------
 

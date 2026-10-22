@@ -125,8 +125,4 @@ def create_rigid_frictionloss_constraint(engine: SimulatorEngine) -> RigidFricti
     from genesis.engine.entities import RigidEntity
 
     has_rigid = any(isinstance(entity, RigidEntity) for entity in engine.scene.entities)
-    return (
-        RigidFrictionLossConstraint()
-        if has_rigid and not engine.scene.options.rigid.disable_constraint
-        else None
-    )
+    return RigidFrictionLossConstraint() if has_rigid and not engine.scene.options.rigid.disable_constraint else None

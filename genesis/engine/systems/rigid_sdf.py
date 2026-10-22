@@ -60,8 +60,4 @@ class RigidSdf(System):
 @register_system(SimulatorEngine)
 def create_rigid_sdf(engine: SimulatorEngine) -> RigidSdf | None:
     """Admit SDF ownership only for a Scene with Rigid geometry."""
-    return (
-        RigidSdf()
-        if any(isinstance(entity, RigidEntity) for entity in engine.scene.entities)
-        else None
-    )
+    return RigidSdf() if any(isinstance(entity, RigidEntity) for entity in engine.scene.entities) else None

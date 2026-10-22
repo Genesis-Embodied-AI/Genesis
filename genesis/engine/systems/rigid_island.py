@@ -4,10 +4,17 @@ from collections.abc import Iterator
 
 import numpy as np
 import quadrants as qd
+import torch
 
 import genesis as gs
 import genesis.utils.array_class as array_class
 from genesis.engine.core import Data, InlineAction, Require, System, register_system
+from genesis.engine.solvers.rigid.abd.accessor import (
+    kernel_wake_up_entities_by_dofs,
+    kernel_wake_up_entities_by_links,
+    kernel_wake_up_entities_by_qs,
+    kernel_wakeup_links_island,
+)
 from genesis.engine.solvers.rigid.constraint.island import func_substep_partition_islands
 from genesis.engine.solvers.rigid.substep import func_substep_hibernate_settled_islands
 from genesis.utils.misc import qd_to_numpy
@@ -90,6 +97,62 @@ class RigidIsland(System):
         yield from array_class.iter_data(self.data, "island")
         yield from array_class.iter_data(self.data, "qd_n_equalities", array_class.DataKind.STATE)
 
+    def wake_entities_by_links(self, links_idx: torch.Tensor, envs_idx: torch.Tensor) -> None:
+        """Wake the hibernated entities holding these links, so that a state written to them is not dropped."""
+        rigid = self.rigid_dynamics
+        if rigid.rigid_config.use_hibernation:
+            kernel_wake_up_entities_by_links(
+                links_idx,
+                envs_idx,
+                rigid.data.dyn_state,
+                self.data.island,
+                rigid.data.dyn_info,
+                rigid.data.rigid_info,
+                rigid.rigid_config,
+            )
+
+    def wake_entities_by_dofs(self, dofs_idx: torch.Tensor, envs_idx: torch.Tensor) -> None:
+        """Wake the hibernated entities owning these dofs: forward dynamics and integration act only on awake dofs, so a
+        state written to a sleeping body would be dropped until something else woke it."""
+        rigid = self.rigid_dynamics
+        if rigid.rigid_config.use_hibernation:
+            kernel_wake_up_entities_by_dofs(
+                dofs_idx,
+                envs_idx,
+                rigid.data.dyn_state,
+                self.data.island,
+                rigid.data.dyn_info,
+                rigid.data.rigid_info,
+                rigid.rigid_config,
+            )
+
+    def wake_entities_by_qs(self, qs_idx: torch.Tensor, envs_idx: torch.Tensor) -> None:
+        """Wake the hibernated entities owning these generalized coordinates."""
+        rigid = self.rigid_dynamics
+        if rigid.rigid_config.use_hibernation:
+            kernel_wake_up_entities_by_qs(
+                qs_idx,
+                envs_idx,
+                rigid.data.dyn_state,
+                self.data.island,
+                rigid.data.dyn_info,
+                rigid.data.rigid_info,
+                rigid.rigid_config,
+            )
+
+    def wake_link_islands(self, links_idx: torch.Tensor, envs_idx: torch.Tensor) -> None:
+        """Wake the island of every hibernated link among these."""
+        rigid = self.rigid_dynamics
+        kernel_wakeup_links_island(
+            links_idx,
+            envs_idx,
+            rigid.data.dyn_state,
+            self.data.island,
+            rigid.data.dyn_info,
+            rigid.data.rigid_info,
+            rigid.rigid_config,
+        )
+
     # -------------------------------- Implementation --------------------------------
 
     def initialize_data(self) -> None:
@@ -128,8 +191,4 @@ class RigidIsland(System):
 def create_rigid_island(engine: SimulatorEngine) -> RigidIsland | None:
     from genesis.engine.entities import RigidEntity
 
-    return (
-        RigidIsland()
-        if any(isinstance(entity, RigidEntity) for entity in engine.scene.entities)
-        else None
-    )
+    return RigidIsland() if any(isinstance(entity, RigidEntity) for entity in engine.scene.entities) else None

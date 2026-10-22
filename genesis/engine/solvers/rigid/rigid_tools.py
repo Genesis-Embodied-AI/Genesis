@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, TypeAlias
 
 import numpy as np
-from numpy.typing import NDArray
+from numpy.typing import ArrayLike, NDArray
 import quadrants as qd
 import torch
 
@@ -13,11 +13,15 @@ import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.constants import link_ref_frame
 from genesis.options.solvers import RigidOptions
+from genesis.utils.misc import sanitize_indexed_tensor
 
 if TYPE_CHECKING:
     from genesis.engine.entities import RigidEntity
+    from genesis.engine.scene import Scene
 
 HostTensor: TypeAlias = NDArray | torch.Tensor
+TensorLike: TypeAlias = ArrayLike | torch.Tensor
+IndexLike: TypeAlias = ArrayLike | torch.Tensor | None
 
 IMP_MIN = 0.0001
 IMP_MAX = 0.9999
@@ -33,6 +37,45 @@ def resolve_broadphase_traversal(
     if gs.backend == gs.cpu or enable_heterogeneous:
         return gs.broadphase_traversal.SAP
     return gs.broadphase_traversal.ALL_VS_ALL
+
+
+def sanitize_io_variables(
+    scene: "Scene",
+    tensor: TensorLike,
+    inputs_idx: IndexLike,
+    input_size: int,
+    idx_name: str,
+    envs_idx: IndexLike = None,
+    element_shape: tuple[int, ...] = (),
+    *,
+    batched: bool = True,
+    skip_allocation: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Sanitize a tensor indexed by element and, when batched, by environment, and the indices that address it."""
+    envs_idx_ = scene._sanitize_envs_idx(envs_idx) if batched else scene._envs_idx[:0]
+
+    if scene.n_envs == 0 or not batched:
+        tensor_, (inputs_idx_,) = sanitize_indexed_tensor(
+            tensor,
+            gs.tc_float,
+            (inputs_idx,),
+            (-1, *element_shape),
+            (input_size, *element_shape),
+            (idx_name, *("" for _ in element_shape)),
+            skip_allocation=skip_allocation,
+        )
+    else:
+        tensor_, (envs_idx_, inputs_idx_) = sanitize_indexed_tensor(
+            tensor,
+            gs.tc_float,
+            (envs_idx_, inputs_idx),
+            (-1, -1, *element_shape),
+            (scene.n_envs, input_size, *element_shape),
+            ("envs_idx", idx_name, *("" for _ in element_shape)),
+            skip_allocation=skip_allocation,
+        )
+
+    return tensor_, inputs_idx_, envs_idx_
 
 
 def sanitize_ref_frame(ref: link_ref_frame, *, has_root_com: bool = True) -> int:
@@ -168,9 +211,7 @@ def jacobi_mass_spread_bound(entities: Sequence["RigidEntity"]) -> float:
                         rotational_self_upper = eigvals[-1] + link_desc.mass * dist_com[link.idx] ** 2
                     for i_d, armature_d in enumerate(joint_desc.dofs_armature):
                         armature = variant_default if is_rotor and armature_d <= 0.0 else armature_d
-                        if joint.type == gs.JOINT_TYPE.PRISMATIC or (
-                            joint.type == gs.JOINT_TYPE.FREE and i_d < 3
-                        ):
+                        if joint.type == gs.JOINT_TYPE.PRISMATIC or (joint.type == gs.JOINT_TYPE.FREE and i_d < 3):
                             lower.append(armature + subtree_mass)
                             upper.append(armature + subtree_mass)
                         elif joint.type == gs.JOINT_TYPE.REVOLUTE and is_sole_joint:

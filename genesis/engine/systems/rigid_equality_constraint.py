@@ -262,8 +262,4 @@ def create_rigid_equality_constraint(engine: SimulatorEngine) -> RigidEqualityCo
     from genesis.engine.entities import RigidEntity
 
     has_rigid = any(isinstance(entity, RigidEntity) for entity in engine.scene.entities)
-    return (
-        RigidEqualityConstraint()
-        if has_rigid and not engine.scene.options.rigid.disable_constraint
-        else None
-    )
+    return RigidEqualityConstraint() if has_rigid and not engine.scene.options.rigid.disable_constraint else None

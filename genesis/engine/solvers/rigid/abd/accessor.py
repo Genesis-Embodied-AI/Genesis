@@ -446,21 +446,10 @@ def kernel_set_links_mass(
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     mass: qd.types.ndarray(),
-    jac_row: qd.Tensor,
-    solve_out: qd.Tensor,
-    dyn_state: array_class.DynState,
-    island_state: array_class.IslandState,
     dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
     is_inertia_scaled: qd.template(),
-    refresh_position: qd.template(),
-    refresh_velocity: qd.template(),
 ):
-    # Waking here rather than from a kernel of its own: a setter that reaches a sleeping body is one launch, and the
-    # weighing below reads the tree at its neutral configuration, which the sleeping bodies are not carried to.
-    func_wakeup_links_island(links_idx, envs_idx, dyn_state, island_state, dyn_info, rigid_info, rigid_config)
-
     # Shared link info holds one value for every environment, so it is written once: scaling what is already there is
     # not idempotent, and a loop over the batch would apply the ratio once per environment.
     if qd.static(rigid_config.batch_links_info):
@@ -474,38 +463,15 @@ def kernel_set_links_mass(
         for i_l_ in range(links_idx.shape[0]):
             func_set_link_mass(links_idx[i_l_], 0, mass[0, i_l_], dyn_info, rigid_config, is_inertia_scaled)
 
-    func_refresh_links_invweight_and_meaninertia(
-        links_idx,
-        envs_idx,
-        jac_row,
-        solve_out,
-        dyn_state,
-        dyn_info,
-        rigid_info,
-        rigid_config,
-        force_update=True,
-        refresh_position=refresh_position,
-        refresh_velocity=refresh_velocity,
-    )
-
 
 @qd.kernel(fastcache=True)
 def kernel_set_links_COM(
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     com: qd.types.ndarray(),
-    jac_row: qd.Tensor,
-    solve_out: qd.Tensor,
-    dyn_state: array_class.DynState,
-    island_state: array_class.IslandState,
     dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
-    refresh_position: qd.template(),
-    refresh_velocity: qd.template(),
 ):
-    func_wakeup_links_island(links_idx, envs_idx, dyn_state, island_state, dyn_info, rigid_info, rigid_config)
-
     # Shared link info holds one value for every environment, so it is written once. See kernel_set_links_mass.
     if qd.static(rigid_config.batch_links_info):
         qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
@@ -518,37 +484,15 @@ def kernel_set_links_COM(
             for j in qd.static(range(3)):
                 dyn_info.links.inertial_pos[links_idx[i_l_]][j] = com[0, i_l_, j]
 
-    func_refresh_links_invweight_and_meaninertia(
-        links_idx,
-        envs_idx,
-        jac_row,
-        solve_out,
-        dyn_state,
-        dyn_info,
-        rigid_info,
-        rigid_config,
-        force_update=True,
-        refresh_position=refresh_position,
-        refresh_velocity=refresh_velocity,
-    )
-
 
 @qd.kernel(fastcache=True)
 def kernel_set_links_inertia(
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     inertia: qd.types.ndarray(),
-    jac_row: qd.Tensor,
-    solve_out: qd.Tensor,
-    dyn_state: array_class.DynState,
-    island_state: array_class.IslandState,
     dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
-    refresh_position: qd.template(),
 ):
-    func_wakeup_links_island(links_idx, envs_idx, dyn_state, island_state, dyn_info, rigid_info, rigid_config)
-
     # Shared link info holds one value for every environment, so it is written once. See kernel_set_links_mass.
     if qd.static(rigid_config.batch_links_info):
         qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
@@ -561,6 +505,33 @@ def kernel_set_links_inertia(
             for j1, j2 in qd.static(qd.ndrange(3, 3)):
                 dyn_info.links.inertial_i[links_idx[i_l_]][j1, j2] = inertia[0, i_l_, j1, j2]
 
+
+@qd.kernel(fastcache=True)
+def kernel_wakeup_links_island(
+    links_idx: qd.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    island_state: array_class.IslandState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+):
+    func_wakeup_links_island(links_idx, envs_idx, dyn_state, island_state, dyn_info, rigid_info, rigid_config)
+
+
+@qd.kernel(fastcache=True)
+def kernel_refresh_links_invweight_and_meaninertia(
+    links_idx: qd.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
+    jac_row: qd.Tensor,
+    solve_out: qd.Tensor,
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+    refresh_position: qd.template(),
+    refresh_velocity: qd.template(),
+):
     func_refresh_links_invweight_and_meaninertia(
         links_idx,
         envs_idx,
@@ -572,8 +543,7 @@ def kernel_set_links_inertia(
         rigid_config,
         force_update=True,
         refresh_position=refresh_position,
-        # An inertia moves no center of mass, so every velocity stands where it stood.
-        refresh_velocity=False,
+        refresh_velocity=refresh_velocity,
     )
 
 
