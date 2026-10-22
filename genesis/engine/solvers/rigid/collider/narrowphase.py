@@ -126,6 +126,22 @@ def func_lane_slot_write(values, k: int, value, tid: int, block_dim: qd.template
 
 
 @qd.func
+def func_lane_slot_min(k: int, n_slots: int, n_slot_rows: qd.template(), block_dim: qd.template()):
+    """Lowest of the slots the lanes of a block name, every lane of the block receiving it.
+
+    Each lane names one of the slots it holds, or n_slots for none (see func_lane_local_get for the layout). The slots
+    are taken row by row, the lowest lane naming a slot of the lowest row holding the lowest slot, which a ballot of the
+    lanes finds where a min-reduction would take a shuffle per halving.
+    """
+    k_min = n_slots
+    for i_k in qd.static(range(n_slot_rows)):
+        lanes = su.qd_block_ballot(k < n_slots and k // block_dim == i_k)
+        if k_min == n_slots and lanes != 0:
+            k_min = i_k * block_dim + qd.math.ffs(lanes) - 1
+    return k_min
+
+
+@qd.func
 def func_is_lane_slot_seen(values, n_values: int, value: int, tid: int, block_dim: qd.template()):
     """Whether a value is among the first n_values slots of a buffer spread over the lanes of a block.
 
@@ -380,7 +396,7 @@ def func_add_polytope_vertex_contacts_sdf(
                                 )
                             if qd.static(block_dim > 1):
                                 sd_best = su.qd_block_min(sd_neighbor)
-                                i_lane = su.qd_block_min(tid if sd_neighbor == sd_best else block_dim)
+                                i_lane = qd.math.ffs(su.qd_block_ballot(sd_neighbor == sd_best)) - 1
                                 i_neighbor = su.qd_block_shuffle(i_neighbor, i_lane)
                                 sd_neighbor = sd_best
                             # Strict decrease guarantees termination: values strictly descend over a finite vertex
@@ -470,7 +486,7 @@ def func_add_polytope_vertex_contacts_sdf(
                                         i_close = k
                                         break
                         if qd.static(block_dim > 1):
-                            i_close = su.qd_block_min(i_close)
+                            i_close = func_lane_slot_min(i_close, n_max, N_SLOTS, block_dim)
                         i_put = weakest_idx
                         if i_close < n_max:
                             i_put = -1
@@ -492,7 +508,9 @@ def func_add_polytope_vertex_contacts_sdf(
                                         weakest_idx = k
                             if qd.static(block_dim > 1):
                                 pen_min_block = su.qd_block_min(pen_min)
-                                weakest_idx = su.qd_block_min(weakest_idx if pen_min <= pen_min_block else n_max)
+                                weakest_idx = func_lane_slot_min(
+                                    weakest_idx if pen_min <= pen_min_block else n_max, n_max, N_SLOTS, block_dim
+                                )
 
         # Pass 2: emit contacts at the selected vertices. Reference normal is the grid SDF gradient sampled at A's
         # center, which gives a stable per-patch normal whenever A is small relative to B's features. Per-vertex
