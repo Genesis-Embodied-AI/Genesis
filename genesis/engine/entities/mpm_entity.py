@@ -517,7 +517,7 @@ class MPMEntity(ParticleEntity):
         muscle_group : torch.Tensor, shape (n_particles,)
             A tensor containing the muscle group ID of each particle.
         """
-        muscle_group = gs.zeros((self._n_particles,), dtype=gs.tc_int, requires_grad=False, scene=self._scene)
+        muscle_group = gs.zeros((self._n_particles,), dtype=gs.tc_int)
         self.solver._kernel_get_particles_muscle_group(self._particle_start, self._n_particles, muscle_group)
         return muscle_group
 

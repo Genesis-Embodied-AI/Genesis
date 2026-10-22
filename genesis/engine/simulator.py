@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 import torch
 
 import genesis as gs
-from genesis.grad.bridge import StepNode
+from genesis.grad.bridge import ReadNode, StepNode
 from genesis.options.morphs import Morph
 from genesis.options.solvers import IPCCouplerOptions, LegacyCouplerOptions, SAPCouplerOptions
 from genesis.repr_base import RBC
@@ -70,13 +70,16 @@ class Simulator(RBC):
 
         self._cur_substep_global = 0
 
-        # Differentiable mode (see genesis.grad.bridge): the token returned by the autograd node of the last step, the
-        # inputs entities taped for the coming step, the gradients the reverse pass of a step gives its inputs, and
-        # the rollout the token chain belongs to, which a reset starts anew.
+        # Gradient tape (see genesis.grad.bridge): the token returned by the autograd node of the last step, the inputs
+        # entities taped for the coming step, the gradients the reverse pass of a step gives its inputs, and the
+        # rollout the token chain belongs to, which a reset starts anew. A backward pass that rewinds the rollout to
+        # its start consumes it, which forbids stepping forward and differentiating again until the next reset.
         self._grad_token = torch.zeros((), dtype=gs.tc_float, requires_grad=True) if self._requires_grad else None
         self._grad_epoch = 0
         self._step_inputs: dict[int, torch.Tensor] = {}
         self._inputs_grad: dict[int, torch.Tensor] = {}
+        self._is_forward_ready = True
+        self._is_backward_ready = True
 
         # solvers
         self.tool_solver = ToolSolver(self.scene, self, options.tool)
@@ -327,6 +330,48 @@ class Simulator(RBC):
             self._grad_token = torch.zeros((), dtype=gs.tc_float, requires_grad=True)
         self._grad_epoch += 1
         self._step_inputs.clear()
+        self._is_forward_ready = True
+        self._is_backward_ready = True
+
+    def track_state(self, *tensors: torch.Tensor):
+        """
+        Make the gradient-carrying tensors of a state queried at the current step differentiable.
+
+        In a differentiable scene, the tensors become the outputs of one read node of the current step (see
+        `genesis.grad.bridge`) and retain their gradient, which `collect_output_grads` hands to the solvers. They stay
+        the same tensor objects, so the solver may fill them afterwards. Outside differentiable mode, this does nothing.
+        """
+        if self._requires_grad:
+            ReadNode.apply(self._grad_token, tensors)
+            for tensor in tensors:
+                tensor.retain_grad()
+
+    def reverse_step(self, step: int, epoch: int) -> dict[int, torch.Tensor]:
+        """
+        Run the reverse pass of one step and return the gradients of the inputs taped for it, keyed by tensor id.
+
+        `step` is the global index of the step, and `epoch` the rollout it belongs to (see `genesis.grad.bridge`). The
+        autograd node of the step calls this once the gradients of the states read at that step and of every later step
+        are in. The reverse pass of the later steps whose node the loss does not reach only rewinds the rollout. The
+        returned dict is reused by the next call, so the caller consumes it right away.
+        """
+        if epoch != self._grad_epoch:
+            gs.raise_exception(
+                "Differentiating a rollout the scene was reset from since. Call backward before 'scene.reset()'."
+            )
+        if not self._is_backward_ready or self.cur_step_global < step:
+            gs.raise_exception("Multiple backward calls not allowed.")
+
+        while self.cur_step_global >= step:
+            if self.cur_step_global == step:
+                self._inputs_grad.clear()
+            self.collect_output_grads()
+            self._step_grad()
+
+        if self.cur_step_global == 0:
+            self._is_forward_ready = False
+            self._is_backward_ready = False
+        return self._inputs_grad
 
     def record_step_inputs(self, tgt: dict):
         """
@@ -413,7 +458,7 @@ class Simulator(RBC):
 
                 if self._requires_grad and not in_backward:
                     self._grad_token = StepNode.apply(
-                        self.scene,
+                        self,
                         self.cur_step_global,
                         self._grad_epoch,
                         self._grad_token,
@@ -603,9 +648,9 @@ class Simulator(RBC):
         return self._requires_grad
 
     @property
-    def grad_token(self):
-        """The token of the current step in the autograd graph of a differentiable rollout (see genesis.grad.bridge)."""
-        return self._grad_token
+    def is_forward_ready(self) -> bool:
+        """Whether the simulation may step forward, which a backward pass rewinding it to its start forbids until reset."""
+        return self._is_forward_ready
 
     @property
     def n_entities(self) -> int:

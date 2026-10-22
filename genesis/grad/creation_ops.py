@@ -6,7 +6,6 @@ import torch
 
 import genesis as gs
 
-from .bridge import ReadNode
 
 # Ops given the requested dtype and 'device=gs.device', so that they allocate there directly and random ones draw from
 # its generator at that precision. The other ops follow the device of their input.
@@ -57,7 +56,7 @@ def _to_gs_dtype(dtype):
 
 def torch_op_wrapper(torch_op):
     @wraps(torch_op)
-    def _wrapper(*args, dtype=None, requires_grad=False, scene=None, **kwargs):
+    def _wrapper(*args, dtype=None, requires_grad=False, **kwargs):
         if "device" in kwargs:
             gs.raise_exception("Device selection not supported. All genesis tensors are on GPU.")
 
@@ -77,7 +76,7 @@ def torch_op_wrapper(torch_op):
         else:
             torch_tensor = torch_op(*args, **kwargs)
 
-        return from_torch(torch_tensor, dtype, requires_grad, detach=True, scene=scene)
+        return from_torch(torch_tensor, dtype, requires_grad, detach=True)
 
     _wrapper.__doc__ = (
         f"This method is the genesis wrapper of `torch.{torch_op.__name__}`.\n\n------------------\n{_wrapper.__doc__}"
@@ -86,14 +85,12 @@ def torch_op_wrapper(torch_op):
     return _wrapper
 
 
-def from_torch(torch_tensor, dtype=None, requires_grad=False, detach=True, scene=None):
+def from_torch(torch_tensor, dtype=None, requires_grad=False, detach=True):
     """
     Copy a torch tensor to `gs.device`, at the dtype Genesis uses for its kind of scalar.
 
     By default, detach is True, meaning that this function returns a new leaf tensor which is not connected to
-    torch_tensor's computation graph. Passing `scene` makes a tensor that requires grad a state of that scene's
-    differentiable rollout, read at its current step (see `genesis.grad.bridge`). The simulator fills such a tensor, so
-    it requires `detach=True` and a scene created with `SimOptions(requires_grad=True)`.
+    torch_tensor's computation graph.
     """
     dtype = _to_gs_dtype(torch_tensor.dtype if dtype is None else dtype)
 
@@ -107,21 +104,6 @@ def from_torch(torch_tensor, dtype=None, requires_grad=False, detach=True, scene
 
     if detach:
         tensor = tensor.detach()
-
-    if requires_grad and scene is not None:
-        if not detach:
-            gs.raise_exception(
-                "A scene state is filled by the simulator, so it cannot stay connected to the graph of the tensor it "
-                "is created from. Pass 'detach=True', or leave 'scene' unset to keep the graph."
-            )
-        if scene.sim.grad_token is None:
-            gs.raise_exception(
-                "Only the states of a differentiable scene can track gradients. Create the scene with "
-                "'SimOptions(requires_grad=True)', or pass 'requires_grad=False'."
-            )
-        tensor = ReadNode.apply(scene.sim.grad_token, [tensor])
-        tensor.retain_grad()
-        return tensor
 
     if requires_grad:
         tensor = tensor.requires_grad_()

@@ -562,16 +562,13 @@ class KinematicEntity(Entity):
 
     @gs.assert_built
     def get_state(self):
-        state = RigidEntityState(self, self._sim.cur_step_global)
-
         solver_state = self._solver.get_state()
-        pos = solver_state.links_pos[:, self.base_link_idx]
-        quat = solver_state.links_quat[:, self.base_link_idx]
-
-        state._pos = pos
-        state._quat = quat
-
-        return state
+        return RigidEntityState(
+            self,
+            self._sim.cur_step_global,
+            solver_state.links_pos[:, self.base_link_idx],
+            solver_state.links_quat[:, self.base_link_idx],
+        )
 
     def _get_global_idx(self, idx_local, idx_local_max, idx_global_start=0, *, unsafe=False):
         if idx_local is None:
@@ -2126,16 +2123,13 @@ class RigidEntity(KinematicEntity):
 
     @gs.assert_built
     def get_state(self):
-        state = RigidEntityState(self, self._sim.cur_step_global)
-
         solver_state = self._solver.get_state()
-        pos = solver_state.links_pos[:, self.base_link_idx]
-        quat = solver_state.links_quat[:, self.base_link_idx]
-
-        state._pos = pos
-        state._quat = quat
-
-        return state
+        return RigidEntityState(
+            self,
+            self._sim.cur_step_global,
+            solver_state.links_pos[:, self.base_link_idx],
+            solver_state.links_quat[:, self.base_link_idx],
+        )
 
     # ------------------------------------------------------------------------------------
     # -------------------------------- vertices / AABB -----------------------------------
