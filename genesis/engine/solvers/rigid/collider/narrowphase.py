@@ -464,9 +464,24 @@ def func_add_polytope_vertex_contacts_sdf(
         # that opposes the reference indicates the vertex is closer to B's OPPOSITE surface across a thin feature,
         # i.e. A has partially tunneled through; using its raw grad would push A further through, so we fall back
         # to the reference direction.
-        grad_center = sdf.sdf_func_grad_world_local(
-            i_gb, center_a_world, gb_pos, gb_quat, dyn_info.geoms, rigid_info, collider_info.sdf, collider_static_config
-        )
+        # The pair-level normal and depth below only serve the kept verts, so a single lane skips them for a scan that
+        # kept none, where the lanes of a block run them at no gain. The buffer fills from its first slot, the weakest
+        # slot being the first empty one, so it holds a vert if that one does.
+        is_vert_kept = True
+        if qd.static(block_dim == 1):
+            is_vert_kept = top_iv[0] >= 0
+        grad_center = qd.Vector.zero(gs.qd_float, 3)
+        if is_vert_kept:
+            grad_center = sdf.sdf_func_grad_world_local(
+                i_gb,
+                center_a_world,
+                gb_pos,
+                gb_quat,
+                dyn_info.geoms,
+                rigid_info,
+                collider_info.sdf,
+                collider_static_config,
+            )
         normal_center = gu.qd_normalize(grad_center, EPS)
         # When two comparably-sized bodies meet "across" each other (the crossed-thin-rod regime: A's center sits within
         # one A-bounding-radius of B's surface, with both bodies of similar bounding-sphere size), the grid SDF gradient
@@ -477,7 +492,7 @@ def func_add_polytope_vertex_contacts_sdf(
         # the FINAL normal rather than letting per-vertex grad override it. The size-ratio gate keeps the existing
         # behavior for one-big-one-small pairs where the SDF grad at A's center is reliable and the closing-direction
         # line is wrong (sphere on a large floor mesh).
-        is_closing_regime = qd.abs(sd_center) < rbound_a and rbound_a_sq > 0.25 * rbound_b_sq
+        is_closing_regime = is_vert_kept and qd.abs(sd_center) < rbound_a and rbound_a_sq > 0.25 * rbound_b_sq
         approach_depth_pair = gs.qd_float(0.0)
         closing_normal = qd.Vector.zero(gs.qd_float, 3)
         # Set when A wraps around B so that B passes through A along the center-to-center axis. There the SDF gradient
