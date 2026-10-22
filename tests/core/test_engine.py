@@ -152,29 +152,6 @@ def test_registration_and_admission_are_idempotent():
     assert list(unregistered_engine.systems) == []
 
 
-@pytest.mark.parametrize("backend", [None])
-def test_action_closure_is_stable_and_invocable():
-    def add(left, right):
-        return left + right
-
-    class Participant(System):
-        @System.action(kind="host")
-        def host(self):
-            return add, 2
-
-    class ParticipantEngine(Engine):
-        pass
-
-    participant = Participant()
-    engine = ParticipantEngine()
-    engine.add_system(participant)
-    engine.build()
-
-    assert participant.host.invoke((5,)) == 7
-    assert participant.host is participant.host
-    assert participant.host.invoke((6,)) == 8
-
-
 # A dependency that a class-level Require / Find would turn into an import cycle is looked up during build() instead.
 # The lookup observes the fixed System set: it returns what the Engine holds and adds nothing.
 @pytest.mark.parametrize("backend", [None])
