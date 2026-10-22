@@ -1,3 +1,5 @@
+import torch
+
 import genesis as gs
 from genesis.repr_base import RBC
 
@@ -11,10 +13,10 @@ class ToolEntityState:
         self.entity = entity
         self.s_global = s_global
 
-        self.pos = gs.zeros((self.entity.sim._B, 3), dtype=gs.tc_float)
-        self.quat = gs.zeros((self.entity.sim._B, 4), dtype=gs.tc_float)
-        self.vel = gs.zeros((self.entity.sim._B, 3), dtype=gs.tc_float)
-        self.ang = gs.zeros((self.entity.sim._B, 3), dtype=gs.tc_float)
+        self.pos = torch.zeros((self.entity.sim._B, 3), dtype=gs.tc_float, device=gs.device)
+        self.quat = torch.zeros((self.entity.sim._B, 4), dtype=gs.tc_float, device=gs.device)
+        self.vel = torch.zeros((self.entity.sim._B, 3), dtype=gs.tc_float, device=gs.device)
+        self.ang = torch.zeros((self.entity.sim._B, 3), dtype=gs.tc_float, device=gs.device)
         self.entity.sim.track_state(self.pos, self.quat, self.vel, self.ang)
 
     # def __repr__(self):
@@ -35,12 +37,12 @@ class MPMEntityState(RBC):
         self._entity = entity
         self._s_global = s_global
         base_shape = (self.entity.sim._B, self._entity.n_particles)
-        self._pos = gs.zeros(base_shape + (3,), dtype=gs.tc_float)
-        self._vel = gs.zeros(base_shape + (3,), dtype=gs.tc_float)
-        self._C = gs.zeros(base_shape + (3, 3), dtype=gs.tc_float)
-        self._F = gs.zeros(base_shape + (3, 3), dtype=gs.tc_float)
-        self._Jp = gs.zeros(base_shape, dtype=gs.tc_float)
-        self._active = gs.zeros(base_shape, dtype=gs.tc_int)
+        self._pos = torch.zeros(base_shape + (3,), dtype=gs.tc_float, device=gs.device)
+        self._vel = torch.zeros(base_shape + (3,), dtype=gs.tc_float, device=gs.device)
+        self._C = torch.zeros(base_shape + (3, 3), dtype=gs.tc_float, device=gs.device)
+        self._F = torch.zeros(base_shape + (3, 3), dtype=gs.tc_float, device=gs.device)
+        self._Jp = torch.zeros(base_shape, dtype=gs.tc_float, device=gs.device)
+        self._active = torch.zeros(base_shape, dtype=gs.tc_int, device=gs.device)
         self.entity.sim.track_state(self._pos, self._vel, self._C, self._F, self._Jp)
 
     @property
@@ -85,8 +87,8 @@ class SPHEntityState(RBC):
         self._entity = entity
         self._s_global = s_global
         base_shape = (self.entity.sim._B, self._entity.n_particles)
-        self._pos = gs.zeros(base_shape + (3,), dtype=gs.tc_float)
-        self._vel = gs.zeros(base_shape + (3,), dtype=gs.tc_float)
+        self._pos = torch.zeros(base_shape + (3,), dtype=gs.tc_float, device=gs.device)
+        self._vel = torch.zeros(base_shape + (3,), dtype=gs.tc_float, device=gs.device)
 
     @property
     def entity(self):
@@ -115,9 +117,9 @@ class FEMEntityState:
         self._s_global = s_global
         base_shape = (self.entity.sim._B, self._entity.n_vertices, 3)
 
-        self._pos = gs.zeros(base_shape, dtype=gs.tc_float)
-        self._vel = gs.zeros(base_shape, dtype=gs.tc_float)
-        self._active = gs.zeros((self.entity.sim._B, self.entity.n_elements), dtype=gs.tc_int)
+        self._pos = torch.zeros(base_shape, dtype=gs.tc_float, device=gs.device)
+        self._vel = torch.zeros(base_shape, dtype=gs.tc_float, device=gs.device)
+        self._active = torch.zeros((self.entity.sim._B, self.entity.n_elements), dtype=gs.tc_int, device=gs.device)
 
     @property
     def entity(self):

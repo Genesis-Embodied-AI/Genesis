@@ -83,10 +83,10 @@ class KinematicSolverState:
         self._s_global = s_global
 
         _B = scene.sim.kinematic_solver._B
-        self.qpos = gs.zeros((_B, scene.sim.kinematic_solver.n_qs), dtype=gs.tc_float)
-        self.dofs_vel = gs.zeros((_B, scene.sim.kinematic_solver.n_dofs), dtype=gs.tc_float)
-        self.links_pos = gs.zeros((_B, scene.sim.kinematic_solver.n_links, 3), dtype=gs.tc_float)
-        self.links_quat = gs.zeros((_B, scene.sim.kinematic_solver.n_links, 4), dtype=gs.tc_float)
+        self.qpos = torch.zeros((_B, scene.sim.kinematic_solver.n_qs), dtype=gs.tc_float, device=gs.device)
+        self.dofs_vel = torch.zeros((_B, scene.sim.kinematic_solver.n_dofs), dtype=gs.tc_float, device=gs.device)
+        self.links_pos = torch.zeros((_B, scene.sim.kinematic_solver.n_links, 3), dtype=gs.tc_float, device=gs.device)
+        self.links_quat = torch.zeros((_B, scene.sim.kinematic_solver.n_links, 4), dtype=gs.tc_float, device=gs.device)
         scene.sim.track_state(self.qpos, self.dofs_vel, self.links_pos, self.links_quat)
 
     @property
@@ -105,12 +105,12 @@ class RigidSolverState:
         self._s_global = s_global
 
         _B = scene.sim.rigid_solver._B
-        self.qpos = gs.zeros((_B, scene.sim.rigid_solver.n_qs), dtype=gs.tc_float)
-        self.dofs_vel = gs.zeros((_B, scene.sim.rigid_solver.n_dofs), dtype=gs.tc_float)
-        self.dofs_acc = gs.zeros((_B, scene.sim.rigid_solver.n_dofs), dtype=gs.tc_float)
-        self.links_pos = gs.zeros((_B, scene.sim.rigid_solver.n_links, 3), dtype=gs.tc_float)
-        self.links_quat = gs.zeros((_B, scene.sim.rigid_solver.n_links, 4), dtype=gs.tc_float)
-        self.friction_ratio = gs.ones((_B, scene.sim.rigid_solver.n_geoms), dtype=gs.tc_float)
+        self.qpos = torch.zeros((_B, scene.sim.rigid_solver.n_qs), dtype=gs.tc_float, device=gs.device)
+        self.dofs_vel = torch.zeros((_B, scene.sim.rigid_solver.n_dofs), dtype=gs.tc_float, device=gs.device)
+        self.dofs_acc = torch.zeros((_B, scene.sim.rigid_solver.n_dofs), dtype=gs.tc_float, device=gs.device)
+        self.links_pos = torch.zeros((_B, scene.sim.rigid_solver.n_links, 3), dtype=gs.tc_float, device=gs.device)
+        self.links_quat = torch.zeros((_B, scene.sim.rigid_solver.n_links, 4), dtype=gs.tc_float, device=gs.device)
+        self.friction_ratio = torch.ones((_B, scene.sim.rigid_solver.n_geoms), dtype=gs.tc_float, device=gs.device)
         scene.sim.track_state(
             self.qpos, self.dofs_vel, self.dofs_acc, self.links_pos, self.links_quat, self.friction_ratio
         )
@@ -147,12 +147,20 @@ class MPMSolverState(RBC):
 
     def __init__(self, scene):
         self._scene = scene
-        self._pos = gs.zeros((scene.sim._B, scene.sim.mpm_solver.n_particles, 3), dtype=gs.tc_float)
-        self._vel = gs.zeros((scene.sim._B, scene.sim.mpm_solver.n_particles, 3), dtype=gs.tc_float)
-        self._C = gs.zeros((scene.sim._B, scene.sim.mpm_solver.n_particles, 3, 3), dtype=gs.tc_float)
-        self._F = gs.zeros((scene.sim._B, scene.sim.mpm_solver.n_particles, 3, 3), dtype=gs.tc_float)
-        self._Jp = gs.zeros((scene.sim._B, scene.sim.mpm_solver.n_particles), dtype=gs.tc_float)
-        self._active = gs.zeros((scene.sim._B, scene.sim.mpm_solver.n_particles), dtype=gs.tc_bool)
+        self._pos = torch.zeros(
+            (scene.sim._B, scene.sim.mpm_solver.n_particles, 3), dtype=gs.tc_float, device=gs.device
+        )
+        self._vel = torch.zeros(
+            (scene.sim._B, scene.sim.mpm_solver.n_particles, 3), dtype=gs.tc_float, device=gs.device
+        )
+        self._C = torch.zeros(
+            (scene.sim._B, scene.sim.mpm_solver.n_particles, 3, 3), dtype=gs.tc_float, device=gs.device
+        )
+        self._F = torch.zeros(
+            (scene.sim._B, scene.sim.mpm_solver.n_particles, 3, 3), dtype=gs.tc_float, device=gs.device
+        )
+        self._Jp = torch.zeros((scene.sim._B, scene.sim.mpm_solver.n_particles), dtype=gs.tc_float, device=gs.device)
+        self._active = torch.zeros((scene.sim._B, scene.sim.mpm_solver.n_particles), dtype=gs.tc_bool, device=gs.device)
         scene.sim.track_state(self._pos, self._vel, self._C, self._F, self._Jp)
 
     @property
@@ -191,9 +199,13 @@ class SPHSolverState:
 
     def __init__(self, scene):
         self._scene = scene
-        self._pos = gs.zeros((scene.sim._B, scene.sim.sph_solver.n_particles, 3), dtype=gs.tc_float)
-        self._vel = gs.zeros((scene.sim._B, scene.sim.sph_solver.n_particles, 3), dtype=gs.tc_float)
-        self._active = gs.zeros((scene.sim._B, scene.sim.sph_solver.n_particles), dtype=gs.tc_bool)
+        self._pos = torch.zeros(
+            (scene.sim._B, scene.sim.sph_solver.n_particles, 3), dtype=gs.tc_float, device=gs.device
+        )
+        self._vel = torch.zeros(
+            (scene.sim._B, scene.sim.sph_solver.n_particles, 3), dtype=gs.tc_float, device=gs.device
+        )
+        self._active = torch.zeros((scene.sim._B, scene.sim.sph_solver.n_particles), dtype=gs.tc_bool, device=gs.device)
         scene.sim.track_state(self._pos, self._vel)
 
     @property
@@ -220,9 +232,13 @@ class PBDSolverState:
 
     def __init__(self, scene):
         self._scene = scene
-        self._pos = gs.zeros((scene.sim._B, scene.sim.pbd_solver.n_particles, 3), dtype=gs.tc_float)
-        self._vel = gs.zeros((scene.sim._B, scene.sim.pbd_solver.n_particles, 3), dtype=gs.tc_float)
-        self._free = gs.zeros((scene.sim._B, scene.sim.pbd_solver.n_particles), dtype=gs.tc_bool)
+        self._pos = torch.zeros(
+            (scene.sim._B, scene.sim.pbd_solver.n_particles, 3), dtype=gs.tc_float, device=gs.device
+        )
+        self._vel = torch.zeros(
+            (scene.sim._B, scene.sim.pbd_solver.n_particles, 3), dtype=gs.tc_float, device=gs.device
+        )
+        self._free = torch.zeros((scene.sim._B, scene.sim.pbd_solver.n_particles), dtype=gs.tc_bool, device=gs.device)
         scene.sim.track_state(self._pos, self._vel)
 
     @property
@@ -245,9 +261,9 @@ class PBDSolverState:
 class FEMSolverState:
     def __init__(self, scene):
         self._scene = scene
-        self._pos = gs.zeros((scene.sim._B, scene.sim.fem_solver.n_vertices, 3), dtype=gs.tc_float)
-        self._vel = gs.zeros((scene.sim._B, scene.sim.fem_solver.n_vertices, 3), dtype=gs.tc_float)
-        self._active = gs.zeros((scene.sim._B, scene.sim.fem_solver.n_elements), dtype=gs.tc_bool)
+        self._pos = torch.zeros((scene.sim._B, scene.sim.fem_solver.n_vertices, 3), dtype=gs.tc_float, device=gs.device)
+        self._vel = torch.zeros((scene.sim._B, scene.sim.fem_solver.n_vertices, 3), dtype=gs.tc_float, device=gs.device)
+        self._active = torch.zeros((scene.sim._B, scene.sim.fem_solver.n_elements), dtype=gs.tc_bool, device=gs.device)
         scene.sim.track_state(self._pos, self._vel)
 
     @property

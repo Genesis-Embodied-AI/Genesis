@@ -1073,7 +1073,7 @@ class FEMEntity(Entity):
         el2v : torch.Tensor
             Tensor of shape (n_elements, 4) mapping each element to its local vertex indices.
         """
-        el2v = gs.zeros((self.n_elements, 4), dtype=int)
+        el2v = torch.zeros((self.n_elements, 4), dtype=gs.tc_int, device=gs.device)
         self._solver._kernel_get_el2v(
             element_el_start=self._el_start, element_v_start=self._v_start, el2v=el2v, n_elements=self.n_elements
         )
