@@ -142,6 +142,20 @@ def func_lane_slot_min(k: int, n_slots: int, n_slot_rows: qd.template(), block_d
 
 
 @qd.func
+def func_lane_mask_pop_first(masks, n_slots: int, block_dim: qd.template()):
+    """Lowest slot a mask of lane-spread slots holds, n_slots if none, and the mask without it.
+
+    Bit i of row r of the mask stands for slot r * block_dim + i, see func_lane_local_get for the layout.
+    """
+    k = n_slots
+    for i_k in qd.static(range(masks.n)):
+        if k == n_slots and masks[i_k] != 0:
+            k = i_k * block_dim + qd.cast(qd.math.ffs(masks[i_k]), gs.qd_int) - 1
+            masks[i_k] = masks[i_k] & (masks[i_k] - 1)
+    return k, masks
+
+
+@qd.func
 def func_is_lane_slot_seen(values, n_values: int, value: int, tid: int, block_dim: qd.template()):
     """Whether a value is among the first n_values slots of a buffer spread over the lanes of a block.
 
@@ -361,9 +375,20 @@ def func_add_polytope_vertex_contacts_sdf(
             if qd.static(block_dim > 1):
                 n_scan_verts = su.qd_block_sum(n_scan_verts)
             n_groups = qd.min(n_columns, 1)
-        # The column and the vert within it that the next batch of the full scan starts from
+        # Most columns are empty, so on GPU the batches jump from one non-empty column to the next through a ballot of
+        # the lanes per row of columns, where CPU steps over every column.
+        lanes_column_left = qd.Vector.zero(qd.u32, N_COLUMN_SLOTS)
+        if qd.static(block_dim > 1):
+            for i_k in qd.static(range(N_COLUMN_SLOTS)):
+                lanes_column_left[i_k] = su.qd_block_ballot(
+                    i_k * block_dim + tid < n_columns
+                    and func_lane_local_get(columns_vert_end, i_k, block_dim)
+                    > func_lane_local_get(columns_vert_start, i_k, block_dim)
+                )
+        # The next column of the full scan, and the start and count of the verts left in the column being walked
         i_column_next = 0
-        i_column_offset = 0
+        column_vert_start = 0
+        n_column_verts_left = 0
         for i_group in range(n_groups):
             i_v_min = -1
             i_c_start = 0
@@ -443,18 +468,27 @@ def func_add_polytope_vertex_contacts_sdf(
                     i_c = -1
                     n_lanes_filled = 0
                     for i_fill_ in range(n_columns):
-                        if n_lanes_filled == block_dim or i_column_next == n_columns:
+                        if n_lanes_filled == block_dim:
                             break
-                        column_start = func_lane_slot_read(columns_vert_start, i_column_next, block_dim)
-                        column_size = func_lane_slot_read(columns_vert_end, i_column_next, block_dim) - column_start
-                        n_taken = qd.min(column_size - i_column_offset, block_dim - n_lanes_filled)
+                        if n_column_verts_left == 0:
+                            i_column = i_column_next
+                            if qd.static(block_dim > 1):
+                                i_column, lanes_column_left = func_lane_mask_pop_first(
+                                    lanes_column_left, n_columns, block_dim
+                                )
+                            if i_column == n_columns:
+                                break
+                            i_column_next = i_column + 1
+                            column_vert_start = func_lane_slot_read(columns_vert_start, i_column, block_dim)
+                            n_column_verts_left = (
+                                func_lane_slot_read(columns_vert_end, i_column, block_dim) - column_vert_start
+                            )
+                        n_taken = qd.min(n_column_verts_left, block_dim - n_lanes_filled)
                         if tid >= n_lanes_filled and tid < n_lanes_filled + n_taken:
-                            i_c = column_start + i_column_offset + tid - n_lanes_filled
+                            i_c = column_vert_start + tid - n_lanes_filled
                         n_lanes_filled = n_lanes_filled + n_taken
-                        i_column_offset = i_column_offset + n_taken
-                        if i_column_offset == column_size:
-                            i_column_next = i_column_next + 1
-                            i_column_offset = 0
+                        column_vert_start = column_vert_start + n_taken
+                        n_column_verts_left = n_column_verts_left - n_taken
                     is_vert = i_c >= 0
                 i_v = i_v_min
                 vertex_pos = qd.Vector.zero(gs.qd_float, 3)
@@ -752,11 +786,7 @@ def func_add_polytope_vertex_contacts_sdf(
         for i_emit in range(n_emit_slots):
             k = i_emit
             if qd.static(block_dim > 1):
-                k = n_max
-                for i_k in qd.static(range(N_SLOTS)):
-                    if k == n_max and lanes_occupied[i_k] != 0:
-                        k = i_k * block_dim + qd.cast(qd.math.ffs(lanes_occupied[i_k]), gs.qd_int) - 1
-                        lanes_occupied[i_k] = lanes_occupied[i_k] & (lanes_occupied[i_k] - 1)
+                k, lanes_occupied = func_lane_mask_pop_first(lanes_occupied, n_max, block_dim)
             i_v = func_lane_slot_read(top_iv, k, block_dim)
             if i_v >= 0:
                 pen_emit = func_lane_slot_read(emit_pen, k, block_dim)
