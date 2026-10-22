@@ -721,7 +721,7 @@ class FEMEntity(Entity):
         else:
             for key in self._tgt_keys:
                 self._tgt_buffer[key].append(self._tgt[key])
-            self._sim.record_step_inputs(self._tgt)
+            self._sim.record_step_inputs(*self._tgt.values())
 
         # set_pos followed by set_vel, because set_pos resets velocity.
         # Detached, see ParticleEntity.process_input.

@@ -472,7 +472,9 @@ class KinematicEntity(Entity):
             self._tgt = self._tgt_buffer[index].copy()
         else:
             self._tgt_buffer.append(self._tgt.copy())
-            self._sim.record_step_inputs(self._tgt)
+            self._sim.record_step_inputs(
+                *(value for data_kwargs in self._tgt.values() for value in data_kwargs.values())
+            )
 
         update_tgt_while_set = self._update_tgt_while_set
         # Apply targets in the order of insertion

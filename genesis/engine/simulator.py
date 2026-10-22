@@ -373,18 +373,18 @@ class Simulator(RBC):
             self._is_backward_ready = False
         return self._inputs_grad
 
-    def record_step_inputs(self, tgt: dict):
+    def record_step_inputs(self, *inputs):
         """
-        Register the gradient-tracking tensors of the inputs an entity applies at the coming step.
+        Register the gradient-tracking tensors among the inputs an entity applies at the coming step.
 
+        `inputs` are the values given to the setters, of any type, since only a tensor that requires grad is registered.
         Each tensor is registered once, however many setters and entities it is given to, since the autograd node of
         the step returns its gradient summed over all of them. Only a differentiable scene registers them.
         """
         if self._requires_grad:
-            for value in tgt.values():
-                for tensor in value.values() if isinstance(value, dict) else (value,):
-                    if isinstance(tensor, torch.Tensor) and tensor.requires_grad:
-                        self._step_inputs[id(tensor)] = tensor
+            for value in inputs:
+                if isinstance(value, torch.Tensor) and value.requires_grad:
+                    self._step_inputs[id(value)] = value
 
     def add_input_grad(self, tensor: torch.Tensor, qd_kernel, *args):
         """

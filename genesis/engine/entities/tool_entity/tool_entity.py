@@ -419,7 +419,7 @@ class ToolEntity(Entity):
             self._tgt_buffer["quat"].append(self._tgt["quat"])
             self._tgt_buffer["vel"].append(self._tgt["vel"])
             self._tgt_buffer["ang"].append(self._tgt["ang"])
-            self._sim.record_step_inputs(self._tgt)
+            self._sim.record_step_inputs(*self._tgt.values())
 
         # Detached, see ParticleEntity.process_input.
         if self._tgt["pos"] is not None:

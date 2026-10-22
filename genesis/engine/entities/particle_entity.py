@@ -427,7 +427,7 @@ class ParticleEntity(Entity):
         else:
             for key in self._tgt_keys:
                 self._tgt_buffer[key].append(self._tgt[key])
-            self._sim.record_step_inputs(self._tgt)
+            self._sim.record_step_inputs(*self._tgt.values())
 
         if any(self._tgt[key] is not None for key in self._tgt_keys):
             particles_idx_local = self._sanitize_particles_idx_local(envs_idx=self._scene._envs_idx)
