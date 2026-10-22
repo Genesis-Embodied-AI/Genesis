@@ -176,6 +176,9 @@ def test_closed_loop_policy_grad_matches_fd(grad_revolute, precision, show_viewe
         scene.reset()
         effort = 0.0
         for i_step in range(HORIZON):
+            # A query without gradient recording, as for logging, leaves the next query of the step differentiable
+            with torch.no_grad():
+                scene.rigid_solver.get_state()
             state = scene.rigid_solver.get_state()
             force = amplitude * torch.sin(frequency * i_step * DT) + kp * (target - state.qpos[:, :1])
             force = force - kd * state.dofs_vel[:, :1]

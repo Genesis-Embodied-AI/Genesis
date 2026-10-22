@@ -150,23 +150,23 @@ class MPMEntity(ParticleEntity):
             The state object containing gradients for physical quantities.
         """
         if state.pos.grad is not None:
-            assert state.pos.is_contiguous()
+            assert state.pos.grad.is_contiguous()
             self._kernel_add_frame_particles_pos_grad(self._sim.cur_substep_local, state.pos.grad)
 
         if state.vel.grad is not None:
-            assert state.vel.is_contiguous()
+            assert state.vel.grad.is_contiguous()
             self._kernel_add_frame_particles_vel_grad(self._sim.cur_substep_local, state.vel.grad)
 
         if state.C.grad is not None:
-            assert state.C.is_contiguous()
+            assert state.C.grad.is_contiguous()
             self._kernel_add_frame_particles_C_grad(self._sim.cur_substep_local, state.C.grad)
 
         if state.F.grad is not None:
-            assert state.F.is_contiguous()
+            assert state.F.grad.is_contiguous()
             self._kernel_add_frame_particles_F_grad(self._sim.cur_substep_local, state.F.grad)
 
         if state.Jp.grad is not None:
-            assert state.Jp.is_contiguous()
+            assert state.Jp.grad.is_contiguous()
             self._kernel_add_frame_particles_Jp_grad(self._sim.cur_substep_local, state.Jp.grad)
 
     @qd.kernel

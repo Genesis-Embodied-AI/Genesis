@@ -1046,11 +1046,11 @@ class FEMSolver(GravityMixin, TimeBasedMixin, Solver):
     def add_grad_from_state(self, state):
         if self.is_active:
             if state.pos.grad is not None:
-                assert state.pos.is_contiguous()
+                assert state.pos.grad.is_contiguous()
                 self._kernel_add_grad_from_pos(self._sim.cur_substep_local, state.pos.grad)
 
             if state.vel.grad is not None:
-                assert state.vel.is_contiguous()
+                assert state.vel.grad.is_contiguous()
                 self._kernel_add_grad_from_vel(self._sim.cur_substep_local, state.vel.grad)
 
     def save_ckpt(self, ckpt_name):

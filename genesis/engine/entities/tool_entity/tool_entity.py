@@ -464,19 +464,19 @@ class ToolEntity(Entity):
 
     def add_grad_from_state(self, state):
         if state.pos.grad is not None:
-            assert state.pos.is_contiguous()
+            assert state.pos.grad.is_contiguous()
             self.set_frame_add_grad_pos(self._sim.cur_substep_local, state.pos.grad)
 
         if state.quat.grad is not None:
-            assert state.quat.is_contiguous()
+            assert state.quat.grad.is_contiguous()
             self.set_frame_add_grad_quat(self._sim.cur_substep_local, state.quat.grad)
 
         if state.vel.grad is not None:
-            assert state.vel.is_contiguous()
+            assert state.vel.grad.is_contiguous()
             self.set_frame_add_grad_vel(self._sim.cur_substep_local, state.vel.grad)
 
         if state.ang.grad is not None:
-            assert state.ang.is_contiguous()
+            assert state.ang.grad.is_contiguous()
             self.set_frame_add_grad_ang(self._sim.cur_substep_local, state.ang.grad)
 
     # ------------------------------------------------------------------------------------

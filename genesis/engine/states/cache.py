@@ -1,3 +1,5 @@
+import torch
+
 from genesis.utils.repr import brief
 
 
@@ -23,7 +25,9 @@ class QueriedStates:
 
     Registering a state makes the tensors it declares in 'grad_tensors' differentiable (see 'Simulator.track_state'),
     and 'collect_output_grads' later hands their gradients to the solver or entity that registered it. A scene that is
-    not differentiable keeps nothing, since nothing will read the gradients.
+    not differentiable keeps nothing, since nothing will read the gradients, and neither does a query made while torch
+    records no gradient ('torch.no_grad', 'torch.inference_mode'): such a state is not differentiable, so the solvers
+    that return the state registered at the current step must never hand it to a later query.
     """
 
     def __init__(self, sim):
@@ -31,7 +35,7 @@ class QueriedStates:
         self.states = dict()
 
     def append(self, state):
-        if not self._sim.requires_grad:
+        if not (self._sim.requires_grad and torch.is_grad_enabled()):
             return
         self._sim.track_state(*state.grad_tensors)
         self.states.setdefault(self._sim.cur_step_global, StateList()).append(state)
