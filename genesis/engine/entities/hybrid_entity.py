@@ -2,6 +2,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import numpy as np
+import torch
 
 import trimesh
 
@@ -372,7 +373,7 @@ class HybridEntity(Entity):
         # can only be called here (at sim build)
         if not self.material.use_default_coupling and self._muscle_group_cache is not None:
             self._part_soft.set_muscle(
-                muscle_group=gs.tensor(self._muscle_group_cache)
+                muscle_group=torch.tensor(self._muscle_group_cache, dtype=gs.tc_int, device=gs.device)
                 # no muscle direction as the soft body is actuated by rigid parts
             )
 

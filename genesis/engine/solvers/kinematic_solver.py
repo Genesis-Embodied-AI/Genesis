@@ -883,10 +883,10 @@ class KinematicSolver(Solver):
 
     def add_grad_from_state(self, state):
         if self.is_active:
-            qpos_grad = gs.zeros_like(state.qpos)
-            dofs_vel_grad = gs.zeros_like(state.dofs_vel)
-            links_pos_grad = gs.zeros_like(state.links_pos)
-            links_quat_grad = gs.zeros_like(state.links_quat)
+            qpos_grad = torch.zeros_like(state.qpos)
+            dofs_vel_grad = torch.zeros_like(state.dofs_vel)
+            links_pos_grad = torch.zeros_like(state.links_pos)
+            links_quat_grad = torch.zeros_like(state.links_quat)
 
             if state.qpos.grad is not None:
                 qpos_grad = state.qpos.grad

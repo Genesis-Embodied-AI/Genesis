@@ -516,7 +516,6 @@ from .options import surfaces
 from .options import textures
 
 from .datatypes import List
-from .grad.creation_ops import *
 
 from .engine import states, materials, force_fields
 from .engine.mesh import Mesh

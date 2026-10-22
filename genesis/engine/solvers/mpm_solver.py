@@ -14,7 +14,7 @@ from genesis.engine.entities import MPMEntity
 from genesis.engine.materials import MPM
 from genesis.engine.states.solvers import MPMSolverState
 from genesis.options.solvers import MPMOptions
-from genesis.utils.misc import DeprecationError, assert_contiguous, qd_to_torch
+from genesis.utils.misc import DeprecationError, qd_to_torch
 
 from .base_solver import GravityMixin, Solver, TimeBasedMixin
 
@@ -712,23 +712,23 @@ class MPMSolver(GravityMixin, TimeBasedMixin, Solver):
     def add_grad_from_state(self, state):
         if self.is_active:
             if state.pos.grad is not None:
-                assert_contiguous(state.pos)
+                assert state.pos.is_contiguous()
                 self.add_grad_from_pos(self._sim.cur_substep_local, state.pos.grad)
 
             if state.vel.grad is not None:
-                assert_contiguous(state.vel)
+                assert state.vel.is_contiguous()
                 self.add_grad_from_vel(self._sim.cur_substep_local, state.vel.grad)
 
             if state.C.grad is not None:
-                assert_contiguous(state.C)
+                assert state.C.is_contiguous()
                 self.add_grad_from_C(self._sim.cur_substep_local, state.C.grad)
 
             if state.F.grad is not None:
-                assert_contiguous(state.F)
+                assert state.F.is_contiguous()
                 self.add_grad_from_F(self._sim.cur_substep_local, state.F.grad)
 
             if state.Jp.grad is not None:
-                assert_contiguous(state.Jp)
+                assert state.Jp.is_contiguous()
                 self.add_grad_from_Jp(self._sim.cur_substep_local, state.Jp.grad)
 
     @qd.kernel

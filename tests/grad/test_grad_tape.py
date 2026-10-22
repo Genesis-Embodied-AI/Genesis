@@ -39,7 +39,7 @@ def test_horizon_truncation_matches_independent_scenes(model_name, request, show
     v1 = np.random.default_rng(seed=101).standard_normal((B, robot_a.n_dofs))
     v2 = np.random.default_rng(seed=202).standard_normal((B, robot_a.n_dofs))
     scene_a.reset()
-    v1_a = gs.tensor(v1, dtype=gs.tc_float, requires_grad=True)
+    v1_a = torch.tensor(v1, dtype=gs.tc_float, device=gs.device, requires_grad=True)
     loss_h1_a = run_segment(scene_a, robot_a, v1_a)
     qpos_mid_a = read_qpos(scene_a)
     time_mid_a = scene_a.get_time().clone()
@@ -50,7 +50,7 @@ def test_horizon_truncation_matches_independent_scenes(model_name, request, show
     assert scene_a._sim._cur_substep_global == 0
     grad1_a = tensor_to_array(v1_a.grad).copy()
 
-    v2_a = gs.tensor(v2, dtype=gs.tc_float, requires_grad=True)
+    v2_a = torch.tensor(v2, dtype=gs.tc_float, device=gs.device, requires_grad=True)
     loss_h2_a = run_segment(scene_a, robot_a, v2_a)
     qpos_end_a = read_qpos(scene_a)
     scene_a.backward(loss_h2_a)
@@ -59,7 +59,7 @@ def test_horizon_truncation_matches_independent_scenes(model_name, request, show
     # Scene B: horizon 1 only; its backward returns the terminal snapshot Scene C resumes from.
     scene_b, robot_b = build()
     scene_b.reset()
-    v1_b = gs.tensor(v1, dtype=gs.tc_float, requires_grad=True)
+    v1_b = torch.tensor(v1, dtype=gs.tc_float, device=gs.device, requires_grad=True)
     loss_h1_b = run_segment(scene_b, robot_b, v1_b)
     qpos_mid_b = read_qpos(scene_b)
     snapshot_b = scene_b.backward(loss_h1_b)
@@ -72,7 +72,7 @@ def test_horizon_truncation_matches_independent_scenes(model_name, request, show
     # Scene C: fresh scene resumed from B's mid-trajectory snapshot.
     scene_c, robot_c = build()
     scene_c.reset(snapshot_b)
-    v2_c = gs.tensor(v2, dtype=gs.tc_float, requires_grad=True)
+    v2_c = torch.tensor(v2, dtype=gs.tc_float, device=gs.device, requires_grad=True)
     loss_h2_c = run_segment(scene_c, robot_c, v2_c)
     qpos_end_c = read_qpos(scene_c)
     scene_c.backward(loss_h2_c)
@@ -106,7 +106,7 @@ def test_sim_vs_solver_state_grad_parity(show_viewer):
     )
     scene.build()
 
-    ctrl = gs.tensor(np.random.randn(robot.n_dofs), dtype=gs.tc_float, requires_grad=True)
+    ctrl = torch.tensor(np.random.randn(robot.n_dofs), dtype=gs.tc_float, device=gs.device, requires_grad=True)
 
     grads = []
     for is_sim_state_source in (False, True):
@@ -131,11 +131,9 @@ def test_sim_vs_solver_state_grad_parity(show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.precision("64")
-@pytest.mark.parametrize("closed_loop", [False, True])
-def test_torch_policy_grad_matches_fd(closed_loop, grad_revolute, show_viewer):
-    # The control forces come from plain torch parameters, are given to both arms and are penalized in the loss, so
-    # their graph is shared by the loss and the rollout. Finite differences need 64-bit precision.
+def test_closed_loop_policy_grad_matches_fd(grad_revolute, precision, show_viewer):
+    # The control forces of a torch policy read the state queried before each step, are given to both arms and are
+    # penalized in the loss, so their graph is shared by the loss and the rollout.
     HORIZON, DT = 50, 0.01
 
     scenes, arms = [], []
@@ -172,18 +170,15 @@ def test_torch_policy_grad_matches_fd(closed_loop, grad_revolute, show_viewer):
 
     target = torch.tensor([[0.4], [-0.3]], dtype=gs.tc_float, device=gs.device)
     params = np.array([0.6, 3.0, 8.0, 0.5])
-    # Open loop, the feedback gains are unused
-    n_params = len(params) if closed_loop else 2
 
     def rollout(scene, arms, params):
         amplitude, frequency, kp, kd = torch.as_tensor(params, dtype=gs.tc_float, device=gs.device)
         scene.reset()
         effort = 0.0
         for i_step in range(HORIZON):
-            force = (amplitude * torch.sin(frequency * i_step * DT)).expand(scene.n_envs, 1)
-            if closed_loop:
-                state = scene.rigid_solver.get_state()
-                force = force + kp * (target - state.qpos[:, :1]) - kd * state.dofs_vel[:, :1]
+            state = scene.rigid_solver.get_state()
+            force = amplitude * torch.sin(frequency * i_step * DT) + kp * (target - state.qpos[:, :1])
+            force = force - kd * state.dofs_vel[:, :1]
             for arm in arms:
                 arm.control_dofs_force(force)
             effort = effort + (force**2).sum()
@@ -195,17 +190,19 @@ def test_torch_policy_grad_matches_fd(closed_loop, grad_revolute, show_viewer):
     (grad_functional,) = torch.autograd.grad(rollout(scene_ana, arms_ana, params_ana), params_ana)
     assert_allclose(grad_functional, params_ana.grad, tol=gs.EPS)
 
-    eps = 1e-6
+    # fp32 needs a large step to clear the state-noise floor. fp64 needs a small step to bound truncation error.
+    eps = 3e-5 if precision == "64" else 3e-2
     fd_grad = np.zeros_like(params)
-    for i in range(n_params):
+    for i in range(len(params)):
         losses = []
         for sign in (+1, -1):
             perturbed = params.copy()
             perturbed[i] += sign * eps
             losses.append(float(rollout(scene_fd, arms_fd, perturbed)))
         fd_grad[i] = (losses[0] - losses[1]) / (2.0 * eps)
-    assert (np.abs(fd_grad[:n_params]) > 1e-5).all()
-    assert_allclose(params_ana.grad, fd_grad, rtol=1e-6, atol=1e-9)
+    assert (np.abs(fd_grad) > 1e-3).all()
+    tol = 2e-10 if precision == "64" else 1e-4
+    assert_allclose(params_ana.grad, fd_grad, rtol=tol, atol=tol)
 
     # A differentiable scene is freed once the user drops it, whatever rollout it recorded
     scene_ref = weakref.ref(scene_ana)

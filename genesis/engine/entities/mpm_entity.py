@@ -6,7 +6,7 @@ import quadrants as qd
 
 import genesis as gs
 from genesis.engine.states.entities import MPMEntityState
-from genesis.utils.misc import assert_contiguous, to_gs_tensor
+from genesis.utils.misc import to_gs_tensor
 
 from .particle_entity import ParticleEntity, assert_active
 
@@ -150,23 +150,23 @@ class MPMEntity(ParticleEntity):
             The state object containing gradients for physical quantities.
         """
         if state.pos.grad is not None:
-            assert_contiguous(state.pos)
+            assert state.pos.is_contiguous()
             self._kernel_add_frame_particles_pos_grad(self._sim.cur_substep_local, state.pos.grad)
 
         if state.vel.grad is not None:
-            assert_contiguous(state.vel)
+            assert state.vel.is_contiguous()
             self._kernel_add_frame_particles_vel_grad(self._sim.cur_substep_local, state.vel.grad)
 
         if state.C.grad is not None:
-            assert_contiguous(state.C)
+            assert state.C.is_contiguous()
             self._kernel_add_frame_particles_C_grad(self._sim.cur_substep_local, state.C.grad)
 
         if state.F.grad is not None:
-            assert_contiguous(state.F)
+            assert state.F.is_contiguous()
             self._kernel_add_frame_particles_F_grad(self._sim.cur_substep_local, state.F.grad)
 
         if state.Jp.grad is not None:
-            assert_contiguous(state.Jp)
+            assert state.Jp.is_contiguous()
             self._kernel_add_frame_particles_Jp_grad(self._sim.cur_substep_local, state.Jp.grad)
 
     @qd.kernel
@@ -257,7 +257,7 @@ class MPMEntity(ParticleEntity):
 
     def process_input(self, in_backward=False):
         if isinstance(self.material, gs.materials.MPM.Muscle) and self._tgt["actu"] is not None:
-            assert_contiguous(self._tgt["actu"])
+            assert self._tgt["actu"].is_contiguous()
             particles_idx_local = self._sanitize_particles_idx_local(envs_idx=self._scene._envs_idx)
             # Detached, see ParticleEntity.process_input.
             self.set_particles_actu(self._tgt["actu"].detach(), particles_idx_local)

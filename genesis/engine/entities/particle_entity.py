@@ -13,7 +13,7 @@ import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
 from genesis.engine.states.cache import QueriedStates
-from genesis.utils.misc import assert_contiguous, broadcast_tensor, to_gs_tensor
+from genesis.utils.misc import broadcast_tensor, to_gs_tensor
 
 from .base_entity import Entity
 
@@ -339,7 +339,7 @@ class ParticleEntity(Entity):
             origin = pos
 
         self._particles = np.asarray(particles, dtype=gs.np_float, order="C")
-        self._init_particles_offset = gs.tensor(self._particles) - gs.tensor(origin)
+        self._init_particles_offset = torch.tensor(self._particles - origin, dtype=gs.tc_float, device=gs.device)
         self._n_particles = len(self._particles)
 
         gs.logger.info(f"Sampled ~<{self._n_particles:,}>~ particles.")
@@ -437,15 +437,15 @@ class ParticleEntity(Entity):
         # reaches each input through `process_input_grad`, and a gradient-tracking kernel argument makes Quadrants
         # allocate a `.grad` buffer for it.
         if self._tgt["pos"] is not None:
-            assert_contiguous(self._tgt["pos"])
+            assert self._tgt["pos"].is_contiguous()
             self.set_particles_pos(self._tgt["pos"].detach(), particles_idx_local)
 
         if self._tgt["vel"] is not None:
-            assert_contiguous(self._tgt["vel"])
+            assert self._tgt["vel"].is_contiguous()
             self.set_particles_vel(self._tgt["vel"].detach(), particles_idx_local)
 
         if self._tgt["act"] is not None:
-            assert_contiguous(self._tgt["act"])
+            assert self._tgt["act"].is_contiguous()
             act_values = torch.tensor((gs.ACTIVE, gs.INACTIVE), dtype=gs.tc_int, device=gs.device)
             assert torch.isin(self._tgt["act"], act_values).all()
             self.set_particles_active(self._tgt["act"], particles_idx_local)

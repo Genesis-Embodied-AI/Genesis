@@ -18,7 +18,7 @@ from genesis.engine.entities.rigid_entity import RigidLink
 from genesis.engine.states.cache import QueriedStates
 from genesis.engine.states.entities import FEMEntityState
 from genesis.repr_base import RBC
-from genesis.utils.misc import assert_contiguous, broadcast_tensor, tensor_to_array, to_gs_tensor
+from genesis.utils.misc import broadcast_tensor, tensor_to_array, to_gs_tensor
 
 from .base_entity import Entity
 
@@ -485,8 +485,10 @@ class FEMEntity(Entity):
         if not init_positions.shape[0] > 0:
             gs.raise_exception("Entity has zero vertices.")
 
-        self.init_positions = gs.tensor(init_positions)
-        self.init_positions_COM_offset = self.init_positions - gs.tensor(verts_COM + offset_shift)
+        self.init_positions = torch.tensor(init_positions, dtype=gs.tc_float, device=gs.device)
+        self.init_positions_COM_offset = torch.tensor(
+            init_positions - (verts_COM + offset_shift), dtype=gs.tc_float, device=gs.device
+        )
 
         self.elems = elems
 
@@ -726,11 +728,11 @@ class FEMEntity(Entity):
         # set_pos followed by set_vel, because set_pos resets velocity.
         # Detached, see ParticleEntity.process_input.
         if self._tgt["pos"] is not None:
-            assert_contiguous(self._tgt["pos"])
+            assert self._tgt["pos"].is_contiguous()
             self.set_pos(self._sim.cur_substep_local, self._tgt["pos"].detach())
 
         if self._tgt["vel"] is not None:
-            assert_contiguous(self._tgt["vel"])
+            assert self._tgt["vel"].is_contiguous()
             self.set_vel(self._sim.cur_substep_local, self._tgt["vel"].detach())
 
         if self._tgt["act"] is not None:
@@ -738,7 +740,7 @@ class FEMEntity(Entity):
             self.set_active(self._sim.cur_substep_local, self._tgt["act"])
 
         if self._tgt["actu"] is not None:
-            assert_contiguous(self._tgt["actu"])
+            assert self._tgt["actu"].is_contiguous()
             self.set_actu(self._sim.cur_substep_local, self._tgt["actu"].detach())
 
         for key in self._tgt_keys:

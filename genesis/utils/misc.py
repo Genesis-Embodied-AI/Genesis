@@ -395,21 +395,16 @@ def harmonic_mean(a, b):
     return 2 * (a * b) / (a + b)
 
 
-def assert_contiguous(tensor: torch.Tensor):
-    if not tensor.is_contiguous():
-        gs.raise_exception("Tensor not contiguous.")
-
-
 def to_gs_tensor(x, dtype: torch.dtype | None = None):
     if isinstance(x, torch.Tensor):
-        tensor = x
-    else:
-        x = np.asarray(x)
-        # See broadcast_tensor for arrays with negative strides
-        if any(stride < 0 for stride in x.strides):
-            x = x.copy()
-        tensor = gs.from_numpy(x)
-    return tensor.to(dtype=dtype, device=gs.device)
+        return x.to(dtype=dtype, device=gs.device)
+    x = np.asarray(x)
+    # See broadcast_tensor for arrays with negative strides
+    if any(stride < 0 for stride in x.strides):
+        x = x.copy()
+    if dtype is None and x.dtype != np.bool_:
+        dtype = gs.tc_float if np.issubdtype(x.dtype, np.floating) else gs.tc_int
+    return torch.tensor(x, dtype=dtype, device=gs.device)
 
 
 def tensor_to_cpu(x):

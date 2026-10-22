@@ -352,7 +352,7 @@ def test_slerp(batch_shape, tol):
         lerp_from_one_true[i] = slerp([INTERP_RATIO]).as_quat(scalar_first=True)
 
     ratio = np.full(batch_shape, INTERP_RATIO)
-    for convert in (lambda x: x, lambda x: gs.tensor(x, dtype=gs.tc_float)):
+    for convert in (lambda x: x, lambda x: torch.tensor(x, dtype=gs.tc_float, device=gs.device)):
         q0_batch, q1_batch = convert(q0.reshape((*batch_shape, 4))), convert(q1.reshape((*batch_shape, 4)))
         lerp = gu.slerp(q0_batch, q1_batch, convert(ratio))
         assert_allclose(lerp_true.reshape((*batch_shape, 4)), lerp, tol=tol)

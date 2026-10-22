@@ -13,7 +13,7 @@ from genesis.utils.geom import (
     qd_transform_quat_by_quat,
     transform_pos_quat_by_trans_quat,
 )
-from genesis.utils.misc import assert_contiguous, to_gs_tensor
+from genesis.utils.misc import to_gs_tensor
 
 from ..base_entity import Entity
 from .mesh import Mesh
@@ -423,19 +423,19 @@ class ToolEntity(Entity):
 
         # Detached, see ParticleEntity.process_input.
         if self._tgt["pos"] is not None:
-            assert_contiguous(self._tgt["pos"])
+            assert self._tgt["pos"].is_contiguous()
             self.set_pos(self._sim.cur_step_local, self._tgt["pos"].detach())
 
         if self._tgt["quat"] is not None:
-            assert_contiguous(self._tgt["quat"])
+            assert self._tgt["quat"].is_contiguous()
             self.set_quat(self._sim.cur_step_local, self._tgt["quat"].detach())
 
         if self._tgt["vel"] is not None:
-            assert_contiguous(self._tgt["vel"])
+            assert self._tgt["vel"].is_contiguous()
             self.set_vel(self._sim.cur_step_local, self._tgt["vel"].detach())
 
         if self._tgt["ang"] is not None:
-            assert_contiguous(self._tgt["ang"])
+            assert self._tgt["ang"].is_contiguous()
             self.set_ang(self._sim.cur_step_local, self._tgt["ang"].detach())
 
         self._tgt["pos"] = None
@@ -472,19 +472,19 @@ class ToolEntity(Entity):
 
     def add_grad_from_state(self, state):
         if state.pos.grad is not None:
-            assert_contiguous(state.pos)
+            assert state.pos.is_contiguous()
             self.set_frame_add_grad_pos(self._sim.cur_substep_local, state.pos.grad)
 
         if state.quat.grad is not None:
-            assert_contiguous(state.quat)
+            assert state.quat.is_contiguous()
             self.set_frame_add_grad_quat(self._sim.cur_substep_local, state.quat.grad)
 
         if state.vel.grad is not None:
-            assert_contiguous(state.vel)
+            assert state.vel.is_contiguous()
             self.set_frame_add_grad_vel(self._sim.cur_substep_local, state.vel.grad)
 
         if state.ang.grad is not None:
-            assert_contiguous(state.ang)
+            assert state.ang.is_contiguous()
             self.set_frame_add_grad_ang(self._sim.cur_substep_local, state.ang.grad)
 
     # ------------------------------------------------------------------------------------

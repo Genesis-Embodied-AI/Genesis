@@ -45,11 +45,18 @@ def test_reference_trajectory_recovery_converges(control_target, grad_cartpole, 
     target_vel = ref_state.dofs_vel.detach().clone()
 
     if control_target == "init_vel":
-        init_vel = gs.tensor(target_ctrl + rng.normal(size=(B, N_DOFS)) * 0.3, dtype=gs.tc_float, requires_grad=True)
+        init_vel = torch.tensor(
+            target_ctrl + rng.normal(size=(B, N_DOFS)) * 0.3, dtype=gs.tc_float, device=gs.device, requires_grad=True
+        )
         params = [init_vel]
     else:
         forces = [
-            gs.tensor(target_ctrl[t] + rng.normal(size=(B, N_DOFS)) * 0.1, dtype=gs.tc_float, requires_grad=True)
+            torch.tensor(
+                target_ctrl[t] + rng.normal(size=(B, N_DOFS)) * 0.1,
+                dtype=gs.tc_float,
+                device=gs.device,
+                requires_grad=True,
+            )
             for t in range(N_STEPS)
         ]
         params = forces
@@ -86,8 +93,8 @@ def test_reference_trajectory_recovery_converges(control_target, grad_cartpole, 
 @pytest.mark.required
 @pytest.mark.debug(False)
 def test_goal_pose_optimization_converges(show_viewer):
-    goal_pos = gs.tensor([0.7, 1.0, 0.05])
-    goal_quat = gs.tensor([0.3, 0.2, 0.1, 0.9])
+    goal_pos = torch.tensor([0.7, 1.0, 0.05], dtype=gs.tc_float, device=gs.device)
+    goal_quat = torch.tensor([0.3, 0.2, 0.1, 0.9], dtype=gs.tc_float, device=gs.device)
     goal_quat = goal_quat / torch.norm(goal_quat, dim=-1, keepdim=True)
 
     scene = gs.Scene(
@@ -116,8 +123,8 @@ def test_goal_pose_optimization_converges(show_viewer):
     )
     scene.build()
 
-    init_pos = gs.tensor([0.3, 0.1, 0.28], requires_grad=True)
-    init_quat = gs.tensor([1.0, 0.0, 0.0, 0.0], requires_grad=True)
+    init_pos = torch.tensor([0.3, 0.1, 0.28], dtype=gs.tc_float, device=gs.device, requires_grad=True)
+    init_quat = torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=gs.tc_float, device=gs.device, requires_grad=True)
     optimizer = torch.optim.Adam([init_pos, init_quat], lr=1e-2)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200, eta_min=1e-3)
 

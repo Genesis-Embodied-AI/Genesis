@@ -54,15 +54,17 @@ def test_mpm_tool_push_grad(show_viewer):
     )
     scene.build(n_envs=2)
 
-    stick.set_position(gs.tensor([[0.3, 0.1, 0.28], [0.3, 0.1, 0.5]], requires_grad=True))
-    obj.set_position(gs.tensor([0.3, 0.3, 0.1], requires_grad=True))
-    obj.set_velocity(gs.tensor([0.0, -1.0, 0.0], requires_grad=True))
-    goal = gs.tensor([0.5, 0.8, 0.05])
+    stick.set_position(
+        torch.tensor([[0.3, 0.1, 0.28], [0.3, 0.1, 0.5]], dtype=gs.tc_float, device=gs.device, requires_grad=True)
+    )
+    obj.set_position(torch.tensor([0.3, 0.3, 0.1], dtype=gs.tc_float, device=gs.device, requires_grad=True))
+    obj.set_velocity(torch.tensor([0.0, -1.0, 0.0], dtype=gs.tc_float, device=gs.device, requires_grad=True))
+    goal = torch.tensor([0.5, 0.8, 0.05], dtype=gs.tc_float, device=gs.device)
 
     loss = 0.0
     v_list = []
     for i in range(HORIZON):
-        v_i = gs.tensor([[0.0, 1.0, 0.0], [0.0, 1.0, 0.0]], requires_grad=True)
+        v_i = torch.tensor([[0.0, 1.0, 0.0], [0.0, 1.0, 0.0]], dtype=gs.tc_float, device=gs.device, requires_grad=True)
         stick.set_velocity(vel=v_i)
         v_list.append(v_i)
         scene.step()
