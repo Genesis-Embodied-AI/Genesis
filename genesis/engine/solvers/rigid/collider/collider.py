@@ -395,8 +395,6 @@ def _compute_collision_pair_idx(
     """
     # Links whose contact is handled by an external backend are excluded from rigid-rigid collision according to the
     # explicit sets selected by the Simulator.
-    n_geoms = n_geoms
-    geoms = geoms
 
     if n_geoms == 0:
         empty_pairs = np.empty((0, 2), dtype=gs.np_int)
@@ -404,8 +402,6 @@ def _compute_collision_pair_idx(
         return 0, np.full((0, 0), -1, dtype=gs.np_int), empty_pairs, False, False, False, False, empty_mask
 
     # A delegated pair is skipped only when both links belong to the external backend.
-    delegated_link_idxs = delegated_link_idxs
-    exclusive_link_idxs = exclusive_link_idxs
 
     # Pre-compute per-geom properties into numpy arrays for vectorized filtering
     geom_link_idx = np.array([g.link.idx for g in geoms], dtype=np.int32)

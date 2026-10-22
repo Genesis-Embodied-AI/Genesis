@@ -41,15 +41,6 @@ def func_union_trees(i_ta: int, i_tb: int, i_b: int, island_state: array_class.I
 
 
 @qd.func
-def func_tree_component(i_t: int, i_b: int, island_state: array_class.IslandState):
-    # Root of a tree's component in the union-find forest, reading only
-    root = i_t
-    while island_state.trees_parent_idx[root, i_b] != root:
-        root = island_state.trees_parent_idx[root, i_b]
-    return root
-
-
-@qd.func
 def func_hook_trees(i_ta: int, i_tb: int, i_b: int, island_state: array_class.IslandState):
     # One hook of the cooperative build (see func_build_islands_coop): the larger root of two components points at the
     # smaller one, and n_islands holds the change flag of the round
@@ -433,9 +424,7 @@ def func_finish_island_partition(
             for i_d in range(dof_start_tree, dof_start_tree + rigid_info.trees_n_dofs[i_t]):
                 i_pos = island_state.dof_slices.curr[i_island, i_b]
                 island_state.dof_id[i_pos, i_b] = i_d
-                island_state.dof_local_pos[i_d, i_b] = (
-                    i_pos - island_state.dof_slices.start[i_island, i_b]
-                )
+                island_state.dof_local_pos[i_d, i_b] = i_pos - island_state.dof_slices.start[i_island, i_b]
                 island_state.dofs_island_idx[i_d, i_b] = i_island
                 island_state.dof_slices.curr[i_island, i_b] = i_pos + 1
                 island_state.inertia[i_island, i_b] += rigid_info.mass_mat[i_d, i_d, i_b]
@@ -568,6 +557,15 @@ def func_build_single_island_coop(
     inertia = su.qd_block_sum(inertia)
     if tid == 0:
         island_state.inertia[0, i_b] = inertia
+
+
+@qd.func
+def func_tree_component(i_t: int, i_b: int, island_state: array_class.IslandState):
+    # Root of a tree's component in the union-find forest, reading only
+    root = i_t
+    while island_state.trees_parent_idx[root, i_b] != root:
+        root = island_state.trees_parent_idx[root, i_b]
+    return root
 
 
 @qd.func
@@ -859,9 +857,7 @@ def func_reorder_island_dofs(
     for i_c in range(n_first_contact, n_contacts):
         i_island = func_contact_island(collider_state.contact_sort_idx[i_c, i_b], i_b, collider_state, island_state)
         if i_island >= 0:
-            reorder_state.contact_slices.n[i_island, i_b] = (
-                reorder_state.contact_slices.n[i_island, i_b] + 1
-            )
+            reorder_state.contact_slices.n[i_island, i_b] = reorder_state.contact_slices.n[i_island, i_b] + 1
     contact_list_start = 0
     for i_island in range(n_islands):
         reorder_state.contact_slices.start[i_island, i_b] = contact_list_start
@@ -872,9 +868,7 @@ def func_reorder_island_dofs(
         i_island = func_contact_island(i_col, i_b, collider_state, island_state)
         if i_island >= 0:
             reorder_state.contact_id[reorder_state.contact_slices.curr[i_island, i_b], i_b] = i_col
-            reorder_state.contact_slices.curr[i_island, i_b] = (
-                reorder_state.contact_slices.curr[i_island, i_b] + 1
-            )
+            reorder_state.contact_slices.curr[i_island, i_b] = reorder_state.contact_slices.curr[i_island, i_b] + 1
 
     # The per-island scratch rows live side by side: island i_island's slots start where the earlier islands' end
     tree_base = 0
@@ -938,10 +932,7 @@ def func_reorder_island_dofs(
                         i_slot_next = i_tb
                     elif i_tb == i_slot_head and i_ta >= 0:
                         i_slot_next = i_ta
-                    if (
-                        i_slot_next >= 0
-                        and not reorder_state.rcm_tree_is_ordered[tree_base + i_slot_next, i_b]
-                    ):
+                    if i_slot_next >= 0 and not reorder_state.rcm_tree_is_ordered[tree_base + i_slot_next, i_b]:
                         # Insert into the current frontier keeping it sorted by ascending degree
                         i_ins = n_ordered
                         while i_ins > n_frontier_start and (
@@ -950,9 +941,9 @@ def func_reorder_island_dofs(
                             ]
                             > reorder_state.rcm_tree_degree[tree_base + i_slot_next, i_b]
                         ):
-                            reorder_state.rcm_tree_order[tree_base + i_ins, i_b] = (
-                                reorder_state.rcm_tree_order[tree_base + i_ins - 1, i_b]
-                            )
+                            reorder_state.rcm_tree_order[tree_base + i_ins, i_b] = reorder_state.rcm_tree_order[
+                                tree_base + i_ins - 1, i_b
+                            ]
                             i_ins = i_ins - 1
                         reorder_state.rcm_tree_order[tree_base + i_ins, i_b] = i_slot_next
                         reorder_state.rcm_tree_is_ordered[tree_base + i_slot_next, i_b] = True
@@ -975,9 +966,7 @@ def func_reorder_island_dofs(
                     dof_start_tree = rigid_info.trees_dof_start[i_t]
                     for i_d in range(dof_start_tree, dof_start_tree + rigid_info.trees_n_dofs[i_t]):
                         island_state.dof_id[i_dof_curr, i_b] = i_d
-                        island_state.dof_local_pos[i_d, i_b] = (
-                            i_dof_curr - island_state.dof_slices.start[i_island, i_b]
-                        )
+                        island_state.dof_local_pos[i_d, i_b] = i_dof_curr - island_state.dof_slices.start[i_island, i_b]
                         i_dof_curr = i_dof_curr + 1
         tree_base = tree_base + n_island_trees
 

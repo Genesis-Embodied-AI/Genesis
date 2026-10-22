@@ -6,10 +6,12 @@ from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
 import numpy as np
 from numpy.typing import NDArray
-import quadrants as qd
 import torch
-from quadrants.lang import impl
+
 from typing_extensions import dataclass_transform  # Made it into standard lib from Python 3.12
+
+import quadrants as qd
+from quadrants.lang import impl
 
 import genesis as gs
 from genesis.utils.misc import data_to_array
@@ -450,7 +452,6 @@ def get_rigid_info(
     mass_mat_shape = (n_dofs, n_dofs, _B)
     if not _is_tensor_addressable(mass_mat_shape, gs.np_float):
         gs.raise_exception(f"Mass matrix shape (n_dofs={n_dofs}, n_dofs={n_dofs}, n_envs={_B}) is too large.")
-    requires_grad = requires_grad
 
     # Batch-first scratch for the register-tiled mass factor (qd.simt tile ops are batch-first, so the factorization
     # cannot run in place on the batch-last mass_mat_L). Allocated only when that path is enabled, with the constraint
@@ -607,7 +608,6 @@ def get_slices(
     *, batch_size: int, n_trees: int, layout: tuple[int, ...] | None, is_active: bool = True
 ) -> IslandSlices:
     _B = batch_size
-    n_trees = n_trees
 
     return IslandSlices(
         curr=V(dtype=gs.qd_int, shape=maybe_shape((n_trees, _B), is_active), layout=layout if is_active else None),
@@ -665,7 +665,6 @@ def get_island_state(
     _B = batch_size
     n_links = max(n_links_actual, 1)
     n_dofs = max(n_dofs_actual, 1)
-    n_trees = n_trees
     # The per-island Hessian is assembled and factored in place in constraint_state.nt_H (block-diagonal), and the
     # per-island solve state lives in constraint_state.island_solve, so island_state holds only the partition maps.
     # Batch-first under the cooperative kernels, whose block serves one env: the lanes then read consecutive items of
@@ -2456,7 +2455,6 @@ class DofsState:
 
 def get_dofs_state(*, requires_grad: bool, n_dofs: int, batch_size: int) -> DofsState:
     shape = (n_dofs, batch_size)
-    requires_grad = requires_grad
     shape_bw = maybe_shape((2, *shape), requires_grad)
 
     return DofsState(
@@ -2545,7 +2543,6 @@ def get_links_state(
     *, requires_grad: bool, n_links: int, batch_size: int, n_links_actual: int, links: "Sequence[RigidLink]"
 ) -> LinksState:
     shape = (n_links, batch_size)
-    requires_grad = requires_grad
     # The backward joint buffers hold one slot per joint of a link plus the link itself; collapsed when grad is off.
     n_joints_bw = (max(link.n_joints for link in links) + 1) if requires_grad and n_links_actual else 1
     shape_bw = (n_links, n_joints_bw, batch_size)
@@ -2691,7 +2688,6 @@ class JointsState:
 
 def get_joints_state(*, requires_grad: bool, n_joints: int, batch_size: int) -> JointsState:
     shape = (n_joints, batch_size)
-    requires_grad = requires_grad
 
     return JointsState(
         xanchor=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
@@ -3101,8 +3097,6 @@ class RigidAdjointCache:
 def get_rigid_adjoint_cache(
     *, requires_grad: bool, substeps_local: int, n_qs: int, batch_size: int, n_dofs: int
 ) -> RigidAdjointCache:
-    requires_grad = requires_grad
-
     qs_shape = maybe_shape((substeps_local + 1, n_qs, batch_size), requires_grad)
     dofs_shape = maybe_shape((substeps_local + 1, n_dofs, batch_size), requires_grad)
     return RigidAdjointCache(
