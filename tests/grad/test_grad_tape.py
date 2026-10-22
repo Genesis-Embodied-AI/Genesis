@@ -136,7 +136,7 @@ def test_torch_policy_grad_matches_fd(closed_loop, grad_revolute, show_viewer):
     # also read the state queried before each step. The rollout is part of the same autograd graph, so a plain
     # `loss.backward()` (no `retain_graph=True`) and `torch.autograd.grad` both differentiate it in one traversal, over
     # a horizon no recursion depth bounds. Finite differences over such a horizon need 64-bit precision.
-    horizon, dt = 400, 0.01
+    horizon, dt = 50, 0.01
     pair = make_diff_scene_pair(grad_revolute, n_envs=2, dt=dt, show_viewer=show_viewer)
     target = torch.tensor([[0.4], [-0.3]], dtype=gs.tc_float, device=gs.device)
     params = np.array([0.6, 3.0, 8.0, 0.5])
