@@ -11,7 +11,7 @@ import quadrants as qd
 
 import genesis as gs
 from genesis.typing import Vec3FType
-from genesis.utils.misc import register_cache_clear
+from genesis.utils.cache import register_cache_clear
 
 # ------------------------------------------------------------------------------------
 # ------------------------------------- Quadrants ----------------------------------------
@@ -562,6 +562,74 @@ def qd_transform_inertia_by_trans_quat(i_inertial, i_mass, trans, quat, eps):
     trans = trans * i_mass
 
     return i, trans, quat, i_mass
+
+
+@qd.func
+def qd_atan2_fast(y, x):
+    """Compute the four-quadrant arctangent from a polynomial, within 4e-8 rad of the exact angle before rounding.
+
+    It spares the libm call, whose cost dominates wherever many directions are binned by angle on CPU. The polynomial
+    approximates the arctangent of the ratio of the smaller to the larger magnitude, in [0, 1], which the symmetries of
+    the octants map back to [-pi, pi]. The axes and the diagonals get the same angles as the libm arctangent.
+    """
+    # The largest angle of the dtype within [-pi, pi], pi rounded down
+    angle_neg_x = qd.static(
+        float(np.nextafter(np.float32(math.pi), np.float32(0.0)))
+        if qd.lang.impl.get_runtime().default_fp == qd.f32
+        else math.pi
+    )
+    abs_x, abs_y = qd.abs(x), qd.abs(y)
+    ratio = qd.min(abs_x, abs_y) / qd.max(qd.max(abs_x, abs_y), 1e-30)
+    ratio_sqr = ratio * ratio
+    # Odd minimax polynomial of degree 15 of the arctangent on [0, 1], evaluated by Horner's rule from its highest term
+    angle = -0.0040545664
+    for coef in qd.static((0.0218629568, -0.0559123287, 0.0964219782, -0.1390862994, 0.1994656579, -0.3332986081)):
+        angle = angle * ratio_sqr + coef
+    angle = ratio * (angle * ratio_sqr + 0.9999993356)
+    # The diagonals and the negative x axis get the angles of the libm arctangent, which rounds pi / 4 to nearest and
+    # the angle of the negative x axis down to the dtype so that it stays within [-pi, pi]. Directions along them sit on
+    # cell boundaries wherever angles are binned in multiples of 45 degrees, so any other rounding would move a
+    # direction resting exactly on a boundary to the other cell
+    if ratio >= 1.0:
+        angle = 0.25 * math.pi
+    if abs_y > abs_x:
+        angle = 0.5 * math.pi - angle
+    if x < 0.0:
+        if angle > 0.0:
+            angle = math.pi - angle
+        else:
+            angle = angle_neg_x
+    if y < 0.0:
+        angle = -angle
+    return angle
+
+
+@qd.func
+def qd_acos_fast(x):
+    """Compute the arccosine from a polynomial, within 5e-7 rad of the exact angle in single precision.
+
+    It spares the libm call, whose cost dominates wherever many directions are binned by angle on CPU. On [0, 1] a
+    polynomial approximates acos(x) / sqrt(1 - x), which stays smooth up to 1, and acos(-x) = pi - acos(x) maps the
+    negative arguments back. The arguments 0, 1 and -1 get the same angles as the libm arccosine.
+    """
+    # The largest angle of the dtype within [0, pi], pi rounded down
+    angle_neg_one = qd.static(
+        float(np.nextafter(np.float32(math.pi), np.float32(0.0)))
+        if qd.lang.impl.get_runtime().default_fp == qd.f32
+        else math.pi
+    )
+    abs_x = qd.abs(x)
+    # Polynomial of degree 6 with its constant term pinned to pi / 2, evaluated by Horner's rule from its highest term
+    angle = 0.002723362274
+    for coef in qd.static((-0.012331481342, 0.028129120756, -0.049390362175, 0.088884094367, -0.21459604108)):
+        angle = angle * abs_x + coef
+    angle = qd.sqrt(1.0 - abs_x) * (angle * abs_x + 0.5 * math.pi)
+    if x < 0.0:
+        if angle > 0.0:
+            angle = math.pi - angle
+        else:
+            angle = angle_neg_one
+    return angle
 
 
 @qd.func

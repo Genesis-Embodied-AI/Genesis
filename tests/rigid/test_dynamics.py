@@ -3,9 +3,11 @@ import math
 import numpy as np
 import pytest
 import torch
+
 from quadrants.lang._perf_dispatch import PerformanceDispatcher
 
 import genesis as gs
+import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.engine.solvers.rigid.constraint import solver as constraint_solver
 from genesis.utils.misc import qd_to_numpy, tensor_to_array
@@ -1072,23 +1074,19 @@ def test_merge_matches_single_equivalent_entity(merged_arm_hand_models, box_posi
 @pytest.mark.parametrize("precision", ["32", "64"])
 @pytest.mark.parametrize("backend", [gs.gpu])
 def test_cholesky_tiling(monkeypatch, tol):
-    import genesis.engine.solvers
-
-    rigid_solver_build_orig = genesis.engine.solvers.RigidSolver.build
+    rigid_sim_static_config_init_orig = array_class.RigidSimStaticConfig.__init__
 
     values = []
     for enable_tiled_cholesky in (True, False):
+        # Static configs are immutable, so the flags are forced where the solver constructs its config rather than
+        # written on the built solver.
+        def rigid_sim_static_config_init(self, **kwargs):
+            kwargs["enable_tiled_cholesky_mass_matrix"] = enable_tiled_cholesky
+            if not enable_tiled_cholesky:
+                kwargs["enable_fused_smooth_acc_solve"] = False
+            rigid_sim_static_config_init_orig(self, **kwargs)
 
-        def rigid_solver_build(self):
-            nonlocal enable_tiled_cholesky
-
-            rigid_solver_build_orig(self)
-            self.rigid_config.enable_tiled_cholesky_mass_matrix = enable_tiled_cholesky
-            self.rigid_config.enable_fused_smooth_acc_solve &= enable_tiled_cholesky
-            if enable_tiled_cholesky:
-                self.rigid_config.tiled_n_dofs_per_entity = 32
-
-        monkeypatch.setattr("genesis.engine.solvers.RigidSolver.build", rigid_solver_build)
+        monkeypatch.setattr(array_class.RigidSimStaticConfig, "__init__", rigid_sim_static_config_init)
 
         scene = gs.Scene(
             rigid_options=gs.options.RigidOptions(
@@ -1123,9 +1121,27 @@ def test_cholesky_tiling(monkeypatch, tol):
 @pytest.mark.required
 @pytest.mark.use_deterministic_algorithms(False)
 @pytest.mark.parametrize("backend", [gs.gpu])
-def test_solve_arm_equivalence(monkeypatch, show_viewer, tol):
+@pytest.mark.parametrize(
+    "n_stack, n_grid",
+    [
+        (3, 9),
+        # In performance mode, two boxes carry too few dofs for the tiled factor seed, so both arms seed and factor the
+        # solve one env per thread
+        pytest.param(1, 0, marks=pytest.mark.performance_mode(True)),
+    ],
+)
+def test_solve_arm_equivalence(n_stack, n_grid, monkeypatch, show_viewer, tol):
     SIZE = 0.1
     N_STEPS = 12
+
+    # The choice of arm is left open, so that the dispatcher deems both of them eligible whatever the scene
+    init_orig = array_class.RigidSimStaticConfig.__init__
+
+    def init_open_choice(self, *args, **kwargs):
+        kwargs["prefer_decomposed_solver"] = -1
+        init_orig(self, *args, **kwargs)
+
+    monkeypatch.setattr(array_class.RigidSimStaticConfig, "__init__", init_open_choice)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -1139,10 +1155,10 @@ def test_solve_arm_equivalence(monkeypatch, show_viewer, tol):
         show_viewer=show_viewer,
     )
     scene.add_entity(gs.morphs.Plane())
-    # Islands of one, three and nine bodies at once, each sunk a ten-thousandth of its height so contact has real depth
+    # Islands of one body, a stack and a grid at once, each sunk a ten-thousandth of its height so contact has depth
     positions = [(0.0, 0.0, (1 - 1e-4) * SIZE / 2)]
-    positions += [(10 * SIZE, 0.0, (1 - 1e-4) * SIZE * (0.5 + i)) for i in range(3)]
-    positions += [(20 * SIZE + SIZE * (i % 3), SIZE * (i // 3), (1 - 1e-4) * SIZE / 2) for i in range(9)]
+    positions += [(10 * SIZE, 0.0, (1 - 1e-4) * SIZE * (0.5 + i)) for i in range(n_stack)]
+    positions += [(20 * SIZE + SIZE * (i % 3), SIZE * (i // 3), (1 - 1e-4) * SIZE / 2) for i in range(n_grid)]
     for pos in positions:
         scene.add_entity(
             morph=gs.morphs.Box(
@@ -1155,6 +1171,7 @@ def test_solve_arm_equivalence(monkeypatch, show_viewer, tol):
     solver = scene.rigid_solver
     constraint_state = solver.constraint_solver.constraint_state
     dofs = solver.dyn_state.dofs
+    assert solver.rigid_config.enable_tiled_island_seed == (n_grid > 0)
 
     # Selecting by index into the candidates the dispatcher deems eligible replaces its whole decision, the timing it
     # would do and any QD_PERFDISPATCH_FORCE in the environment alike, and demanding more than one candidate means a
@@ -1208,19 +1225,25 @@ def test_solve_arm_equivalence(monkeypatch, show_viewer, tol):
     # solve starts from a warm start that already resolves it: resting boxes would leave both implementations returning
     # that common warm start untouched.
     dofs_force_scale = np.tile((1.0, 1.0, 1.0, 0.02, 0.02, 0.02), len(positions))
+    accelerations_gap = np.empty(N_STEPS)
     for i_step in range(N_STEPS):
         solver.control_dofs_force(np.random.uniform(-1.0, 1.0, size=(2, solver.n_dofs)) * dofs_force_scale)
         scene.step()
         assert not solver.get_error_envs_mask().any()
         # Neither implementation may be compared on a solve that had nothing to resolve
-        assert (qd_to_numpy(constraint_state.n_constraints) > 32).all()
+        assert (qd_to_numpy(constraint_state.n_constraints) >= 16 * len(positions)).all()
 
         compared, reference = accelerations
         assert not np.allclose(reference, *warmstarts, rtol=0.0, atol=tol)
         # The two implementations spread every reduction, factor and solve differently, so their accelerations land
         # within rounding of each other and never on the same value: a gap of exactly zero means one of them ran twice.
-        assert np.abs(compared.astype(np.float64) - reference.astype(np.float64)).max() > 0.0
+        # Without the tiled factor seed, both seed the solve one env per thread and share the line search and the
+        # factor, so they can land on the same value at a step, never at every step.
+        accelerations_gap[i_step] = np.abs(compared.astype(np.float64) - reference.astype(np.float64)).max()
+        if solver.rigid_config.enable_tiled_island_seed:
+            assert accelerations_gap[i_step] > 0.0
         assert_allclose(compared, reference, tol=tol, err_msg=f"step {i_step}")
+    assert accelerations_gap.max() > 0.0
 
 
 @pytest.mark.slow  # ~200s

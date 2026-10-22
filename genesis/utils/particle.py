@@ -1,21 +1,22 @@
 import ctypes
 import os
 import platform
+import shutil
 import subprocess
 import sys
-import shutil
 import tempfile
 from multiprocessing import Process, Queue
 
-import igl
 import numpy as np
+
+import igl
 import trimesh
 
 import genesis as gs
 
 from . import geom as gu
-from . import mesh as msu
 from . import misc as miu
+from .cache import get_ptc_cache
 
 # Make sure ParticleMesherPy shared libary can be found in search path
 LD_LIBRARY_PATH = os.path.join(miu.get_src_dir(), "ext/ParticleMesher/ParticleMesherPy")
@@ -54,7 +55,7 @@ def trimesh_to_particles_simple(mesh, p_size, sampler):
     # sampling advances. An entry is therefore keyed on the state the sampling starts from and holds the state it ends
     # at, which a hit restores, so that a run draws exactly what it would draw without the cache.
     random_state = np.random.get_state() if sampler == "random" else None
-    cache = msu.get_ptc_cache(mesh.vertices, mesh.faces, p_size, sampler, random_state)
+    cache = get_ptc_cache(mesh.vertices, mesh.faces, p_size, sampler, random_state)
 
     entry = cache.load()
     if entry is not None:
@@ -90,7 +91,7 @@ def trimesh_to_particles_pbs(mesh, p_size, sampler, pos=(0, 0, 0)):
         gs.raise_exception(f"Physics-based particle sampler '{sampler}' is only supported on Linux x86.")
 
     # The physics-based sampler draws nothing from the global generator, which its entries leave out of their key
-    cache = msu.get_ptc_cache(mesh.vertices, mesh.faces, p_size, sampler, None)
+    cache = get_ptc_cache(mesh.vertices, mesh.faces, p_size, sampler, None)
 
     # loading pre-computed cache if available
     positions = cache.load()

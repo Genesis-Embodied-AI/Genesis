@@ -571,7 +571,8 @@ class RigidOptions(GravityMixin, TimeBasedMixin):
         translation and rotation. If None, it is set to 1e-4 when MuJoCo compatibility is enabled (matching MuJoCo's
         default) and 2e-3 otherwise. Defaults to None.
     max_dynamic_constraints : int, optional
-        Maximum number of dynamic constraints (like suction cup). Defaults to 8.
+        Maximum number of dynamic constraints (like suction cup) per environment. Adding one past it raises. Defaults
+        to 8.
     use_gjk_collision: bool, optional
         Whether to use GJK for collision detection instead of MPR. More stable but much slower. Defaults to
         `sim_options.requires_grad`.

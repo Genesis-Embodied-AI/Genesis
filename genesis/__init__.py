@@ -29,7 +29,7 @@ import numpy as np
 
 from .constants import backend as _gs_backend
 from .logging import Logger
-from .utils import get_device, redirect_libc_stderr, set_random_seed
+from .utils import get_device, redirect_libc_stderr, set_environ, set_random_seed
 from .version import __version__
 
 
@@ -184,13 +184,13 @@ def init(
         tc_bool = torch.bool
 
     # Let's use GLSL convention: https://learnwebgl.brown37.net/12_shader_language/glsl_data_types.html
-    global qd_vec2, qd_vec3, qd_vec4, qd_vec6, qd_vec7, qd_vec11, qd_mat3, qd_mat4, qd_ivec2, qd_ivec3, qd_ivec4
+    global qd_vec2, qd_vec3, qd_vec4, qd_vec6, qd_vec7, qd_vec18, qd_mat3, qd_mat4, qd_ivec2, qd_ivec3, qd_ivec4
     qd_vec2 = qd.types.vector(2, qd_float)
     qd_vec3 = qd.types.vector(3, qd_float)
     qd_vec4 = qd.types.vector(4, qd_float)
     qd_vec6 = qd.types.vector(6, qd_float)
     qd_vec7 = qd.types.vector(7, qd_float)
-    qd_vec11 = qd.types.vector(11, qd_float)
+    qd_vec18 = qd.types.vector(18, qd_float)
     qd_mat3 = qd.types.matrix(3, 3, qd_float)
     qd_mat4 = qd.types.matrix(4, 4, qd_float)
     qd_ivec2 = qd.types.vector(2, qd_int)
@@ -245,6 +245,17 @@ def init(
             offline_cache_max_size_of_files=2**31 - 1,
         )
 
+    # Environment variables read by Quadrants while initializing, set for the duration of its initialization only.
+    # FIXME: quadrants#983 - Buffers from the HIP memory pool fault on their first write on RDNA4 GPUs (gfx12), so
+    # Quadrants allocates through plain hipMalloc there, at the cost of reserving its device memory budget at init.
+    qd_init_environ = {}
+    if (
+        backend == _gs_backend.amdgpu
+        and "QD_ENABLE_HIP_MEMPOOL" not in os.environ
+        and torch.cuda.get_device_properties().gcnArchName.startswith("gfx12")
+    ):
+        qd_init_environ["QD_ENABLE_HIP_MEMPOOL"] = "0"
+
     if seed is not None:
         global SEED
         SEED = seed
@@ -270,7 +281,7 @@ def init(
     # The native logger of Quadrants writes to the stderr file descriptor directly, before its Python logger is
     # redirected to ours below, so what it prints while initializing is collected there as well
     with tempfile.TemporaryFile(mode="w+") as qd_errors:
-        with redirect_stdout(_qd_outputs), redirect_libc_stderr(qd_errors):
+        with redirect_stdout(_qd_outputs), redirect_libc_stderr(qd_errors), set_environ(qd_init_environ):
             qd.init(
                 arch=getattr(qd, backend.name),
                 enable_fallback=False,
@@ -453,7 +464,7 @@ sys.excepthook = _custom_excepthook
 
 from .ext import _trimesh_patch
 from .utils.misc import get_src_dir as _get_src_dir
-from .utils.misc import clear_caches as _clear_caches
+from .utils.cache import clear_caches as _clear_caches
 
 # Eagerly load native extensions under redirected stderr to silence dlopen-time noise (e.g. macOS
 # objc duplicate-class warnings when several libraries ship their own copy of GLFW).

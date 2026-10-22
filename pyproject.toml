@@ -109,6 +109,8 @@ dev = [
     "matplotlib>=3.7.0",
     # Used for ground truth validation in unit tests
     "scipy",
+    # The ImGui overlay snapshots are rendered with imgui-bundle 1.93.0, which draws tab corners differently from 1.92
+    "imgui-bundle>=1.93.0; python_version >= '3.11'",
     # Used for code formatting during commits
     "pre_commit",
 ]

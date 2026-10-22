@@ -2,7 +2,6 @@ import math
 from typing import TYPE_CHECKING
 
 import numpy as np
-from scipy.spatial import ConvexHull
 
 import quadrants as qd
 
@@ -15,20 +14,16 @@ if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
 
-# Rotation from the mesh frame to the frame of each spherical chart. The second chart carries its poles a quarter turn
-# away from those of the first, onto +/- y (see _func_direction_cell).
-CHARTS_ROT = np.stack((np.eye(3), gu.euler_to_R(np.array((90.0, 0.0, 0.0)))))
-
-
 class SupportField:
     """
     Support table of the geoms: for every cell of a grid of directions, the vertices supporting a direction of the cell.
 
-    A lookup scans the list of the cell its direction falls in, which makes it exact. The normal cone of a vertex (the
-    directions it supports) meets a cell only by holding one of its corners, by holding the normal of one of its faces
-    inside the cell, or by crossing the cell with one of its edges, which are the arcs between the normals of two
-    adjacent hull faces. A cell therefore lists the supports of its four corners, the vertices of the hull faces whose
-    normal it holds, and the two vertices of every hull edge whose arc crosses it.
+    A lookup scans the list of the cell its direction falls in, which makes it exact up to the angle error of the
+    binning in single precision (see _func_direction_cell). The normal cone of a vertex (the directions it supports)
+    meets a cell only by holding one of its corners, by holding the normal of one of its faces inside the cell, or by
+    crossing the cell with one of its edges, which are the arcs between the normals of two adjacent hull faces. A cell
+    therefore lists the supports of its four corners, the vertices of the hull faces whose normal it holds, and the two
+    vertices of every hull edge whose arc crosses it.
 
     The grid is made of two spherical charts, each one answering for the band of directions 45 to 135 degrees off its
     own poles (see _func_direction_cell), so only the cells of that band are stored.
@@ -51,36 +46,8 @@ class SupportField:
         if self.is_active:
             return
 
-        band_start, band_rows = self._support_res // 4, self._support_res // 2
+        band_rows = self._support_res // 2
         n_geom_cells = 2 * self._support_res * band_rows
-
-        # Unit direction in the mesh frame of every node bounding the cells of the charts, as [chart, azimuth, polar]
-        theta = np.arange(self._support_res) / self._support_res * 2 * math.pi - math.pi
-        phi = np.arange(band_start, band_start + band_rows + 1) / self._support_res * math.pi
-        nodes_chart = np.stack(
-            np.broadcast_arrays(
-                np.sin(phi) * np.cos(theta[:, None]), np.sin(phi) * np.sin(theta[:, None]), np.cos(phi)
-            ),
-            axis=-1,
-        )
-        nodes = nodes_chart @ CHARTS_ROT[:, None]
-
-        # Four corner nodes of each cell
-        cells_chart, cells_i, cells_j, corners_di, corners_dj = np.meshgrid(
-            np.arange(2), np.arange(self._support_res), np.arange(band_rows), (0, 1), (0, 1), indexing="ij"
-        )
-        cells_corner = np.ravel_multi_index(
-            (cells_chart, (cells_i + corners_di) % self._support_res, cells_j + corners_dj), nodes.shape[:3]
-        ).reshape((n_geom_cells, 4))
-
-        # Planes of the meridians and polar angles of the parallels bounding the cells of a chart, in its own frame
-        meridians_theta = theta[: self._support_res // 2]
-        meridians_normal = np.stack(
-            (-np.sin(meridians_theta), np.cos(meridians_theta), np.zeros_like(meridians_theta)), axis=-1
-        )
-        parallels_z = np.cos(phi)
-        # Corners of the closure of a cell around a direction, widened by a margin in cell units
-        cells_corner_margin = 1e-6 * np.array(((-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)))
 
         # The table of a geom depends on its trimesh alone, so the geoms of one trimesh share one table (see
         # 'Mesh.tmesh_hash'), as the instances of an asset do.
@@ -105,154 +72,10 @@ class SupportField:
         for i_t, geom in enumerate(tables_geom):
             cell_start = i_t * n_geom_cells
 
-            # Normal cones of the hull vertices, as the faces and edges of their union: the normals of the hull faces,
-            # each supported by the vertices of its face, and the arcs between the normals of adjacent hull faces, along
-            # which both vertices of their shared edge tie. A flat geom joins its two opposite face normals through the
-            # outward normal of each outline edge by two quarter arcs. A segment or a point ties both of its ends along
-            # the great circle orthogonal to it, cut in four quarter arcs.
-            verts = geom.init_verts
-            verts_centered = verts - verts.mean(axis=0)
-            verts_rank = np.linalg.matrix_rank(verts_centered)
-            # Principal axes of the vertices, from the eigenvectors of their 3x3 second moment, of fixed size
-            _, _, frame = np.linalg.svd(verts_centered.T @ verts_centered)
-            if verts_rank == 3:
-                hull = ConvexHull(verts_centered)
-                hull_vid = hull.vertices
-                faces_idx, i_vert = np.nonzero(hull.neighbors > np.arange(len(hull.simplices))[:, None])
-                faces_normal = hull.equations[:, :3]
-                faces_direction = np.repeat(faces_normal, repeats=3, axis=0)
-                faces_vid = hull.simplices.reshape(-1)
-                arcs_start = faces_normal[faces_idx]
-                arcs_end = faces_normal[hull.neighbors[faces_idx, i_vert]]
-                # The neighbour of a face across its i-th vertex shares the edge made of its two other vertices
-                arcs_vid = np.stack(
-                    (hull.simplices[faces_idx, (i_vert + 1) % 3], hull.simplices[faces_idx, (i_vert + 2) % 3]), axis=-1
-                )
-            elif verts_rank == 2:
-                outline = ConvexHull(verts_centered @ frame[:2].T)
-                hull_vid = outline.vertices
-                edges_normal = outline.equations[:, :2] @ frame[:2]
-                faces_normal = np.stack((frame[2], -frame[2]))
-                n_edges = len(edges_normal)
-                faces_direction = np.repeat(faces_normal, repeats=len(hull_vid), axis=0)
-                faces_vid = np.tile(hull_vid, reps=2)
-                arcs_start = np.concatenate((np.tile(faces_normal[0], reps=(n_edges, 1)), edges_normal))
-                arcs_end = np.concatenate((edges_normal, np.tile(faces_normal[1], reps=(n_edges, 1))))
-                arcs_vid = np.tile(outline.simplices, reps=(2, 1))
-            else:
-                verts_axial = verts_centered @ frame[0]
-                hull_vid = np.array((np.argmin(verts_axial), np.argmax(verts_axial)))
-                faces_direction = np.zeros((0, 3))
-                faces_vid = np.zeros((0,), dtype=gs.np_int)
-                arcs_start = np.stack((frame[1], frame[2], -frame[1], -frame[2]))
-                arcs_end = np.roll(arcs_start, shift=-1, axis=0)
-                arcs_vid = np.tile(hull_vid, reps=(4, 1))
-
-            # Support of every node, searched among the hull vertices alone, by chunks of nodes whose dot products take
-            # a bounded memory whatever the vertex count
-            nodes_chunks = np.array_split(nodes.reshape((-1, 3)), max(nodes[..., 0].size * len(hull_vid) // 2**24, 1))
-            nodes_vid = np.concatenate(
-                [hull_vid[np.argmax(nodes_chunk @ verts[hull_vid].T, axis=-1)] for nodes_chunk in nodes_chunks]
-            )
-
-            # Every arc is cut where it crosses the meridians and parallels of a chart, so that each piece lies in a
-            # single cell, the cell of its midpoint. A crossing outside of the arc is clamped to one of its ends. The
-            # cuts lie on the boundaries of the cells, which an arc tangent to a parallel touches without crossing, so
-            # they are listed along with the midpoints.
-            arcs_cos = np.clip(np.sum(arcs_start * arcs_end, axis=-1), -1.0, 1.0)
-            arcs_angle = np.arccos(arcs_cos)
-            arcs_orthogonal = arcs_end - arcs_cos[:, None] * arcs_start
-            arcs_orthogonal_norm = np.linalg.norm(arcs_orthogonal, axis=-1, keepdims=True)
-            arcs_orthogonal = np.divide(
-                arcs_orthogonal,
-                arcs_orthogonal_norm,
-                out=np.zeros_like(arcs_orthogonal),
-                where=arcs_orthogonal_norm > 0,
-            )
-
-            # The corners of a cell mostly share their support, which is listed once
-            corners_vid = nodes_vid[cells_corner]
-            is_repeat = np.tril(corners_vid[:, :, None] == corners_vid[:, None, :], k=-1).any(axis=-1)
-            corners_cell, i_corner = np.nonzero(~is_repeat)
-            pairs = [np.stack((corners_cell, corners_vid[corners_cell, i_corner]), axis=-1)]
-            for i_chart in range(2):
-                arcs_start_chart = arcs_start @ CHARTS_ROT[i_chart].T
-                arcs_orthogonal_chart = arcs_orthogonal @ CHARTS_ROT[i_chart].T
-                arcs_meridian = np.mod(
-                    np.arctan2(-arcs_start_chart @ meridians_normal.T, arcs_orthogonal_chart @ meridians_normal.T),
-                    math.pi,
-                )
-                arcs_amplitude = np.hypot(arcs_start_chart[:, 2], arcs_orthogonal_chart[:, 2])
-                arcs_phase = np.arctan2(arcs_orthogonal_chart[:, 2], arcs_start_chart[:, 2])
-                arcs_ratio = parallels_z / np.maximum(arcs_amplitude, gs.EPS)[:, None]
-                # A parallel the great circle of an arc misses, or touches up to rounding, cuts it at its extreme point
-                arcs_half = np.arccos(np.clip(arcs_ratio, -1.0, 1.0))
-                arcs_cuts = np.concatenate(
-                    (
-                        np.zeros_like(arcs_angle)[:, None],
-                        arcs_meridian,
-                        np.mod(arcs_phase[:, None] + arcs_half, 2 * math.pi),
-                        np.mod(arcs_phase[:, None] - arcs_half, 2 * math.pi),
-                        arcs_angle[:, None],
-                    ),
-                    axis=-1,
-                )
-                arcs_cuts = np.sort(np.minimum(arcs_cuts, arcs_angle[:, None]), axis=-1)
-                arcs_idx, i_cut = np.nonzero(arcs_cuts[:, 1:] > arcs_cuts[:, :-1])
-                # The midpoint and the start of every piece, the starts covering every distinct cut but the end of the
-                # arc, a face normal listed with its face
-                points_angle = np.concatenate(
-                    (0.5 * (arcs_cuts[arcs_idx, i_cut] + arcs_cuts[arcs_idx, i_cut + 1]), arcs_cuts[arcs_idx, i_cut])
-                )
-                points_arc_idx = np.concatenate((arcs_idx, arcs_idx))
-                points_direction = (
-                    np.cos(points_angle)[:, None] * arcs_start[points_arc_idx]
-                    + np.sin(points_angle)[:, None] * arcs_orthogonal[points_arc_idx]
-                )
-
-                # Every face normal lists the vertices of its face, and every point of arc both ends of its hull edge,
-                # in the cells whose closure holds it. A direction on a cell boundary belongs to every cell around it,
-                # since the vertices it supports may support directions of any of them. The closure is widened by a
-                # margin covering the rounding of the cell coordinates, which lists a vertex in one cell more at most.
-                for directions, directions_vid in (
-                    (faces_direction, faces_vid[:, None]),
-                    (points_direction, arcs_vid[points_arc_idx]),
-                ):
-                    directions_chart = directions @ CHARTS_ROT[i_chart].T
-                    theta_chart = np.arctan2(directions_chart[:, 1], directions_chart[:, 0])
-                    phi_chart = np.arccos(np.clip(directions_chart[:, 2], -1.0, 1.0))
-                    cells_coord = np.stack(
-                        (
-                            (theta_chart + math.pi) / (2 * math.pi) * self._support_res,
-                            phi_chart / math.pi * self._support_res,
-                        ),
-                        axis=-1,
-                    )
-                    cells_ij = np.floor(cells_coord[:, None] + cells_corner_margin)
-                    cells_i = cells_ij[..., 0].astype(gs.np_int) % self._support_res
-                    cells_j = cells_ij[..., 1].astype(gs.np_int) - band_start
-                    is_in_band = (cells_j >= 0) & (cells_j < band_rows)
-                    directions_idx, _ = np.nonzero(is_in_band)
-                    cells_idx = ((i_chart * self._support_res + cells_i) * band_rows + cells_j)[is_in_band]
-                    cells_idx = np.repeat(cells_idx, repeats=directions_vid.shape[-1])
-                    pairs.append(np.stack((cells_idx, directions_vid[directions_idx].reshape(-1)), axis=-1))
-
-            # Each pair is encoded as one integer key, cells major, so that a flat sort removes the repeated ones
-            pairs = np.concatenate(pairs)
-            cells_idx, verts_idx = np.divmod(np.unique(pairs[:, 0] * len(verts) + pairs[:, 1]), len(verts))
-            # Every cell lists the supports of its corners, so the candidates of each cell come in a row, in cell order.
-            # Records are laid out as described in SupportFieldInfo.
-            candidates_idx = np.arange(len(cells_idx))
-            is_first = np.concatenate(((True,), cells_idx[1:] != cells_idx[:-1]))
-            candidates_rank = candidates_idx - np.maximum.accumulate(np.where(is_first, candidates_idx, 0))
-            slots_vid = np.repeat(verts_idx[is_first, None], repeats=2, axis=-1)
-            is_slot = candidates_rank < 2
-            slots_vid[cells_idx[is_slot], candidates_rank[is_slot]] = verts_idx[is_slot]
+            slots_vid, table_extras_vid, cells_n_extras = geom.mesh.get_support_table(self._support_res)
             records_vid[cell_start : cell_start + n_geom_cells] = slots_vid
-            extras_vid.append(verts_idx[~is_slot])
-            support_list_start[cell_start + 1 : cell_start + n_geom_cells + 1] = np.bincount(
-                cells_idx[~is_slot], minlength=n_geom_cells
-            )
+            extras_vid.append(table_extras_vid)
+            support_list_start[cell_start + 1 : cell_start + n_geom_cells + 1] = cells_n_extras
 
         # The extra candidates of every cell start past the records of all cells, in cell order
         support_list_start[0] = 2 * n_support_cells
@@ -349,8 +172,9 @@ def _func_support_world(
     """Support position for a world direction.
 
     The vertex comes from the precomputed support table, or from an exhaustive scan of the mesh vertices when
-    'exhaustive' is set. Both are exact, but the scan returns the first of tied vertices at a cost linear in the
-    vertex count, while the table returns any of them.
+    'exhaustive' is set. The scan is exact and returns the first of tied vertices at a cost linear in the vertex count,
+    while the table is exact up to the angle error of its binning in single precision (see _func_direction_cell) and
+    returns any of them.
     """
     v = qd.Vector.zero(gs.qd_float, 3)
     v_ = qd.Vector.zero(gs.qd_float, 3)
@@ -385,13 +209,26 @@ def _func_direction_cell(i_g: int, d_mesh: qd.types.vector(3), collider_info: ar
     d_chart = d_mesh
     if qd.abs(d_mesh[2]) > qd.abs(d_mesh[1]):
         # The first chart's poles sit on +/- z, so a direction closer to them is handed to the second chart, whose
-        # own coordinates see it a quarter turn away (see CHARTS_ROT).
+        # own coordinates see it a quarter turn away (see CHARTS_ROT in genesis/engine/mesh.py).
         i_chart = 1
         d_chart = qd.Vector([d_mesh[0], -d_mesh[2], d_mesh[1]], dt=gs.qd_float)
 
-    theta = qd.atan2(d_chart[1], d_chart[0])  # [-pi, pi]
-    phi = qd.acos(d_chart[2])  # [0, pi]
-    i = gs.qd_int(qd.math.floor((theta + math.pi) / math.pi / 2 * support_res)) % support_res
+    # Azimuth theta in [-pi, pi] and polar angle phi in [0, pi]. In single precision, polynomials spare the libm calls.
+    # A direction within their error of a cell boundary may then fall in the neighbouring cell, whose best candidate
+    # falls short of the support by that error times the extent of the geom, which stays near the rounding of the dtype
+    # in single precision alone.
+    theta = 0.0
+    phi = 0.0
+    if qd.static(qd.lang.impl.get_runtime().default_fp == qd.f32):
+        theta = gu.qd_atan2_fast(d_chart[1], d_chart[0])
+        phi = gu.qd_acos_fast(d_chart[2])
+    else:
+        theta = qd.atan2(d_chart[1], d_chart[0])
+        phi = qd.acos(d_chart[2])
+    # The azimuth wraps around once at most, which a subtraction undoes at the cost of a comparison
+    i = gs.qd_int(qd.math.floor((theta + math.pi) / math.pi / 2 * support_res))
+    if i >= support_res:
+        i = i - support_res
     j = gs.qd_int(qd.math.clamp(qd.math.floor(phi / math.pi * support_res) - band_start, 0, band_rows - 1))
     return collider_info.support_field.support_cell_start[i_g] + (i_chart * support_res + i) * band_rows + j
 

@@ -210,12 +210,14 @@ class Collider:
         # specialization, unless it holds a sphere or an ellipsoid, which leaves it a single point. Outside performance
         # mode the pass is always compiled in, being a no-op wherever it would be left out. Composes with contact
         # islands: pruning writes a logical permutation into contact_sort_idx, which the island construction reads.
+        self._geoms_link_idx = np.array([geom.link.idx for geom in self._solver.geoms], dtype=gs.np_int)
+        self._links_n_geoms = np.bincount(self._geoms_link_idx, minlength=self._solver.n_links_)
+
         has_prunable_contacts = gs.use_ndarray or has_nonconvex_nonterrain or has_terrain
         if not has_prunable_contacts and len(self._valid_collision_pairs):
             geoms_type = np.array([geom.type for geom in self._solver.geoms])
-            geoms_link_idx = np.array([geom.link.idx for geom in self._solver.geoms])
             pairs_type = geoms_type[self._valid_collision_pairs]
-            pairs_link_idx = np.sort(geoms_link_idx[self._valid_collision_pairs], axis=1)
+            pairs_link_idx = np.sort(self._geoms_link_idx[self._valid_collision_pairs], axis=1)
             is_point_pair = np.isin(pairs_type, (gs.GEOM_TYPE.SPHERE, gs.GEOM_TYPE.ELLIPSOID)).any(axis=1)
             is_multi_point_pair = ~is_point_pair & (
                 self._solver._options.enable_multi_contact | (pairs_type == gs.GEOM_TYPE.BOX).any(axis=1)
@@ -247,14 +249,23 @@ class Collider:
         # Pre-compute fields, as they are needed to initialize the collider state and info.
         vert_neighbors, vert_neighbor_start, vert_n_neighbors = self._compute_verts_connectivity()
         n_vert_neighbors = len(vert_neighbors)
-        n_valid_pairs = len(self._valid_collision_pairs)
+
+        # The link pairs holding a valid geom pair, oriented with the link carrying the most geoms first, whose geoms
+        # the broad phase spreads its work over (see func_broad_phase_geoms).
+        valid_link_pairs = np.unique(np.sort(self._geoms_link_idx[self._valid_collision_pairs], axis=1), axis=0)
+        is_swapped = self._links_n_geoms[valid_link_pairs[:, 1]] > self._links_n_geoms[valid_link_pairs[:, 0]]
+        valid_link_pairs[is_swapped] = valid_link_pairs[is_swapped, ::-1]
+        n_valid_link_pairs = len(valid_link_pairs)
+        link_pair_idx = np.full((self._solver.n_links_, self._solver.n_links_), fill_value=-1, dtype=gs.np_int)
+        link_pair_idx[valid_link_pairs[:, 0], valid_link_pairs[:, 1]] = np.arange(n_valid_link_pairs, dtype=gs.np_int)
+        link_pair_idx[valid_link_pairs[:, 1], valid_link_pairs[:, 0]] = np.arange(n_valid_link_pairs, dtype=gs.np_int)
 
         # Initialize [info], which stores every data that must be considered mutable from Quadrants's perspective,
         # i.e. unknown at compile time, but IMMUTABLE from Genesis scene's perspective after build.
         self.collider_info = array_class.get_collider_info(
             self._solver,
             n_vert_neighbors,
-            n_valid_pairs,
+            n_valid_link_pairs,
             self.collider_config,
             self.mpr._mpr_info,
             self.gjk._gjk_info,
@@ -268,7 +279,23 @@ class Collider:
             prune_deep_penetration_ratio=self._prune_deep_penetration_ratio,
         )
         self._init_collision_pair_idx(self._collision_pair_idx)
-        self._init_valid_pairs()
+        self.collider_info.link_pair_idx.from_numpy(link_pair_idx)
+
+        # The box of every link in its own frame, bounding the boxes of its geoms, whose pose in the link is fixed
+        if self._solver.n_geoms > 0:
+            geoms_corners = gu.transform_by_trans_quat(
+                qd_to_numpy(self._solver.geoms_init_AABB)[: self._solver.n_geoms],
+                np.array([geom.init_pos for geom in self._solver.geoms])[:, None],
+                np.array([geom.init_quat for geom in self._solver.geoms])[:, None].repeat(8, axis=1),
+            )
+            links_init_aabb_min = np.full((self._solver.n_links_, 3), np.inf)
+            links_init_aabb_max = np.full((self._solver.n_links_, 3), -np.inf)
+            np.minimum.at(links_init_aabb_min, self._geoms_link_idx, geoms_corners.min(axis=1))
+            np.maximum.at(links_init_aabb_max, self._geoms_link_idx, geoms_corners.max(axis=1))
+            self.collider_info.links_init_aabb_min.from_numpy(links_init_aabb_min.astype(gs.np_float))
+            self.collider_info.links_init_aabb_max.from_numpy(links_init_aabb_max.astype(gs.np_float))
+        if n_valid_link_pairs > 0:
+            self.collider_info.valid_link_pairs.from_numpy(valid_link_pairs)
         self._init_verts_connectivity(vert_neighbors, vert_neighbor_start, vert_n_neighbors)
         self._init_verts_spatial_grid()
         self._init_max_contacts(self._n_possible_pairs, self._large_contact_pair_mask)
@@ -308,7 +335,7 @@ class Collider:
         Returns (n_possible_pairs, collision_pair_idx, pair_flags) where pair_flags is a dict of booleans
         for has_terrain, has_non_box_plane_convex_convex, has_convex_specialization, has_nonconvex_nonterrain.
         """
-        # Links whose contact is handled by an external solver (e.g. IPC) — exclude from GJK collision.
+        # Links whose contact is handled by an external solver (e.g. IPC) are excluded from GJK collision.
         # Only applies when the IPC coupler is active. Mirrors the link filtering logic in
         # IPCCoupler._add_rigid_geoms_to_ipc: for two_way_soft_constraint with a link filter,
         # only the filtered links are in IPC; for all other coupling modes, all links are in IPC.
@@ -387,7 +414,7 @@ class Collider:
         con_skip = (same_entity | ~has_local_mask) & (con_match == 0)
         valid &= ~con_skip
 
-        # self collision (same root) — disabled
+        # self collision (same root), disabled
         same_root = geom_root_idx[row] == geom_root_idx[col]
         if not self._solver._enable_self_collision:
             valid &= ~same_root
@@ -666,10 +693,6 @@ class Collider:
             self.collider_info.collision_pair_idx.fill(-1)
             return
         self.collider_info.collision_pair_idx.from_numpy(collision_pair_idx)
-
-    def _init_valid_pairs(self):
-        if len(self._valid_collision_pairs) > 0:
-            self.collider_info.valid_collision_pairs.from_numpy(self._valid_collision_pairs)
 
     def _init_verts_connectivity(self, vert_neighbors, vert_neighbor_start, vert_n_neighbors):
         if self._solver.n_verts > 0:
@@ -1210,7 +1233,7 @@ def func_detection(
                 errno,
             )
         if qd.static(coop_dedup):
-            func_clamp_prune_contacts_coop(dyn_state, collider_state, rigid_info, collider_info, errno)
+            func_clamp_prune_contacts_coop(dyn_state, collider_state, dyn_info, rigid_info, collider_info, errno)
         else:
             func_clamp_prune_contacts(
                 dyn_state, collider_state, rigid_info, collider_info, rigid_config, collider_static_config, errno

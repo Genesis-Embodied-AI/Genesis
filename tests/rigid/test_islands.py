@@ -400,8 +400,8 @@ def test_islands_converge_independently(show_viewer, n_envs):
 def test_monolith_seed_oversaturated(show_viewer, monkeypatch):
     # enable_cooperative_constraint_kernels is bounded by get_gpu_core_count(), so faking extreme GPU saturation
     # (get_gpu_core_count -> 1) disables the cooperative kernels at 2 envs - a small-scale stand-in for the
-    # >get_gpu_core_count() env regime. With the monolith arm pinned, the seed factor + gradient come from the
-    # monolith body itself (see is_self_seeding in func_solve_init); a stale Mgrad drops the boxes through the floor.
+    # >get_gpu_core_count() env regime. With the monolith arm pinned, the seed factor + gradient come from the monolith
+    # body itself (see has_per_env_solve_seed in array_class.py). A stale Mgrad drops the boxes through the floor.
     import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
     from genesis.utils.array_class import RigidSimStaticConfig
 
@@ -745,6 +745,11 @@ def test_hibernation_wakes_on_user_input(show_viewer, n_envs, tol):
     def z_of(entity):
         return entity.get_pos()[..., 2]
 
+    # The forced box carries an armature while it sleeps, which its mass matrix must hold once, whatever the time spent
+    # asleep, when the force wakes it.
+    ARMATURE = 0.5
+    box_cforce.set_dofs_armature(ARMATURE)
+
     # Velocity/position control need PD gains to produce a force; index 2 of each free joint is the world-z dof.
     for box in (box_cvel, box_cpos):
         box.set_dofs_kp([0.0, 0.0, 400.0, 0.0, 0.0, 0.0])
@@ -795,6 +800,8 @@ def test_hibernation_wakes_on_user_input(show_viewer, n_envs, tol):
         box_cforce.control_dofs_force([0.0, 0.0, 30.0, 0.0, 0.0, 0.0])
         scene.step()
     assert not asleep(box_cforce) and (z_of(box_cforce) > z0 + 0.02).all()
+    mass = float(box_cforce.get_mass())
+    assert_allclose(box_cforce.get_dofs_velocity()[..., 2], 8 * DT * (30.0 - mass * G) / (mass + ARMATURE), tol=tol)
     assert all(map(asleep, (box_cvel, box_cpos)))
 
     z0 = z_of(box_cvel)
@@ -821,7 +828,6 @@ def test_hibernation_wakes_on_user_input(show_viewer, n_envs, tol):
     # to settle into the new one. Both writes are made while the body sleeps, and the weight they land on is the
     # analytic one of a free body.
     MASS = 4.0
-    ARMATURE = 0.5
     invweight_before = solver.get_links_invweight(box_mass.base_link_idx)
     box_mass.set_mass(MASS)
     assert not asleep(box_mass)

@@ -411,10 +411,12 @@ def kernel_update_heterogeneous_links_vgeom(
     links_vgeom_end: qd.types.ndarray(),
     # Quadrants variables
     dyn_info: array_class.DynInfo,
+    rigid_config: qd.template(),
 ):
     """Update per-environment links vgeom for heterogeneous entities."""
     _B = links_vgeom_start.shape[0]
 
+    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         dyn_info.links.vgeom_start[i_l, i_b] = links_vgeom_start[i_b]
         dyn_info.links.vgeom_end[i_l, i_b] = links_vgeom_end[i_b]
@@ -433,10 +435,12 @@ def kernel_update_heterogeneous_link_info(
     links_inertial_i: qd.types.ndarray(),
     # Quadrants variables
     dyn_info: array_class.DynInfo,
+    rigid_config: qd.template(),
 ):
     """Update per-environment link info for heterogeneous entities."""
     _B = links_geom_start.shape[0]
 
+    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         dyn_info.links.geom_start[i_l, i_b] = links_geom_start[i_b]
         dyn_info.links.geom_end[i_l, i_b] = links_geom_end[i_b]

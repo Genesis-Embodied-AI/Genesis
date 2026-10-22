@@ -1,5 +1,6 @@
 """Tests for the entity naming system."""
 
+import gc
 import os
 import xml.etree.ElementTree as ET
 
@@ -13,6 +14,7 @@ import quadrants as qd
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.point_cloud as pc
+from genesis.utils.cache import disable_owned_cache_release, enable_owned_cache_release
 from genesis.utils.misc import indices_to_mask, sanitize_index, tensor_to_array
 
 from ..utils.assertions import assert_allclose, assert_equal
@@ -49,6 +51,36 @@ def test_scene_destroy_idempotent():
 
     scene.destroy()
     assert scene._sim is None
+
+
+@pytest.mark.required
+def test_rebuild_keeps_cached_data():
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/duck/duck.obj",
+            scale=0.001,
+        ),
+    )
+    scene.build()
+    duck_verts = scene.entities[0].vgeoms[0].trimesh.vertices
+
+    # A rebuilt scene shares the data of the destroyed one while its release is disabled, and loads it anew otherwise.
+    # The destroyed scene sits in reference cycles, which only a garbage collection frees.
+    for is_release_disabled in (True, False):
+        if is_release_disabled:
+            disable_owned_cache_release()
+        scene.destroy()
+        scene = gs.Scene(show_viewer=False)
+        gc.collect()
+        scene.add_entity(
+            morph=gs.morphs.Mesh(
+                file="meshes/duck/duck.obj",
+                scale=0.001,
+            ),
+        )
+        enable_owned_cache_release()
+        assert np.shares_memory(scene.entities[0].vgeoms[0].trimesh.vertices, duck_verts) == is_release_disabled
 
 
 @pytest.mark.required
