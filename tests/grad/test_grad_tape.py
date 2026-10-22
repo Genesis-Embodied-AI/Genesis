@@ -137,8 +137,8 @@ def test_torch_policy_grad_matches_fd(closed_loop, grad_revolute, show_viewer):
     # The control forces are computed by a torch policy from plain torch parameters, not from tensors Genesis created,
     # and are penalized in the loss as well, so their graph is shared by the loss and the rollout. Closed loop, they
     # also read the state queried before each step. The rollout is part of the same autograd graph, so a plain
-    # `loss.backward()` (no `retain_graph=True`) and `torch.autograd.grad` both differentiate it in one traversal, over
-    # a horizon no recursion depth bounds. Finite differences over such a horizon need 64-bit precision.
+    # `loss.backward()` (no `retain_graph=True`) and `torch.autograd.grad` both differentiate it in one traversal.
+    # Finite differences need 64-bit precision.
     horizon, dt = 50, 0.01
     pair = make_diff_scene_pair(grad_revolute, n_envs=2, dt=dt, show_viewer=show_viewer)
     target = torch.tensor([[0.4], [-0.3]], dtype=gs.tc_float, device=gs.device)
