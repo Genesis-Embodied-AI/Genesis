@@ -14,6 +14,7 @@ from genesis.constants import link_ref_frame
 from genesis.engine.core import Find, Require, System, register_system
 from genesis.engine.entities import RigidEntity
 from genesis.engine.solvers.base_solver import kernel_set_gravity
+from genesis.engine.solvers.rigid import kinematic_tools
 from genesis.engine.solvers.rigid.kinematic_tools import offset_world_shift as _offset_world_shift
 from genesis.engine.solvers.rigid.kinematic_tools import select_links_offset as _select_links_offset
 from genesis.engine.solvers.rigid.abd.accessor import (
@@ -25,7 +26,6 @@ from genesis.engine.solvers.rigid.abd.accessor import (
     kernel_get_dofs_control_force,
     kernel_get_links_acc,
     kernel_get_links_vel,
-    kernel_get_terrain_height,
     kernel_set_dofs_act_bias,
     kernel_set_dofs_act_gain,
     kernel_set_dofs_armature,
@@ -64,9 +64,6 @@ from genesis.engine.solvers.rigid.abd.forward_kinematics import (
     kernel_update_vverts_for_vgeoms,
 )
 from genesis.engine.solvers.rigid.abd.inverse_kinematics import (
-    kernel_forward_kinematics_query,
-    kernel_get_jacobian,
-    kernel_get_jacobian_zero,
     kernel_inverse_kinematics_entity,
     kernel_set_ik_targets,
 )
@@ -113,8 +110,6 @@ class RigidAPI(System):
     cartesian state, its forward-state flags and the inverse weights, and RigidIsland the hibernation state.
     """
 
-    _TERRAIN_HEIGHT_QUERY_TILT_TOLERANCE = 1e-3
-
     # -------------------------------- Dependencies --------------------------------
 
     rigid_dynamics = Require(RigidDynamics)
@@ -132,43 +127,15 @@ class RigidAPI(System):
 
     def get_terrain_height(self, positions: TensorLike, link_idx: int, envs_idx: IndexLike = None) -> torch.Tensor:
         dynamics = self.rigid_dynamics
-        terrain = dynamics.links[link_idx].entity
-
-        positions = torch.as_tensor(positions, dtype=gs.tc_float, device=gs.device)
-        if positions.ndim == 0 or positions.ndim > 3 or positions.shape[-1] != 2:
-            gs.raise_exception("`positions` must have shape (2,), (n_points, 2), or (n_envs, n_points, 2).")
-
-        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-        n_envs = len(envs_idx)
-        is_single_position = positions.ndim == 1
-        n_points = 1 if is_single_position else positions.shape[-2]
-        if n_points == 0:
-            gs.raise_exception("`positions` must contain at least one position.")
-
-        is_per_env = positions.ndim == 3 and positions.shape[0] != 1
-        positions = broadcast_tensor(
-            positions, gs.tc_float, (n_envs if is_per_env else 1, n_points, 2), ("envs_idx", "positions", "")
-        )
-
-        heights = torch.empty((n_envs, n_points), dtype=gs.tc_float, device=gs.device)
-        kernel_get_terrain_height(
-            envs_idx,
+        return kinematic_tools.get_terrain_height(
+            dynamics.links[link_idx].entity,
             link_idx,
-            terrain._morph.horizontal_scale,
-            positions.contiguous(),
-            terrain._terrain_height_field,
-            heights,
+            positions,
+            self._scene._sanitize_envs_idx(envs_idx),
+            dynamics.n_envs > 0,
             dynamics.data.dyn_state,
             dynamics.rigid_config,
-            tilt_tolerance=self._TERRAIN_HEIGHT_QUERY_TILT_TOLERANCE,
-            is_per_env=is_per_env,
         )
-
-        if dynamics.n_envs == 0:
-            heights = heights[0]
-        if is_single_position:
-            heights = heights[..., 0]
-        return heights
 
     def get_links_quat(
         self, links_idx: IndexLike = None, envs_idx: IndexLike = None, *, relative: bool = False
@@ -323,74 +290,34 @@ class RigidAPI(System):
         n_dofs: int,
         local_point: TensorLike | None = None,
     ) -> torch.Tensor:
-        """Spatial Jacobian of a link-local point, as (n_envs, 6, n_dofs), for the entity owning that link.
-
-        dof_start offsets the entity degrees of freedom into the solver and n_dofs narrows the shared buffer down to
-        that entity. local_point defaults to the link origin.
-        """
         dynamics = self.rigid_dynamics
-        jacobian = self._kinematics_scratch.jacobian
-        if local_point is None:
-            kernel_get_jacobian_zero(
-                link_idx,
-                dof_start,
-                jacobian,
-                dynamics.data.dyn_state,
-                dynamics.data.dyn_info,
-                dynamics.rigid_config,
-                dynamics.batch_size,
-            )
-        else:
-            kernel_get_jacobian(
-                link_idx,
-                dof_start,
-                local_point,
-                jacobian,
-                dynamics.data.dyn_state,
-                dynamics.data.dyn_info,
-                dynamics.rigid_config,
-                dynamics.batch_size,
-            )
-        return qd_to_torch(jacobian, transpose=True, copy=True)[..., :n_dofs]
+        return kinematic_tools.get_links_jacobian(
+            self._kinematics_scratch.jacobian,
+            link_idx,
+            dof_start,
+            n_dofs,
+            local_point,
+            dynamics.batch_size,
+            dynamics.data.dyn_state,
+            dynamics.data.dyn_info,
+            dynamics.rigid_config,
+        )
 
     def forward_kinematics_query(
         self, entity: RigidEntity, qpos: TensorLike, envs_idx: IndexLike = None
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Link poses one entity would have at the given configuration, leaving the live configuration as it was.
-
-        Distinct from the forward kinematics the step propagates: this evaluates a configuration the solver does not
-        hold, and restores the one it does. Returns positions (n_envs, n_links, 3) and orientations
-        (n_envs, n_links, 4), without the batch dimension when the scene is not batched.
-        """
         dynamics = self.rigid_dynamics
-        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-        qpos = broadcast_tensor(qpos, gs.tc_float, (len(envs_idx), entity.n_qs), ("envs_idx", "qs_idx")).contiguous()
-
-        qs_idx = torch.arange(entity._q_start, entity._q_start + entity.n_qs, dtype=gs.tc_int, device=gs.device)
-        links_idx = torch.arange(
-            entity._link_start, entity._link_start + entity.n_links, dtype=gs.tc_int, device=gs.device
-        )
-        links_pos = torch.empty((len(envs_idx), entity.n_links, 3), dtype=gs.tc_float, device=gs.device)
-        links_quat = torch.empty((len(envs_idx), entity.n_links, 4), dtype=gs.tc_float, device=gs.device)
-        kernel_forward_kinematics_query(
-            entity._idx_in_solver,
-            qs_idx,
-            links_idx,
-            envs_idx,
-            links_pos,
-            links_quat,
+        return kinematic_tools.forward_kinematics_query(
+            entity,
             qpos,
+            self._scene._sanitize_envs_idx(envs_idx),
+            dynamics.n_envs > 0,
             self._kinematics_scratch.qpos_cache,
             dynamics.data.dyn_state,
             dynamics.data.dyn_info,
             dynamics.data.rigid_info,
             dynamics.rigid_config,
         )
-
-        if dynamics.n_envs == 0:
-            links_pos = links_pos[0]
-            links_quat = links_quat[0]
-        return links_pos, links_quat
 
     def inverse_kinematics(
         self,
