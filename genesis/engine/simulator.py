@@ -74,7 +74,9 @@ class Simulator(RBC):
         # entities taped for the coming step, the gradients the reverse pass of a step gives its inputs, and the
         # rollout the token chain belongs to, which a reset starts anew. A backward pass that rewinds the rollout to
         # its start consumes it, which forbids stepping forward and differentiating again until the next reset.
-        self._grad_token = torch.zeros((), dtype=gs.tc_float, requires_grad=True) if self._requires_grad else None
+        self._grad_token = (
+            torch.zeros((), dtype=gs.tc_float, device=gs.device, requires_grad=True) if self._requires_grad else None
+        )
         self._grad_epoch = 0
         self._step_inputs: dict[int, torch.Tensor] = {}
         self._inputs_grad: dict[int, torch.Tensor] = {}
@@ -327,7 +329,7 @@ class Simulator(RBC):
         self._queried_states.clear()
 
         if self._requires_grad:
-            self._grad_token = torch.zeros((), dtype=gs.tc_float, requires_grad=True)
+            self._grad_token = torch.zeros((), dtype=gs.tc_float, device=gs.device, requires_grad=True)
         self._grad_epoch += 1
         self._step_inputs.clear()
         self._is_forward_ready = True

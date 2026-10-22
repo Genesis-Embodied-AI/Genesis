@@ -15,8 +15,10 @@ returns the gradients of the inputs of step t to autograd. Those flow on through
 a policy, an earlier state) within the same backward pass, so neither `retain_graph=True` nor a second traversal is
 needed, and `torch.autograd.grad` works as well as `loss.backward()`.
 
-The token only orders the nodes, so its gradient is never materialized. It lives on CPU: autograd runs a node on the
-device of the gradients it receives, so the reverse pass of every step runs on the thread calling backward.
+The token only orders the nodes, and its gradient is always zero. Autograd runs a node on the worker thread of the device
+of the gradients it receives, and the queues of different devices concurrently. The token and its gradients therefore
+live on `gs.device`, so the reverse pass of every step runs on the thread that runs the torch operations of the policy
+around it: two threads issuing work to the same device stream concurrently is unsafe on Metal.
 """
 
 import weakref
@@ -29,7 +31,6 @@ import genesis as gs
 class StepNode(torch.autograd.Function):
     @staticmethod
     def forward(ctx, sim, step, epoch, token, *inputs):
-        ctx.set_materialize_grads(False)
         # The simulator owns the token chain, so a strong reference would make a cycle that crosses the C++ autograd
         # graph, which the garbage collector cannot traverse: the scene would never be freed.
         ctx.sim = weakref.ref(sim)
@@ -43,17 +44,16 @@ class StepNode(torch.autograd.Function):
         if sim is None:
             gs.raise_exception("Differentiating a rollout whose scene was destroyed.")
         inputs_grad = sim.reverse_step(ctx.step, ctx.epoch)
-        return None, None, None, None, *(inputs_grad.get(i) for i in ctx.inputs_id)
+        return None, None, None, token_grad, *(inputs_grad.get(i) for i in ctx.inputs_id)
 
 
 class ReadNode(torch.autograd.Function):
     @staticmethod
     def forward(ctx, token, tensors):
-        ctx.set_materialize_grads(False)
         # The tensors travel in a tuple so that autograd makes them the outputs themselves rather than views of inputs:
         # the solver fills them in place afterwards, and users may write to them.
         return tensors
 
     @staticmethod
     def backward(ctx, *grads):
-        return None, None
+        return grads[0].new_zeros(()), None
