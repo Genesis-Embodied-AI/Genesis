@@ -1,5 +1,7 @@
 import quadrants as qd
 
+import genesis as gs
+
 
 @qd.func
 def qd_block_sum(value, log2_size: qd.template() = 5):
@@ -100,6 +102,123 @@ def qd_lane_vector_get(v, i, block_dim: qd.template()):
         if k == k_owner:
             v_owner = v[k]
     return qd.simt.subgroup.broadcast(v_owner, qd.u32(i - k_owner * block_dim))
+
+
+@qd.func
+def qd_lane_local_get(values, i_k: int, block_dim: qd.template()):
+    """Read an entry of the share of a buffer spread over the lanes of a block that this lane holds.
+
+    The entry read is i_k, see qd_lane_vector_get for the layout. The entries of a vector are scalars, those of a matrix
+    its rows. With several lanes, the entry is selected among the few entries of the share by a static unroll, which
+    keeps the share in registers where a runtime index would place it in local memory. A single lane holds the whole
+    buffer and indexes it.
+    """
+    if qd.static(len(values.get_shape()) == 2):
+        return qd.Vector([qd_lane_local_get(values[:, j], i_k, block_dim) for j in qd.static(range(values.m))])
+    else:
+        value = values[0]
+        if qd.static(block_dim > 1):
+            for k in qd.static(range(1, values.n)):
+                if k == i_k:
+                    value = values[k]
+        else:
+            value = values[i_k]
+        return value
+
+
+@qd.func
+def qd_lane_local_set(values, i_k: int, value, block_dim: qd.template()):
+    """Return the share of a lane-spread buffer this lane holds, with one of its entries replaced.
+
+    Entry i_k takes value. See qd_lane_vector_get for the layout and qd_lane_local_get for the selection.
+    """
+    if qd.static(len(values.get_shape()) == 2):
+        for j in qd.static(range(values.m)):
+            values[:, j] = qd_lane_local_set(values[:, j], i_k, value[j], block_dim)
+    elif qd.static(block_dim > 1):
+        for k in qd.static(range(values.n)):
+            if k == i_k:
+                values[k] = value
+    else:
+        values[i_k] = value
+    return values
+
+
+@qd.func
+def qd_lane_slot_read(values, k: int, block_dim: qd.template()):
+    """Read a slot of a buffer spread over the lanes of a block, every lane of the block receiving it.
+
+    The slot read is k, a scalar for a vector and a row for a matrix (see qd_lane_local_get). See qd_lane_vector_get for
+    the layout. Every lane of the block must call it with the same k.
+    """
+    if qd.static(len(values.get_shape()) == 2):
+        return qd.Vector([qd_lane_slot_read(values[:, j], k, block_dim) for j in qd.static(range(values.m))])
+    else:
+        value = values[0]
+        if qd.static(block_dim > 1):
+            value = qd_lane_vector_get(values, k, block_dim)
+        else:
+            value = values[k]
+        return value
+
+
+@qd.func
+def qd_lane_slot_write(values, k: int, value, tid: int, block_dim: qd.template()):
+    """Return the share of a lane-spread buffer this lane holds, with one slot replaced where this lane holds it.
+
+    Slot k takes value. See qd_lane_vector_get for the layout.
+    """
+    if k % block_dim == tid:
+        values = qd_lane_local_set(values, k // block_dim, value, block_dim)
+    return values
+
+
+@qd.func
+def qd_lane_slot_min(k: int, n_slots: int, n_slot_rows: qd.template(), block_dim: qd.template()):
+    """Lowest of the slots the lanes of a block name, every lane of the block receiving it.
+
+    Each lane names one of the slots it holds, or n_slots for none (see qd_lane_vector_get for the layout). The slots
+    are taken row by row, the lowest lane naming a slot of the lowest row holding the lowest slot, which a ballot of the
+    lanes finds where a min-reduction would take a shuffle per halving.
+    """
+    k_min = n_slots
+    for i_k in qd.static(range(n_slot_rows)):
+        lanes = qd_block_ballot(k < n_slots and k // block_dim == i_k)
+        if k_min == n_slots and lanes != 0:
+            k_min = i_k * block_dim + qd.cast(qd.math.ffs(lanes), gs.qd_int) - 1
+    return k_min
+
+
+@qd.func
+def qd_lane_mask_pop_first(masks, n_slots: int, block_dim: qd.template()):
+    """Lowest slot a mask of lane-spread slots holds, and the mask without it.
+
+    Bit i of row r of the mask stands for slot r * block_dim + i, see qd_lane_vector_get for the layout. The slot is
+    n_slots when the mask holds none.
+    """
+    k = n_slots
+    for i_k in qd.static(range(masks.n)):
+        if k == n_slots and masks[i_k] != 0:
+            k = i_k * block_dim + qd.cast(qd.math.ffs(masks[i_k]), gs.qd_int) - 1
+            masks[i_k] = masks[i_k] & (masks[i_k] - 1)
+    return k, masks
+
+
+@qd.func
+def qd_is_lane_slot_seen(values, n_values: int, value: int, tid: int, block_dim: qd.template()):
+    """Whether a value is among the leading slots of a buffer spread over the lanes of a block.
+
+    The first n_values slots are searched. See qd_lane_vector_get for the layout. Every lane of the block must call it
+    with the same arguments but tid.
+    """
+    n_slots = qd.static(values.n)
+    is_seen = False
+    for i_k in range(n_slots):
+        if i_k * block_dim + tid < n_values and qd_lane_local_get(values, i_k, block_dim) == value:
+            is_seen = True
+    if qd.static(block_dim > 1):
+        is_seen = qd_block_any(is_seen)
+    return is_seen
 
 
 @qd.func
