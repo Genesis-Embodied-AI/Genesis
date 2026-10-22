@@ -660,32 +660,6 @@ def test_mjcf_parsing_merge_fixed_links(xml_path, show_viewer):
 
 
 @pytest.mark.required
-def test_urdf_legacy_parser_primitive_scale(primitive_collision_urdf, caplog):
-    scene = gs.Scene()
-    links = []
-    for scale in (1.0, 2.0):
-        with caplog.at_level("WARNING"):
-            entity = scene.add_entity(
-                morph=gs.morphs.URDF(
-                    file=primitive_collision_urdf,
-                    scale=scale,
-                    align=False,
-                ),
-                material=gs.materials.Rigid(
-                    rho=1000.0,
-                ),
-            )
-        links.append(entity.base_link)
-        assert_allclose(entity.base_link.geoms[0].data[:3], scale * np.array((0.1, 0.2, 0.3)), tol=gs.EPS)
-        assert_allclose(entity.base_link.desc.mass, 1000.0 * (0.1 * 0.2 * 0.3 + 0.05**3) * scale**3, rtol=1e-6)
-    assert_allclose(links[1].desc.inertial_pos, 2.0 * links[0].desc.inertial_pos, rtol=1e-6)
-    assert_allclose(links[1].desc.inertia, 2.0**5 * links[0].desc.inertia, rtol=1e-6)
-
-    # MuJoCo cannot load the GLB collision mesh, which sends the whole file through the legacy parser
-    assert any("legacy URDF parser" in record.getMessage() for record in caplog.records)
-
-
-@pytest.mark.required
 def test_urdf_capsule(tmp_path, show_viewer, tol):
     urdf_path = tmp_path / "capsule.urdf"
     with open(urdf_path, "w") as f:
@@ -1042,9 +1016,11 @@ def test_color_overwrite(overwrite, urdf_with_external_assets, show_viewer):
         "xml/franka_emika_panda/panda.xml",
         "urdf/go2/urdf/go2.urdf",
         "urdf/panda_bullet/panda.urdf",
+        # MuJoCo cannot load its GLB collision mesh, which sends the whole file through the legacy URDF parser
+        "primitive_collision_urdf",
     ],
 )
-def test_robot_scale_and_dofs_armature(xml_path, monkeypatch, tol):
+def test_robot_scale_and_dofs_armature(xml_path, monkeypatch, request, tol):
     ROBOT_SCALES = (1.0, 0.2, 5.0)
 
     scene = gs.Scene(
@@ -1057,7 +1033,8 @@ def test_robot_scale_and_dofs_armature(xml_path, monkeypatch, tol):
         show_viewer=False,
         show_FPS=False,
     )
-    files = [xml_path]
+    # An asset without a file extension names a fixture
+    files = [xml_path if os.path.splitext(xml_path)[1] else request.getfixturevalue(xml_path)]
     if xml_path.endswith(".urdf"):
         # The asset is also loaded as one in-memory model shared by an entity at every scale, which parsing must leave
         # intact for the next one. An in-memory model resolves its relative mesh paths against the working directory.
