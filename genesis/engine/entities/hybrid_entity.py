@@ -2,16 +2,16 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import numpy as np
-import quadrants as qd
-import torch
+
 import trimesh
+
+import quadrants as qd
 
 import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 import genesis.utils.urdf as uu
 from genesis.ext.urdfpy.urdf import URDF
-
 from genesis.utils.hybrid import (
     check_graph,
     compute_graph_attribute,
@@ -145,7 +145,7 @@ class HybridEntity(Entity):
                 part_soft_info.quat_local_to_global.from_numpy(np.asarray(quat_local_to_global, dtype=gs.np_float))
 
                 part_soft_init_positions = qd.field(dtype=gs.qd_vec3, shape=(part_soft.init_particles.shape[0],))
-                part_soft_init_positions.from_torch(torch.as_tensor(part_soft.init_particles))
+                part_soft_init_positions.from_numpy(part_soft.init_particles)
 
                 self._part_soft_info = part_soft_info
                 self._part_soft_init_positions = part_soft_init_positions

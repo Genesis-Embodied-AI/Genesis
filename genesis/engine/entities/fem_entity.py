@@ -1,22 +1,24 @@
 from functools import wraps
 from pathlib import Path
 
-import igl
 import numpy as np
-import quadrants as qd
 import torch
+
+import igl
 import trimesh
+
+import quadrants as qd
 
 import genesis as gs
 import genesis.utils.element as eu
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
-from genesis.engine.entities.rigid_entity import RigidLink
 from genesis.engine.couplers import SAPCoupler
+from genesis.engine.entities.rigid_entity import RigidLink
 from genesis.engine.states.cache import QueriedStates
 from genesis.engine.states.entities import FEMEntityState
 from genesis.repr_base import RBC
-from genesis.utils.misc import assert_contiguous, to_gs_tensor, tensor_to_array, broadcast_tensor
+from genesis.utils.misc import assert_contiguous, broadcast_tensor, tensor_to_array, to_gs_tensor
 
 from .base_entity import Entity
 
@@ -722,8 +724,7 @@ class FEMEntity(Entity):
             self._sim.record_step_inputs(self._tgt)
 
         # set_pos followed by set_vel, because set_pos resets velocity.
-        # Detached: the kernels only read the values, the gradient reaches each input through `process_input_grad`,
-        # and a kernel argument that tracks gradients would make Quadrants allocate a `.grad` buffer for it.
+        # Detached, see ParticleEntity.process_input.
         if self._tgt["pos"] is not None:
             assert_contiguous(self._tgt["pos"])
             self.set_pos(self._sim.cur_substep_local, self._tgt["pos"].detach())

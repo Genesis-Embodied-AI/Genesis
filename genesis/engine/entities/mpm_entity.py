@@ -1,13 +1,14 @@
 import functools
 
-import quadrants as qd
 import torch
+
+import quadrants as qd
 
 import genesis as gs
 from genesis.engine.states.entities import MPMEntityState
 from genesis.utils.misc import assert_contiguous, to_gs_tensor
 
-from .particle_entity import assert_active, ParticleEntity
+from .particle_entity import ParticleEntity, assert_active
 
 
 def assert_muscle(method):
@@ -258,8 +259,7 @@ class MPMEntity(ParticleEntity):
         if isinstance(self.material, gs.materials.MPM.Muscle) and self._tgt["actu"] is not None:
             assert_contiguous(self._tgt["actu"])
             particles_idx_local = self._sanitize_particles_idx_local(envs_idx=self._scene._envs_idx)
-            # Detached: the kernel only reads the values, the gradient reaches the input through `process_input_grad`,
-            # and a kernel argument that tracks gradients would make Quadrants allocate a `.grad` buffer for it.
+            # Detached, see ParticleEntity.process_input.
             self.set_particles_actu(self._tgt["actu"].detach(), particles_idx_local)
 
         super().process_input(in_backward)

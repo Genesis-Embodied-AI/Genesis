@@ -1551,11 +1551,12 @@ class Scene(RBC):
 
     def _reverse_step(self, step: int, epoch: int) -> dict[int, torch.Tensor]:
         """
-        Run the reverse pass of step `step` and return the gradients of the inputs taped for it, keyed by tensor id.
+        Run the reverse pass of one step and return the gradients of the inputs taped for it, keyed by tensor id.
 
-        Called by the autograd node of that step (see `genesis.grad.bridge`), once the gradients of the states read at
-        that step and of every later step are in. The later steps whose node the loss does not reach have no output
-        gradient, and their reverse pass only rewinds the rollout down to `step`.
+        `step` is the global index of the step, and `epoch` the rollout it belongs to (see `genesis.grad.bridge`). The
+        autograd node of the step calls this once the gradients of the states read at that step and of every later step
+        are in. The reverse pass of the later steps whose node the loss does not reach only rewinds the rollout. The
+        returned dict is reused by the next call, so the caller consumes it right away.
         """
         if epoch != self._sim._grad_epoch:
             gs.raise_exception(
@@ -1566,14 +1567,13 @@ class Scene(RBC):
 
         while self._sim.cur_step_global > step:
             self._step_grad()
-        self._sim._inputs_grad = {}
+        self._sim._inputs_grad.clear()
         self._step_grad()
-        inputs_grad, self._sim._inputs_grad = self._sim._inputs_grad, {}
 
         if self._sim.cur_step_global == 0:
             self._backward_ready = False
             self._forward_ready = False
-        return inputs_grad
+        return self._sim._inputs_grad
 
     @gs.assert_built
     def get_time(self, envs_idx=None):

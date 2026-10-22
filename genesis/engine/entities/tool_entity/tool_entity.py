@@ -1,8 +1,9 @@
 from pathlib import Path
 
 import numpy as np
-import quadrants as qd
 import torch
+
+import quadrants as qd
 
 import genesis as gs
 from genesis.engine.states.cache import QueriedStates
@@ -420,8 +421,7 @@ class ToolEntity(Entity):
             self._tgt_buffer["ang"].append(self._tgt["ang"])
             self._sim.record_step_inputs(self._tgt)
 
-        # Detached: the kernels only read the values, the gradient reaches each input through `process_input_grad`,
-        # and a kernel argument that tracks gradients would make Quadrants allocate a `.grad` buffer for it.
+        # Detached, see ParticleEntity.process_input.
         if self._tgt["pos"] is not None:
             assert_contiguous(self._tgt["pos"])
             self.set_pos(self._sim.cur_step_local, self._tgt["pos"].detach())

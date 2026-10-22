@@ -2,16 +2,18 @@ import functools
 from pathlib import Path
 
 import numpy as np
-import quadrants as qd
 import torch
+
 import trimesh
+
+import quadrants as qd
 
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
 from genesis.engine.states.cache import QueriedStates
-from genesis.utils.misc import assert_contiguous, to_gs_tensor, broadcast_tensor
+from genesis.utils.misc import assert_contiguous, broadcast_tensor, to_gs_tensor
 
 from .base_entity import Entity
 
@@ -431,8 +433,9 @@ class ParticleEntity(Entity):
             particles_idx_local = self._sanitize_particles_idx_local(envs_idx=self._scene._envs_idx)
 
         # Note that setting positions resets velocities to zero, so it must be done BEFORE setting velocities.
-        # Detached: the kernels only read the values, the gradient reaches each input through `process_input_grad`,
-        # and a kernel argument that tracks gradients would make Quadrants allocate a `.grad` buffer for it.
+        # The setter kernels of every deformable entity take detached inputs: they only read the values, the gradient
+        # reaches each input through `process_input_grad`, and a gradient-tracking kernel argument makes Quadrants
+        # allocate a `.grad` buffer for it.
         if self._tgt["pos"] is not None:
             assert_contiguous(self._tgt["pos"])
             self.set_particles_pos(self._tgt["pos"].detach(), particles_idx_local)
