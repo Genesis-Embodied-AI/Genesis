@@ -320,12 +320,17 @@ def func_add_polytope_vertex_contacts_sdf(
         n_seen = 0
         weakest_idx = 0
         # The vert ranges of the columns of cells are read by the lanes at once, each holding a block_dim-th of them
-        # (see func_lane_local_get), rather than one column after the other at the head of its group.
+        # (see func_lane_local_get). A column holds a few verts only, so the full scan walks the verts of all the
+        # columns as one sequence in column order, a batch of verts spanning as many columns as it takes to fill the
+        # lanes of the block, rather than one batch per column.
         N_COLUMN_SLOTS = qd.static((n_cells_per_axis**2 + block_dim - 1) // block_dim)
         columns_vert_start = qd.Vector.zero(gs.qd_int, N_COLUMN_SLOTS)
         columns_vert_end = qd.Vector.zero(gs.qd_int, N_COLUMN_SLOTS)
         n_cells_y = cell_max[1] - cell_min[1] + 1
+        n_columns = 0
+        n_scan_verts = 0
         if not seeded:
+            n_columns = n_groups
             for i_k in range(N_COLUMN_SLOTS):
                 i_column = i_k * block_dim + tid
                 if i_column < n_groups:
@@ -351,13 +356,20 @@ def func_add_polytope_vertex_contacts_sdf(
                         collider_info.verts_spatial_grid.cells_vert_start[i_cell + cell_max[2] - cell_min[2] + 1],
                         block_dim,
                     )
+                    n_scan_verts = n_scan_verts + func_lane_local_get(columns_vert_end, i_k, block_dim)
+                    n_scan_verts = n_scan_verts - func_lane_local_get(columns_vert_start, i_k, block_dim)
+            if qd.static(block_dim > 1):
+                n_scan_verts = su.qd_block_sum(n_scan_verts)
+            n_groups = qd.min(n_columns, 1)
+        # The column and the vert within it that the next batch of the full scan starts from
+        i_column_next = 0
+        i_column_offset = 0
         for i_group in range(n_groups):
             i_v_min = -1
             i_c_start = 0
             i_c_end = 0
             if not seeded:
-                i_c_start = func_lane_slot_read(columns_vert_start, i_group, block_dim)
-                i_c_end = func_lane_slot_read(columns_vert_end, i_group, block_dim)
+                i_c_end = n_scan_verts
             else:
                 if i_group == 0:
                     i_v_min = sdf.sdf_func_find_closest_vert(
@@ -425,11 +437,30 @@ def func_add_polytope_vertex_contacts_sdf(
                 # Read by every lane ahead of the per-vert branches, which only some lanes enter
                 pen_weakest = func_lane_slot_read(top_pen, weakest_idx, block_dim)
                 i_c = i_c_start + i_batch * block_dim + tid
+                is_vert = i_c < i_c_end
+                if not seeded:
+                    # The lanes take the next verts of the columns in order, from the column the last batch stopped in.
+                    i_c = -1
+                    n_lanes_filled = 0
+                    for i_fill_ in range(n_columns):
+                        if n_lanes_filled == block_dim or i_column_next == n_columns:
+                            break
+                        column_start = func_lane_slot_read(columns_vert_start, i_column_next, block_dim)
+                        column_size = func_lane_slot_read(columns_vert_end, i_column_next, block_dim) - column_start
+                        n_taken = qd.min(column_size - i_column_offset, block_dim - n_lanes_filled)
+                        if tid >= n_lanes_filled and tid < n_lanes_filled + n_taken:
+                            i_c = column_start + i_column_offset + tid - n_lanes_filled
+                        n_lanes_filled = n_lanes_filled + n_taken
+                        i_column_offset = i_column_offset + n_taken
+                        if i_column_offset == column_size:
+                            i_column_next = i_column_next + 1
+                            i_column_offset = 0
+                    is_vert = i_c >= 0
                 i_v = i_v_min
                 vertex_pos = qd.Vector.zero(gs.qd_float, 3)
                 pen_v = gs.qd_float(0.0)
                 is_inserted = False
-                if i_c < i_c_end:
+                if is_vert:
                     vertex_local = qd.Vector.zero(gs.qd_float, 3)
                     if not seeded:
                         i_v = collider_info.verts_spatial_grid.verts_idx[i_c]
