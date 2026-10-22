@@ -4770,11 +4770,19 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
         # The pairs of an env are split over chunks so that the GPU cores are kept busy whatever the env count, as in
         # func_narrowphase_contact0. Every pair is detected by one block, its contacts appended atomically. Where the
         # loop runs in parallel on GPU, the block spans the lanes of a subgroup, which split the vert scan of the pair.
+        # The cost of a pair spans orders of magnitude, from a shallow seeded walk to a full scan of a dense mesh, so the
+        # loop holds 8 times the blocks the GPU cores would take at once: a block done early picks up a remaining chunk
+        # instead of leaving its share of the GPU idle behind the slowest pair of its env. The chunks never outnumber
+        # the pairs an env can hold, which spares the launch of blocks without pairs at low env counts. The blocks go
+        # over the envs chunk by chunk, so that the blocks of an env spread over the launch: the empty chunks of an env
+        # with few pairs would otherwise alternate with loaded ones, which leaves a share of the GPU idle.
         is_coop = qd.static(rigid_config.backend != gs.cpu and rigid_config.para_level >= gs.PARA_LEVEL.PARTIAL)
         BLOCK_DIM = qd.static(32 if is_coop else 1)
         _B = collider_state.active_buffer.shape[1]
-        n_chunks = qd.max((collider_static_config.gpu_cores // BLOCK_DIM + _B - 1) // _B, 1)
         max_broad_pairs = collider_state.broad_collision_pairs.shape[0]
+        n_chunks = qd.max(
+            qd.min((8 * collider_static_config.gpu_cores // BLOCK_DIM + _B - 1) // _B, max_broad_pairs), 1
+        )
         qd.loop_config(
             name="narrowphase_nonconvex",
             serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL,
@@ -4783,8 +4791,8 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
         for i_flat in range(_B * n_chunks * BLOCK_DIM):
             tid = i_flat % BLOCK_DIM
             i_b_chunk = i_flat // BLOCK_DIM
-            i_b = i_b_chunk // n_chunks
-            i_chunk = i_b_chunk % n_chunks
+            i_b = i_b_chunk % _B
+            i_chunk = i_b_chunk // _B
             n_pairs = qd.min(collider_state.n_broad_pairs[i_b], max_broad_pairs)
             for i_pair in range(i_chunk * n_pairs // n_chunks, (i_chunk + 1) * n_pairs // n_chunks):
                 i_ga = collider_state.broad_collision_pairs[i_pair, i_b][0]
