@@ -14,6 +14,7 @@ from genesis.utils.tools import StepTimer
 
 from .couplers import IPCCoupler, LegacyCoupler, SAPCoupler
 from .entities import HybridEntity
+from .entities.hybrid_entity import HybridEntityDescription
 from .sensors import SensorManager
 from .solvers import (
     FEMSolver,
@@ -144,8 +145,10 @@ class Simulator(RBC):
         if visualize_contact and not isinstance(material, gs.materials.Rigid):
             gs.raise_exception("'visualize_contact' only applies to rigid entities.")
         if isinstance(material, gs.materials.Hybrid):
-            # Note that adding to solver is handled in the hybrid entity
-            entity = HybridEntity(self.n_entities, self.scene, material, morph, surface, name=name)
+            # Resolution adds both parts to the scene first, so the hybrid entity comes after them, authored or loaded
+            if desc is None:
+                desc = HybridEntityDescription.resolve(self.scene, material, morph, surface, name)
+            entity = HybridEntity(self.n_entities, self.scene, desc)
         else:
             # Several solvers may declare a class the material belongs to, since 'Rigid' derives from 'Kinematic'. The
             # one declaring the most derived class simulates it (see 'Solver.material_cls').
@@ -161,8 +164,7 @@ class Simulator(RBC):
                 self.n_entities, material, morph, surface, visualize_contact, name=name, desc=desc
             )
         self._entities.append(entity)
-        if entity.desc is not None:
-            self.scene._desc.entities.append(entity.desc)
+        self.scene._desc.entities.append(entity.desc)
         return entity
 
     def _add_force_field(self, force_field):
