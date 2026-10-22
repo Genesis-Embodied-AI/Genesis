@@ -306,6 +306,10 @@ class RigidSolver:
         return self._rigid_dynamics.sol_min_timeconst
 
     @property
+    def _base_links_idx(self) -> torch.Tensor:
+        return self._rigid_dynamics.base_links_idx
+
+    @property
     def _sol_default_timeconst(self) -> float | None:
         return self._rigid_dynamics.sol_default_timeconst
 

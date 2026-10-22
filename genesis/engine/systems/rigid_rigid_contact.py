@@ -21,6 +21,8 @@ from genesis.engine.solvers.rigid.collider.collider import (
     func_substep_detection,
     initialize_collider_fields,
     iter_collider_data,
+    kernel_detection,
+    kernel_detection_without_graph,
 )
 from genesis.engine.solvers.rigid.collider import gjk, mpr, support_field
 from genesis.engine.solvers.rigid.constraint.island import func_substep_order_contacts, func_union_contact_edges
@@ -179,7 +181,33 @@ class RigidRigidContact(System):
         """Detect the contacts between rigid geoms of a substep through the detection kernel alone."""
         self.clear_contact_data_cache()
         rigid = self.rigid_dynamics
-        kernel_substep_detection(rigid.data, rigid.rigid_config, self.data, self.rigid_island.data)
+        rigid_data, config = rigid.data, self.data.collider_config
+        # FIXME: quadrants#946 - a graph refuses the ndarrays that own a gradient, so a scene tracking gradients
+        # launches the detection without a graph.
+        kernel = kernel_detection_without_graph if rigid.requires_grad else kernel_detection
+        kernel(
+            rigid_data.geoms_init_AABB,
+            rigid_data.dyn_state,
+            self.data.collider_state,
+            self.data.mpr_state,
+            self.data.gjk_state,
+            self.data.gjk_state.diff_contact_input,
+            self.data.contact0_mpr_state,
+            self.data.contact0_gjk_state,
+            self.data.multicontact_mpr_state,
+            self.data.multicontact_gjk_state,
+            self.rigid_island.data.qd_n_equalities,
+            rigid_data.dyn_info,
+            rigid_data.rigid_info,
+            self.data.collider_info,
+            rigid.rigid_config,
+            config,
+            self.data.gjk_config,
+            config.has_possible_pairs,
+            config.split_narrowphase,
+            config.coop_dedup,
+            rigid_data.errno,
+        )
 
     def redetect_contacts(self) -> None:
         """Clear the contacts of every env and detect them again, through the detection kernel alone."""
@@ -425,13 +453,3 @@ def create_rigid_rigid_contact(engine: SimulatorEngine) -> RigidRigidContact | N
         and any(isinstance(entity, RigidEntity) for entity in engine.scene.entities)
         else None
     )
-
-
-@qd.kernel
-def kernel_substep_detection(
-    rigid_data: qd.template(),
-    rigid_config: qd.template(),
-    contact_data: qd.template(),
-    island_data: qd.template(),
-):
-    func_substep_detection(rigid_data, rigid_config, contact_data, island_data)

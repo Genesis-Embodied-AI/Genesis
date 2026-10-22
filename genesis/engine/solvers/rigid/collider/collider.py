@@ -1367,6 +1367,106 @@ def func_substep_detection(
     )
 
 
+@qd.kernel(graph=True, fastcache=True)
+def kernel_detection(
+    geoms_init_AABB: array_class.GeomsInitAABB,
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    mpr_state: array_class.MPRState,
+    gjk_state: array_class.GJKState,
+    diff_contact_input: array_class.DiffContactInput,
+    contact0_mpr_state: array_class.MPRState,
+    contact0_gjk_state: array_class.GJKState,
+    multicontact_mpr_state: array_class.MPRState,
+    multicontact_gjk_state: array_class.GJKState,
+    qd_n_equalities: qd.Tensor,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
+    rigid_config: qd.template(),
+    collider_static_config: qd.template(),
+    gjk_static_config: qd.template(),
+    has_possible_pairs: qd.template(),
+    split_narrowphase: qd.template(),
+    coop_dedup: qd.template(),
+    errno: qd.Tensor,
+):
+    """Detect the collisions of every environment, captured as one graph."""
+    func_detection(
+        geoms_init_AABB=geoms_init_AABB,
+        dyn_state=dyn_state,
+        collider_state=collider_state,
+        mpr_state=mpr_state,
+        gjk_state=gjk_state,
+        diff_contact_input=diff_contact_input,
+        contact0_mpr_state=contact0_mpr_state,
+        contact0_gjk_state=contact0_gjk_state,
+        multicontact_mpr_state=multicontact_mpr_state,
+        multicontact_gjk_state=multicontact_gjk_state,
+        qd_n_equalities=qd_n_equalities,
+        dyn_info=dyn_info,
+        rigid_info=rigid_info,
+        collider_info=collider_info,
+        rigid_config=rigid_config,
+        collider_static_config=collider_static_config,
+        gjk_static_config=gjk_static_config,
+        has_possible_pairs=has_possible_pairs,
+        split_narrowphase=split_narrowphase,
+        coop_dedup=coop_dedup,
+        errno=errno,
+    )
+
+
+@qd.kernel(fastcache=True)
+def kernel_detection_without_graph(
+    geoms_init_AABB: array_class.GeomsInitAABB,
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    mpr_state: array_class.MPRState,
+    gjk_state: array_class.GJKState,
+    diff_contact_input: array_class.DiffContactInput,
+    contact0_mpr_state: array_class.MPRState,
+    contact0_gjk_state: array_class.GJKState,
+    multicontact_mpr_state: array_class.MPRState,
+    multicontact_gjk_state: array_class.GJKState,
+    qd_n_equalities: qd.Tensor,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
+    rigid_config: qd.template(),
+    collider_static_config: qd.template(),
+    gjk_static_config: qd.template(),
+    has_possible_pairs: qd.template(),
+    split_narrowphase: qd.template(),
+    coop_dedup: qd.template(),
+    errno: qd.Tensor,
+):
+    """Detect the collisions of every environment without a graph (see RigidRigidContact.detect_launching_kernels)."""
+    func_detection(
+        geoms_init_AABB=geoms_init_AABB,
+        dyn_state=dyn_state,
+        collider_state=collider_state,
+        mpr_state=mpr_state,
+        gjk_state=gjk_state,
+        diff_contact_input=diff_contact_input,
+        contact0_mpr_state=contact0_mpr_state,
+        contact0_gjk_state=contact0_gjk_state,
+        multicontact_mpr_state=multicontact_mpr_state,
+        multicontact_gjk_state=multicontact_gjk_state,
+        qd_n_equalities=qd_n_equalities,
+        dyn_info=dyn_info,
+        rigid_info=rigid_info,
+        collider_info=collider_info,
+        rigid_config=rigid_config,
+        collider_static_config=collider_static_config,
+        gjk_static_config=gjk_static_config,
+        has_possible_pairs=has_possible_pairs,
+        split_narrowphase=split_narrowphase,
+        coop_dedup=coop_dedup,
+        errno=errno,
+    )
+
+
 from genesis.utils.deprecated_module_wrapper import create_virtual_deprecated_module
 
 create_virtual_deprecated_module(__name__, "genesis.engine.solvers.rigid.collider_decomp")
