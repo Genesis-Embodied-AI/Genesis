@@ -211,7 +211,7 @@ class SPHSolver(GravityMixin, TimeBasedMixin, Solver):
                 self.particles_ng_reordered[reordered_idx, i_b].active = self.particles_ng[i_p, i_b].active
 
         if qd.static(self._coupler._rigid_sph):
-            for i_p, i_g, i_b in qd.ndrange(self._n_particles, self._coupler._n_rigid_geoms, self._B):
+            for i_p, i_g, i_b in qd.ndrange(self._n_particles, self._coupler.rigid_solver.n_geoms, self._B):
                 if self.particles_ng[i_p, i_b].active:
                     self._coupler.sph_rigid_normal_reordered[self.particles_ng[i_p, i_b].reordered_idx, i_g, i_b] = (
                         self._coupler.sph_rigid_normal[i_p, i_g, i_b]
@@ -225,7 +225,7 @@ class SPHSolver(GravityMixin, TimeBasedMixin, Solver):
                 self.particles[i_p, i_b] = self.particles_reordered[self.particles_ng[i_p, i_b].reordered_idx, i_b]
 
         if qd.static(self._coupler._rigid_sph):
-            for i_p, i_g, i_b in qd.ndrange(self._n_particles, self._coupler._n_rigid_geoms, self._B):
+            for i_p, i_g, i_b in qd.ndrange(self._n_particles, self._coupler.rigid_solver.n_geoms, self._B):
                 if self.particles_ng[i_p, i_b].active:
                     self._coupler.sph_rigid_normal[i_p, i_g, i_b] = self._coupler.sph_rigid_normal_reordered[
                         self.particles_ng[i_p, i_b].reordered_idx, i_g, i_b

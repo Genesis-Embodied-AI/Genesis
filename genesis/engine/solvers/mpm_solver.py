@@ -425,11 +425,11 @@ class MPMSolver(GravityMixin, TimeBasedMixin, Solver):
                         weight *= w[offset[d]][d]
 
                     sep_geom_idx = -1
-                    if qd.static(self._enable_CPIC and self._coupler._rigid_active):
+                    if qd.static(self._enable_CPIC and self.sim.rigid_solver.is_active):
                         # check if particle and cell center are at different side of any thin object
                         cell_pos = (base + offset) * self._dx
 
-                        for i_g in range(self._coupler._n_rigid_geoms):
+                        for i_g in range(self.sim.rigid_solver.n_geoms):
                             if geoms_info.needs_coup[i_g]:
                                 sdf_normal_particle = self._coupler.mpm_rigid_normal[i_p, i_g, i_b]
                                 sdf_normal_cell = sdf.sdf_func_normal_world(
@@ -494,7 +494,7 @@ class MPMSolver(GravityMixin, TimeBasedMixin, Solver):
                     for d in qd.static(range(3)):
                         weight *= w[offset[d]][d]
 
-                    if qd.static(self._enable_CPIC and self._coupler._rigid_active):
+                    if qd.static(self._enable_CPIC and self.sim.rigid_solver.is_active):
                         sep_geom_idx = self._coupler.cpic_flag[i_p, offset[0], offset[1], offset[2], i_b]
                         if sep_geom_idx != -1:
                             grid_vel = self.sim.coupler._func_collide_in_rigid_geom(
