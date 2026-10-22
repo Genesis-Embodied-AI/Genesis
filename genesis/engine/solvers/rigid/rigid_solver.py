@@ -11,10 +11,8 @@ import genesis.utils.array_class as array_class
 from genesis.constants import link_ref_frame
 from genesis.engine.entities import RigidEntity
 from genesis.engine.materials import Rigid
-from genesis.engine.states import RigidSolverState, SolverCheckpoint
-from genesis.engine.states.cache import QueriedStates
+from genesis.engine.states import RigidSolverState
 from genesis.options.solvers import RigidOptions
-from genesis.utils.misc import data_to_array
 
 from ..base_solver import MutatedLinks, StateChange, Subscriber, mutates, register_subscriber
 from .collider import Collider
@@ -35,6 +33,7 @@ if TYPE_CHECKING:
     from genesis.engine.systems.rigid_dynamics import RigidDynamics
     from genesis.engine.systems.rigid_equality_constraint import RigidEqualityConstraint
     from genesis.engine.systems.rigid_island import RigidIsland
+    from genesis.engine.systems.rigid_rigid_contact import RigidRigidContact
 
 TensorLike: TypeAlias = ArrayLike | torch.Tensor
 IndexLike: TypeAlias = ArrayLike | torch.Tensor | None
@@ -44,7 +43,7 @@ StructuredResult: TypeAlias = dict[str, StructuredValue]
 
 
 def _constraint_state_property(name: str) -> property:
-    return property(lambda facade: getattr(facade._system.data.constraint_state, name))
+    return property(lambda facade: getattr(facade._rigid_constraint.data.constraint_state, name))
 
 
 class ConstraintSolver:
@@ -134,7 +133,6 @@ class RigidSolver:
         self._scene = scene
         self._sim = sim
         self._options = options
-        self._queried_states = QueriedStates()
         self._ffs = []
         self._subscribers: set[Subscriber] = set()
         self._is_mutating = False
@@ -152,46 +150,31 @@ class RigidSolver:
         self._rigid_dynamics: "RigidDynamics | None" = None
         self._rigid_api: "RigidAPI | None" = None
         self._rigid_island: "RigidIsland | None" = None
+        self._rigid_rigid_contact: "RigidRigidContact | None" = None
+        self._rigid_constraint: "RigidConstraint | None" = None
 
         self.collider = None
         self.constraint_solver = None
 
-        self._ckpt = dict()
-
-    def init_ckpt(self) -> None:
-        pass
-
     def wire_backend(self, engine: "SimulatorEngine") -> None:
         """Connect the public facade to the owner APIs of the Systems of the Engine after initialization."""
-        from genesis.engine.systems import (
-            RigidAPI,
-            RigidContactConstraint,
-            RigidDynamics,
-            RigidEqualityConstraint,
-            RigidFrictionLossConstraint,
-            RigidJointLimitConstraint,
-        )
+        from genesis.engine.systems import RigidAPI, RigidDynamics, RigidEqualityConstraint
 
         system = engine.require(RigidDynamics)
         self._rigid_dynamics = system
         self._rigid_api = engine.require(RigidAPI)
         self._rigid_island = engine.rigid_island
+        self._rigid_rigid_contact = engine.rigid_rigid_contact
+        self._rigid_constraint = engine.rigid_constraint
         self._articulated_links_idx = system._articulated_links_idx
         self._links_parent_idx = system._links_parent_idx
         self.collider = None if engine.rigid_rigid_contact is None else Collider(engine.rigid_rigid_contact)
         self.constraint_solver = None
         if engine.rigid_constraint is not None:
-            participant_types = (
-                RigidEqualityConstraint,
-                RigidFrictionLossConstraint,
-                RigidContactConstraint,
-                RigidJointLimitConstraint,
-            )
-            participants = tuple(
-                participant for participant in map(engine.find, participant_types) if participant is not None
-            )
             self.constraint_solver = ConstraintSolver(
-                engine.rigid_constraint, engine.require(RigidEqualityConstraint), participants
+                engine.rigid_constraint,
+                engine.require(RigidEqualityConstraint),
+                engine.rigid_constraint_participants,
             )
 
     # Explicit compatibility exports of Rigid-owned data. These replace the former inheritance/__getattr__ surface:
@@ -584,35 +567,12 @@ class RigidSolver:
         return self._rigid_api.get_error_envs_mask()
 
     def check_errno(self) -> None:
-        errno = self._rigid_dynamics.read_errno()
-        contact_data = None if self.collider is None else self.collider._data
-        if errno & array_class.ErrorCode.OVERFLOW_CANDIDATE_CONTACTS:
-            maximum = contact_data.collider_info.max_collision_pairs_broad[None]
-            gs.raise_exception(
-                f"Exceeding max number of broad phase candidate contact pairs ({maximum}). Please increase "
-                "'multiplier_collision_broad_phase'."
-            )
-        if errno & array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS:
-            maximum = contact_data.collider_info.max_candidate_contacts[None]
-            gs.raise_exception(
-                f"Exceeding max number of candidate contact points ({maximum}). Please increase 'max_collision_pairs'."
-            )
-        if errno & array_class.ErrorCode.OVERFLOW_CONTACTS:
-            maximum = contact_data.collider_info.max_contacts[None]
-            gs.raise_exception(
-                f"Exceeding max number of post-pruning contact points ({maximum}). Please increase 'max_contacts'."
-            )
-        if errno & array_class.ErrorCode.INVALID_CONTACT_NAN:
-            gs.raise_exception("Collision detection reported a non-finite contact; please report this internal error.")
-        if errno & array_class.ErrorCode.INVALID_FORCE_NAN:
-            gs.raise_exception("Invalid constraint forces causing 'nan'. Please decrease Rigid simulation timestep.")
-        if errno & array_class.ErrorCode.INVALID_ACC_NAN:
-            gs.raise_exception("Invalid accelerations causing 'nan'. Please decrease Rigid simulation timestep.")
+        return self._sim._engine.check_errno()
 
     def _kernel_detect_collision(self) -> None:
-        if self.collider is not None:
-            self.collider.clear()
-            self.collider.detection()
+        if self._rigid_rigid_contact is not None:
+            self._rigid_rigid_contact.clear_contacts()
+            self._rigid_rigid_contact.detect_launching_kernels()
 
     def detect_collision(self, env_idx: int = 0) -> NDArray[np.integer]:
         if self.collider is None:
@@ -662,76 +622,48 @@ class RigidSolver:
         *,
         partial: bool = False,
     ) -> None:
-        if self.collider is not None:
+        # Restarting the contact and constraint warm starts on a Rigid state write is a legacy behavior of this facade,
+        # which asks their owners for it directly.
+        contact, constraint = self._rigid_rigid_contact, self._rigid_constraint
+        if contact is not None:
             if partial:
-                self.collider.reset(envs_idx)
+                contact.reset_contacts(envs_idx)
             else:
-                self.collider.clear(envs_idx)
-        if self.constraint_solver is not None:
+                contact.clear_contacts(envs_idx)
+        if constraint is not None:
             if partial:
-                self.constraint_solver.reset(envs_idx)
+                constraint.reset(envs_idx)
             else:
-                self.constraint_solver.clear(envs_idx)
+                constraint.clear(envs_idx)
         self._rigid_dynamics.set_state(f, state, envs_idx, partial=partial)
         self._restart()
+
+    @mutates(StateChange.GEOMETRY, StateChange.DYNAMICS)
+    def notify_state_change(self, envs_idx: IndexLike = None) -> None:
+        """Notify the frontend subscribers of a Rigid state the Simulator wrote, such as a scene reset or restore."""
+
+    @mutates(StateChange.MODEL)
+    def notify_model_change(self, envs_idx: IndexLike = None) -> None:
+        """Notify the frontend subscribers of a Rigid model parameter the Simulator wrote, such as the gravity."""
 
     @property
     def data(self) -> Iterator[array_class.DataItem | array_class.ConfigItem]:
         if self._rigid_dynamics is None:
             return
-        yield from self._rigid_dynamics.iter_data()
-        yield from self._rigid_island.iter_data()
-        if self.collider is not None:
-            yield from self.collider.data
-        if self.constraint_solver is not None:
-            yield from self.constraint_solver.data
-
-    def __getstate__(self) -> SolverCheckpoint:
-        arrays = {}
-        configs = {}
-        for item in self.data:
-            if isinstance(item, array_class.ConfigItem):
-                configs[item.name] = item.config
-            elif item.kind in array_class.CHECKPOINT_KINDS:
-                if isinstance(item, array_class.ScalarItem):
-                    arrays[item.name] = np.array(getattr(item.owner, item.attr))
-                else:
-                    arrays[item.name] = data_to_array(item.array, to_torch=gs.use_zerocopy, copy=True)
-        return SolverCheckpoint(arrays=arrays, configs=configs, kinds=array_class.CHECKPOINT_KINDS)
+        yield from self._sim.iter_rigid_data()
 
     def _restart(self) -> None:
         self._rigid_dynamics.restart_owner()
-        if self.collider is not None:
-            self.collider._rigid_rigid_contact.clear_contact_data_cache()
-        if self.constraint_solver is not None:
-            self.constraint_solver.clear_query_cache()
+        if self._rigid_rigid_contact is not None:
+            self._rigid_rigid_contact.clear_contact_data_cache()
+        if self._rigid_constraint is not None:
+            self._rigid_constraint.clear_readback_caches()
 
     def _reset_dependents(self, envs_idx: IndexLike = None) -> None:
-        if self.collider is not None:
-            self.collider.reset(envs_idx)
-        if self.constraint_solver is not None:
-            self.constraint_solver.reset(envs_idx)
-
-    @mutates(StateChange.GEOMETRY, StateChange.DYNAMICS)
-    def __setstate__(self, state: SolverCheckpoint) -> None:
-        items = (item for item in self.data if isinstance(item, array_class.DataItem) and item.kind in state.kinds)
-        array_class.fill_data(items, state.arrays)
-        if array_class.DataKind.DERIVED not in state.kinds:
-            self._rigid_dynamics.invalidate_forward_state()
-            self._rigid_dynamics.update_forward_pos()
-        self._restart()
-
-    def process_input(self, in_backward: bool = False) -> None:
-        return self._rigid_dynamics.process_input(in_backward)
-
-    def process_input_grad(self) -> None:
-        return self._rigid_dynamics.process_input_grad()
-
-    def save_ckpt(self, ckpt_name: str) -> None:
-        return self._rigid_dynamics.save_ckpt(ckpt_name)
-
-    def load_ckpt(self, ckpt_name: str) -> None:
-        return self._rigid_dynamics.load_ckpt(ckpt_name)
+        if self._rigid_rigid_contact is not None:
+            self._rigid_rigid_contact.reset_contacts(envs_idx)
+        if self._rigid_constraint is not None:
+            self._rigid_constraint.reset(envs_idx)
 
     # ------------------------------------------------------------------------------------
     # ------------------------------------ control ---------------------------------------

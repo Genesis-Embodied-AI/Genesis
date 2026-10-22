@@ -158,7 +158,7 @@ class RigidRigidContact(System):
         rigid = self.rigid_dynamics
         kernel_substep_detection(rigid.data, rigid.rigid_config, self.data, self.rigid_island.data)
 
-    def reset_contacts(self, envs_idx: EnvIndex, *, cache_only: bool = True) -> None:
+    def reset_contacts(self, envs_idx: EnvIndex = None, *, cache_only: bool = True) -> None:
         """Restart the warm start of the detection in the given environments."""
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         collider_reset(
@@ -170,7 +170,7 @@ class RigidRigidContact(System):
             cache_only=cache_only,
         )
 
-    def clear_contacts(self, envs_idx: EnvIndex) -> None:
+    def clear_contacts(self, envs_idx: EnvIndex = None) -> None:
         """Clear the contacts and the warm start of the detection in the given environments."""
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         collider_clear(

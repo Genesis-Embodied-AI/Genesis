@@ -1236,7 +1236,7 @@ class Collider:
     @property
     def data(self) -> Iterator[array_class.DataItem | array_class.ConfigItem]:
         """Yield every array and static config of the collider (see 'Solver.data')."""
-        return iter_collider_data(self._data, self._data.collider_config.split_narrowphase)
+        return self._rigid_rigid_contact.iter_data()
 
     def reset(self, envs_idx: EnvIndex = None, *, cache_only: bool = True) -> None:
         self._rigid_rigid_contact.reset_contacts(envs_idx, cache_only=cache_only)

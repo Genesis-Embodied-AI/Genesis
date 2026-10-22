@@ -531,6 +531,10 @@ class RigidDynamics(System):
         self._queried_states.append(state)
         return state
 
+    def discard_queried_state(self, state: RigidSolverState) -> None:
+        """Forget a state 'get_state' returned, once the scene state holding it is dropped."""
+        self._queried_states.discard(state)
+
     def set_state(
         self,
         f: int,

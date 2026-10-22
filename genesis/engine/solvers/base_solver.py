@@ -1,7 +1,7 @@
 import enum
 import functools
 import inspect
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
@@ -322,6 +322,31 @@ class GravityMixin:
         return tensor[0] if self._sim.n_envs == 0 else tensor
 
 
+def read_checkpoint(items: Iterable[array_class.DataItem | array_class.ConfigItem]) -> SolverCheckpoint:
+    """Copy the items of the kinds a checkpoint carries (see 'CHECKPOINT_KINDS') into a SolverCheckpoint.
+
+    The arrays are copied where they live: on the device as torch tensors when zero-copy views exist, which keeps a
+    save and a restore within one process off the host, and as numpy arrays otherwise.
+    """
+    arrays = {}
+    configs = {}
+    for item in items:
+        if isinstance(item, array_class.ConfigItem):
+            configs[item.name] = item.config
+        elif item.kind in array_class.CHECKPOINT_KINDS:
+            if isinstance(item, array_class.ScalarItem):
+                arrays[item.name] = np.array(getattr(item.owner, item.attr))
+            else:
+                arrays[item.name] = data_to_array(item.array, to_torch=gs.use_zerocopy, copy=True)
+    return SolverCheckpoint(arrays=arrays, configs=configs, kinds=array_class.CHECKPOINT_KINDS)
+
+
+def write_checkpoint(items: Iterable[array_class.DataItem | array_class.ConfigItem], state: SolverCheckpoint) -> None:
+    """Write back the arrays of the kinds a SolverCheckpoint holds, rejecting a record read from another build."""
+    items = (item for item in items if isinstance(item, array_class.DataItem) and item.kind in state.kinds)
+    array_class.fill_data(items, state.arrays)
+
+
 class Solver(RBC):
     # The material of the entities this solver simulates, None for a solver holding no entity of its own
     material_cls: type[Material] | None = None
@@ -374,23 +399,8 @@ class Solver(RBC):
         gs.raise_exception(f"{type(self).__name__} cannot be checkpointed yet.")
 
     def __getstate__(self) -> SolverCheckpoint:
-        """Return a SolverCheckpoint of this solver, for '__setstate__' to restore.
-
-        The state is what 'data' yields of the kinds a checkpoint carries (see 'CHECKPOINT_KINDS'), copied where it
-        lives: on the device as torch tensors when zero-copy views exist, which keeps a save and a restore within one
-        process off the host, and as numpy arrays otherwise.
-        """
-        arrays = {}
-        configs = {}
-        for item in self.data:
-            if isinstance(item, array_class.ConfigItem):
-                configs[item.name] = item.config
-            elif item.kind in array_class.CHECKPOINT_KINDS:
-                if isinstance(item, array_class.ScalarItem):
-                    arrays[item.name] = np.array(getattr(item.owner, item.attr))
-                else:
-                    arrays[item.name] = data_to_array(item.array, to_torch=gs.use_zerocopy, copy=True)
-        return SolverCheckpoint(arrays=arrays, configs=configs, kinds=array_class.CHECKPOINT_KINDS)
+        """Return a SolverCheckpoint of what 'data' yields, for '__setstate__' to restore (see 'read_checkpoint')."""
+        return read_checkpoint(self.data)
 
     def __setstate__(self, state: SolverCheckpoint) -> None:
         """Write back the arrays of the kinds a record holds, rejecting a record read from another build.
@@ -398,8 +408,7 @@ class Solver(RBC):
         A solver whose step reads a DERIVED array before recomputing it overrides this to recompute or invalidate that
         array when the record lacks DERIVED (see 'DataKind').
         """
-        items = (item for item in self.data if isinstance(item, array_class.DataItem) and item.kind in state.kinds)
-        array_class.fill_data(items, state.arrays)
+        write_checkpoint(self.data, state)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

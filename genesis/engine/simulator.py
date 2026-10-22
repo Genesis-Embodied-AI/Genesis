@@ -8,7 +8,7 @@ import genesis as gs
 from genesis.options.morphs import Morph
 from genesis.options.solvers import IPCCouplerOptions, LegacyCouplerOptions, SAPCouplerOptions
 from genesis.repr_base import RBC
-from genesis.utils.array_class import DataItem, DataKind, iter_data
+from genesis.utils.array_class import ConfigItem, DataItem, DataKind, iter_data
 from genesis.utils.misc import indices_to_mask
 from genesis.utils.tools import StepTimer
 
@@ -17,10 +17,10 @@ from .entities import HybridEntity
 from .sensors import SensorManager
 from .simulator_engine import SimulatorEngine
 from .solvers import FEMSolver, KinematicSolver, MPMSolver, PBDSolver, RigidSolver, SFSolver, SPHSolver, ToolSolver
-from .solvers.base_solver import GravityMixin, TimeBasedMixin
+from .solvers.base_solver import GravityMixin, TimeBasedMixin, read_checkpoint, write_checkpoint
 from .states.cache import QueriedStates
 from .states.solvers import SimState, SimulatorCheckpoint
-from .systems import RigidDynamics
+from .systems import RigidAPI, RigidDynamics
 
 if TYPE_CHECKING:
     from genesis.engine.entities.base_entity import Entity, EntityDescription
@@ -111,6 +111,7 @@ class Simulator(RBC):
         # The compositional engine exists only when an admitted backend needs Rigid data.
         self._engine: SimulatorEngine | None = None
         self._rigid_dynamics: RigidDynamics | None = None
+        self._rigid_api: RigidAPI | None = None
 
         # states
         self._queried_states = QueriedStates()
@@ -229,6 +230,7 @@ class Simulator(RBC):
                 self._engine = SimulatorEngine(self.scene)
                 self._engine.build()
                 self._rigid_dynamics = self._engine.require(RigidDynamics)
+                self._rigid_api = self._engine.require(RigidAPI)
                 if isinstance(self._coupler, IPCCoupler) and self._engine.rigid_rigid_contact is not None:
                     delegated_links, exclusive_links = self._coupler.rigid_collision_exclusions(
                         self._rigid_dynamics.entities
@@ -271,11 +273,13 @@ class Simulator(RBC):
 
     def reset(self, state: SimState, envs_idx: IndexLike = None) -> None:
         for solver, solver_state in zip(self._solvers, state):
-            if solver.n_entities > 0:
-                if solver is self.rigid_solver:
-                    self.rigid_solver.set_state(0, solver_state, envs_idx)
-                else:
-                    solver.set_state(0, solver_state, envs_idx)
+            if solver is self.rigid_solver:
+                # The Rigid owners reset through the Engine, and the facade only notifies its frontend subscribers.
+                if self._engine is not None:
+                    self._engine.reset(solver_state, envs_idx)
+                    self.rigid_solver.notify_state_change(envs_idx)
+            elif solver.n_entities > 0:
+                solver.set_state(0, solver_state, envs_idx)
 
         if envs_idx is None:
             self._steps.zero_()
@@ -309,10 +313,25 @@ class Simulator(RBC):
                 yield item._replace(name=f"Simulator.{item.name}")
         for solver in self._active_solvers:
             prefix = type(solver).__name__
-            items = solver.data
+            items = self.iter_rigid_data() if solver is self.rigid_solver else solver.data
             for item in items:
                 if isinstance(item, DataItem) and item.kind in kinds:
                     yield item._replace(name=f"{prefix}.{item.name}")
+
+    def iter_rigid_data(self) -> Iterator[DataItem | ConfigItem]:
+        """Yield every array and static config of the Rigid owner Systems, which a checkpoint records under the name
+        of the RigidSolver."""
+        engine = self._engine
+        if engine is None:
+            return
+        yield from engine.rigid_dynamics.iter_data()
+        yield from engine.rigid_island.iter_data()
+        if engine.rigid_rigid_contact is not None:
+            yield from engine.rigid_rigid_contact.iter_data()
+        if engine.rigid_constraint is not None:
+            yield from engine.rigid_constraint.iter_data()
+            for participant in engine.rigid_constraint_participants:
+                yield from participant.iter_data()
 
     def __getstate__(self) -> SimulatorCheckpoint:
         """Return a SimulatorCheckpoint of the simulation, for '__setstate__' to restore."""
@@ -322,7 +341,12 @@ class Simulator(RBC):
             )
         return SimulatorCheckpoint(
             steps=self._steps.clone(),
-            solvers={type(solver).__name__: (solver.__getstate__()) for solver in self._active_solvers},
+            solvers={
+                type(solver).__name__: (
+                    read_checkpoint(self.iter_rigid_data()) if solver is self.rigid_solver else solver.__getstate__()
+                )
+                for solver in self._active_solvers
+            },
         )
 
     def __setstate__(self, state: SimulatorCheckpoint) -> None:
@@ -338,7 +362,12 @@ class Simulator(RBC):
         self._restart()
         for solver in self._active_solvers:
             solver_state = state.solvers[type(solver).__name__]
-            solver.__setstate__(solver_state)
+            if solver is self.rigid_solver:
+                write_checkpoint(self.iter_rigid_data(), solver_state)
+                self._engine.restore(solver_state.kinds)
+                self.rigid_solver.notify_state_change()
+            else:
+                solver.__setstate__(solver_state)
         self._steps[:] = torch.as_tensor(state.steps, device=gs.device)
         # Flush the zero-copy writes of fill_data on Metal.
         if gs.use_zerocopy and gs.backend == gs.metal:
@@ -387,8 +416,8 @@ class Simulator(RBC):
         # This will trigger GPU sync, but it is not a big deal at the point, since we are going to enqueue very large
         # kernel right away. Moreover, if computations are still not done at this point, then the queue will just
         # continue growing endlessly, which will not make the simulation faster either.
-        if self.rigid_solver.is_active and self._cur_substep_global % RATE_CHECK_ERRNO == 0:
-            self.rigid_solver.check_errno()
+        if self._engine is not None and self._cur_substep_global % RATE_CHECK_ERRNO == 0:
+            self._engine.check_errno()
 
         # Reconstructing a checkpoint window replays steps the environments already simulated, so only a forward step
         # advances their clock. The backward pass winds it down again through `_step_grad`.
@@ -572,7 +601,8 @@ class Simulator(RBC):
     def add_grad_from_state(self, state: SimState) -> None:
         for solver, solver_state in zip(self._solvers, state):
             if solver is self.rigid_solver:
-                self._rigid_dynamics.add_grad_from_state(solver_state)
+                if self._rigid_dynamics is not None:
+                    self._rigid_dynamics.add_grad_from_state(solver_state)
             else:
                 solver.add_grad_from_state(solver_state)
 
@@ -639,22 +669,31 @@ class Simulator(RBC):
     # ------------------------------------------------------------------------------------
 
     def get_state(self) -> SimState:
+        # The Rigid state is read from its owner System, and an inactive RigidSolver holds none.
+        state_owners = [
+            self._rigid_dynamics if solver is self.rigid_solver and self._rigid_dynamics is not None else solver
+            for solver in self._solvers
+        ]
         state = SimState(
             scene=self.scene,
             s_global=self.cur_step_global,
             f_local=self.cur_substep_local,
-            solvers=self._solvers,
+            solvers=state_owners,
         )
 
-        # `SimState.__init__` calls `solver.get_state` on every solver, and solvers that maintain a per-solver queue
+        # `SimState.__init__` calls `get_state` on every state owner, and the owners that maintain a per-solver queue
         # (kinematic/rigid) push the returned state there as a within-step cache. The SimState itself is registered just
         # below for grad collection at the simulator level, so the per-solver entry would cause `collect_output_grads`
         # to dispatch `kernel_get_state_grad` twice on the same state and double the adjoint via atomic_add. Lift those
         # entries here. Solvers without solver-state registration (mpm, fem, sph, pbd, sf, tool) leave their queue
         # empty, so `discard` is a no-op for them.
-        for solver, solver_state in zip(self._solvers, state.solvers_state):
-            if solver_state is not None:
-                solver._queried_states.discard(solver_state)
+        for owner, solver_state in zip(state_owners, state.solvers_state):
+            if solver_state is None:
+                continue
+            if owner is self._rigid_dynamics:
+                owner.discard_queried_state(solver_state)
+            else:
+                owner._queried_states.discard(solver_state)
 
         # store all queried states to track gradient flow
         self._queried_states.append(state)
@@ -663,7 +702,14 @@ class Simulator(RBC):
 
     def set_gravity(self, gravity: ArrayLike | torch.Tensor, envs_idx: IndexLike = None) -> None:
         for solver in self._solvers:
-            if solver.is_active and (solver is self.rigid_solver or isinstance(solver, GravityMixin)):
+            if not solver.is_active:
+                continue
+            if solver is self.rigid_solver:
+                if self._rigid_api is None:
+                    gs.raise_exception(f"{type(solver).__name__} is not built yet.")
+                self._rigid_api.set_gravity(gravity, envs_idx)
+                self.rigid_solver.notify_model_change(envs_idx)
+            elif isinstance(solver, GravityMixin):
                 solver.set_gravity(gravity, envs_idx)
 
     # ------------------------------------------------------------------------------------

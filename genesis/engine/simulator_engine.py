@@ -1,13 +1,20 @@
 """Concrete Engine composing the Rigid Systems of a Simulator."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeAlias
 
+from numpy.typing import ArrayLike
 import quadrants as qd
+import torch
 
-from genesis.engine.core import Engine, Pipeline
+import genesis as gs
+from genesis.engine.core import Engine, Pipeline, System
+from genesis.utils.array_class import DataKind, ErrorCode
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
+    from genesis.engine.states import RigidSolverState
+
+IndexLike: TypeAlias = ArrayLike | torch.Tensor | None
 
 
 class SimulatorEngine(Engine):
@@ -25,6 +32,10 @@ class SimulatorEngine(Engine):
         from .systems.rigid_island import RigidIsland
         from .systems.rigid_rigid_contact import RigidRigidContact
         from .systems.rigid_constraint import RigidConstraint
+        from .systems.rigid_contact_constraint import RigidContactConstraint
+        from .systems.rigid_equality_constraint import RigidEqualityConstraint
+        from .systems.rigid_frictionloss_constraint import RigidFrictionLossConstraint
+        from .systems.rigid_joint_limit_constraint import RigidJointLimitConstraint
 
         super().build()
         self.rigid_dynamics = self.find(RigidDynamics)
@@ -33,11 +44,21 @@ class SimulatorEngine(Engine):
             self.rigid_island = None
             self.rigid_rigid_contact = None
             self.rigid_constraint = None
+            self.rigid_constraint_participants: tuple[System, ...] = ()
             return
         self.rigid_sdf = self.require(RigidSdf)
         self.rigid_island = self.require(RigidIsland)
         self.rigid_rigid_contact = self.find(RigidRigidContact)
         self.rigid_constraint = self.find(RigidConstraint)
+        participant_types = (
+            RigidEqualityConstraint,
+            RigidFrictionLossConstraint,
+            RigidContactConstraint,
+            RigidJointLimitConstraint,
+        )
+        self.rigid_constraint_participants = tuple(
+            participant for participant in map(self.find, participant_types) if participant is not None
+        )
         rigid, contact, constraint = self.rigid_dynamics, self.rigid_rigid_contact, self.rigid_constraint
         context = self.create_context()
 
@@ -172,6 +193,70 @@ class SimulatorEngine(Engine):
         else:
             self.rigid_constraint.reverse.invoke()
         rigid.reverse_forward_dynamics.invoke((f,))
+
+    def check_errno(self) -> None:
+        """Raise on the errors the Rigid kernels reported, with the option that bounds each overflowed buffer."""
+        rigid = self.rigid_dynamics
+        if rigid is None:
+            return
+        errno = rigid.read_errno()
+        if errno & ErrorCode.OVERFLOW_CANDIDATE_CONTACTS:
+            max_collision_pairs_broad = self.rigid_rigid_contact.data.collider_info.max_collision_pairs_broad[None]
+            gs.raise_exception(
+                f"Exceeding max number of broad phase candidate contact pairs ({max_collision_pairs_broad}). "
+                f"Please increase the value of RigidSolver's option 'multiplier_collision_broad_phase'."
+            )
+        if errno & ErrorCode.OVERFLOW_COLLISION_PAIRS:
+            max_candidate_contacts = self.rigid_rigid_contact.data.collider_info.max_candidate_contacts[None]
+            gs.raise_exception(
+                f"Exceeding max number of candidate contact points ({max_candidate_contacts}). Please increase the "
+                "value of RigidSolver's option 'max_collision_pairs'."
+            )
+        if errno & ErrorCode.OVERFLOW_CONTACTS:
+            max_contacts = self.rigid_rigid_contact.data.collider_info.max_contacts[None]
+            gs.raise_exception(
+                f"Exceeding max number of post-pruning contact points ({max_contacts}) supported by the constraint "
+                "solver. Please increase the value of RigidSolver's option 'max_contacts'."
+            )
+        if errno & ErrorCode.INVALID_CONTACT_NAN:
+            gs.raise_exception(
+                "Collision detection reported a contact whose position, normal or penetration is not finite. This is a "
+                "solver-internal error, please report it."
+            )
+        if errno & ErrorCode.INVALID_FORCE_NAN:
+            gs.raise_exception("Invalid constraint forces causing 'nan'. Please decrease Rigid simulation timestep.")
+        if errno & ErrorCode.INVALID_ACC_NAN:
+            gs.raise_exception("Invalid accelerations causing 'nan'. Please decrease Rigid simulation timestep.")
+
+    def reset(self, state: "RigidSolverState", envs_idx: IndexLike = None) -> None:
+        """Put the Rigid Systems back in a state, as a scene reset does.
+
+        The contacts and the constraint warm starts start over, the state is written, and the Rigid owners restart.
+        """
+        rigid = self.rigid_dynamics
+        if rigid is None:
+            return
+        if self.rigid_rigid_contact is not None:
+            self.rigid_rigid_contact.clear_contacts(envs_idx)
+        if self.rigid_constraint is not None:
+            self.rigid_constraint.clear(envs_idx)
+        rigid.set_state(0, state, envs_idx)
+        self._restart()
+
+    def restore(self, kinds: frozenset[DataKind]) -> None:
+        """Restart the Rigid Systems once a checkpoint has written the given kinds of their Data back."""
+        rigid = self.rigid_dynamics
+        if rigid is None:
+            return
+        if DataKind.DERIVED not in kinds:
+            rigid.invalidate_forward_state()
+            rigid.update_forward_pos()
+        self._restart()
+
+    def _restart(self) -> None:
+        """Restart what the Rigid owners keep across steps, once their state was written."""
+        self.rigid_dynamics.restart_owner()
+        self._clear_readbacks()
 
     def _clear_readbacks(self) -> None:
         """Drop what the contact and constraint owners read back, before a substep recomputes it."""
