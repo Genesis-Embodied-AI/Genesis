@@ -129,6 +129,12 @@ def test_sim_vs_solver_state_grad_parity(show_viewer):
 
     assert_allclose(*grads, atol=gs.EPS)
 
+    # A state queried after a setter reflects it, even within the step of an earlier query
+    scene.reset()
+    scene.rigid_solver.get_state()
+    robot.set_pos((0.1, -0.2, 0.3))
+    assert_allclose(scene.rigid_solver.get_state().links_pos[0, 0], (0.1, -0.2, 0.3), tol=gs.EPS)
+
 
 @pytest.mark.required
 def test_closed_loop_policy_grad_matches_fd(grad_revolute, precision, show_viewer):

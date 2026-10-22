@@ -2119,16 +2119,6 @@ class RigidEntity(KinematicEntity):
     # ---------------------------------- control & io ------------------------------------
     # ------------------------------------------------------------------------------------
 
-    @gs.assert_built
-    def get_state(self):
-        solver_state = self._solver.get_state()
-        return RigidEntityState(
-            self,
-            self._sim.cur_step_global,
-            solver_state.links_pos[:, self.base_link_idx],
-            solver_state.links_quat[:, self.base_link_idx],
-        )
-
     # ------------------------------------------------------------------------------------
     # -------------------------------- vertices / AABB -----------------------------------
     # ------------------------------------------------------------------------------------

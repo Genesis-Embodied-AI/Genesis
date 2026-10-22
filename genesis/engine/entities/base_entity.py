@@ -5,7 +5,7 @@ import torch
 
 import genesis as gs
 from genesis.engine.materials.base import Material
-from genesis.engine.states.cache import QueriedStates
+from genesis.grad.bridge import QueriedStates
 from genesis.options.morphs import Morph
 from genesis.repr_base import RBC
 

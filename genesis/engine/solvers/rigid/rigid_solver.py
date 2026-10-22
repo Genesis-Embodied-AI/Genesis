@@ -1754,12 +1754,8 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
     # ------------------------------------------------------------------------------------
 
     def get_state(self, f=None):
-        s_global = self.sim.cur_step_global
         if self.is_active:
-            if s_global in self._queried_states:
-                return self._queried_states[s_global][0]
-
-            state = RigidSolverState(self._scene, s_global)
+            state = RigidSolverState(self._scene, self.sim.cur_step_global)
 
             # A captured state must be self-consistent: links_pos / links_quat have to be the Cartesian pose implied by
             # the qpos captured alongside them, otherwise restoring it does not reproduce the configuration it was taken

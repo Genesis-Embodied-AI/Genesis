@@ -158,8 +158,9 @@ class RigidEntityState(RBC):
     def __init__(self, entity, s_global, pos, quat):
         self._entity = entity
         self._s_global = s_global
-        self._pos = pos
-        self._quat = quat
+        # Copies, so that editing this state leaves the solver state it was read from untouched
+        self._pos = pos.clone()
+        self._quat = quat.clone()
 
     @property
     def entity(self):

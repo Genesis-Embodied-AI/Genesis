@@ -13,7 +13,8 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.materials.base import Material
-from genesis.engine.states import QueriedStates, SolverCheckpoint
+from genesis.engine.states import SolverCheckpoint
+from genesis.grad.bridge import QueriedStates
 from genesis.repr_base import RBC
 from genesis.utils.misc import (
     assign_indexed_tensor,

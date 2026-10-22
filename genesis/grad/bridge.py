@@ -57,3 +57,31 @@ class ReadNode(torch.autograd.Function):
     @staticmethod
     def backward(ctx, *grads):
         return grads[0].new_zeros(()), None
+
+
+class QueriedStates:
+    """
+    The states queried during the current rollout of a differentiable scene, grouped by the step they were read at.
+
+    Registering a state makes the tensors it declares in 'grad_tensors' differentiable (see 'Simulator.track_state'),
+    and 'collect_output_grads' later hands their gradients to the solver or entity that registered it. A scene that is
+    not differentiable keeps nothing, since nothing will read the gradients, and neither does a query made while torch
+    records no gradient ('torch.no_grad', 'torch.inference_mode'), whose state is not differentiable.
+    """
+
+    def __init__(self, sim):
+        self._sim = sim
+        self._states_by_step: dict[int, list] = {}
+
+    def append(self, state):
+        if not (self._sim.requires_grad and torch.is_grad_enabled()):
+            return
+        self._sim.track_state(*state.grad_tensors)
+        self._states_by_step.setdefault(self._sim.cur_step_global, []).append(state)
+
+    def get(self, s_global):
+        """Return the states registered at the given global step, if any."""
+        return self._states_by_step.get(s_global, ())
+
+    def clear(self):
+        self._states_by_step.clear()

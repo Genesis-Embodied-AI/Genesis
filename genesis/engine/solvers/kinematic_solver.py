@@ -933,11 +933,7 @@ class KinematicSolver(Solver):
 
     def get_state(self, f=None):
         if self.is_active:
-            s_global = self.sim.cur_step_global
-            if s_global in self._queried_states:
-                return self._queried_states[s_global][0]
-
-            state = KinematicSolverState(self._scene, s_global)
+            state = KinematicSolverState(self._scene, self.sim.cur_step_global)
 
             kernel_get_kinematic_state(
                 state.qpos,
