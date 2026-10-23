@@ -1,0 +1,138 @@
+genesis/engine/system_data/__init__.py
+  s_c8d7cbda7564fe::t_4fcbe5a59eaa04 1-64
+genesis/engine/system_data/articulated.py
+  s_c8d7cbda7564fe::t_4fcbe5a59eaa04 1-50,62-148
+genesis/engine/simulator.py
+  s_c8d7cbda7564fe::t_4fcbe5a59eaa04 85-86,242-250,277
+  s_c8d7cbda7564fe::t_7bf712ea139fe4 31
+  s_c8d7cbda7564fe::t_4ad725237b2cd7 144-147
+  s_c8d7cbda7564fe::t_261dc30daf6931 17,161-164,180
+  s_c8d7cbda7564fe::t_ce9b60be21874f 36,138,143,150-160
+genesis/engine/solvers/rigid/rigid_solver.py
+  s_c8d7cbda7564fe::t_4fcbe5a59eaa04 2,314,343-355,380
+genesis/utils/array_class.py
+  s_c8d7cbda7564fe::t_4fcbe5a59eaa04 2273-2274,2329-2331,2416-2418,2420-2421,2492-2495,2541-2542,2564-2566,2614-2615,2665-2667,2695-2696,2719-2720,2737-2738,2755-2756,2759-2760,2776-2777,2797,2800,2802-2804,2806,2820-2821,2845-2846,2873-2874,2895-2896,2927-2928,2955-2958,3033,3035-3043,3217
+tests/rigid/test_api.py
+  s_c8d7cbda7564fe::t_4fcbe5a59eaa04 487,491,495
+genesis/engine/solvers/kinematic_solver.py
+  s_c8d7cbda7564fe::t_4fcbe5a59eaa04 21-27,194-195,246-247,391-453,512-515,517
+  s_c8d7cbda7564fe::t_ce9b60be21874f 206,211-212,219-226
+genesis/engine/solvers/base_solver.py
+  s_c8d7cbda7564fe::t_4fcbe5a59eaa04 17,327,361-362,364-370
+.github/contributing/ARCHITECTURE.md
+  s_c8d7cbda7564fe::t_4fcbe5a59eaa04 110-123,131,135
+  s_c8d7cbda7564fe::t_7bf712ea139fe4 125
+  s_c8d7cbda7564fe::t_7bd108a3ff5edd 126
+  s_c8d7cbda7564fe::t_4ad725237b2cd7 128
+  s_c8d7cbda7564fe::t_3eabef3a40ba87 129,132
+  s_c8d7cbda7564fe::t_261dc30daf6931 134
+genesis/engine/couplers/legacy_coupler.py
+  s_c8d7cbda7564fe::t_7bf712ea139fe4 4,9,48,58-59,522,524-525,527-529,539,542-543,553,560-562,609,614-616,661,665-667
+  s_c8d7cbda7564fe::t_7bd108a3ff5edd 10,42,52-53,344,347,353,475,488,494,575,586,594,600
+  s_c8d7cbda7564fe::t_4ad725237b2cd7 11,46,56-57,443,446,465,468-471,723,728-729,733-735,763,767,779,796,815-816,819,868
+genesis/utils/serialization.py
+  s_c8d7cbda7564fe::t_7bf712ea139fe4 5-6,255-272,274,281,302,308,407-413,417
+  s_c8d7cbda7564fe::t_ce9b60be21874f 419-422,533-536
+genesis/engine/couplers/sap_coupler.py
+  s_c8d7cbda7564fe::t_7bf712ea139fe4 16,188,247-248,724,737-744,788-789,794,879,882,885,940,967,1076,1083-1084,1088,1435,1439,1450-1451,1455,1569,1590,2450,2492,2604-2605,2635-2636,2679,2694,2703,2715,2731,2784-2789,2816-2817,2822-2823,2873-2874,2877-2878,2977,3015,3018,3038,3045,3062,3069,3089,3092,3139-3140,3148,3150,3461,3486-3487,3541-3542,3622,3675,3696,3721,3737
+tests/rigid/test_serialization.py
+  s_c8d7cbda7564fe::t_7bf712ea139fe4 151-153,337-338
+  s_c8d7cbda7564fe::t_7bd108a3ff5edd 598,600
+tests/deformable/test_fem.py
+  s_c8d7cbda7564fe::t_7bf712ea139fe4 7-8,10,161,166,174,181-186
+genesis/engine/solvers/fem_solver.py
+  s_c8d7cbda7564fe::t_7bf712ea139fe4 13-14,17,203-204,214-269,308-313,333
+genesis/engine/entities/fem_entity.py
+  s_c8d7cbda7564fe::t_15870eb23cec24 279-282
+  s_c8d7cbda7564fe::t_7bf712ea139fe4 1,18,20-21,26-34,36-39,40-128,242-244,263,283-293,572-574
+  s_c8d7cbda7564fe::t_7bd108a3ff5edd 25,35
+  s_c8d7cbda7564fe::t_261dc30daf6931 271
+genesis/engine/system_data/fem.py
+  s_c8d7cbda7564fe::t_7bf712ea139fe4 1-124
+genesis/engine/entities/particle_entity.py
+  s_c8d7cbda7564fe::t_7bd108a3ff5edd 2,16-17,20,27-33,35-54,56-57,60-74,76-146
+  s_c8d7cbda7564fe::t_4db28889b54d2d 201
+  s_c8d7cbda7564fe::t_4ad725237b2cd7 34,55,58-59,75,168-169,181,185,188,195-200,202-203,256
+  s_c8d7cbda7564fe::t_261dc30daf6931 183
+genesis/engine/solvers/sph_solver.py
+  s_c8d7cbda7564fe::t_7bd108a3ff5edd 2,149-150,152-153,155
+genesis/engine/system_data/mpm.py
+  s_c8d7cbda7564fe::t_7bd108a3ff5edd 1-83
+tests/particles/test_mpm.py
+  s_c8d7cbda7564fe::t_7bd108a3ff5edd 7,13,65-70
+genesis/engine/entities/base_entity.py
+  s_c8d7cbda7564fe::t_7bd108a3ff5edd 4,33-35
+  s_c8d7cbda7564fe::t_261dc30daf6931 43,54-55,57,65-68,72-73,114-116
+  s_c8d7cbda7564fe::t_ce9b60be21874f 1,10,24-26,30,118-126
+genesis/engine/solvers/mpm_solver.py
+  s_c8d7cbda7564fe::t_7bd108a3ff5edd 14,17-18,85,92,158-159,174-203,210-211,239-251,257
+genesis/engine/entities/sph_entity.py
+  s_c8d7cbda7564fe::t_7bd108a3ff5edd 9,29
+  s_c8d7cbda7564fe::t_4ad725237b2cd7 37
+genesis/engine/system_data/particles.py
+  s_c8d7cbda7564fe::t_7bd108a3ff5edd 1-14
+genesis/engine/entities/mpm_entity.py
+  s_c8d7cbda7564fe::t_7bd108a3ff5edd 2,9,13-18,42-43,58,66-68
+  s_c8d7cbda7564fe::t_4ad725237b2cd7 64
+tests/particles/test_pbd.py
+  s_c8d7cbda7564fe::t_4ad725237b2cd7 2,6,8,19,53-61,65,82-86,92
+genesis/engine/solvers/pbd_solver.py
+  s_c8d7cbda7564fe::t_4ad725237b2cd7 4,10-11,14,110-111,122-123,133-181,185,206-216,220,228,232,240,242,244,246
+genesis/engine/entities/pbd_entity.py
+  s_c8d7cbda7564fe::t_4ad725237b2cd7 1-2,12-102,110-113,261-262,276,278,280-288,347-350,366-370,383-384,403,411,452-456,469-470,489,497,546-547,606-607
+genesis/engine/system_data/pbd.py
+  s_c8d7cbda7564fe::t_4ad725237b2cd7 1-121
+genesis/engine/entities/tool_entity/mesh.py
+  s_c8d7cbda7564fe::t_3eabef3a40ba87 9,11-25
+genesis/engine/system_data/tool.py
+  s_c8d7cbda7564fe::t_3eabef3a40ba87 1-76
+genesis/vis/rasterizer_context.py
+  s_c8d7cbda7564fe::t_3eabef3a40ba87 556
+tests/grad/test_hybrid_push.py
+  s_c8d7cbda7564fe::t_3eabef3a40ba87 6,14,59-62
+genesis/engine/entities/tool_entity/tool_entity.py
+  s_c8d7cbda7564fe::t_3eabef3a40ba87 1,7-8,12-13,15-18,21,25-66,72,75-83,85-103,105-107,237,257-258,369,371,559-582,585,589
+  s_c8d7cbda7564fe::t_261dc30daf6931 104
+genesis/engine/solvers/tool_solver.py
+  s_c8d7cbda7564fe::t_3eabef3a40ba87 4,7,35-50,65-69
+genesis/engine/entities/hybrid_entity.py
+  s_c8d7cbda7564fe::t_261dc30daf6931 2,16-17,19-20,32,36-40,43-47,49-54,57-63,65-70,126,144-206,208-217,220,223,407-410,415-418,445-447,450,476,480,487-489,497
+  s_c8d7cbda7564fe::t_6b96dc038a46d0 207,420-422
+genesis/engine/entities/rigid_entity/rigid_entity.py
+  s_c8d7cbda7564fe::t_261dc30daf6931 88
+tests/coupling/test_hybrid.py
+  s_c8d7cbda7564fe::t_261dc30daf6931 9,18,80-84,172,176-178,183-186,190,192-197,203-205,209-220
+genesis/engine/materials/hybrid.py
+  s_c8d7cbda7564fe::t_261dc30daf6931 3,7,22,41,46-48
+genesis/engine/scene.py
+  s_c8d7cbda7564fe::t_261dc30daf6931 1609,1649-1653
+  s_c8d7cbda7564fe::t_ce9b60be21874f 31,33,38,40,314-319,345,348,351-352,370,372-373,380-384,391-412,505
+genesis/engine/entities/rigid_entity/description.py
+  s_c8d7cbda7564fe::t_ce9b60be21874f 27,405,409,415-418,460-468
+genesis/engine/materials/rigid.py
+  s_c8d7cbda7564fe::t_ce9b60be21874f 113,116-118
+genesis/options/__init__.py
+  s_c8d7cbda7564fe::t_ce9b60be21874f 1,9,25,29-30,35
+genesis/options/entities.py
+  s_c8d7cbda7564fe::t_ce9b60be21874f 1-91
+tests/core/test_misc.py
+  s_c8d7cbda7564fe::t_ce9b60be21874f 24-107
+genesis/options/morphs.py
+  s_c8d7cbda7564fe::t_ce9b60be21874f 131-135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "10a2cd50d1869b8b3408894b7e03ada7574fd503",
+  "prompts": {},
+  "sessions": {
+    "s_c8d7cbda7564fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9ce42b86-b899-4650-b4da-3a8070dd912b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trinity Chung <trinity.chung@genesis-ai.company>"
+    }
+  }
+}

@@ -1,0 +1,210 @@
+tests/coupling/test_sph_rigid.py
+  s_c8d7cbda7564fe::t_ae633d30145897 43-50,128-135
+genesis/engine/materials/FEM/base.py
+  s_c8d7cbda7564fe::t_ae633d30145897 1,13
+examples/ipc/ipc_robot_grasp_cube.py
+  s_c8d7cbda7564fe::t_ae633d30145897 60-66,68-77,80-83,85
+examples/sap_coupling/franka_grasp_fem_sphere.py
+  s_c8d7cbda7564fe::t_ae633d30145897 55-65
+examples/deformable/fem_hard_and_soft_constraint.py
+  s_c8d7cbda7564fe::t_ae633d30145897 45-55,60-70
+examples/tutorials/pbd_cloth.py
+  s_c8d7cbda7564fe::t_ae633d30145897 25-35,40-50
+examples/tutorials/advanced_worm.py
+  s_c8d7cbda7564fe::t_ae633d30145897 41-58
+examples/tutorials/mpm.py
+  s_c8d7cbda7564fe::t_ae633d30145897 31-40,45-54,59-68
+genesis/engine/materials/PBD/elastic.py
+  s_c8d7cbda7564fe::t_ae633d30145897 6
+examples/coupling/rigid_mpm_attachment.py
+  s_c8d7cbda7564fe::t_ae633d30145897 47-56
+tests/benchmarks/test_rigid.py
+  s_c8d7cbda7564fe::t_ae633d30145897 295-299
+examples/ipc/ipc_momentum.py
+  s_c8d7cbda7564fe::t_ae633d30145897 39-49
+genesis/engine/materials/PBD/liquid.py
+  s_c8d7cbda7564fe::t_ae633d30145897 3,14
+genesis/engine/materials/PBD/particle.py
+  s_c8d7cbda7564fe::t_ae633d30145897 3,14
+tests/rendering/test_imgui_overlay.py
+  s_c8d7cbda7564fe::t_ae633d30145897 79,83-84,88,351,374,377-381,425-435
+examples/deformable/elastic_dragon.py
+  s_c8d7cbda7564fe::t_ae633d30145897 32-39
+examples/tutorials/advanced_muscle.py
+  s_c8d7cbda7564fe::t_ae633d30145897 46-56,61-71
+genesis/engine/materials/SPH/base.py
+  s_c8d7cbda7564fe::t_ae633d30145897 3,12
+genesis/engine/materials/hybrid.py
+  s_c8d7cbda7564fe::t_ae633d30145897 1,11
+tests/deformable/test_fem.py
+  s_c8d7cbda7564fe::t_ae633d30145897 26-34,106-111,139-145,151-158,175-181,185-190,239-248,252-257,337-347,351-361,493-503,550-558,563-574,627-637,641-648
+tests/sensors/test_raycaster.py
+  s_c8d7cbda7564fe::t_ae633d30145897 313-323,530-539,690-698
+examples/sap_coupling/fem_fixed_constraint.py
+  s_c8d7cbda7564fe::t_ae633d30145897 56-62
+tests/rigid/test_serialization.py
+  s_c8d7cbda7564fe::t_ae633d30145897 69,71-76,201-205
+examples/deformable/differentiable_push.py
+  s_c8d7cbda7564fe::t_ae633d30145897 40-52,56-67,71-84
+genesis/engine/solvers/tool_solver.py
+  s_c8d7cbda7564fe::t_ae633d30145897 61
+tests/parsers/test_usd.py
+  s_c8d7cbda7564fe::t_ae633d30145897 440-445
+examples/sap_coupling/fem_sphere_and_cube.py
+  s_c8d7cbda7564fe::t_ae633d30145897 38-47,58-66
+examples/ipc/ipc_objects_falling.py
+  s_c8d7cbda7564fe::t_ae633d30145897 52-68,90-103
+genesis/engine/entities/particle_entity.py
+  s_c8d7cbda7564fe::t_ae633d30145897 55,59
+tests/particles/test_mpm.py
+  s_c8d7cbda7564fe::t_ae633d30145897 41-50,58-66,143-153,157-164
+examples/rigid/ik_franka.py
+  s_c8d7cbda7564fe::t_ae633d30145897 26-29,34-41
+examples/coupling/cloth_attached_to_rigid.py
+  s_c8d7cbda7564fe::t_ae633d30145897 61-67
+tests/rigid/test_heterogeneous.py
+  s_c8d7cbda7564fe::t_ae633d30145897 450-452,489-491,499-500,506
+genesis/engine/scene.py
+  s_c8d7cbda7564fe::t_ae633d30145897 27-28,58,373,384,392-401,412-413,418,425-427,432,434-440,442-444,446-472,565,577-578,907-911
+genesis/engine/entities/fem_entity.py
+  s_c8d7cbda7564fe::t_ae633d30145897 48,55
+tests/core/test_misc.py
+  s_c8d7cbda7564fe::t_ae633d30145897 54-57,179-180,226-229,231,237,239-240,840-845
+examples/sensors/depth_camera_custom_vverts.py
+  s_c8d7cbda7564fe::t_ae633d30145897 65-77,86-97
+tests/parsers/test_mesh.py
+  s_c8d7cbda7564fe::t_ae633d30145897 923,925-930
+  s_c8d7cbda7564fe::t_2cee97bcd68558 910-918,922,924
+tests/sensors/test_camera.py
+  s_c8d7cbda7564fe::t_ae633d30145897 76-85
+genesis/engine/solvers/kinematic_solver.py
+  s_c8d7cbda7564fe::t_ae633d30145897 204,210
+genesis/engine/solvers/sph_solver.py
+  s_c8d7cbda7564fe::t_ae633d30145897 146
+examples/coupling/fem_cube_linked_with_arm.py
+  s_c8d7cbda7564fe::t_ae633d30145897 44-54
+examples/rigid/diffik_controller.py
+  s_c8d7cbda7564fe::t_ae633d30145897 34-36,42-45,52-59
+examples/rigid/ik_duck.py
+  s_c8d7cbda7564fe::t_ae633d30145897 26-31,36-44
+tests/coupling/test_hybrid.py
+  s_c8d7cbda7564fe::t_ae633d30145897 49-55,57-68,146-155,196-200,204-213,273-282,286-293,297-307,311-321,518-527
+examples/coupling/cloth_on_rigid.py
+  s_c8d7cbda7564fe::t_ae633d30145897 54-63
+examples/deformable/pbd_liquid.py
+  s_c8d7cbda7564fe::t_ae633d30145897 34-44
+tests/deformable/test_muscle.py
+  s_c8d7cbda7564fe::t_ae633d30145897 12-16,47-63
+examples/rigid/ik_custom_chain.py
+  s_c8d7cbda7564fe::t_ae633d30145897 25-32,37-44
+genesis/engine/interactive_scene.py
+  s_c8d7cbda7564fe::t_ae633d30145897 13,51,199,211-213,217-218,229-230,276,278-280,282-291,293
+tests/ipc/test_rigid.py
+  s_c8d7cbda7564fe::t_ae633d30145897 70-86,105-118,390-401,472-488,508-522,596-607
+genesis/engine/entities/rigid_entity/description.py
+  s_c8d7cbda7564fe::t_ae633d30145897 409-410,417
+examples/tutorials/advanced_hybrid_robot.py
+  s_c8d7cbda7564fe::t_ae633d30145897 47-53,55-66
+genesis/engine/solvers/mpm_solver.py
+  s_c8d7cbda7564fe::t_ae633d30145897 237
+examples/rigid/ik_franka_batched.py
+  s_c8d7cbda7564fe::t_ae633d30145897 27-29,32-35,40-47
+examples/coupling/sph_rigid.py
+  s_c8d7cbda7564fe::t_ae633d30145897 40-51
+examples/coupling/sph_mpm.py
+  s_c8d7cbda7564fe::t_ae633d30145897 41-49,53-66
+examples/coupling/grasp_soft_cube.py
+  s_c8d7cbda7564fe::t_ae633d30145897 40-49
+genesis/engine/entities/pbd_entity.py
+  s_c8d7cbda7564fe::t_ae633d30145897 39,42
+genesis/engine/solvers/fem_solver.py
+  s_c8d7cbda7564fe::t_ae633d30145897 304
+examples/coupling/flush_cubes.py
+  s_c8d7cbda7564fe::t_ae633d30145897 40-51,56-67,72-84
+genesis/engine/entities/base_entity.py
+  s_c8d7cbda7564fe::t_ae633d30145897 24-25,29,118-119,125
+genesis/ext/pyrender/overlay/plugin.py
+  s_c8d7cbda7564fe::t_ae633d30145897 9,19,126,190,310-317,830-831,845-850,865,986,989,1002
+genesis/options/entities.py
+  s_c8d7cbda7564fe::t_ae633d30145897 211-222
+tests/particles/test_pbd.py
+  s_c8d7cbda7564fe::t_ae633d30145897 29-35,41-48,79-84,116-126,130-140,244-252
+tests/rendering/test_interactive_viewer.py
+  s_c8d7cbda7564fe::t_ae633d30145897 485-492
+tests/rigid/test_kinematics.py
+  s_c8d7cbda7564fe::t_ae633d30145897 784-790,794-801,908-915,968-971
+examples/rendering/demo.py
+  s_c8d7cbda7564fe::t_ae633d30145897 30-36,42-51,57-65,70-78,83-91,96-104,109-117,122-130,135-140,145-155
+genesis/engine/materials/MPM/base.py
+  s_c8d7cbda7564fe::t_ae633d30145897 4,34
+genesis/engine/materials/rigid.py
+  s_c8d7cbda7564fe::t_ae633d30145897 1,14
+tests/grad/test_hybrid_push.py
+  s_c8d7cbda7564fe::t_ae633d30145897 40-49,53-60
+tests/rigid/test_dynamics.py
+  s_c8d7cbda7564fe::t_ae633d30145897 24-27
+genesis/engine/materials/PBD/cloth.py
+  s_c8d7cbda7564fe::t_ae633d30145897 6
+tests/ipc/test_deformable.py
+  s_c8d7cbda7564fe::t_ae633d30145897 81-95,204-217,310-324
+genesis/engine/materials/tool.py
+  s_c8d7cbda7564fe::t_ae633d30145897 8
+examples/tutorials/sph_liquid.py
+  s_c8d7cbda7564fe::t_ae633d30145897 30-38
+genesis/engine/materials/kinematic.py
+  s_c8d7cbda7564fe::t_ae633d30145897 1,4
+tests/integration/test_integration.py
+  s_c8d7cbda7564fe::t_ae633d30145897 268-278,284-293
+examples/kinematic/go2_kinematic.py
+  s_c8d7cbda7564fe::t_ae633d30145897 43-51
+genesis/engine/simulator.py
+  s_c8d7cbda7564fe::t_ae633d30145897 149-150,154
+examples/coupling/cut_dragon.py
+  s_c8d7cbda7564fe::t_ae633d30145897 54-67
+genesis/engine/entities/tool_entity/tool_entity.py
+  s_c8d7cbda7564fe::t_ae633d30145897 44,49
+genesis/engine/entities/hybrid_entity.py
+  s_c8d7cbda7564fe::t_ae633d30145897 19,67,71,87-89,108,628-637,672-674
+examples/ipc/ipc_robot_cloth_teleop.py
+  s_c8d7cbda7564fe::t_ae633d30145897 96-113,117-134
+.github/contributing/ARCHITECTURE.md
+  s_c8d7cbda7564fe::t_ae633d30145897 65,86,97-107
+genesis/engine/materials/PBD/base.py
+  s_c8d7cbda7564fe::t_ae633d30145897 1,4
+genesis/engine/solvers/pbd_solver.py
+  s_c8d7cbda7564fe::t_ae633d30145897 204
+genesis/engine/materials/FEM/cloth.py
+  s_c8d7cbda7564fe::t_ae633d30145897 57-61
+tests/particles/test_sph.py
+  s_c8d7cbda7564fe::t_ae633d30145897 38-49,310-317
+tests/rigid/test_api.py
+  s_c8d7cbda7564fe::t_ae633d30145897 1386-1390
+genesis/engine/materials/base.py
+  s_c8d7cbda7564fe::t_ae633d30145897 2,10
+examples/rigid/ik_shadow_hand.py
+  s_c8d7cbda7564fe::t_ae633d30145897 25-32,37-44,48-55,59-66
+tests/rendering/test_dynamic_meshes.py
+  s_c8d7cbda7564fe::t_ae633d30145897 86-95,99-113,117-128,208-218,225-239
+tests/rendering/test_offscreen.py
+  s_c8d7cbda7564fe::t_ae633d30145897 169-178,846,848-859,863,867-877,896,898-900,902,938-943
+tests/rigid/test_friction.py
+  s_c8d7cbda7564fe::t_ae633d30145897 202-204
+tests/rigid/test_asset_loading.py
+  s_c8d7cbda7564fe::t_ae633d30145897 1202,1207,1219-1221,1345-1347,1384,1390,1716-1720,1739-1741,2059-2063,2067-2071
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5ffb4561e0e55b97a1a6f39d3a529cba274ef0ef",
+  "prompts": {},
+  "sessions": {
+    "s_c8d7cbda7564fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9ce42b86-b899-4650-b4da-3a8070dd912b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trinity Chung <trinity.chung@genesis-ai.company>"
+    }
+  }
+}
