@@ -14,6 +14,7 @@ from genesis.utils.tools import StepTimer
 
 from .couplers import IPCCoupler, LegacyCoupler, SAPCoupler
 from .entities import HybridEntity
+from .entities.hybrid_entity import HybridEntityDescription
 from .sensors import SensorManager
 from .solvers import (
     FEMSolver,
@@ -27,6 +28,7 @@ from .solvers import (
 )
 from .solvers.base_solver import GravityMixin, TimeBasedMixin
 from .states.solvers import SimState, SimulatorCheckpoint
+from .system_data import SystemDataArray
 
 if TYPE_CHECKING:
     from genesis.engine.entities.base_entity import Entity, EntityDescription
@@ -78,6 +80,8 @@ class Simulator(RBC):
         self._grad_epoch = 0
         self._is_forward_ready = True
         self._is_backward_ready = True
+
+        self._system_data = SystemDataArray()
 
         # solvers
         self.tool_solver = ToolSolver(self.scene, self, options.tool)
@@ -134,11 +138,17 @@ class Simulator(RBC):
     ):
         if desc is not None:
             material = desc.material
+        # Only a kinematic or rigid entity takes several morphs, one per variant. The other solvers resolve their
+        # description from the morph before the entity exists, so the check runs here.
+        elif not isinstance(morph, Morph) and not isinstance(material, gs.materials.Kinematic):
+            gs.raise_exception(f"An entity is created from one morph, got {type(morph).__name__}.")
         if visualize_contact and not isinstance(material, gs.materials.Rigid):
             gs.raise_exception("'visualize_contact' only applies to rigid entities.")
         if isinstance(material, gs.materials.Hybrid):
-            # Note that adding to solver is handled in the hybrid entity
-            entity = HybridEntity(self.n_entities, self.scene, material, morph, surface, name=name)
+            # Resolution adds both parts to the scene first, so the hybrid entity comes after them, authored or loaded
+            if desc is None:
+                desc = HybridEntityDescription.resolve(self.scene, material, morph, surface, name)
+            entity = HybridEntity(self.n_entities, self.scene, desc)
         else:
             # Several solvers may declare a class the material belongs to, since 'Rigid' derives from 'Kinematic'. The
             # one declaring the most derived class simulates it (see 'Solver.material_cls').
@@ -154,8 +164,7 @@ class Simulator(RBC):
                 self.n_entities, material, morph, surface, visualize_contact, name=name, desc=desc
             )
         self._entities.append(entity)
-        if entity.desc is not None:
-            self.scene._desc.entities.append(entity.desc)
+        self.scene._desc.entities.append(entity.desc)
         return entity
 
     def _add_force_field(self, force_field):
@@ -217,6 +226,15 @@ class Simulator(RBC):
         # Counted per environment to support per-env reset, as steps rather than seconds to avoid drifting over time.
         self._steps = torch.zeros((self._B,), dtype=gs.tc_int, device=gs.device)
 
+        descriptions = [solver.describe() for solver in self._solvers]
+        for solver, description in zip(self._solvers, descriptions):
+            if description is not None:
+                solver._data_record = self._system_data.allocate(solver, description)
+        for solver in self._solvers:
+            if solver._data_record is not None:
+                solver.register_data()
+        self._system_data.build()
+
         # solvers
         # IPCCoupler needs full substep flow for pre/post coupling phases
         self._rigid_only = self.rigid_solver.is_active and not isinstance(self._coupler, (SAPCoupler, IPCCoupler))
@@ -243,6 +261,7 @@ class Simulator(RBC):
 
     def destroy(self):
         self._sensor_manager.destroy()
+        self._system_data.clear()
 
     def reset(self, state: SimState, envs_idx=None):
         for solver, solver_state in zip(self._solvers, state):

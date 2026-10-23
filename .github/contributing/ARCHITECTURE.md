@@ -107,6 +107,32 @@ Location: `genesis/engine/materials/`
 
 Location: `genesis/engine/solvers/`
 
+### System data lifecycle
+
+`Simulator` owns an internal `SystemDataArray`. Each record has a concrete type, an owning solver and an index: 0 for the aggregate record of a solver, the scene index of the entity for a per-entity record and the solver index of the geometry for a per-geometry record. The owning solver decides whether its record exists, describes it and binds it, and the record lives as long as the scene. Solvers, couplers and entities look records up during build and keep references for runtime access, and a coupler writes into the fields of the records it couples.
+
+The build phases are:
+
+1. `describe()` reads the entity ranges that `add_entity` assigned, resolves the static configuration, and returns the dimensions and inputs of the shared allocation, or None when the solver allocates nothing.
+2. The simulator allocates every description into its data collection.
+3. `register_data()` binds the allocated record and registers the range records that index into it. The simulator calls it only for a solver that allocated a record.
+4. The collection closes registration.
+5. `build()` initializes state and private workspaces.
+
+| Family | Solver description | Record | Range records | Kept by the solver |
+|--------|--------------------|--------|---------------|--------------------|
+| Kinematic, rigid | `ArticulatedDescription` | `ArticulatedData`: dynamic info and state | `LinksData`, `JointsData` per entity, `VisualGeomData` per visual geometry, `RigidGeomData` per collision geometry of the rigid solver | `RigidInfo`, scratch and adjoint workspaces |
+| FEM | `FEMDescription` | `FEMData`: time-indexed state, element and vertex info, surface fields | `FEMEntityData` per entity | Iterative solve, rendering and constraint workspaces |
+| MPM | `MPMDescription` | `MPMData`: particle history, particle info, coupling grid | `ParticleEntityData` per entity | Grid reset bookkeeping, render buffers |
+| SPH | `SPHDescription` | `SPHData`: particle state and info, in entity order and in spatial hash order | `ParticleEntityData` per entity, in entity order | Spatial hash, render buffers |
+| PBD | `PBDDescription` | `PBDData`: particle state and info, in entity order and in spatial hash order, rest topology | `PBDEntityData` per entity: particle range and topology ranges | Spatial hash, visual vertex supports, render buffers |
+| Tool | `ToolDescription` | `ToolData`: the `ToolEntityData` of each entity | `ToolEntityData` per entity: pose history, signed distance field | Boundary |
+| SF | `SFDescription` | `SFData`: grid of cell velocity, pressure and jet concentrations, shared by every environment | None | Swap fields of the pressure projection |
+
+A range record holds the aggregate record it indexes and its ranges into it. A tool entity holds fields of its own, so its `ToolEntityData` holds them in place of ranges. Checkpoint iteration includes each shared allocation once. A visual geometry pose is refreshed by `update_vgeoms()` before reading its state directly.
+
+Every entity is created from its `EntityDescription`: the solver resolves the description in `add_entity` when the caller passes none, and `Scene.export` writes it. A description declares its material as the base material of its solver, such as `FEM.Base`, so a material name read from a scene file resolves among the materials of that solver.
+
 ## Key Files Reference
 
 | File | Purpose |
