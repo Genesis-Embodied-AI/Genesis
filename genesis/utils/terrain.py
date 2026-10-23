@@ -12,6 +12,7 @@ from genesis.ext.isaacgym import terrain_utils as isaacgym_terrain_utils
 from genesis.options.morphs import Terrain
 
 from .cache import get_gnd_path
+from .mesh import load_trimesh
 from .misc import tensor_to_array
 
 
@@ -444,7 +445,7 @@ def mesh_to_heightfield(
     if np.isscalar(spacing):
         spacing = (spacing, spacing)
 
-    mesh = trimesh.load(path, force="mesh")
+    mesh = load_trimesh(path, force="mesh")
 
     # -------------------------------- axis handling ---------------------------
     if up_axis.lower() == "y":

@@ -256,8 +256,14 @@ def test_urdf_yup(file_meshes_are_zup, mesh_urdf, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("mesh_file", ["1707/base_link.stl"])
-def test_urdf_mesh_processing(mesh_path, mesh_urdf, show_viewer):
+@pytest.mark.parametrize(
+    "mesh_file, color",
+    [
+        ("1707/base_link.stl", (255, 255, 255, 255)),
+        ("allegro_hand/meshes/visual/link_3.0.obj", (1, 1, 1, 255)),
+    ],
+)
+def test_urdf_mesh_processing(mesh_path, mesh_urdf, color, show_viewer):
     scene = gs.Scene(
         show_viewer=show_viewer,
         show_FPS=False,
@@ -283,6 +289,11 @@ def test_urdf_mesh_processing(mesh_path, mesh_urdf, show_viewer):
 
     tmesh = trimesh.Trimesh(vertices=tmesh_obj_vis.vertices, faces=tmesh_obj_vis.faces, process=True)
     assert len(tmesh.vertices) != len(tmesh_obj_vis.vertices)
+
+    # An OBJ takes its color from its material library, reached through a symlink of the Hugging Face cache, and an STL
+    # takes the default color
+    for vgeom in (obj.vgeoms[0], robot.vgeoms[0]):
+        assert_equal(vgeom.vmesh.trimesh.visual.vertex_colors, color)
 
 
 @pytest.mark.required

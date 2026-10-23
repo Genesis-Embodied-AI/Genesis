@@ -1,6 +1,7 @@
+import inspect
 import math
 import os
-from functools import lru_cache
+from functools import lru_cache, wraps
 from pathlib import Path
 
 import numpy as np
@@ -197,14 +198,47 @@ def get_asset_path(file):
     return os.path.join(get_src_dir(), "assets", file)
 
 
+@wraps(trimesh.load, assigned=())
+def load_trimesh(*args, skip_materials_on_failure=False, **kwargs):
+    """Load a mesh file through 'trimesh.load', reading by default the files it references wherever they are on disk.
+
+    trimesh refuses a referenced file (glTF buffer, OBJ material library, texture) whose resolved path leaves the folder
+    of the mesh file. The Hugging Face cache stores every file as a symlink to a blob elsewhere, and assets commonly
+    reference '../textures/...', so the default resolver of a file path accepts any path, at the cost of letting an
+    asset read any file on disk. A resolver given by the caller is used as is.
+
+    Parameters
+    ----------
+    *args, **kwargs
+        Arguments of 'trimesh.load', forwarded to it and to the loader of the format.
+    skip_materials_on_failure : bool
+        Whether to load the file again without its materials and textures, with a warning, when loading it with them
+        fails. A format whose trimesh loader cannot skip materials (e.g. COLLADA) fails again with the same error.
+
+    Returns
+    -------
+    trimesh.Trimesh | trimesh.Scene
+        The loaded geometry, a mesh or a scene depending on the file and on 'force'.
+    """
+    # Name the arguments, since the file and the resolver may each be passed either positionally or by keyword
+    load_args = inspect.signature(trimesh.load).bind(*args, **kwargs)
+
+    file_obj = load_args.arguments["file_obj"]
+    if load_args.arguments.get("resolver") is None and isinstance(file_obj, (str, Path)):
+        load_args.arguments["resolver"] = trimesh.resolvers.FilePathResolver(file_obj, allow_anywhere=True)
+    try:
+        return trimesh.load(*load_args.args, **load_args.kwargs)
+    except Exception as e:
+        if not skip_materials_on_failure:
+            raise
+        gs.logger.warning(f"Failed to load mesh '{file_obj}' with its materials, loading it without them: {e}")
+        load_args.arguments["kwargs"] = {**load_args.arguments.get("kwargs", {}), "skip_materials": True}
+        return trimesh.load(*load_args.args, **load_args.kwargs)
+
+
 def load_mesh(file):
     if isinstance(file, (str, Path)):
-        try:
-            return trimesh.load_mesh(file, force="mesh", skip_texture=False)
-        except Exception as e:
-            gs.logger.warning(f"Failed to load mesh with texture: {e}")
-            # try loading without texture data
-            return trimesh.load_mesh(file, force="mesh", skip_texture=True)
+        return load_trimesh(file, force="mesh", skip_materials_on_failure=True)
     return file
 
 
@@ -741,7 +775,7 @@ def _load_trimesh_scene_cached(path, group_by_material, mtime) -> "trimesh.Scene
     # exact same bytes for every entity. The result is keyed by file modification time so an edited asset is reloaded.
     # The returned scene is treated as an immutable template - callers copy each geometry out before applying scale or
     # surface - so it is never mutated and is safe to share across entities.
-    return trimesh.load(path, force="scene", group_material=group_by_material, process=False)
+    return load_trimesh(path, force="scene", group_material=group_by_material, process=False)
 
 
 register_cache_clear(_load_trimesh_scene_cached.cache_clear)
@@ -891,7 +925,7 @@ def create_frame(
 
 def create_camera_frustum(camera, color):
     # camera
-    camera_mesh = trimesh.load(os.path.join(get_src_dir(), "assets", "meshes", "camera/camera.glb"), force="mesh")
+    camera_mesh = load_trimesh(os.path.join(get_src_dir(), "assets", "meshes", "camera/camera.glb"), force="mesh")
     camera_mesh.visual = camera_mesh.visual.to_color()
     camera_mesh.apply_translation([0.0, 0.0, 1.0])
     camera_mesh.apply_scale(0.05)

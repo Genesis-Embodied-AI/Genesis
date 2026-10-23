@@ -43,7 +43,7 @@ class EnvironmentSphere:
         self._renderer = renderer
         if self.surface is None:
             return
-        env_sphere = trimesh.load(self.file_path)
+        env_sphere = mu.load_trimesh(self.file_path)
         env_vertices = env_sphere.vertices * self.radius
         env_faces = env_sphere.faces
         env_normals = env_sphere.vertex_normals
