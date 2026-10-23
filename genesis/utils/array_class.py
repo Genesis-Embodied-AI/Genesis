@@ -1370,10 +1370,9 @@ class NarrowphaseWorkQueues:
     mpr_i_ga: qd.Tensor
     mpr_i_gb: qd.Tensor
     mpr_i_pair: qd.Tensor
-    # Candidate contacts of the multicontact pass, one slot per contact a pair can hold. The contact0 kernel stores the
-    # first contact of the pair in slot 0, the detections of the pass store theirs in their own slot, and the gather
-    # accepts them in slot order according to their status (see MULTICONTACT_SLOT in collider/constants.py). Under the
-    # contact patch an entry holds slot 0 alone and no status.
+    # The multicontact pass stores its seed in slot 0 and each perturbed detection in its own slot. Acceptance uses
+    # MULTICONTACT_SLOT in collider/constants.py, retaining the seed as a fallback when targeted detections replace it.
+    # Under the contact patch an entry holds slot 0 alone and no status.
     mpr_contact_pos: qd.Tensor
     mpr_normal: qd.Tensor
     mpr_penetration: qd.Tensor
@@ -1508,11 +1507,11 @@ def get_collider_state(
         broad_collision_pairs=V_VEC(2, dtype=gs.qd_int, shape=(max(max_collision_pairs_broad, 1), _B)),
         contact_data=get_contact_data(solver, max_candidate_contacts, requires_grad),
         diff_contact_input=get_diff_contact_input(_B, max(max_candidate_contacts, 1), True, requires_grad),
-        # A pair holds its first contact and its four perturbed ones (see N_PERTURBATIONS in narrowphase.py), or its
+        # A pair holds its seed and up to five perturbed contacts (see N_PERTURBATIONS in narrowphase.py), or its
         # first contact alone under the contact patch (see NarrowphaseWorkQueues).
         narrowphase_work_queues=get_narrowphase_work_queues(
             max(max_collision_pairs_broad, 1) * _B,
-            1 if solver._options.enable_contact_patch else 5,
+            1 if solver._options.enable_contact_patch else (5 if solver._enable_mujoco_compatibility else 6),
             split_narrowphase,
         ),
         contact_sort_key=V(dtype=gs.qd_float, shape=(max(max_candidate_contacts, 1), _B), layout=(1, 0)),
