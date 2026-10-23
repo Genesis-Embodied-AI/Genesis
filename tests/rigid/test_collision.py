@@ -374,13 +374,17 @@ def test_no_drift(gjk_collision, entity_kind, entity_type, ground_type, show_vie
 
 @pytest.mark.required
 @pytest.mark.parametrize("precision", ["32"])
-def test_convex_on_primitive_at_rest(show_viewer):
-    # The tilt is generic, so that the faces of the supports are aligned with no world axis
+def test_convex_on_primitive_at_rest(show_viewer, tol):
+    # The tilt is generic, so that the faces of the supports are aligned with no world axis. The gravity vector is
+    # rotated by the same tilt, which leaves the entities nothing to slide down.
     tilt_quat = gu.xyz_to_quat(np.radians((3.5, 1.2, 23.0)), rpy=True)
     R = gu.quat_to_R(tilt_quat)
     cube_mesh = trimesh.creation.box(extents=(0.06, 0.06, 0.06))
 
     scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=R @ (0.0, 0.0, -9.81),
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.1, -0.3, 0.25),
             camera_lookat=(0.1, 0.0, 0.1),
@@ -423,13 +427,12 @@ def test_convex_on_primitive_at_rest(show_viewer):
     )
     scene.build(n_envs=2)
 
-    for _ in range(20):
-        scene.step()
-    # The compliance of the contacts lets an entity resting on a tilted support creep down it, well below this bound
     for _ in range(30):
         scene.step()
-        assert_allclose(entity_on_cylinder.get_dofs_velocity(), 0.0, atol=1e-3)
-        assert_allclose(entity_on_box.get_dofs_velocity(), 0.0, atol=1e-3)
+    for _ in range(50):
+        scene.step()
+        assert_allclose(entity_on_cylinder.get_dofs_velocity(), 0.0, tol=tol)
+        assert_allclose(entity_on_box.get_dofs_velocity(), 0.0, tol=tol)
 
 
 @pytest.mark.required
