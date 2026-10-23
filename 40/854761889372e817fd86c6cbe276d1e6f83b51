@@ -1,0 +1,51 @@
+genesis/engine/entities/rigid_entity/rigid_entity.py
+  s_33aab527a44173::t_dfb906d481f73a 3238-3239
+genesis/engine/solvers/rigid/collider/collider.py
+  s_33aab527a44173::t_551693783cbad1 416-424,430,435,454,464,531
+genesis/engine/solvers/rigid/collider/contact.py
+  s_33aab527a44173::t_8daca271a93feb 531,533-538
+genesis/engine/solvers/rigid/contact_pair.py
+  s_33aab527a44173::t_a5bc3bdab98bc4 2,4-5,163-168,171-196,205-220,222-240
+  s_33aab527a44173::t_dec0ee77e8aa7e 32-35,169-170,197-204,221
+  s_33aab527a44173::t_ca901b29eb7ae6 145-149
+  s_33aab527a44173::t_421dd9815d4959 1,3,6-31,36-144,150-162
+genesis/engine/system_data/articulated.py
+  s_33aab527a44173::t_8daca271a93feb 88
+genesis/utils/array_class.py
+  s_33aab527a44173::t_8daca271a93feb 2595-2596,2631,2669-2671,2686-2690
+genesis/engine/solvers/rigid/abd/accessor.py
+  s_33aab527a44173::t_650bf96e615516 103,135-140,151,190-196,654-670
+  s_33aab527a44173::t_4d36fb3a1fb03a 671-672
+genesis/engine/materials/material.py
+  s_33aab527a44173::t_dfb906d481f73a 21-24
+tests/rigid/test_serialization.py
+  s_33aab527a44173::t_d26dce386eb424 157-158,336-339
+genesis/engine/solvers/rigid/rigid_solver.py
+  s_33aab527a44173::t_5be554a9878470 50,154
+  s_33aab527a44173::t_646aaaa3adb558 243-248,335-339,359,1241-1244,1820,1882,1923-1928,1954,1977,3594-3626,3820-3838
+  s_33aab527a44173::t_3af1e425ada733 3839
+genesis/engine/scene.py
+  s_33aab527a44173::t_646aaaa3adb558 942-944
+  s_33aab527a44173::t_551693783cbad1 26,29-34,107,115,888-941,945-976,1890-1891
+genesis/engine/states/solvers.py
+  s_33aab527a44173::t_650bf96e615516 127-130
+tests/rigid/test_friction.py
+  s_33aab527a44173::t_8ca10aa8bc67b5 966,968-979,997,1018-1021,1024-1046,1051,1057,1075,1077,1079,1101-1105
+  s_33aab527a44173::t_221cddaa3c307e 967,1016-1017,1022-1023,1076
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "40854761889372e817fd86c6cbe276d1e6f83b51",
+  "prompts": {},
+  "sessions": {
+    "s_33aab527a44173": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "28f96fc5-3905-4f11-a3af-5f67dc372dbe",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trinity Chung <trinity.chung@genesis-ai.company>"
+    }
+  }
+}
