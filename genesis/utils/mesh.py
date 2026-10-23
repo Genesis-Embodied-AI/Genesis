@@ -220,7 +220,9 @@ def load_trimesh(*args, skip_materials_on_failure=False, **kwargs):
     trimesh.Trimesh | trimesh.Scene
         The loaded geometry, a mesh or a scene depending on the file and on 'force'.
     """
+    # Name the arguments, since the file and the resolver may each be passed either positionally or by keyword
     load_args = inspect.signature(trimesh.load).bind(*args, **kwargs)
+
     file_obj = load_args.arguments["file_obj"]
     if load_args.arguments.get("resolver") is None and isinstance(file_obj, (str, Path)):
         load_args.arguments["resolver"] = trimesh.resolvers.FilePathResolver(file_obj, allow_anywhere=True)
