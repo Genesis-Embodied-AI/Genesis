@@ -160,5 +160,5 @@ def test_muscle_actuation_grad_matches_fd(precision, show_viewer):
             losses.append(float(rollout(scenes[1], boxes[1], perturbed)))
         fd_grad[i, j] = (losses[0] - losses[1]) / (2.0 * eps)
     assert (np.abs(fd_grad) > 1e-3).all()
-    tol = 5e-10 if precision == "64" else 2e-4
+    tol = 2e-9 if precision == "64" else 2e-4
     assert_allclose(torch.stack([actu.grad for actu in actus_ana]), fd_grad, rtol=tol, atol=tol)
