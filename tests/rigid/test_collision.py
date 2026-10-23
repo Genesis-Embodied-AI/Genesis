@@ -374,6 +374,69 @@ def test_no_drift(gjk_collision, entity_kind, entity_type, ground_type, show_vie
 
 @pytest.mark.required
 @pytest.mark.parametrize("precision", ["32"])
+def test_convex_on_primitive_at_rest(show_viewer, tol):
+    # The tilt is generic, so that the faces of the supports are aligned with no world axis. The gravity vector is
+    # rotated by the same tilt, which leaves the entities nothing to slide down.
+    tilt_quat = gu.xyz_to_quat(np.radians((3.5, 1.2, 23.0)), rpy=True)
+    R = gu.quat_to_R(tilt_quat)
+    cube_mesh = trimesh.creation.box(extents=(0.06, 0.06, 0.06))
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=R @ (0.0, 0.0, -9.81),
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.1, -0.3, 0.25),
+            camera_lookat=(0.1, 0.0, 0.1),
+            camera_fov=40,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        gs.morphs.Cylinder(
+            pos=(0.0, 0.0, 0.1),
+            quat=tilt_quat,
+            fixed=True,
+            height=0.008,
+            radius=0.05,
+        ),
+    )
+    scene.add_entity(
+        gs.morphs.Box(
+            pos=(0.2, 0.0, 0.1),
+            quat=tilt_quat,
+            fixed=True,
+            size=(0.1, 0.1, 0.008),
+        ),
+    )
+    entity_on_cylinder = scene.add_entity(
+        gs.morphs.MeshSet(
+            pos=(0.0, 0.0, 0.1) + R @ (0.004, -0.003, 0.034),
+            quat=tilt_quat,
+            files=(cube_mesh,),
+        ),
+        visualize_contact=True,
+    )
+    entity_on_box = scene.add_entity(
+        gs.morphs.MeshSet(
+            pos=(0.2, 0.0, 0.1) + R @ (0.004, -0.003, 0.034),
+            quat=tilt_quat,
+            files=(cube_mesh,),
+        ),
+        visualize_contact=True,
+    )
+    scene.build(n_envs=2)
+
+    for _ in range(30):
+        scene.step()
+    for _ in range(50):
+        scene.step()
+        assert_allclose(entity_on_cylinder.get_dofs_velocity(), 0.0, tol=tol)
+        assert_allclose(entity_on_box.get_dofs_velocity(), 0.0, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("precision", ["32"])
 def test_mpr_thin_box_stack_no_lateral_phantom(show_viewer, tol):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(

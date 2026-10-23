@@ -2230,8 +2230,10 @@ def func_contact_overlap_axes(
         if geom_type == gs.GEOM_TYPE.SPHERE or geom_type == gs.GEOM_TYPE.ELLIPSOID or geom_type == gs.GEOM_TYPE.CAPSULE:
             is_outlined = False
     if is_outlined:
-        # Prioritize edges nearest contact 0 so the vertex budget resolves the portion around the contact first.
-        # Surviving edges retain their settled bits when an insertion removes the visible chain.
+        # Prioritize the edges longest relative to their distance to contact 0 (squared length over squared distance),
+        # so the vertex budget resolves the portion around the contact first without spending itself on short edges
+        # next to it while a long edge farther away hides a corner of the overlap past it. Surviving edges retain their
+        # settled bits when an insertion removes the visible chain.
         edges_settled = qd.Vector.zero(gs.qd_int, 2)
         i_g_refine = 0
         i_e_refine = 0
@@ -2250,7 +2252,7 @@ def func_contact_overlap_axes(
                             i_e_refine = 0
                 if i_g_refine < 2:
                     i_e_refine = 0
-                    distance_min = gs.qd_float(-1.0)
+                    span_max = gs.qd_float(-1.0)
                     for j_e in range(polygons_size[i_g_refine]):
                         if edges_settled[i_g_refine] & (1 << j_e) == 0:
                             j_k0 = 8 * i_g_refine + j_e
@@ -2262,8 +2264,9 @@ def func_contact_overlap_axes(
                             edge_fraction = qd.min(qd.max(edge_fraction / qd.max(edge_length_sqr, EPS**2), 0.0), 1.0)
                             distance = (polygons[j_k0, 0] + edge_fraction * edge_x) ** 2
                             distance += (polygons[j_k0, 1] + edge_fraction * edge_y) ** 2
-                            if distance_min < 0.0 or distance < distance_min:
-                                distance_min = distance
+                            span = edge_length_sqr / qd.max(distance, EPS**2)
+                            if span > span_max:
+                                span_max = span
                                 i_e_refine = j_e
                     # Both directed seed edges span the same segment. Contact 0 selects the side to refine first
                     if polygons_size[i_g_refine] == 2 and edges_settled[i_g_refine] == 0:

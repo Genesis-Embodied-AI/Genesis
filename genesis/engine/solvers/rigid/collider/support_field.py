@@ -377,18 +377,21 @@ def _func_support_cylinder(
     Like the capsule, but with flat caps: the support point is on the rim of the cap selected by the sign of d along
     the axis, displaced radially by the radius along d projected onto the cap plane (a sphere/hemisphere cap would
     instead displace along d itself). When d is axial the radial part vanishes and the support is the cap centre.
+    With 'shrink', the support is the cap centre for any d.
     """
     radius = dyn_info.geoms.data[i_g][0]
     halflength = 0.5 * dyn_info.geoms.data[i_g][1]
-    axis = gu.qd_transform_by_quat(qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float), quat)
-    endpoint_side = -1.0 if d.dot(axis) < 0.0 else 1.0
-    res = pos + halflength * endpoint_side * axis
+    # The point is built in the frame of the cylinder, where the radial part of d has no axial component. Removing the
+    # axial component in world frame leaves its rounding, which the division by the radial norm amplifies as d aligns
+    # with the axis, lifting the point off the cap by the radius times the ratio of that rounding to the radial part.
+    d_local = gu.qd_inv_transform_by_quat(d, quat)
+    v_ = qd.Vector([0.0, 0.0, -halflength if d_local[2] < 0.0 else halflength], dt=gs.qd_float)
     if not shrink:
-        d_radial = d - d.dot(axis) * axis
-        d_radial_norm = d_radial.norm()
-        if d_radial_norm > 1e-9:
-            res = res + (radius / d_radial_norm) * d_radial
-    return res
+        d_radial_norm = qd.sqrt(d_local[0] ** 2 + d_local[1] ** 2)
+        if d_radial_norm > 0.0:
+            v_[0] = radius * d_local[0] / d_radial_norm
+            v_[1] = radius * d_local[1] / d_radial_norm
+    return gu.qd_transform_by_trans_quat_fast(v_, pos, quat)
 
 
 @qd.func
