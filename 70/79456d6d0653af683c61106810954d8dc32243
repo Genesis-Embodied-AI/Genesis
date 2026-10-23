@@ -1,0 +1,38 @@
+tests/particles/test_pbd.py
+  s_c8d7cbda7564fe::t_4ad725237b2cd7 2,6,8,19,53-61,65,82-86,92
+genesis/engine/entities/mpm_entity.py
+  s_c8d7cbda7564fe::t_4ad725237b2cd7 64
+genesis/engine/couplers/legacy_coupler.py
+  s_c8d7cbda7564fe::t_4ad725237b2cd7 11,46,56-57,443,446,465,468-471,723,728-729,733-735,763,767,779,796,815-816,819,868
+genesis/engine/simulator.py
+  s_c8d7cbda7564fe::t_4ad725237b2cd7 140-143
+genesis/engine/solvers/pbd_solver.py
+  s_c8d7cbda7564fe::t_4ad725237b2cd7 4,10-11,14,110-111,122-123,133-181,185,206-216,220,228,232,240,242,244,246
+genesis/engine/entities/particle_entity.py
+  s_c8d7cbda7564fe::t_4db28889b54d2d 204
+  s_c8d7cbda7564fe::t_4ad725237b2cd7 34,55,58-59,75,168-169,181,183-186,188,191,198-203,205-206,259
+genesis/engine/entities/pbd_entity.py
+  s_c8d7cbda7564fe::t_4ad725237b2cd7 1-2,12-102,110-113,261-262,276,278,280-288,347-350,366-370,383-384,403,411,452-456,469-470,489,497,546-547,606-607
+.github/contributing/ARCHITECTURE.md
+  s_c8d7cbda7564fe::t_4ad725237b2cd7 128
+genesis/engine/system_data/pbd.py
+  s_c8d7cbda7564fe::t_4ad725237b2cd7 1-121
+genesis/engine/entities/sph_entity.py
+  s_c8d7cbda7564fe::t_4ad725237b2cd7 37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7079456d6d0653af683c61106810954d8dc32243",
+  "prompts": {},
+  "sessions": {
+    "s_c8d7cbda7564fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9ce42b86-b899-4650-b4da-3a8070dd912b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trinity Chung <trinity.chung@genesis-ai.company>"
+    }
+  }
+}
