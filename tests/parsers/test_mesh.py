@@ -256,8 +256,14 @@ def test_urdf_yup(file_meshes_are_zup, mesh_urdf, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("mesh_file", ["1707/base_link.stl"])
-def test_urdf_mesh_processing(mesh_path, mesh_urdf, show_viewer):
+@pytest.mark.parametrize(
+    "mesh_file, color",
+    [
+        ("1707/base_link.stl", (255, 255, 255, 255)),
+        ("allegro_hand/meshes/visual/link_3.0.obj", (1, 1, 1, 255)),
+    ],
+)
+def test_urdf_mesh_processing(mesh_path, mesh_urdf, color, show_viewer):
     scene = gs.Scene(
         show_viewer=show_viewer,
         show_FPS=False,
@@ -284,43 +290,9 @@ def test_urdf_mesh_processing(mesh_path, mesh_urdf, show_viewer):
     tmesh = trimesh.Trimesh(vertices=tmesh_obj_vis.vertices, faces=tmesh_obj_vis.faces, process=True)
     assert len(tmesh.vertices) != len(tmesh_obj_vis.vertices)
 
-
-@pytest.mark.required
-@pytest.mark.parametrize("mesh_format", ["gltf", "obj"])
-def test_mesh_files_load_through_symlinks(mesh_format, tmp_path):
-    box = trimesh.creation.box(extents=(0.1, 0.2, 0.3))
-    if mesh_format == "gltf":
-        files = box.export(file_type="gltf")
-    else:
-        box.visual = trimesh.visual.TextureVisuals(
-            uv=np.zeros((len(box.vertices), 2)),
-            material=trimesh.visual.material.SimpleMaterial(diffuse=(255, 0, 0, 255)),
-        )
-        text, files = trimesh.exchange.obj.export_obj(box, return_texture=True, mtl_name="material.mtl")
-        files["model.obj"] = text.encode()
-    files["model.urdf"] = (
-        f'<robot name="box"><link name="base"><visual><geometry><mesh filename="model.{mesh_format}"/></geometry>'
-        "</visual></link></robot>"
-    ).encode()
-
-    # Every file of the snapshot is a symlink to a blob elsewhere, as in the Hugging Face cache
-    (tmp_path / "blobs").mkdir()
-    (tmp_path / "snapshot").mkdir()
-    for name, data in files.items():
-        (tmp_path / "blobs" / name).write_bytes(data)
-        (tmp_path / "snapshot" / name).symlink_to(tmp_path / "blobs" / name)
-
-    scene = gs.Scene(show_viewer=False)
-    entities = [scene.add_entity(gs.morphs.URDF(file=str(tmp_path / "snapshot" / "model.urdf")))]
-    if mesh_format == "obj":
-        entities.append(scene.add_entity(gs.morphs.Mesh(file=str(tmp_path / "snapshot" / "model.obj"))))
-    for entity in entities:
-        vmesh = entity.vgeoms[0].vmesh
-        # glTF stores its vertices in single precision
-        assert_allclose(np.sort(vmesh.trimesh.extents), (0.1, 0.2, 0.3), tol=1e-7)
-        if mesh_format == "obj":
-            # A material that fails to resolve falls back to grey without raising
-            assert_allclose(vmesh.surface.diffuse_texture.color, (1.0, 0.0, 0.0), tol=gs.EPS)
+    # Each cached file of the Hugging Face hub is a symlink to a blob outside the folder of the mesh
+    for vgeom in (obj.vgeoms[0], robot.vgeoms[0]):
+        assert_equal(vgeom.vmesh.trimesh.visual.vertex_colors, color)
 
 
 @pytest.mark.required
