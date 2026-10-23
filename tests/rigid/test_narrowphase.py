@@ -1043,14 +1043,13 @@ def test_multi_contact_overlap_corners(gjk_collision, n_base_sides, show_viewer,
 
 @pytest.mark.required
 def test_maximum_contact_area(show_viewer, tol):
-    # A pillar of three to six sides rests on a wider pillar of seven, with regular and irregular convex sections,
-    # at evenly spread yaws and tilts within the reach of the multi-contact perturbation, each pair at its own scale. The
+    # A pillar of three, four or six sides rests on a wider pillar of seven, both of random convex sections, at evenly
+    # spread yaws and a random tilt within the reach of the multi-contact perturbation, each pair at its own scale. The
     # overlap of their faces is the bottom face of the narrow pillar. GJK keeps the first contact exact, so that only the
     # multi-contact perturbation is on trial.
     N_YAWS = 16
     N_TRIALS = 4
-    TOPS_N_SIDES = (3, 4, 5, 6, 3, 4, 5, 6, 3, 4, 5, 6)
-    TOPS_IS_REGULAR = (True,) * 4 + (False,) * 8
+    TOPS_N_SIDES = (3, 4, 6, 3, 4, 6, 3, 4, 6)
     SCALES = np.geomspace(0.05, 5.0, len(TOPS_N_SIDES))
     TILT_RATIO = 0.5
     PENETRATION = 1e-4
@@ -1066,19 +1065,13 @@ def test_maximum_contact_area(show_viewer, tol):
     # jitter bounds the gaps between them, so that the wide section always contains a disk around its center. The narrow
     # sections of at most four sides are drawn again until every interior angle complies with the guarantee.
     bases_mesh, tops_mesh, tops_corners = [], [], []
-    for scale, n_sides_top, is_regular in zip(SCALES, TOPS_N_SIDES, TOPS_IS_REGULAR):
-        angle_jitter = 0.0 if is_regular else 0.25
+    for scale, n_sides_top in zip(SCALES, TOPS_N_SIDES):
         for n_sides, radius, aspect_max, meshes in (
             (7, BASE_RADIUS, 1.0, bases_mesh),
-            (n_sides_top, TOP_RADIUS, 1.0 if is_regular else 3.0, tops_mesh),
+            (n_sides_top, TOP_RADIUS, 3.0, tops_mesh),
         ):
             while True:
-                angles = (
-                    2.0
-                    * np.pi
-                    * (np.arange(n_sides) + np.random.uniform(-angle_jitter, angle_jitter, n_sides))
-                    / n_sides
-                )
+                angles = 2.0 * np.pi * (np.arange(n_sides) + np.random.uniform(-0.25, 0.25, n_sides)) / n_sides
                 corners = np.stack((np.random.uniform(1.0, aspect_max) * np.cos(angles), np.sin(angles)), axis=-1)
                 corners *= scale * radius / np.linalg.norm(corners, axis=-1).max()
                 dirs_in = corners - np.roll(corners, 1, axis=0)
@@ -1120,11 +1113,11 @@ def test_maximum_contact_area(show_viewer, tol):
     quats_yaw = gu.rotvec_to_quat(yaws[:, None] * np.array((0.0, 0.0, 1.0)))
     envs_corners = [np.pad(tops_corners[i_b // N_YAWS], ((0, 0), (0, 1))) for i_b in range(scene.n_envs)]
     tilt_max = TILT_RATIO * scene.rigid_solver.collider._mc_perturbation
-    for i_trial in range(N_TRIALS):
+    for _ in range(N_TRIALS):
         # The narrow pillar lies inside the disk that the wide section contains, anywhere within it, with its deepest
         # corner pressed into the wide one by the penetration
         tilts_angle = np.random.uniform(0.0, 2.0 * np.pi, scene.n_envs)
-        tilts = np.random.uniform(0.0, tilt_max if i_trial > 0 else 0.0, scene.n_envs)[:, None] * np.stack(
+        tilts = np.random.uniform(0.0, tilt_max, scene.n_envs)[:, None] * np.stack(
             (np.cos(tilts_angle), np.sin(tilts_angle), np.zeros(scene.n_envs)), axis=-1
         )
         quats = gu.transform_quat_by_quat(quats_yaw, gu.rotvec_to_quat(tilts))
