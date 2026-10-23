@@ -37,7 +37,7 @@ ARRAY_MEMBER = "arrays.npz"
 
 # This dict records how to write a class from another library to a file and read it back. Such a class cannot
 # declare this itself. '_class_codec' walks the method resolution order, so a subclass falls back to its base's pair.
-_REGISTERED: dict[type, tuple[Callable, Callable]] = {}
+_REGISTERED: dict[type, tuple[Callable, Callable | None]] = {}
 
 
 class Exporting(NamedTuple):
@@ -91,17 +91,21 @@ class SerializationMixin:
         raise NotImplementedError
 
 
-def register(cls: type, export: Callable, load: Callable) -> None:
+def register(cls: type, export: Callable, load: Callable | None) -> None:
     """Record how a class from another library travels in a file, which lets a file hold a class Genesis does not own.
 
     'export(value, exporting)' returns what JSON can hold and 'load(raw, loading)' gives the value back, both of them
     handed an 'Exporting' or a 'Loading' to put arrays aside and to export or load the values the class holds. A class
     Genesis declares mixes in 'SerializationMixin' and states the same two things as its own methods.
+
+    Without 'load', the class travels as the plain value 'export' returns and loads back as that value. This suits a
+    class that stands for a value Genesis also accepts in its place, such as a model built in memory from a document,
+    whose recreation would read the assets the document names. A value and its plain stand-in then export alike.
     """
     _REGISTERED[cls] = (export, load)
 
 
-def _class_codec(cls) -> tuple[Callable, Callable] | None:
+def _class_codec(cls) -> tuple[Callable, Callable | None] | None:
     """Return the export and load pair for a class.
 
     A self-serialisable class supplies its own methods; otherwise its own or its base's registered pair applies.
@@ -380,7 +384,7 @@ def _export_value(value, expect, exported: "Exported"):
     if codec is not None:
         held = codec[0](value, _exporting_into(exported))
         # A class saying how it travels may stand where its base is declared, so the file names which one it is.
-        if held is None or _accepted_classes(expect) == (type(value),):
+        if held is None or codec[1] is None or _accepted_classes(expect) == (type(value),):
             return held
         return {"@class": type(value).__name__, "raw": held}
     if _has_declared_fields(expect):
@@ -430,7 +434,8 @@ def _export_any(value, exported: "Exported"):
     # it received rather than a path to read them from.
     codec = _class_codec(type(value))
     if codec is not None:
-        return {"@class": type(value).__name__, "raw": codec[0](value, _exporting_into(exported))}
+        held = codec[0](value, _exporting_into(exported))
+        return held if codec[1] is None else {"@class": type(value).__name__, "raw": held}
     gs.raise_exception(f"A Genesis file cannot hold {type(value).__name__} where 'Any' was declared.")
 
 
