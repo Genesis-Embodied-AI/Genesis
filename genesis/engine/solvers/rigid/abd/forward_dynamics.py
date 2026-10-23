@@ -2299,14 +2299,16 @@ def func_integrate(
                             )
 
     # The coupling wrench of this substep is consumed: the bias force read it during forward dynamics and the midpoint
-    # pass above read it last. The coupler accumulates the next one after the substep.
-    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
-    for i_l, i_b in qd.ndrange(dyn_info.links.root_idx.shape[0], dyn_state.dofs.ctrl_mode.shape[1]):
-        dyn_state.links.cfrc_coupling_ang[i_l, i_b] = qd.Vector.zero(gs.qd_float, 3)
-        dyn_state.links.cfrc_coupling_vel[i_l, i_b] = qd.Vector.zero(gs.qd_float, 3)
-        if qd.static(rigid_config.use_hibernation and not is_backward):
-            if not dyn_state.links.is_hibernated[i_l, i_b]:
-                func_count_settled_step(i_l, i_b, dyn_state, dyn_info, rigid_info, rigid_config)
+    # pass above read it last, and the coupler accumulates the next one after the substep. The replay of a substep in
+    # the backward pass restores it (see func_load_adjoint_cache in diff.py) for the reversed integration.
+    if qd.static(not is_backward):
+        qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_l, i_b in qd.ndrange(dyn_info.links.root_idx.shape[0], dyn_state.dofs.ctrl_mode.shape[1]):
+            dyn_state.links.cfrc_coupling_ang[i_l, i_b] = qd.Vector.zero(gs.qd_float, 3)
+            dyn_state.links.cfrc_coupling_vel[i_l, i_b] = qd.Vector.zero(gs.qd_float, 3)
+            if qd.static(rigid_config.use_hibernation):
+                if not dyn_state.links.is_hibernated[i_l, i_b]:
+                    func_count_settled_step(i_l, i_b, dyn_state, dyn_info, rigid_info, rigid_config)
 
 
 @qd.func

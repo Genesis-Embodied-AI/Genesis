@@ -2975,6 +2975,10 @@ class RigidAdjointCache:
     qpos: qd.Tensor
     dofs_vel: qd.Tensor
     dofs_acc: qd.Tensor
+    # The coupling wrench each substep consumes, which the couplers accumulate during the previous one (see
+    # func_integrate). The replay of a substep in the backward pass restores it.
+    links_cfrc_coupling_ang: qd.Tensor
+    links_cfrc_coupling_vel: qd.Tensor
 
 
 def get_rigid_adjoint_cache(solver):
@@ -2983,10 +2987,13 @@ def get_rigid_adjoint_cache(solver):
 
     qs_shape = maybe_shape((substeps_local + 1, solver.n_qs_, solver._B), requires_grad)
     dofs_shape = maybe_shape((substeps_local + 1, solver.n_dofs_, solver._B), requires_grad)
+    links_shape = maybe_shape((substeps_local + 1, solver.n_links_, solver._B), requires_grad)
     return RigidAdjointCache(
         qpos=V(dtype=gs.qd_float, shape=qs_shape, needs_grad=requires_grad),
         dofs_vel=V(dtype=gs.qd_float, shape=dofs_shape, needs_grad=requires_grad),
         dofs_acc=V(dtype=gs.qd_float, shape=dofs_shape, needs_grad=requires_grad),
+        links_cfrc_coupling_ang=V(dtype=gs.qd_vec3, shape=links_shape),
+        links_cfrc_coupling_vel=V(dtype=gs.qd_vec3, shape=links_shape),
     )
 
 

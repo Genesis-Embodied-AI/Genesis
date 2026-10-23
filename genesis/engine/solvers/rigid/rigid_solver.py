@@ -1363,10 +1363,6 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         if not isinstance(self.sim.coupler, SAPCoupler):
             self._is_forward_pos_updated = not self._enable_mujoco_compatibility
             self._is_forward_vel_updated = not self._enable_mujoco_compatibility
-            if self._requires_grad:
-                kernel_save_adjoint_cache(
-                    f + 1, self.dyn_state, self._rigid_adjoint_cache, self.rigid_info, self.rigid_config
-                )
 
     def get_error_envs_mask(self):
         return qd_to_torch(self._errno) > 0
@@ -1755,6 +1751,12 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             if self.sim.coupler.has_any_rigid_coupling:
                 self.substep(f)
 
+        if self._requires_grad and not isinstance(self.sim.coupler, SAPCoupler):
+            # After the couplers, which accumulate the coupling wrench the next substep consumes
+            kernel_save_adjoint_cache(
+                f + 1, self.dyn_state, self._rigid_adjoint_cache, self.rigid_info, self.rigid_config
+            )
+
     # ------------------------------------------------------------------------------------
     # -------------------------------- state get/set -------------------------------------
     # ------------------------------------------------------------------------------------
@@ -1812,6 +1814,8 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             quat_dst = qd_to_torch(self.dyn_state.links.quat, transpose=True, copy=False)
             cfrc_vel_dst = qd_to_torch(self.dyn_state.links.cfrc_applied_vel, transpose=True, copy=False)
             cfrc_ang_dst = qd_to_torch(self.dyn_state.links.cfrc_applied_ang, transpose=True, copy=False)
+            cfrc_coupling_vel_dst = qd_to_torch(self.dyn_state.links.cfrc_coupling_vel, transpose=True, copy=False)
+            cfrc_coupling_ang_dst = qd_to_torch(self.dyn_state.links.cfrc_coupling_ang, transpose=True, copy=False)
             fric_dst = qd_to_torch(self.dyn_state.geoms.friction_ratio, transpose=True, copy=False)
             # Setting the state is a discontinuity: wake every body in the affected envs (a body left hibernated would
             # stay frozen), restoring the flags and the awake-dof count alongside the other state buffers.
@@ -1849,6 +1853,8 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 torch.where(envs_mask[:, None, None], state.links_quat, quat_dst, out=quat_dst)
                 cfrc_vel_dst.masked_fill_(envs_mask[:, None, None], 0.0)
                 cfrc_ang_dst.masked_fill_(envs_mask[:, None, None], 0.0)
+                cfrc_coupling_vel_dst.masked_fill_(envs_mask[:, None, None], 0.0)
+                cfrc_coupling_ang_dst.masked_fill_(envs_mask[:, None, None], 0.0)
                 if self.n_geoms:
                     torch.where(envs_mask[:, None], state.friction_ratio, fric_dst, out=fric_dst)
                 if self._use_hibernation:
@@ -1872,6 +1878,8 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 quat_dst[envs_idx] = state.links_quat[envs_idx]
                 cfrc_vel_dst[envs_idx] = 0.0
                 cfrc_ang_dst[envs_idx] = 0.0
+                cfrc_coupling_vel_dst[envs_idx] = 0.0
+                cfrc_coupling_ang_dst[envs_idx] = 0.0
                 if self.n_geoms:
                     fric_dst[envs_idx] = state.friction_ratio[envs_idx]
                 if self._use_hibernation:
@@ -1958,6 +1966,12 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             self._ckpt[ckpt_name]["qpos"] = qd_to_numpy(self._rigid_adjoint_cache.qpos, copy=True)
             self._ckpt[ckpt_name]["dofs_vel"] = qd_to_numpy(self._rigid_adjoint_cache.dofs_vel, copy=True)
             self._ckpt[ckpt_name]["dofs_acc"] = qd_to_numpy(self._rigid_adjoint_cache.dofs_acc, copy=True)
+            self._ckpt[ckpt_name]["links_cfrc_coupling_ang"] = qd_to_numpy(
+                self._rigid_adjoint_cache.links_cfrc_coupling_ang, copy=True
+            )
+            self._ckpt[ckpt_name]["links_cfrc_coupling_vel"] = qd_to_numpy(
+                self._rigid_adjoint_cache.links_cfrc_coupling_vel, copy=True
+            )
 
             for entity in self._entities:
                 entity.save_ckpt(ckpt_name)
@@ -1967,6 +1981,8 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         self.rigid_info.qpos.from_numpy(self._ckpt[ckpt_name]["qpos"][0])
         self.dyn_state.dofs.vel.from_numpy(self._ckpt[ckpt_name]["dofs_vel"][0])
         self.dyn_state.dofs.acc.from_numpy(self._ckpt[ckpt_name]["dofs_acc"][0])
+        self.dyn_state.links.cfrc_coupling_ang.from_numpy(self._ckpt[ckpt_name]["links_cfrc_coupling_ang"][0])
+        self.dyn_state.links.cfrc_coupling_vel.from_numpy(self._ckpt[ckpt_name]["links_cfrc_coupling_vel"][0])
 
         if not self._enable_mujoco_compatibility:
             # Mirror the post-integrate refresh of kernel_step_2: the replayed substeps skip their own cartesian /

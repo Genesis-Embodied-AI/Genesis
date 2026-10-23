@@ -112,6 +112,11 @@ def func_save_adjoint_cache(
     for i_q, i_b in qd.ndrange(n_qs, _B):
         rigid_adjoint_cache.qpos[f, i_q, i_b] = rigid_info.qpos[i_q, i_b]
 
+    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    for i_l, i_b in qd.ndrange(dyn_state.links.cfrc_coupling_ang.shape[0], _B):
+        rigid_adjoint_cache.links_cfrc_coupling_ang[f, i_l, i_b] = dyn_state.links.cfrc_coupling_ang[i_l, i_b]
+        rigid_adjoint_cache.links_cfrc_coupling_vel[f, i_l, i_b] = dyn_state.links.cfrc_coupling_vel[i_l, i_b]
+
 
 @qd.func
 def func_load_adjoint_cache(
@@ -134,6 +139,11 @@ def func_load_adjoint_cache(
     for i_q, i_b in qd.ndrange(n_qs, _B):
         rigid_info.qpos[i_q, i_b] = rigid_adjoint_cache.qpos[f, i_q, i_b]
 
+    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    for i_l, i_b in qd.ndrange(dyn_state.links.cfrc_coupling_ang.shape[0], _B):
+        dyn_state.links.cfrc_coupling_ang[i_l, i_b] = rigid_adjoint_cache.links_cfrc_coupling_ang[f, i_l, i_b]
+        dyn_state.links.cfrc_coupling_vel[i_l, i_b] = rigid_adjoint_cache.links_cfrc_coupling_vel[f, i_l, i_b]
+
 
 @qd.kernel(fastcache=True)
 def kernel_prepare_backward_substep(
@@ -147,6 +157,13 @@ def kernel_prepare_backward_substep(
 ):
     # Load the current state from adjoint cache
     func_load_adjoint_cache(f, dyn_state, rigid_adjoint_cache, rigid_info, rigid_config)
+
+    # The coupling wrench is cleared at the end of a substep outside the backward pass (see func_integrate), so its
+    # adjoint, which the couplers have read by now, starts from zero for this substep.
+    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    for i_l, i_b in qd.ndrange(dyn_state.links.cfrc_coupling_ang.shape[0], dyn_state.links.cfrc_coupling_ang.shape[1]):
+        dyn_state.links.cfrc_coupling_ang.grad[i_l, i_b] = qd.Vector.zero(gs.qd_float, 3)
+        dyn_state.links.cfrc_coupling_vel.grad[i_l, i_b] = qd.Vector.zero(gs.qd_float, 3)
 
     # If mujoco compatibility is disabled, update the cartesian space and save the results to adjoint cache. This is
     # because the cartesian space is overwritten later by other kernels if mujoco compatibility was disabled.
