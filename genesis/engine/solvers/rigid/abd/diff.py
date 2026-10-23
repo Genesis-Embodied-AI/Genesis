@@ -182,6 +182,13 @@ def kernel_begin_backward_substep(
         func_copy_cartesian_space(dyn_state_adjoint_cache, dyn_state, rigid_config)
 
 
+@qd.kernel(fastcache=True)
+def kernel_flag_nan_grad(
+    dyn_state: array_class.DynState, rigid_info: array_class.RigidInfo, rigid_config: qd.template(), errno: qd.Tensor
+):
+    func_flag_nan_grad(dyn_state, rigid_info, rigid_config, errno)
+
+
 @qd.func
 def func_flag_nan_grad(
     dyn_state: array_class.DynState, rigid_info: array_class.RigidInfo, rigid_config: qd.template(), errno: qd.Tensor

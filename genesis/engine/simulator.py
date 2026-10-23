@@ -78,6 +78,7 @@ class Simulator(RBC):
         self._grad_epoch = 0
         self._is_forward_ready = True
         self._is_backward_ready = True
+        self._is_rollout_checked = False
 
         # solvers
         self.tool_solver = ToolSolver(self.scene, self, options.tool)
@@ -323,6 +324,7 @@ class Simulator(RBC):
         self._grad_epoch += 1
         self._is_forward_ready = True
         self._is_backward_ready = True
+        self._is_rollout_checked = False
 
     def track_state(self, *tensors: torch.Tensor):
         """
@@ -352,6 +354,13 @@ class Simulator(RBC):
             )
         if not self._is_backward_ready or self.cur_step_global < step:
             gs.raise_exception("Multiple backward calls not allowed.")
+
+        # The forward pass reads the flags of the rigid solver every RATE_CHECK_ERRNO substeps only, and its replays by the
+        # backward pass not at all, so the flags its last substeps raised are read once, before any replay adds its own
+        if not self._is_rollout_checked:
+            self._is_rollout_checked = True
+            if self.rigid_solver.is_active:
+                self.rigid_solver.check_errno()
 
         while self.cur_step_global >= step:
             self.collect_output_grads()
@@ -406,8 +415,8 @@ class Simulator(RBC):
         # This will trigger GPU sync, but it is not a big deal at the point, since we are going to enqueue very large
         # kernel right away. Moreover, if computations are still not done at this point, then the queue will just
         # continue growing endlessly, which will not make the simulation faster either.
-        # A step replayed by the backward pass was checked when it first ran, and the backward pass checks its own flag
-        # once over (see 'reverse_step'), so the replay does not wait on the host.
+        # A step replayed by the backward pass does not wait on the host: the flags of the rollout are read once as the
+        # backward pass starts, and its own flag once it is over (see 'reverse_step').
         if not in_backward and self.rigid_solver.is_active and self._cur_substep_global % RATE_CHECK_ERRNO == 0:
             self.rigid_solver.check_errno()
 

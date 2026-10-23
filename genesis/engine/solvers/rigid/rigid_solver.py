@@ -87,6 +87,7 @@ from .abd.diff import (
     kernel_begin_backward_substep,
     kernel_copy_acc,
     kernel_copy_next_to_curr_no_check,
+    kernel_flag_nan_grad,
     kernel_prepare_backward_substep,
     kernel_save_adjoint_cache,
 )
@@ -633,7 +634,9 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             # Largest mass block in DOFs, the unit the per-block factor is sized for: merged entities can make a block
             # exceed any single entity (see attach).
             max_block_dofs = int((dofs_mass_block_end - dofs_mass_block_start).max()) if self.n_dofs else 0
-            rigid_config.update(max_mass_block_dofs=max_block_dofs)
+            # Rounded up to a power of two, a compile-time bound that scenes of similar size share (see
+            # func_compute_mass_matrix_and_link_force)
+            rigid_config.update(max_mass_block_dofs=1 << (max_block_dofs - 1).bit_length() if max_block_dofs else 0)
             if gs.backend != gs.cpu:
                 max_tiled_envs = get_gpu_core_count()
                 envs_undersaturate = self.n_envs <= max_tiled_envs
@@ -1376,8 +1379,10 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         """Raise if a reverse substep flagged a 'nan' gradient (see func_flag_nan_grad), once the backward pass is over.
 
         Only that flag is read: the reverse pass replays the forward substeps, whose own flags a 'nan' gradient tends to
-        raise as well, and those would hide the cause.
+        raise as well, and those would hide the cause. Each reverse substep flags the gradient the previous one left, so
+        the gradient the last one leaves is flagged here.
         """
+        kernel_flag_nan_grad(self.dyn_state, self.rigid_info, self.rigid_config, self._errno)
         if gs.use_zerocopy:
             errno = np.bitwise_or.reduce(qd_to_numpy(self._errno))
         else:
