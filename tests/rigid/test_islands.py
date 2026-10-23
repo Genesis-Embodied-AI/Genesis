@@ -924,8 +924,7 @@ def test_hibernation_wakes_on_collision(show_viewer, n_envs, broadphase_traversa
     # pass. The multi-free-body entity (offset clear of the boxes) checks per-component hibernation: its free bodies
     # sleep independently and disturbing one wakes only its island, which needs the wake/daisy chain to act per link
     # rather than per entity. ALL_VS_ALL exercises hibernation under the non-default traversal: it advects and skips
-    # hibernated-fixed pairs exactly like SAP, and the hibernated-vs-hibernated pairs it traverses instead of skipping
-    # are inert (both bodies frozen).
+    # the pairs of a sleeper against a fixed link or another sleeper exactly like SAP.
     GRAVITY = -9.81
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -1132,7 +1131,11 @@ def test_hibernation_repartitioning(show_viewer, n_envs):
     # Full lifecycle of hibernation and the partition together: two boxes sleep apart (2 islands); moving one onto the
     # other wakes it, it collides, and the stack sleeps as one merged island; moving a box off the hibernated stack
     # must wake the WHOLE merged island (else the stale daisy chain keeps re-connecting both); they then split back.
+    GRAVITY = -9.81
     scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, GRAVITY),
+        ),
         rigid_options=gs.options.RigidOptions(
             use_hibernation=True,
         ),
@@ -1197,6 +1200,14 @@ def test_hibernation_repartitioning(show_viewer, n_envs):
     assert asleep(box1_idx)
     assert asleep(box2_idx)
     assert_equal(qd_to_numpy(island_state.n_islands), 1)
+
+    # The sleeping stack keeps the contact between its boxes, and the upper box keeps reporting the support force
+    # balancing its weight.
+    for _ in range(5):
+        scene.step()
+    assert asleep(box1_idx)
+    assert tensor_to_array(box1.get_contacts(with_entity=box2, is_padded=True)["valid_mask"]).any(axis=-1).all()
+    assert_allclose(box1.get_links_net_contact_force()[..., 0, 2], -GRAVITY * box1.get_mass(), tol=2e-3)
 
     box1.set_pos([1.0, 0.0, 0.15])
     assert awake(box1_idx)

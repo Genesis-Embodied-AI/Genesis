@@ -12,7 +12,7 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 
-from .contact import func_collider_clear_env
+from .contact import func_collider_clear_env, func_is_link_pair_hibernated
 from .utils import func_is_geom_aabbs_overlap
 
 
@@ -42,18 +42,11 @@ def func_check_links_collision_valid(
             if (i_leqa == i_la and i_leqb == i_lb) or (i_leqa == i_lb and i_leqb == i_la):
                 is_valid = False
 
-    # A sleeping link against a fixed or sleeping one: the pair stands still, so a contact between them is either kept
-    # from the last awake solve (see func_collider_clear_env) or settled, and an awake link striking either one is the
-    # only motion that reaches them.
+    # A pair standing still keeps its contacts from the last awake solve (see func_collider_clear_env), and an awake
+    # link striking either one is the only motion that reaches them.
     if qd.static(rigid_config.use_hibernation):
         if rigid_info.n_awake_dofs[i_b] < dyn_state.dofs.is_hibernated.shape[0]:
-            I_la = [i_la, i_b] if qd.static(rigid_config.batch_links_info) else i_la
-            I_lb = [i_lb, i_b] if qd.static(rigid_config.batch_links_info) else i_lb
-            is_a_hibernated = dyn_state.links.is_hibernated[i_la, i_b]
-            is_b_hibernated = dyn_state.links.is_hibernated[i_lb, i_b]
-            if (is_a_hibernated and (is_b_hibernated or dyn_info.links.is_fixed[I_lb])) or (
-                is_b_hibernated and dyn_info.links.is_fixed[I_la]
-            ):
+            if func_is_link_pair_hibernated(i_la, i_lb, i_b, dyn_state, dyn_info, rigid_config):
                 is_valid = False
 
     return is_valid

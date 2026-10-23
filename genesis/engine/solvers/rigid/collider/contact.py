@@ -212,6 +212,28 @@ def func_add_contacts_force_to_links(
 
 
 @qd.func
+def func_is_link_pair_hibernated(
+    i_la: int,
+    i_lb: int,
+    i_b: int,
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
+    rigid_config: qd.template(),
+):
+    """Check whether two links stand still in an environment: one sleeps and the other sleeps or is fixed.
+
+    The broadphase skips such a pair and the clear pass keeps its contacts from the last solve it took part in.
+    """
+    I_la = [i_la, i_b] if qd.static(rigid_config.batch_links_info) else i_la
+    I_lb = [i_lb, i_b] if qd.static(rigid_config.batch_links_info) else i_lb
+    is_a_hibernated = dyn_state.links.is_hibernated[i_la, i_b]
+    is_b_hibernated = dyn_state.links.is_hibernated[i_lb, i_b]
+    return (is_a_hibernated and (is_b_hibernated or dyn_info.links.is_fixed[I_lb])) or (
+        is_b_hibernated and dyn_info.links.is_fixed[I_la]
+    )
+
+
+@qd.func
 def func_collider_clear_env(
     i_b: int,
     dyn_state: array_class.DynState,
@@ -221,13 +243,13 @@ def func_collider_clear_env(
     rigid_config: qd.template(),
 ):
     if qd.static(rigid_config.use_hibernation):
-        # Advect the contacts of the sleepers: a hibernated-fixed pair stays where it is, so its contact is kept at the
-        # front of the buffer with the force of the last solve it took part in (see n_contacts_hibernated in
-        # array_class.py for what reads the kept range). The contacts are first flagged on their raw slot, in the sort
-        # key the narrowphase rewrites before reading it, then compacted in raw order: every slot written to was
-        # already read, so no kept contact is overwritten. The kept range then lists them in their last logical order
-        # (see func_sort_contacts), the raw order following the narrowphase's slot allocation, which the GPU leaves to
-        # atomics. An env with no sleeper keeps none (see n_awake_dofs in array_class.py).
+        # Advect the contacts of the sleepers: a pair standing still (func_is_link_pair_hibernated) stays where it is,
+        # so its contact is kept at the front of the buffer with the force of the last solve it took part in (see
+        # n_contacts_hibernated in array_class.py for what reads the kept range). The contacts are first flagged on
+        # their raw slot, in the sort key the narrowphase rewrites before reading it, then compacted in raw order: every
+        # slot written to was already read, so no kept contact is overwritten. The kept range then lists them in their
+        # last logical order (see func_sort_contacts), the raw order following the narrowphase's slot allocation, which
+        # the GPU leaves to atomics. An env with no sleeper keeps none (see n_awake_dofs in array_class.py).
         n_hib = 0
         if rigid_info.n_awake_dofs[i_b] < dyn_state.dofs.is_hibernated.shape[0]:
             n_raw = 0
@@ -239,11 +261,7 @@ def func_collider_clear_env(
                 i_c = collider_state.contact_sort_idx[i_c_, i_b]
                 i_la = collider_state.contact_data.link_a[i_c, i_b]
                 i_lb = collider_state.contact_data.link_b[i_c, i_b]
-                I_la = [i_la, i_b] if qd.static(rigid_config.batch_links_info) else i_la
-                I_lb = [i_lb, i_b] if qd.static(rigid_config.batch_links_info) else i_lb
-                if (dyn_state.links.is_hibernated[i_la, i_b] and dyn_info.links.is_fixed[I_lb]) or (
-                    dyn_state.links.is_hibernated[i_lb, i_b] and dyn_info.links.is_fixed[I_la]
-                ):
+                if func_is_link_pair_hibernated(i_la, i_lb, i_b, dyn_state, dyn_info, rigid_config):
                     collider_state.contact_sort_key[i_c, i_b] = 1.0
             n_hib = 0
             for i_c in range(n_raw):
@@ -298,14 +316,21 @@ def func_collider_clear_env(
 
 
 @qd.func
-def func_promote_woken_contacts(i_b: int, dyn_state: array_class.DynState, collider_state: array_class.ColliderState):
+def func_promote_woken_contacts(
+    i_b: int,
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    dyn_info: array_class.DynInfo,
+    rigid_config: qd.template(),
+):
     """Move the kept contacts of the links of env i_b that woke this step among the live contacts.
 
     A kept contact holds where its sleeper rests, and the narrowphase left the sleeper's pairs out while it slept, so
-    the woken link would solve its wake step without its support otherwise. The promoted contact moves to the end of
-    the kept range, which shrinks past it onto the first live slot (see n_contacts_hibernated in array_class.py), and
-    the kept contacts behind it close the gap in their order, so the getters keep listing the contacts of the links
-    still asleep as they stood. The caller then sorts the live range.
+    the woken link would solve its wake step without its support otherwise. A contact is promoted once its pair no
+    longer stands still (func_is_link_pair_hibernated). The promoted contact moves to the end of the kept range, which
+    shrinks past it onto the first live slot (see n_contacts_hibernated in array_class.py), and the kept contacts
+    behind it close the gap in their order, so the getters keep listing the contacts of the links still asleep as they
+    stood. The caller then sorts the live range.
     """
     n_hib = collider_state.n_contacts_hibernated[i_b]
     i_c_ = 0
@@ -313,8 +338,7 @@ def func_promote_woken_contacts(i_b: int, dyn_state: array_class.DynState, colli
         i_c = collider_state.contact_sort_idx[i_c_, i_b]
         i_la = collider_state.contact_data.link_a[i_c, i_b]
         i_lb = collider_state.contact_data.link_b[i_c, i_b]
-        # A kept contact pairs a sleeper with a fixed link, which never sleeps: both flags clear means the sleeper woke
-        if dyn_state.links.is_hibernated[i_la, i_b] or dyn_state.links.is_hibernated[i_lb, i_b]:
+        if func_is_link_pair_hibernated(i_la, i_lb, i_b, dyn_state, dyn_info, rigid_config):
             i_c_ = i_c_ + 1
         else:
             n_hib = n_hib - 1
