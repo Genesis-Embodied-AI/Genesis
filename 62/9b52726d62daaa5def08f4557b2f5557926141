@@ -1,0 +1,31 @@
+genesis/engine/entities/tool_entity/mesh.py
+  s_c8d7cbda7564fe::t_3eabef3a40ba87 9,11-25
+genesis/engine/system_data/tool.py
+  s_c8d7cbda7564fe::t_3eabef3a40ba87 1-76
+genesis/vis/rasterizer_context.py
+  s_c8d7cbda7564fe::t_3eabef3a40ba87 556
+tests/grad/test_hybrid_push.py
+  s_c8d7cbda7564fe::t_3eabef3a40ba87 6,14,59-62
+genesis/engine/entities/tool_entity/tool_entity.py
+  s_c8d7cbda7564fe::t_3eabef3a40ba87 1,7-8,12-13,15-18,21,25-66,72,75-83,85-110,240,260-261,372,374,562-585,588,592
+.github/contributing/ARCHITECTURE.md
+  s_c8d7cbda7564fe::t_3eabef3a40ba87 129,131
+genesis/engine/solvers/tool_solver.py
+  s_c8d7cbda7564fe::t_3eabef3a40ba87 4,7,35-50,65-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "629b52726d62daaa5def08f4557b2f5557926141",
+  "prompts": {},
+  "sessions": {
+    "s_c8d7cbda7564fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9ce42b86-b899-4650-b4da-3a8070dd912b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Trinity Chung <trinity.chung@genesis-ai.company>"
+    }
+  }
+}
