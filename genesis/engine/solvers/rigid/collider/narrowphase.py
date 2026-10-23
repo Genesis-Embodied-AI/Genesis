@@ -2230,10 +2230,10 @@ def func_contact_overlap_axes(
         if geom_type == gs.GEOM_TYPE.SPHERE or geom_type == gs.GEOM_TYPE.ELLIPSOID or geom_type == gs.GEOM_TYPE.CAPSULE:
             is_outlined = False
     if is_outlined:
-        # Prioritize the edges spanning the widest angle seen from contact 0 (squared length over squared distance), so
-        # the vertex budget resolves the portion around the contact first without spending itself on short edges next
-        # to it while a long edge farther away hides a corner of the overlap. Surviving edges retain their settled bits
-        # when an insertion removes the visible chain.
+        # Prioritize the edges longest relative to their distance to contact 0 (squared length over squared distance),
+        # so the vertex budget resolves the portion around the contact first without spending itself on short edges
+        # next to it while a long edge farther away hides a corner of the overlap past it. Surviving edges retain their
+        # settled bits when an insertion removes the visible chain.
         edges_settled = qd.Vector.zero(gs.qd_int, 2)
         i_g_refine = 0
         i_e_refine = 0
