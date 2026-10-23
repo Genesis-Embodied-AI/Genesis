@@ -1,6 +1,7 @@
+import inspect
 import math
 import os
-from functools import lru_cache
+from functools import lru_cache, wraps
 from pathlib import Path
 
 import numpy as np
@@ -197,46 +198,45 @@ def get_asset_path(file):
     return os.path.join(get_src_dir(), "assets", file)
 
 
-def load_trimesh(file, **kwargs):
-    """Load a mesh file with trimesh, reading the files it references wherever they are on disk.
+@wraps(trimesh.load, assigned=())
+def load_trimesh(*args, skip_materials_on_failure=False, **kwargs):
+    """Load a mesh file through 'trimesh.load', reading by default the files it references wherever they are on disk.
 
     trimesh refuses a referenced file (glTF buffer, OBJ material library, texture) whose resolved path leaves the folder
     of the mesh file. The Hugging Face cache stores every file as a symlink to a blob elsewhere, and assets commonly
-    reference '../textures/...', so any path is accepted, at the cost of letting an asset read any file on disk.
+    reference '../textures/...', so the default resolver of a file path accepts any path, at the cost of letting an
+    asset read any file on disk. A resolver given by the caller is used as is.
 
     Parameters
     ----------
-    file : str | Path
-        Path of the mesh file.
-    **kwargs
-        Options forwarded to 'trimesh.load', e.g. 'force' or 'process'.
+    *args, **kwargs
+        Arguments of 'trimesh.load', forwarded to it and to the loader of the format.
+    skip_materials_on_failure : bool
+        Whether to load the file again without its materials and textures, with a warning, when loading it with them
+        fails. A format whose trimesh loader cannot skip materials (e.g. COLLADA) fails again with the same error.
 
     Returns
     -------
     trimesh.Trimesh | trimesh.Scene
         The loaded geometry, a mesh or a scene depending on the file and on 'force'.
     """
-    return trimesh.load(file, resolver=trimesh.resolvers.FilePathResolver(file, allow_anywhere=True), **kwargs)
+    load_args = inspect.signature(trimesh.load).bind(*args, **kwargs)
+    file_obj = load_args.arguments["file_obj"]
+    if load_args.arguments.get("resolver") is None and isinstance(file_obj, (str, Path)):
+        load_args.arguments["resolver"] = trimesh.resolvers.FilePathResolver(file_obj, allow_anywhere=True)
+    try:
+        return trimesh.load(*load_args.args, **load_args.kwargs)
+    except Exception as e:
+        if not skip_materials_on_failure:
+            raise
+        gs.logger.warning(f"Failed to load mesh '{file_obj}' with its materials, loading it without them: {e}")
+        load_args.arguments["kwargs"] = {**load_args.arguments.get("kwargs", {}), "skip_materials": True}
+        return trimesh.load(*load_args.args, **load_args.kwargs)
 
 
-def load_mesh(file, skip_materials=False):
-    """Load a mesh file as a single trimesh mesh, passing an already loaded mesh through unchanged.
-
-    Parameters
-    ----------
-    file : str | Path | trimesh.Trimesh
-        Path of the mesh file, or a mesh returned as is.
-    skip_materials : bool
-        Whether to ignore the materials and textures of the file, for a file whose materials fail to load. A format
-        whose trimesh loader has no such option (e.g. COLLADA) loads its materials regardless.
-
-    Returns
-    -------
-    trimesh.Trimesh
-        The loaded mesh.
-    """
+def load_mesh(file):
     if isinstance(file, (str, Path)):
-        return load_trimesh(file, force="mesh", skip_materials=skip_materials)
+        return load_trimesh(file, force="mesh", skip_materials_on_failure=True)
     return file
 
 
