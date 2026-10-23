@@ -374,7 +374,7 @@ def test_no_drift(gjk_collision, entity_kind, entity_type, ground_type, show_vie
 
 @pytest.mark.required
 @pytest.mark.parametrize("precision", ["32"])
-def test_face_contact_at_rest(show_viewer):
+def test_convex_contact_stability(show_viewer):
     # The tilt is generic, so that the faces are aligned with no world axis. The gravity vector is rotated by the same
     # tilt, which leaves the entities nothing to slide down.
     tilt_quat = gu.xyz_to_quat(np.radians((3.5, 1.2, 23.0)), rpy=True)
