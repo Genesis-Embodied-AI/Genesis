@@ -172,13 +172,13 @@ def kernel_begin_backward_substep(
     rigid_config: qd.template(),
 ) -> qd.i32:
     is_grad_valid = func_is_grad_valid(dyn_state, rigid_info, rigid_config)
-    if is_grad_valid:
-        func_copy_next_to_curr_grad(f, dyn_state, rigid_adjoint_cache, rigid_info, rigid_config)
+    # Unconditional: only top-level loops run in parallel, and the caller raises on an invalid gradient anyway
+    func_copy_next_to_curr_grad(f, dyn_state, rigid_adjoint_cache, rigid_info, rigid_config)
 
-        if not rigid_config.enable_mujoco_compatibility:
-            # Restore the cartesian space that was overwritten by the post-integrate forward replay in the backward
-            # substep (see _update_cartesian_grad in rigid_solver.py).
-            func_copy_cartesian_space(dyn_state_adjoint_cache, dyn_state, rigid_config)
+    if qd.static(not rigid_config.enable_mujoco_compatibility):
+        # Restore the cartesian space that was overwritten by the post-integrate forward replay in the backward
+        # substep (see _update_cartesian_grad in rigid_solver.py).
+        func_copy_cartesian_space(dyn_state_adjoint_cache, dyn_state, rigid_config)
 
     return is_grad_valid
 
