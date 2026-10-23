@@ -10,11 +10,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
+
 import trimesh
 
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.engine.scene import SCENE_FORMAT, description_digest
+from genesis.ext import urdfpy
 from genesis.recorders.trajectory import CHUNK_MAGIC, TRAJECTORY_FORMAT, Trajectory
 from genesis.utils.misc import get_assets_dir, tensor_to_array
 from genesis.utils.serialization import ARRAY_MEMBER, MANIFEST_NAME
@@ -255,9 +257,10 @@ def test_export_and_load_rigid(
         ),
     )
     # An asset may name a mesh outside its own directory, which the mesh states as an absolute path of its own
+    urdf_node = ET.fromstring(urdf_with_external_assets)
     far_mesh = scene.add_entity(
         morph=gs.morphs.URDF(
-            file=urdf_with_external_assets,
+            file=urdfpy.URDF._from_xml(urdf_node, urdf_node, path=str(tmp_path)),
             pos=(80.0, 80.0, 1.0),
         ),
     )
@@ -267,6 +270,13 @@ def test_export_and_load_rigid(
             pos=(90.0, 90.0, 1.0),
             file="meshes/camera/camera.glb",
             file_meshes_are_zup=True,
+        ),
+    )
+    # The same document given inline rather than as a model built in memory
+    inline_urdf = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=urdf_with_external_assets,
+            pos=(100.0, 100.0, 1.0),
         ),
     )
     # A sensor and a recorder observe the scene rather than taking part in it, and a file holds no code to run.
@@ -342,7 +352,9 @@ def test_export_and_load_rigid(
     assert restored.entities[15].morph.file == "two_link.urdf.xacro"
     # A mesh states the asset it was read from by name, wherever that asset stood
     assert restored.entities[16].geoms[0].mesh.metadata["mesh_path"] == "sphere.obj"
-    # The document that entity was created from names that mesh as well, and the name travels without its directory
+    # A model built in memory travels as the document it stands for, which names that mesh without its directory.
+    # The entity it was given to keeps it.
+    assert isinstance(far_mesh.morph.file, urdfpy.URDF)
     assert "external_assets" not in restored.entities[16].morph.file
     assert 'filename="sphere.obj"' in restored.entities[16].morph.file
     # A scale per axis comes back as the three factors it was given, and the geometry it produced with them
@@ -351,7 +363,7 @@ def test_export_and_load_rigid(
     authored_by_index = dict(
         enumerate((brick, articulated, mesh_set, anchored, terrain, drone, heterogeneous), start=3)
     )
-    authored_by_index.update({14: stretched, 15: expanded, 16: far_mesh})
+    authored_by_index.update({14: stretched, 15: expanded, 16: far_mesh, 18: inline_urdf})
     for index, authored in authored_by_index.items():
         assert restored.entities[index].n_links == authored.n_links
         assert restored.entities[index].n_geoms == authored.n_geoms
