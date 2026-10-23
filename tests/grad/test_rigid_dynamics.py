@@ -230,3 +230,39 @@ def test_per_step_pd_target_grad_matches_fd(control_mode, grad_revolute, precisi
         atol=1e-10 if precision == "64" else 5e-5,
         eps=3e-5 if precision == "64" else 3e-2,
     )
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("control_mode", ["position", "velocity", "position_velocity"])
+def test_pd_target_grad_matches_fd(control_mode, grad_revolute, precision, show_viewer):
+    # A PD target tracking gradients receives the adjoint of the actuation force it drives, over every substep of every
+    # step it stays in force: the last one stays in force for the step run after it, until a force command replaces it.
+    pair = make_diff_scene_pair(
+        grad_revolute,
+        substeps=4,
+        show_viewer=show_viewer,
+    )
+    for entity in (pair.entity_ana, pair.entity_fd):
+        entity.set_dofs_kp(4.0)
+        entity.set_dofs_kv(0.8)
+
+    def apply_fn(entity, x):
+        if control_mode == "position":
+            entity.control_dofs_position(x)
+        elif control_mode == "velocity":
+            entity.control_dofs_velocity(x)
+        else:
+            entity.control_dofs_position_velocity(x[:1], x[1:])
+
+    n_targets = 2 if control_mode == "position_velocity" else 1
+    assert_grad_matches_fd(
+        pair,
+        [0.3 * np.sin(0.7 * t + np.arange(n_targets)) for t in range(6)],
+        apply_fn,
+        lambda scene, entity: scene.rigid_solver.get_state().qpos[0, 0] ** 2,
+        n_steps=9,
+        step_fn=lambda entity, i_step: entity.control_dofs_force(0.2) if i_step == 7 else None,
+        rtol=1e-10 if precision == "64" else 5e-5,
+        atol=1e-10 if precision == "64" else 5e-5,
+        eps=3e-5 if precision == "64" else 3e-2,
+    )

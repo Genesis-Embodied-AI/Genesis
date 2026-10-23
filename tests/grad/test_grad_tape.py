@@ -218,3 +218,81 @@ def test_closed_loop_policy_grad_matches_fd(grad_revolute, precision, show_viewe
     del scenes, arms, scene, scene_ana, arms_ana
     gc.collect()
     assert scene_ref() is None
+
+
+@pytest.mark.required
+@pytest.mark.precision("64")
+@pytest.mark.parametrize("setter", ["control_dofs_force", "control_dofs_position", "set_dofs_velocity"])
+def test_plain_overwrite_cuts_input_grad(setter, grad_revolute, show_viewer):
+    # A setter given a plain value overwrites the slots an earlier input tracking gradients set, so that input only
+    # receives the gradient of the steps run before the overwrite, not the one of the slots' later values.
+    pair = make_diff_scene_pair(grad_revolute, n_envs=2, show_viewer=show_viewer)
+    for entity in (pair.entity_ana, pair.entity_fd):
+        entity.set_dofs_kp(4.0)
+        entity.set_dofs_kv(0.8)
+
+    def apply(entity, value):
+        if setter == "control_dofs_force":
+            entity.control_dofs_force(value)
+        elif setter == "control_dofs_position":
+            entity.control_dofs_position(value)
+        else:
+            entity.set_dofs_velocity(value)
+
+    def rollout(scene, entity, value):
+        scene.reset()
+        for i_step in range(6):
+            if i_step == 0:
+                apply(entity, value)
+            elif i_step == 3:
+                apply(entity, torch.full((scene.n_envs, 1), 0.2, dtype=gs.tc_float, device=gs.device))
+            scene.step()
+        return (scene.rigid_solver.get_state().qpos ** 2).sum()
+
+    value = np.array([[0.7], [-0.4]])
+    value_ana = torch.tensor(value, dtype=gs.tc_float, device=gs.device, requires_grad=True)
+    rollout(pair.scene_ana, pair.entity_ana, value_ana).backward()
+
+    eps = 1e-6
+    fd_grad = np.zeros_like(value)
+    for i in range(value.size):
+        losses = []
+        for sign in (+1, -1):
+            perturbed = value.copy()
+            perturbed.flat[i] += sign * eps
+            losses.append(float(rollout(pair.scene_fd, pair.entity_fd, perturbed)))
+        fd_grad.flat[i] = (losses[0] - losses[1]) / (2.0 * eps)
+    assert (np.abs(fd_grad) > 1e-5).all()
+    assert_allclose(value_ana.grad, fd_grad, rtol=1e-9, atol=1e-12)
+
+
+@pytest.mark.required
+@pytest.mark.precision("64")
+def test_broadcast_input_grad_matches_fd(grad_revolute, show_viewer):
+    # An input broadcast to the slots it sets, a scalar to every environment or one value per environment to all its
+    # dofs, receives the gradient summed over all of them.
+    pair = make_diff_scene_pair(grad_revolute, n_envs=2, show_viewer=show_viewer)
+    target = torch.tensor([[0.4], [-0.3]], dtype=gs.tc_float, device=gs.device)
+
+    def rollout(scene, entity, gain):
+        scene.reset()
+        for i_step in range(5):
+            entity.control_dofs_force(gain * (i_step + 1.0))
+            scene.step()
+        return ((scene.rigid_solver.get_state().qpos - target) ** 2).sum()
+
+    eps = 1e-6
+    for gain in (np.array(0.7), np.array([0.7, -0.5])):
+        gain_ana = torch.tensor(gain, dtype=gs.tc_float, device=gs.device, requires_grad=True)
+        rollout(pair.scene_ana, pair.entity_ana, gain_ana).backward()
+
+        fd_grad = np.zeros_like(gain)
+        for i in range(gain.size):
+            losses = []
+            for sign in (+1, -1):
+                perturbed = gain.copy()
+                perturbed.flat[i] += sign * eps
+                losses.append(float(rollout(pair.scene_fd, pair.entity_fd, perturbed)))
+            fd_grad.flat[i] = (losses[0] - losses[1]) / (2.0 * eps)
+        assert (np.abs(fd_grad) > 1e-3).all()
+        assert_allclose(gain_ana.grad, fd_grad, rtol=1e-6, atol=1e-9)

@@ -38,8 +38,10 @@ from .rigid.abd.accessor import (
     kernel_get_terrain_height,
     kernel_set_dofs_force_grad,
     kernel_set_dofs_position,
+    kernel_set_dofs_position_target_grad,
     kernel_set_dofs_velocity,
     kernel_set_dofs_velocity_grad,
+    kernel_set_dofs_velocity_target_grad,
     kernel_set_dofs_zero_velocity,
     kernel_set_kinematic_state,
     kernel_set_links_pos,
@@ -84,6 +86,16 @@ def _balanced_variant_mapping(n_variants, B):
         return np.repeat(np.arange(n_variants), sizes)
     else:
         return np.arange(B)
+
+
+def _sum_back_grad(grad, slots_grad):
+    """Sum the adjoints of the slots a setter input was broadcast to back into the gradient buffer of that input."""
+    # 'broadcast_tensor' may insert the missing dimensions of the input anywhere, so autograd reverses the very
+    # broadcast it applied, which a right-aligned reduction would get wrong.
+    with torch.enable_grad():
+        grad_in = torch.zeros_like(grad, requires_grad=True)
+        (grad_sum,) = torch.autograd.grad(broadcast_tensor(grad_in, gs.tc_float, slots_grad.shape), grad_in, slots_grad)
+    grad.copy_(grad_sum)
 
 
 def _select_links_offset(offset, links_idx, envs_idx):
@@ -1038,6 +1050,11 @@ class KinematicSolver(Solver):
                 skip_allocation=skip_allocation,
             )
 
+        # Kernels read the tensor as plain data, whereas quadrants binds the '.grad' of a tensor tracking gradients as
+        # its adjoint buffer, which is invalid on a tensor computed by torch (the gradient tape handles setter inputs).
+        if tensor_ is not None:
+            tensor_ = tensor_.detach()
+
         return tensor_, inputs_idx_, envs_idx_
 
     @mutates(StateChange.GEOMETRY, links="links_idx")
@@ -1077,26 +1094,38 @@ class KinematicSolver(Solver):
             self._is_forward_vel_updated = False
 
     def set_base_links_pos_grad(self, links_idx, envs_idx, relative, pos_grad):
+        """
+        Move the adjoint of the base link positions overwritten by 'set_base_links_pos' into the input gradient.
+
+        `pos_grad` is None to drop the adjoint.
+        """
         if links_idx is None:
             links_idx = self._base_links_idx
         # A relative 'set_pos' adds 'R(authored_quat) @ offset_pos', which reads the current orientation; that
         # dependency is not propagated, so with a non-zero offset position the backward pass is only supported on links
         # without one. 'relative=False' sets the world position directly and is a plain passthrough.
         idx = links_idx if isinstance(links_idx, int) else slice(None)
-        if relative and not self._links_offset_pos_is_identity[idx].all():
+        if pos_grad is not None and relative and not self._links_offset_pos_is_identity[idx].all():
             gs.raise_exception(
                 "Backward pass for 'set_pos' with 'relative=True' is only supported on links without an offset "
                 "position (no inertial alignment shifting the link origin). Use 'relative=False' to set the world "
                 "position."
             )
-        pos_grad_, links_idx, envs_idx = self._sanitize_io_variables(
-            pos_grad.unsqueeze(-2), links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
+        pos_grad = None if pos_grad is None else pos_grad.unsqueeze(-2)
+        slots_grad, links_idx, envs_idx = self._sanitize_io_variables(
+            pos_grad, links_idx, self.n_links, "links_idx", envs_idx, (3,)
         )
-        if self.n_envs == 0:
-            pos_grad_ = pos_grad_.unsqueeze(0)
         kernel_set_links_pos_grad(
-            links_idx, envs_idx, pos_grad_, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
+            links_idx,
+            envs_idx,
+            slots_grad[None] if self.n_envs == 0 else slots_grad,
+            self.dyn_state,
+            self.dyn_info,
+            self.rigid_info,
+            self.rigid_config,
         )
+        if pos_grad is not None:
+            _sum_back_grad(pos_grad, slots_grad)
 
     @mutates(StateChange.GEOMETRY, links="links_idx")
     def set_base_links_quat(self, quat, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False):
@@ -1146,6 +1175,12 @@ class KinematicSolver(Solver):
             self._is_forward_vel_updated = False
 
     def set_base_links_quat_grad(self, links_idx, envs_idx, relative, quat_grad):
+        """
+        Move the adjoint of the base link orientations overwritten by 'set_base_links_quat' into the input gradient.
+
+        `quat_grad` is None to drop the adjoint. The adjoint of a position rewritten by a relative 'set_base_links_quat'
+        stays in place and flows on to the position it was rewritten from, short of the term of the prior orientation.
+        """
         if links_idx is None:
             links_idx = self._base_links_idx
         # A relative 'set_quat' composes the orientation offset (a constant right-multiplication) and, when the offset
@@ -1153,21 +1188,30 @@ class KinematicSolver(Solver):
         # propagated, so the backward pass is only supported when the targeted links carry no pose offset. With
         # 'relative=False' the world orientation is set directly, which is a plain passthrough and always differentiable.
         idx = links_idx if isinstance(links_idx, int) else slice(None)
-        if relative and not (
-            self._links_offset_quat_is_identity[idx].all() and self._links_offset_pos_is_identity[idx].all()
+        if (
+            quat_grad is not None
+            and relative
+            and not (self._links_offset_quat_is_identity[idx].all() and self._links_offset_pos_is_identity[idx].all())
         ):
             gs.raise_exception(
                 "Backward pass for 'set_quat' with 'relative=True' is only supported on links without a pose offset "
                 "(no up-axis conversion or inertial alignment). Use 'relative=False' to set the world orientation."
             )
-        quat_grad_, links_idx, envs_idx = self._sanitize_io_variables(
-            quat_grad.unsqueeze(-2), links_idx, self.n_links, "links_idx", envs_idx, (4,), skip_allocation=True
+        quat_grad = None if quat_grad is None else quat_grad.unsqueeze(-2)
+        slots_grad, links_idx, envs_idx = self._sanitize_io_variables(
+            quat_grad, links_idx, self.n_links, "links_idx", envs_idx, (4,)
         )
-        if self.n_envs == 0:
-            quat_grad_ = quat_grad_.unsqueeze(0)
         kernel_set_links_quat_grad(
-            links_idx, envs_idx, quat_grad_, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
+            links_idx,
+            envs_idx,
+            slots_grad[None] if self.n_envs == 0 else slots_grad,
+            self.dyn_state,
+            self.dyn_info,
+            self.rigid_info,
+            self.rigid_config,
         )
+        if quat_grad is not None:
+            _sum_back_grad(quat_grad, slots_grad)
 
     @mutates(StateChange.GEOMETRY, links=MutatedLinks.ARTICULATED)
     def set_qpos(self, qpos, qs_idx=None, envs_idx=None, *, skip_forward=False):
@@ -1277,20 +1321,29 @@ class KinematicSolver(Solver):
             self._is_forward_vel_updated = False
 
     def set_dofs_velocity_grad(self, dofs_idx, envs_idx, velocity_grad):
-        velocity_grad_, dofs_idx, envs_idx = self._sanitize_io_variables(
-            velocity_grad, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
-        )
-        if self.n_envs == 0:
-            velocity_grad_ = velocity_grad_.unsqueeze(0)
-        kernel_set_dofs_velocity_grad(dofs_idx, envs_idx, velocity_grad_, self.dyn_state, self.rigid_config)
+        self._take_dofs_grad(kernel_set_dofs_velocity_grad, dofs_idx, envs_idx, velocity_grad)
 
     def set_dofs_force_grad(self, dofs_idx, envs_idx, force_grad):
-        force_grad_, dofs_idx, envs_idx = self._sanitize_io_variables(
-            force_grad, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
+        self._take_dofs_grad(kernel_set_dofs_force_grad, dofs_idx, envs_idx, force_grad)
+
+    def set_dofs_position_target_grad(self, dofs_idx, envs_idx, position_grad):
+        self._take_dofs_grad(kernel_set_dofs_position_target_grad, dofs_idx, envs_idx, position_grad)
+
+    def set_dofs_velocity_target_grad(self, dofs_idx, envs_idx, velocity_grad):
+        self._take_dofs_grad(kernel_set_dofs_velocity_target_grad, dofs_idx, envs_idx, velocity_grad)
+
+    def _take_dofs_grad(self, qd_kernel, dofs_idx, envs_idx, grad):
+        """
+        Move the adjoint of the dofs slots overwritten by a setter into the gradient buffer of its input.
+
+        `qd_kernel` reads the adjoint of the slots and zeroes it. `grad` is None to drop the adjoint.
+        """
+        slots_grad, dofs_idx, envs_idx = self._sanitize_io_variables(grad, dofs_idx, self.n_dofs, "dofs_idx", envs_idx)
+        qd_kernel(
+            dofs_idx, envs_idx, slots_grad[None] if self.n_envs == 0 else slots_grad, self.dyn_state, self.rigid_config
         )
-        if self.n_envs == 0:
-            force_grad_ = force_grad_.unsqueeze(0)
-        kernel_set_dofs_force_grad(dofs_idx, envs_idx, force_grad_, self.dyn_state, self.rigid_config)
+        if grad is not None:
+            _sum_back_grad(grad, slots_grad)
 
     @mutates(StateChange.GEOMETRY, links=MutatedLinks.ARTICULATED)
     def set_dofs_position(self, position, dofs_idx=None, envs_idx=None):
