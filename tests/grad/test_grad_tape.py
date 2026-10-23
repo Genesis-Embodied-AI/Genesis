@@ -218,3 +218,18 @@ def test_closed_loop_policy_grad_matches_fd(grad_revolute, precision, show_viewe
     del scenes, arms, scene, scene_ana, arms_ana
     gc.collect()
     assert scene_ref() is None
+
+
+@pytest.mark.required
+def test_nan_gradient_raises_after_backward(grad_revolute, show_viewer):
+    # The reverse substeps flag a 'nan' gradient on the device rather than check it on the host one by one, and the
+    # backward pass raises once it is over.
+    pair = make_diff_scene_pair(grad_revolute, n_envs=2, modes=(True,), show_viewer=show_viewer)
+    scene, entity = pair.scene_ana, pair.entity_ana
+    force = torch.full((2, 1), 0.3, dtype=gs.tc_float, device=gs.device, requires_grad=True)
+    for _ in range(3):
+        entity.control_dofs_force(force)
+        scene.step()
+    loss = (scene.rigid_solver.get_state().qpos * float("nan")).sum()
+    with pytest.raises(gs.GenesisException, match="'nan' gradient of the positions or velocities"):
+        loss.backward()

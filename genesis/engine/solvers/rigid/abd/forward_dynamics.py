@@ -383,6 +383,24 @@ def func_mass_mat_assemble_tree_cooperative(
 
 
 @qd.func
+def func_mass_mat_assemble_entry(
+    i_d: int, k: int, i_b: int, dyn_state: array_class.DynState, rigid_info: array_class.RigidInfo
+):
+    """Write entry (i_d, dofs_mass_block_start[i_d] + k) of the mass matrix of env i_b, if it lies in the block of i_d.
+
+    An entry above the diagonal takes the product of its mirror below it, as func_mass_mat_assemble_tree copies it, so
+    every entry is written once, from fields no other entry writes.
+    """
+    j_d = rigid_info.dofs_mass_block_start[i_d] + k
+    if j_d < rigid_info.dofs_mass_block_end[i_d]:
+        i_row, i_col = qd.max(i_d, j_d), qd.min(i_d, j_d)
+        rigid_info.mass_mat[i_d, j_d, i_b] = (
+            dyn_state.dofs.f_ang[i_row, i_b].dot(dyn_state.dofs.cdof_ang[i_col, i_b])
+            + dyn_state.dofs.f_vel[i_row, i_b].dot(dyn_state.dofs.cdof_vel[i_col, i_b])
+        ) * rigid_info.mass_parent_mask[i_row, i_col]
+
+
+@qd.func
 def func_mass_mat_assemble_tree(
     i_t: int, i_b: int, dyn_state: array_class.DynState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
 ):
@@ -427,7 +445,8 @@ def func_compute_mass_matrix_and_link_force(
         func_crb_initialize(i_l, i_b, dyn_state, rigid_info, rigid_config)
         func_link_force_initialize(i_l, i_b, dyn_state, rigid_config)
 
-    if qd.static(rigid_config.enable_level_sweep):
+    # Autodiff cannot reverse the lane syncs of the level sweep, so a reversed pass keeps the walk
+    if qd.static(rigid_config.enable_level_sweep and not is_backward):
         func_sweep_links_by_level(
             dyn_state,
             dyn_info,
@@ -447,7 +466,15 @@ def func_compute_mass_matrix_and_link_force(
     for i_l, i_b in qd.ndrange(dyn_state.links.pos.shape[0], dyn_state.links.pos.shape[1]):
         func_mass_mat_force(i_l, i_b, dyn_state, dyn_info, rigid_info, rigid_config)
 
-    if qd.static(rigid_config.enable_cooperative_constraint_kernels):
+    if qd.static(is_backward):
+        # One thread per entry, which autodiff reverses in parallel, where it would reverse a tree walk serially and
+        # cannot reverse the lane syncs of the cooperative assembly. A differentiable scene never hibernates.
+        qd.loop_config(name="mass_mat_assemble", serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
+        for i_d, k, i_b in qd.ndrange(
+            dyn_state.dofs.f_ang.shape[0], rigid_config.max_mass_block_dofs, dyn_state.links.pos.shape[1]
+        ):
+            func_mass_mat_assemble_entry(i_d, k, i_b, dyn_state, rigid_info)
+    elif qd.static(rigid_config.enable_cooperative_constraint_kernels):
         BLOCK_DIM = qd.static(32)
         n_trees = rigid_info.trees_root_idx.shape[0]
         qd.loop_config(name="mass_mat_assemble", block_dim=BLOCK_DIM)
@@ -1758,7 +1785,8 @@ def func_update_acc(
     links of the root ahead of its trees: one walk keeps the link body inlined once in the kernel, where a static pass
     and a tree pass would inline it twice. Differentiability wants the loop outermost in its kernel, which it is.
     """
-    if qd.static(rigid_config.enable_level_sweep):
+    # Autodiff cannot reverse the lane syncs of the level sweep, so a reversed pass keeps the walk
+    if qd.static(rigid_config.enable_level_sweep and not is_backward):
         func_sweep_links_by_level(
             dyn_state,
             dyn_info,

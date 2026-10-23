@@ -231,10 +231,11 @@ def func_COM_link(
     EPS = rigid_info.EPS[None]
     I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
     i_l_root = dyn_info.links.root_idx[I_l]
-    # The uses below read the copy back from the field rather than a local loaded from the root: autodiff reverses this
-    # function (see kernel_COM_links_replay), and on the root link the copy overwrites its own source, which breaks the
-    # gradient of a local held across it.
-    dyn_state.links.root_COM[i_l, i_b] = dyn_state.links.root_COM[i_l_root, i_b]
+    # The uses below read the copy back from the field rather than a local loaded from the root, and the root link,
+    # which already holds it, does not copy it onto itself: autodiff reverses this function with one thread per link
+    # (see kernel_COM_links_replay), where a root copying onto its own source would race its links reading it.
+    if i_l != i_l_root:
+        dyn_state.links.root_COM[i_l, i_b] = dyn_state.links.root_COM[i_l_root, i_b]
     dyn_state.links.i_pos[i_l, i_b] = dyn_state.links.i_pos_bw[i_l, i_b] - dyn_state.links.root_COM[i_l, i_b]
     (
         dyn_state.links.cinr_inertial[i_l, i_b],
@@ -1303,7 +1304,27 @@ def kernel_COM_links_replay(
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
+    """func_COM_root for every root, in the stages autodiff reverses (see _update_cartesian_grad in rigid_solver.py).
+
+    One thread per link and env computes the inertial frames, one per root and env sums them into the center of mass,
+    and one per link and env derives the quantities that follow from it, rather than one thread walking every link of
+    a root: only top-level loops run in parallel, in the reverse pass as in this one. A differentiable scene never
+    hibernates, so every link is awake.
+    """
+    qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    for i_l, i_b in qd.ndrange(dyn_state.links.pos.shape[0], dyn_state.links.pos.shape[1]):
+        I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
+        (dyn_state.links.i_pos_bw[i_l, i_b], dyn_state.links.i_quat[i_l, i_b]) = gu.qd_transform_pos_quat_by_trans_quat(
+            dyn_info.links.inertial_pos[I_l],
+            dyn_info.links.inertial_quat[I_l],
+            dyn_state.links.pos[i_l, i_b],
+            dyn_state.links.quat[i_l, i_b],
+        )
+
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_r, i_b in qd.ndrange(rigid_info.roots_link_idx.shape[0], dyn_state.links.pos.shape[1]):
-        i_l_root = rigid_info.roots_link_idx[i_r]
-        func_COM_root(i_l_root, i_b, dyn_state, dyn_info, rigid_info, rigid_config)
+        func_COM_root_sum(rigid_info.roots_link_idx[i_r], i_b, dyn_state, dyn_info, rigid_info, rigid_config)
+
+    qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    for i_l, i_b in qd.ndrange(dyn_state.links.pos.shape[0], dyn_state.links.pos.shape[1]):
+        func_COM_link(i_l, i_b, dyn_state, dyn_info, rigid_info, rigid_config)

@@ -170,9 +170,10 @@ def kernel_begin_backward_substep(
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
-) -> qd.i32:
-    is_grad_valid = func_is_grad_valid(dyn_state, rigid_info, rigid_config)
-    # Unconditional: only top-level loops run in parallel, and the caller raises on an invalid gradient anyway
+    errno: qd.Tensor,
+):
+    func_flag_nan_grad(dyn_state, rigid_info, rigid_config, errno)
+    # Unconditional: only top-level loops run in parallel, and a flagged gradient raises at the end of the backward pass
     func_copy_next_to_curr_grad(f, dyn_state, rigid_adjoint_cache, rigid_info, rigid_config)
 
     if qd.static(not rigid_config.enable_mujoco_compatibility):
@@ -180,23 +181,25 @@ def kernel_begin_backward_substep(
         # substep (see _update_cartesian_grad in rigid_solver.py).
         func_copy_cartesian_space(dyn_state_adjoint_cache, dyn_state, rigid_config)
 
-    return is_grad_valid
-
 
 @qd.func
-def func_is_grad_valid(dyn_state: array_class.DynState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()):
-    is_valid = True
+def func_flag_nan_grad(
+    dyn_state: array_class.DynState, rigid_info: array_class.RigidInfo, rigid_config: qd.template(), errno: qd.Tensor
+):
+    """Raise INVALID_GRAD_NAN for every env whose position or velocity gradient is not a number.
+
+    The flag stays on the device, where the rigid solver checks it once the backward pass is over (see check_errno), so
+    the reverse substeps do not wait on the host.
+    """
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
-    for I in qd.grouped(qd.ndrange(*rigid_info.qpos.shape)):
-        if qd.math.isnan(rigid_info.qpos.grad[I]):
-            is_valid = False
+    for i_q, i_b in qd.ndrange(rigid_info.qpos.shape[0], rigid_info.qpos.shape[1]):
+        if qd.math.isnan(rigid_info.qpos.grad[i_q, i_b]):
+            qd.atomic_or(errno[i_b], array_class.ErrorCode.INVALID_GRAD_NAN)
 
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
-    for I in qd.grouped(qd.ndrange(*dyn_state.dofs.vel.shape)):
-        if qd.math.isnan(dyn_state.dofs.vel.grad[I]):
-            is_valid = False
-
-    return is_valid
+    for i_d, i_b in qd.ndrange(dyn_state.dofs.vel.shape[0], dyn_state.dofs.vel.shape[1]):
+        if qd.math.isnan(dyn_state.dofs.vel.grad[i_d, i_b]):
+            qd.atomic_or(errno[i_b], array_class.ErrorCode.INVALID_GRAD_NAN)
 
 
 @qd.func

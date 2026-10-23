@@ -324,6 +324,7 @@ class ErrorCode(IntEnum):
     INVALID_CONTACT_NAN = 0b00000000000000000000000000010000
     INVALID_FORCE_NAN = 0b00000000000000000000000000100000
     INVALID_ACC_NAN = 0b00000000000000000000000001000000
+    INVALID_GRAD_NAN = 0b00000000000000000000000010000000
 
 
 # =========================================== RigidInfo ===========================================
@@ -3087,6 +3088,9 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     broadphase_traversal: int = 0
     enable_tiled_cholesky_mass_matrix: bool = False
     mass_matrix_fits_shared: bool = False
+    # DOFs of the largest mass block (see dofs_mass_block_start), which bounds the per-entry assembly of the mass matrix
+    # in a reversed pass (see func_compute_mass_matrix_and_link_force).
+    max_mass_block_dofs: int = 0
     # Register-tile width of the mass-matrix Cholesky kernels: 16 (Tile16x16) or 32 (Tile32x32), see
     # cholesky_tile_size_for.
     cholesky_tile_size: int = 32

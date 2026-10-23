@@ -360,6 +360,9 @@ class Simulator(RBC):
         if self.cur_step_global == 0:
             self._is_forward_ready = False
             self._is_backward_ready = False
+            # The reverse substeps flag a 'nan' gradient on the device rather than wait on the host for each check
+            if self.rigid_solver.is_active:
+                self.rigid_solver.check_grad_errno()
 
         inputs_grad: dict[int, torch.Tensor] = {}
         for tensor, grad in inputs_grad_pairs:
@@ -403,7 +406,9 @@ class Simulator(RBC):
         # This will trigger GPU sync, but it is not a big deal at the point, since we are going to enqueue very large
         # kernel right away. Moreover, if computations are still not done at this point, then the queue will just
         # continue growing endlessly, which will not make the simulation faster either.
-        if self.rigid_solver.is_active and self._cur_substep_global % RATE_CHECK_ERRNO == 0:
+        # A step replayed by the backward pass was checked when it first ran, and the backward pass checks its own flag
+        # once over (see 'reverse_step'), so the replay does not wait on the host.
+        if not in_backward and self.rigid_solver.is_active and self._cur_substep_global % RATE_CHECK_ERRNO == 0:
             self.rigid_solver.check_errno()
 
         # Reconstructing a checkpoint window replays steps the environments already simulated, so only a forward step
