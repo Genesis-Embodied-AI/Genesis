@@ -199,12 +199,13 @@ def get_asset_path(file):
 
 def load_mesh(file):
     if isinstance(file, (str, Path)):
+        resolver = trimesh.resolvers.FilePathResolver(file, allow_anywhere=True)
         try:
-            return trimesh.load_mesh(file, force="mesh", skip_texture=False)
+            return trimesh.load_mesh(file, force="mesh", skip_texture=False, resolver=resolver)
         except Exception as e:
             gs.logger.warning(f"Failed to load mesh with texture: {e}")
             # try loading without texture data
-            return trimesh.load_mesh(file, force="mesh", skip_texture=True)
+            return trimesh.load_mesh(file, force="mesh", skip_texture=True, resolver=resolver)
     return file
 
 
@@ -741,7 +742,8 @@ def _load_trimesh_scene_cached(path, group_by_material, mtime) -> "trimesh.Scene
     # exact same bytes for every entity. The result is keyed by file modification time so an edited asset is reloaded.
     # The returned scene is treated as an immutable template - callers copy each geometry out before applying scale or
     # surface - so it is never mutated and is safe to share across entities.
-    return trimesh.load(path, force="scene", group_material=group_by_material, process=False)
+    resolver = trimesh.resolvers.FilePathResolver(path, allow_anywhere=True)
+    return trimesh.load(path, force="scene", group_material=group_by_material, process=False, resolver=resolver)
 
 
 register_cache_clear(_load_trimesh_scene_cached.cache_clear)

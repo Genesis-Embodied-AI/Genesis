@@ -238,7 +238,10 @@ def load_meshes(filename):
     meshes : list of :class:`~trimesh.base.Trimesh`
         The meshes loaded from the file.
     """
-    meshes = trimesh.load(filename, process=False)
+    # trimesh refuses a referenced file whose resolved path leaves the folder of the mesh file, and asset caches such as
+    # Hugging Face's store every file as a symlink to a blob elsewhere.
+    resolver = trimesh.resolvers.FilePathResolver(filename, allow_anywhere=True)
+    meshes = trimesh.load(filename, process=False, resolver=resolver)
 
     if isinstance(meshes, trimesh.Scene):
         # FIXME: Scene.dump() has bug that uses copy without include_cache=True,

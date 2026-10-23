@@ -444,7 +444,7 @@ def mesh_to_heightfield(
     if np.isscalar(spacing):
         spacing = (spacing, spacing)
 
-    mesh = trimesh.load(path, force="mesh")
+    mesh = trimesh.load(path, force="mesh", resolver=trimesh.resolvers.FilePathResolver(path, allow_anywhere=True))
 
     # -------------------------------- axis handling ---------------------------
     if up_axis.lower() == "y":
