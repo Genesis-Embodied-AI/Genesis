@@ -219,9 +219,24 @@ def load_trimesh(file, **kwargs):
     return trimesh.load(file, resolver=trimesh.resolvers.FilePathResolver(file, allow_anywhere=True), **kwargs)
 
 
-def load_mesh(file):
+def load_mesh(file, skip_materials=False):
+    """Load a mesh file as a single trimesh mesh, passing an already loaded mesh through unchanged.
+
+    Parameters
+    ----------
+    file : str | Path | trimesh.Trimesh
+        Path of the mesh file, or a mesh returned as is.
+    skip_materials : bool
+        Whether to ignore the materials and textures of the file, for a file whose materials fail to load. A format
+        whose trimesh loader has no such option (e.g. COLLADA) loads its materials regardless.
+
+    Returns
+    -------
+    trimesh.Trimesh
+        The loaded mesh.
+    """
     if isinstance(file, (str, Path)):
-        return load_trimesh(file, force="mesh")
+        return load_trimesh(file, force="mesh", skip_materials=skip_materials)
     return file
 
 
