@@ -9,6 +9,7 @@ import numpy as np
 
 import fast_simplification
 import igl
+import numba
 import trimesh
 from scipy.spatial import ConvexHull, QhullError
 
@@ -58,12 +59,18 @@ class SupportTable(NamedTuple):
 
     'slots_vid' holds the first two candidates of each cell, the first one repeated when the cell has a single one,
     'extras_vid' the other candidates of all cells, in cell order, and 'cells_n_extras' their count per cell. Vertex
-    indices are local to the geometry (see 'SupportField').
+    indices are local to the geometry (see 'SupportField'). 'faces_start' indexes the incident supporting normals in
+    'faces_normal' for each vertex when requested by the patch builder. Its second component holds the root of the
+    supporting-normal tree, or -1 for a short list. 'faces_nodes' and 'faces_bounds' store those trees.
     """
 
     slots_vid: np.ndarray
     extras_vid: np.ndarray
     cells_n_extras: np.ndarray
+    faces_start: np.ndarray
+    faces_normal: np.ndarray
+    faces_nodes: np.ndarray
+    faces_bounds: np.ndarray
 
 
 # Rotation from the mesh frame to the frame of each spherical chart of the support table. The second chart carries its
@@ -392,13 +399,14 @@ class Mesh(RBC, serialization.SerializationMixin):
         return _get_sdf_grid(self.verts, self.faces, sdf_tmesh, sdf, mesh_descr)
 
     @cached_by_tmesh
-    def get_support_table(self, support_res: int) -> SupportTable:
+    def get_support_table(self, support_res: int, face_precision: float | None = None) -> SupportTable:
         """Return the support table of the geometry, over a grid of directions of a given resolution.
 
         'support_res' is the number of cells of each spherical chart of the grid along its azimuth. The table is shared
-        by reference across the meshes of one trimesh (see 'tmesh_hash').
+        by reference across the meshes of one trimesh (see 'tmesh_hash'). 'face_precision' also requests incident face
+        normals, grouping coplanar triangle normals at that precision for patch construction.
         """
-        return _get_support_table(self.verts, support_res)
+        return _get_support_table(self.verts, support_res, face_precision)
 
     @cached_by_tmesh
     def get_vert_adjacency(self):
@@ -887,7 +895,7 @@ def _get_sdf_grid(
     return sdf_grid
 
 
-def _get_support_table(verts: np.ndarray, support_res: int) -> SupportTable:
+def _get_support_table(verts: np.ndarray, support_res: int, face_precision: float | None = None) -> SupportTable:
     """Compute the support table of the convex hull of a set of vertices over the cells of a grid of directions.
 
     The grid is made of two spherical charts of 'support_res' cells along their azimuth, each one covering the band
@@ -964,6 +972,23 @@ def _get_support_table(verts: np.ndarray, support_res: int) -> SupportTable:
         arcs_start = np.stack((frame[1], frame[2], -frame[1], -frame[2]))
         arcs_end = np.roll(arcs_start, shift=-1, axis=0)
         arcs_vid = np.tile(hull_vid, reps=(4, 1))
+
+    faces_start = np.array(((0, -1),), dtype=gs.np_int)
+    faces_nodes = np.empty((0, 4), dtype=gs.np_int)
+    faces_bounds = np.empty((0, 2, 3))
+    faces_normal_incident = np.empty((0, 3))
+    if face_precision is not None:
+        # Triangulation repeats coplanar incident normals. Group at the requested precision while retaining each
+        # representative's original normal, using the hull already required by the support table.
+        keys = np.column_stack((faces_vid, np.round(faces_direction / face_precision)))
+        _, indices = np.unique(keys, axis=0, return_index=True)
+        counts = np.bincount(faces_vid[indices], minlength=len(verts))
+        faces_start = np.concatenate((np.zeros(1, dtype=gs.np_int), np.cumsum(counts)))
+        faces_normal_incident = faces_direction[indices]
+        faces_root, faces_nodes, faces_bounds = _build_support_trees(
+            faces_start, faces_normal_incident, leaf_size=8, scan_size=32
+        )
+        faces_start = np.column_stack((faces_start, faces_root))
 
     # Support of every node, searched among the hull vertices alone, by chunks of nodes whose dot products take a
     # bounded memory whatever the vertex count
@@ -1068,7 +1093,64 @@ def _get_support_table(verts: np.ndarray, support_res: int) -> SupportTable:
     slots_vid = np.repeat(verts_idx[is_first, None], repeats=2, axis=-1)
     is_slot = candidates_rank < 2
     slots_vid[cells_idx[is_slot], candidates_rank[is_slot]] = verts_idx[is_slot]
-    return SupportTable(slots_vid, verts_idx[~is_slot], np.bincount(cells_idx[~is_slot], minlength=n_geom_cells))
+    return SupportTable(
+        slots_vid,
+        verts_idx[~is_slot],
+        np.bincount(cells_idx[~is_slot], minlength=n_geom_cells),
+        faces_start,
+        faces_normal_incident,
+        faces_nodes,
+        faces_bounds,
+    )
+
+
+@numba.njit(cache=True)
+def _build_support_trees(points_start, points, leaf_size, scan_size):
+    """Build spatial trees for support queries over disjoint point sets, reordering each set in place.
+
+    Short sets retain their scan order. Return roots, node links and axis-aligned bounds. Each node stores its parent,
+    subtree end and point range. Preorder storage makes its first child adjacent and its second child follow the first
+    subtree. The root array includes a final sentinel matching the point-range offsets.
+    """
+    roots = np.full(len(points_start), -1, dtype=points_start.dtype)
+    n_nodes = 0
+    for i_p in range(len(points_start) - 1):
+        n_points = points_start[i_p + 1] - points_start[i_p]
+        if n_points > scan_size:
+            roots[i_p] = n_nodes
+            n_nodes += 2 * ((n_points + leaf_size - 1) // leaf_size) - 1
+    nodes = np.empty((n_nodes, 4), dtype=points_start.dtype)
+    bounds = np.empty((n_nodes, 2, 3), dtype=points.dtype)
+    ranges = np.empty((n_nodes, 2), dtype=points_start.dtype)
+    for i_p in range(len(points_start) - 1):
+        i_root = roots[i_p]
+        if i_root >= 0:
+            i_p_start, i_p_end = points_start[i_p], points_start[i_p + 1]
+            n_leaves = (i_p_end - i_p_start + leaf_size - 1) // leaf_size
+            ranges[i_root, 0], ranges[i_root, 1] = 0, n_leaves
+            nodes[i_root, 0] = -1
+            for i_n in range(i_root, i_root + 2 * n_leaves - 1):
+                i_l_start, i_l_end = ranges[i_n]
+                i_start = i_p_start + leaf_size * i_l_start
+                i_end = min(i_p_start + leaf_size * i_l_end, i_p_end)
+                nodes[i_n, 1] = i_n + 2 * (i_l_end - i_l_start) - 1
+                nodes[i_n, 2], nodes[i_n, 3] = i_start, i_end
+                for i_axis in range(3):
+                    lower = upper = points[i_start, i_axis]
+                    for i_v in range(i_start + 1, i_end):
+                        lower = min(lower, points[i_v, i_axis])
+                        upper = max(upper, points[i_v, i_axis])
+                    bounds[i_n, 0, i_axis], bounds[i_n, 1, i_axis] = lower, upper
+                if i_l_end - i_l_start > 1:
+                    i_axis = np.argmax(bounds[i_n, 1] - bounds[i_n, 0])
+                    order = np.argsort(points[i_start:i_end, i_axis])
+                    points[i_start:i_end] = points[i_start:i_end][order]
+                    i_middle = (i_l_start + i_l_end) // 2
+                    i_left, i_right = i_n + 1, i_n + 2 * (i_middle - i_l_start)
+                    ranges[i_left, 0], ranges[i_left, 1] = i_l_start, i_middle
+                    ranges[i_right, 0], ranges[i_right, 1] = i_middle, i_l_end
+                    nodes[i_left, 0] = nodes[i_right, 0] = i_n
+    return roots, nodes, bounds
 
 
 def _exported_geometry(mesh: trimesh.Trimesh, exporting: serialization.Exporting) -> dict:
