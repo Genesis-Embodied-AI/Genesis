@@ -1,5 +1,7 @@
 import sys
 
+import torch
+
 import pyglet
 
 import genesis as gs
@@ -263,6 +265,8 @@ class Visualizer(RBC):
         else:
             self.update_on_sim_step(advanced=True, auto=auto)
 
+    # Rendering reads the state without differentiating it, so the getters it calls skip the differentiable state read
+    @torch.no_grad()
     def update_visual_states(self, force_render: bool = False):
         """
         Update all visualization-only variables here.

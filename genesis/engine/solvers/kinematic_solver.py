@@ -86,6 +86,19 @@ def _balanced_variant_mapping(n_variants, B):
         return np.arange(B)
 
 
+def _select(tensor, row_mask, col_mask):
+    """
+    Select the rows and columns of a tensor of a queried state, as a copy.
+
+    In a differentiable scene, the state getters read the state queried at the current step rather than the solver
+    fields while torch records gradients, so that what they return tracks gradients. The copy keeps in-place updates of
+    the result off the state, whose gradient the reverse pass reads.
+    """
+    if row_mask is None and col_mask is None:
+        return tensor.clone()
+    return tensor[indices_to_mask(row_mask, col_mask, to_torch=True, keepdim=True)].clone()
+
+
 def _select_links_offset(offset, links_idx, envs_idx):
     """Index a base-link forward offset for a transposed state query.
 
@@ -177,6 +190,8 @@ class KinematicSolver(Solver):
         self._enable_collision = False
         self._enable_mujoco_compatibility = False
         self._requires_grad = False
+        # Index maps deriving the DOF positions from the configuration, built on first use (see _dofs_position)
+        self._dofs_position_maps = None
         self._enable_heterogeneous = False  # Set to True when any entity has heterogeneous morphs
 
         self.collider = None
@@ -1352,16 +1367,28 @@ class KinematicSolver(Solver):
             _, links_idx, envs_idx = self._sanitize_io_variables(
                 None, links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
             )
-        tensor = qd_to_torch(self.dyn_state.links.pos, envs_idx, links_idx, transpose=True, copy=True)
+        # See _select for the state read in a differentiable scene
+        state = self.get_state() if self._requires_grad and torch.is_grad_enabled() else None
+        if state is not None:
+            tensor = _select(state.links_pos, envs_idx, links_idx)
+        else:
+            tensor = qd_to_torch(self.dyn_state.links.pos, envs_idx, links_idx, transpose=True, copy=True)
         if relative and not self._links_offset_pos_is_identity[idx].all():
-            quat = qd_to_torch(self.dyn_state.links.quat, envs_idx, links_idx, transpose=True)
+            if state is not None:
+                quat = _select(state.links_quat, envs_idx, links_idx)
+            else:
+                quat = qd_to_torch(self.dyn_state.links.quat, envs_idx, links_idx, transpose=True)
             offset_pos = _select_links_offset(self._links_offset_pos, links_idx, envs_idx)
             offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
             tensor -= _offset_world_shift(offset_pos, offset_quat, quat)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_quat(self, links_idx=None, envs_idx=None, *, relative=False):
-        tensor = qd_to_torch(self.dyn_state.links.quat, envs_idx, links_idx, transpose=True, copy=True)
+        # See _select for the state read in a differentiable scene
+        if self._requires_grad and torch.is_grad_enabled():
+            tensor = _select(self.get_state().links_quat, envs_idx, links_idx)
+        else:
+            tensor = qd_to_torch(self.dyn_state.links.quat, envs_idx, links_idx, transpose=True, copy=True)
         idx = links_idx if isinstance(links_idx, int) else slice(None)
         if relative and not self._links_offset_quat_is_identity[idx].all():
             offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
@@ -1444,17 +1471,64 @@ class KinematicSolver(Solver):
         return dof_to_q[dofs_idx_t]
 
     def get_qpos(self, qs_idx=None, envs_idx=None):
-        tensor = qd_to_torch(self.qpos, envs_idx, qs_idx, transpose=True, copy=True)
+        # See _select for the state read in a differentiable scene
+        if self._requires_grad and torch.is_grad_enabled():
+            tensor = _select(self.get_state().qpos, envs_idx, qs_idx)
+        else:
+            tensor = qd_to_torch(self.qpos, envs_idx, qs_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_dofs_velocity(self, dofs_idx=None, envs_idx=None):
-        tensor = qd_to_torch(self.dyn_state.dofs.vel, envs_idx, dofs_idx, transpose=True, copy=True)
+        # See _select for the state read in a differentiable scene
+        if self._requires_grad and torch.is_grad_enabled():
+            tensor = _select(self.get_state().dofs_vel, envs_idx, dofs_idx)
+        else:
+            tensor = qd_to_torch(self.dyn_state.dofs.vel, envs_idx, dofs_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_dofs_position(self, dofs_idx=None, envs_idx=None):
         """Read current DOF positions."""
-        tensor = qd_to_torch(self.dyn_state.dofs.pos, envs_idx, dofs_idx, transpose=True, copy=True)
+        # See _select for the state read in a differentiable scene
+        if self._requires_grad and torch.is_grad_enabled():
+            tensor = _select(self._dofs_position(self.get_state().qpos), envs_idx, dofs_idx)
+        else:
+            tensor = qd_to_torch(self.dyn_state.dofs.pos, envs_idx, dofs_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
+
+    def _dofs_position(self, qpos):
+        """The DOF positions of the configuration `qpos`, derived as forward kinematics does, in torch."""
+        if self._dofs_position_maps is None:
+            # The DOFs of hinges, slides and of the translation of free joints read one coordinate each, offset by
+            # the neutral configuration for hinges and slides, while the DOFs of rotations read the Euler angles of a
+            # quaternion.
+            coord_qs_idx, coord_dofs_idx, is_offset, quat_qs_idx, euler_dofs_idx = [], [], [], [], []
+            for joint in self.joints:
+                if joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC):
+                    coord_qs_idx.append(joint.q_start)
+                    coord_dofs_idx.append(joint.dof_start)
+                    is_offset.append(True)
+                elif joint.type == gs.JOINT_TYPE.FREE:
+                    coord_qs_idx += range(joint.q_start, joint.q_start + 3)
+                    coord_dofs_idx += range(joint.dof_start, joint.dof_start + 3)
+                    is_offset += (False, False, False)
+                    quat_qs_idx.append(range(joint.q_start + 3, joint.q_start + 7))
+                    euler_dofs_idx += range(joint.dof_start + 3, joint.dof_start + 6)
+                elif joint.type == gs.JOINT_TYPE.SPHERICAL:
+                    quat_qs_idx.append(range(joint.q_start, joint.q_start + 4))
+                    euler_dofs_idx += range(joint.dof_start, joint.dof_start + 3)
+            dofs_order = torch.tensor(coord_dofs_idx + euler_dofs_idx, dtype=gs.tc_int, device=gs.device)
+            self._dofs_position_maps = (
+                torch.tensor(coord_qs_idx, dtype=gs.tc_int, device=gs.device),
+                torch.tensor(is_offset, dtype=torch.bool, device=gs.device),
+                torch.tensor(quat_qs_idx, dtype=gs.tc_int, device=gs.device).reshape(-1, 4),
+                torch.argsort(dofs_order),
+            )
+        coord_qs_idx, is_offset, quat_qs_idx, dofs_order_inv = self._dofs_position_maps
+
+        qpos0 = qd_to_torch(self.rigid_info.qpos0, transpose=True)
+        coords = qpos[:, coord_qs_idx] - torch.where(is_offset, qpos0[:, coord_qs_idx], 0.0)
+        eulers = gu.quat_to_xyz(qpos[:, quat_qs_idx]).flatten(-2)
+        return torch.cat((coords, eulers), dim=-1)[:, dofs_order_inv]
 
     def get_dofs_limit(self, dofs_idx=None, envs_idx=None):
         if not self._options.batch_dofs_info and envs_idx is not None:

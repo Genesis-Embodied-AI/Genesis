@@ -218,3 +218,66 @@ def test_closed_loop_policy_grad_matches_fd(grad_revolute, precision, show_viewe
     del scenes, arms, scene, scene_ana, arms_ana
     gc.collect()
     assert scene_ref() is None
+
+
+@pytest.mark.required
+@pytest.mark.precision("64")
+def test_state_getters_grad_matches_fd(grad_free_with_hinge_ball_slide, show_viewer):
+    # A PD controller written with the getters feeds the configuration and velocity they read back into the control
+    # forces, and the loss reads every getter of the state, so the gradient of its gains follows all of them. In the
+    # differentiable scene, the getters give the values the solver holds, DOF positions derived from the configuration
+    # included.
+    horizon = 30
+    pair = make_diff_scene_pair(
+        grad_free_with_hinge_ball_slide, n_envs=2, gravity=(0.0, 0.0, -1.0), show_viewer=show_viewer
+    )
+    velocity = np.linspace(-0.8, 0.9, 11) * np.array([[1.0], [-0.7]])
+    params = np.array([3.0, 0.4, 0.5])
+    joints_dofs = slice(6, 11)
+
+    def rollout(scene, entity, params):
+        kp, kd, amplitude = torch.as_tensor(params, dtype=gs.tc_float, device=gs.device)
+        scene.reset()
+        entity.set_dofs_velocity(velocity)
+        for i_step in range(horizon):
+            position = entity.get_dofs_position(joints_dofs)
+            force = kp * (amplitude * np.sin(0.2 * i_step) - position) - kd * entity.get_dofs_velocity(joints_dofs)
+            entity.control_dofs_force(force, joints_dofs)
+            scene.step()
+        reads = {
+            "qpos": entity.get_qpos(),
+            "dofs_position": entity.get_dofs_position(),
+            "dofs_position_selected": entity.get_dofs_position([8, 3], envs_idx=[1]),
+            "dofs_velocity": entity.get_dofs_velocity(),
+            "links_pos": entity.get_links_pos(),
+            "links_pos_solver": entity.get_links_pos(relative=False),
+            "links_quat": entity.get_links_quat(),
+            "pos": entity.get_pos(),
+            "quat": entity.get_quat(),
+        }
+        # A fixed linear form per read, since the squared norm of a quaternion carries no gradient
+        loss = 0.0
+        for read in reads.values():
+            weights = torch.linspace(-1.0, 1.0, read.numel(), dtype=gs.tc_float, device=gs.device)
+            loss = loss + (read * weights.reshape(read.shape)).sum()
+        return loss, reads
+
+    params_ana = torch.tensor(params, dtype=gs.tc_float, device=gs.device, requires_grad=True)
+    loss_ana, reads_ana = rollout(pair.scene_ana, pair.entity_ana, params_ana)
+    loss_ana.backward()
+    _, reads_ref = rollout(pair.scene_fd, pair.entity_fd, params)
+    for name, read in reads_ana.items():
+        assert read.requires_grad, name
+        assert_allclose(read, reads_ref[name], tol=gs.EPS, err_msg=name)
+
+    eps = 1e-6
+    fd_grad = np.zeros_like(params)
+    for i in range(len(params)):
+        losses = []
+        for sign in (+1, -1):
+            perturbed = params.copy()
+            perturbed[i] += sign * eps
+            losses.append(float(rollout(pair.scene_fd, pair.entity_fd, perturbed)[0]))
+        fd_grad[i] = (losses[0] - losses[1]) / (2.0 * eps)
+    assert (np.abs(fd_grad) > 1e-4).all()
+    assert_allclose(params_ana.grad, fd_grad, rtol=1e-6, atol=1e-9)
