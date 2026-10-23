@@ -197,15 +197,31 @@ def get_asset_path(file):
     return os.path.join(get_src_dir(), "assets", file)
 
 
+def load_trimesh(file, **kwargs):
+    """Load a mesh file with trimesh, reading the files it references wherever they are on disk.
+
+    trimesh refuses a referenced file (glTF buffer, OBJ material library, texture) whose resolved path leaves the folder
+    of the mesh file. The Hugging Face cache stores every file as a symlink to a blob elsewhere, and assets commonly
+    reference '../textures/...', so any path is accepted, at the cost of letting an asset read any file on disk.
+
+    Parameters
+    ----------
+    file : str | Path
+        Path of the mesh file.
+    **kwargs
+        Options forwarded to 'trimesh.load', e.g. 'force' or 'process'.
+
+    Returns
+    -------
+    trimesh.Trimesh | trimesh.Scene
+        The loaded geometry, a mesh or a scene depending on the file and on 'force'.
+    """
+    return trimesh.load(file, resolver=trimesh.resolvers.FilePathResolver(file, allow_anywhere=True), **kwargs)
+
+
 def load_mesh(file):
     if isinstance(file, (str, Path)):
-        resolver = trimesh.resolvers.FilePathResolver(file, allow_anywhere=True)
-        try:
-            return trimesh.load_mesh(file, force="mesh", skip_texture=False, resolver=resolver)
-        except Exception as e:
-            gs.logger.warning(f"Failed to load mesh with texture: {e}")
-            # try loading without texture data
-            return trimesh.load_mesh(file, force="mesh", skip_texture=True, resolver=resolver)
+        return load_trimesh(file, force="mesh")
     return file
 
 
@@ -742,8 +758,7 @@ def _load_trimesh_scene_cached(path, group_by_material, mtime) -> "trimesh.Scene
     # exact same bytes for every entity. The result is keyed by file modification time so an edited asset is reloaded.
     # The returned scene is treated as an immutable template - callers copy each geometry out before applying scale or
     # surface - so it is never mutated and is safe to share across entities.
-    resolver = trimesh.resolvers.FilePathResolver(path, allow_anywhere=True)
-    return trimesh.load(path, force="scene", group_material=group_by_material, process=False, resolver=resolver)
+    return load_trimesh(path, force="scene", group_material=group_by_material, process=False)
 
 
 register_cache_clear(_load_trimesh_scene_cached.cache_clear)
@@ -893,7 +908,7 @@ def create_frame(
 
 def create_camera_frustum(camera, color):
     # camera
-    camera_mesh = trimesh.load(os.path.join(get_src_dir(), "assets", "meshes", "camera/camera.glb"), force="mesh")
+    camera_mesh = load_trimesh(os.path.join(get_src_dir(), "assets", "meshes", "camera/camera.glb"), force="mesh")
     camera_mesh.visual = camera_mesh.visual.to_color()
     camera_mesh.apply_translation([0.0, 0.0, 1.0])
     camera_mesh.apply_scale(0.05)

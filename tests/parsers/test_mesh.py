@@ -290,7 +290,8 @@ def test_urdf_mesh_processing(mesh_path, mesh_urdf, color, show_viewer):
     tmesh = trimesh.Trimesh(vertices=tmesh_obj_vis.vertices, faces=tmesh_obj_vis.faces, process=True)
     assert len(tmesh.vertices) != len(tmesh_obj_vis.vertices)
 
-    # Each cached file of the Hugging Face hub is a symlink to a blob outside the folder of the mesh
+    # An OBJ takes its color from its material library, reached through a symlink of the Hugging Face cache, and an STL
+    # takes the default color
     for vgeom in (obj.vgeoms[0], robot.vgeoms[0]):
         assert_equal(vgeom.vmesh.trimesh.visual.vertex_colors, color)
 

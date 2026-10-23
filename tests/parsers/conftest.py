@@ -30,7 +30,7 @@ except ImportError:
 def mesh_path(mesh_file):
     path = os.path.join(get_assets_dir(), mesh_file)
     if not os.path.exists(path):
-        # Fetch the files a mesh references, which share its name
+        # Fetch the files sharing the name of the mesh, such as the material library of an OBJ
         path = os.path.join(get_hf_dataset(pattern=f"{os.path.splitext(mesh_file)[0]}.*"), mesh_file)
     return path
 
