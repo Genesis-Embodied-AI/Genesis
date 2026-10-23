@@ -374,65 +374,80 @@ def test_no_drift(gjk_collision, entity_kind, entity_type, ground_type, show_vie
 
 @pytest.mark.required
 @pytest.mark.parametrize("precision", ["32"])
-def test_convex_on_primitive_at_rest(show_viewer, tol):
-    # The tilt is generic, so that the faces of the supports are aligned with no world axis. The gravity vector is
-    # rotated by the same tilt, which leaves the entities nothing to slide down.
+def test_convex_contact_stability(show_viewer):
+    # The tilt is generic, so that the faces are aligned with no world axis. The gravity vector is rotated by the same
+    # tilt, which leaves the entities nothing to slide down.
     tilt_quat = gu.xyz_to_quat(np.radians((3.5, 1.2, 23.0)), rpy=True)
     R = gu.quat_to_R(tilt_quat)
-    cube_mesh = trimesh.creation.box(extents=(0.06, 0.06, 0.06))
+    support_angles = np.radians((0.0, 35.0, 80.0, 120.0, 160.0, 200.0, 245.0, 290.0, 330.0))
+    support_radii = np.array((0.05, 0.046, 0.052, 0.048, 0.05, 0.047, 0.051, 0.049, 0.05))
+    support_corners = support_radii[:, None] * np.stack((np.cos(support_angles), np.sin(support_angles)), axis=-1)
+    support_heights = np.repeat((-0.004, 0.004), len(support_corners))[:, None]
+    support_prism = trimesh.Trimesh(np.concatenate((np.tile(support_corners, (2, 1)), support_heights), axis=-1))
+    resting_angles = np.radians((10.0, 70.0, 130.0, 185.0, 240.0, 300.0))
+    resting_radii = np.array((0.03, 0.027, 0.031, 0.028, 0.03, 0.026))
+    resting_corners = resting_radii[:, None] * np.stack((np.cos(resting_angles), np.sin(resting_angles)), axis=-1)
+    resting_heights = np.repeat((-0.02, 0.02), len(resting_corners))[:, None]
+    resting_prism = trimesh.Trimesh(np.concatenate((np.tile(resting_corners, (2, 1)), resting_heights), axis=-1))
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             gravity=R @ (0.0, 0.0, -9.81),
         ),
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(0.1, -0.3, 0.25),
-            camera_lookat=(0.1, 0.0, 0.1),
+            camera_pos=(0.2, -0.45, 0.45),
+            camera_lookat=(0.2, 0.1, 0.1),
             camera_fov=40,
         ),
         show_viewer=show_viewer,
     )
-    scene.add_entity(
-        gs.morphs.Cylinder(
-            pos=(0.0, 0.0, 0.1),
-            quat=tilt_quat,
-            fixed=True,
-            height=0.008,
-            radius=0.05,
-        ),
-    )
-    scene.add_entity(
-        gs.morphs.Box(
-            pos=(0.2, 0.0, 0.1),
-            quat=tilt_quat,
-            fixed=True,
-            size=(0.1, 0.1, 0.008),
-        ),
-    )
-    entity_on_cylinder = scene.add_entity(
-        gs.morphs.MeshSet(
-            pos=(0.0, 0.0, 0.1) + R @ (0.004, -0.003, 0.034),
-            quat=tilt_quat,
-            files=(cube_mesh,),
-        ),
-        visualize_contact=True,
-    )
-    entity_on_box = scene.add_entity(
-        gs.morphs.MeshSet(
-            pos=(0.2, 0.0, 0.1) + R @ (0.004, -0.003, 0.034),
-            quat=tilt_quat,
-            files=(cube_mesh,),
-        ),
-        visualize_contact=True,
-    )
+    # Each resting entity, a prism and a faceted cylinder, lies on each support, a cylinder, a faceted disc and a prism,
+    # off-center and at its own yaw, so that no pair of faces is aligned with the other or with the contact frame
+    resting_meshes = (resting_prism.convex_hull, trimesh.creation.cylinder(radius=0.03, height=0.04))
+    support_meshes = (trimesh.creation.cylinder(radius=0.05, height=0.008), support_prism.convex_hull)
+    entities = []
+    for i_r, resting_mesh in enumerate(resting_meshes):
+        for i_s in range(3):
+            support_pos = np.array((0.2 * i_s, 0.2 * i_r, 0.1))
+            if i_s == 0:
+                scene.add_entity(
+                    gs.morphs.Cylinder(
+                        pos=support_pos,
+                        quat=tilt_quat,
+                        fixed=True,
+                        height=0.008,
+                        radius=0.05,
+                    ),
+                )
+            else:
+                scene.add_entity(
+                    gs.morphs.MeshSet(
+                        pos=support_pos,
+                        quat=tilt_quat,
+                        fixed=True,
+                        files=(support_meshes[i_s - 1],),
+                    ),
+                )
+            yaw_quat = gu.xyz_to_quat(np.radians((0.0, 0.0, 17.0 + 41.0 * (3 * i_r + i_s))), rpy=True)
+            entity = scene.add_entity(
+                gs.morphs.MeshSet(
+                    pos=support_pos + R @ (0.004, -0.003, 0.024),
+                    quat=gu.transform_quat_by_quat(yaw_quat, tilt_quat),
+                    files=(resting_mesh,),
+                ),
+                visualize_contact=True,
+            )
+            entities.append(entity)
     scene.build(n_envs=2)
 
     for _ in range(30):
         scene.step()
     for _ in range(50):
         scene.step()
-        assert_allclose(entity_on_cylinder.get_dofs_velocity(), 0.0, tol=tol)
-        assert_allclose(entity_on_box.get_dofs_velocity(), 0.0, tol=tol)
+        for entity in entities:
+            velocity = entity.get_dofs_velocity()
+            assert_allclose(velocity[..., :3], 0.0, atol=2e-3)
+            assert_allclose(velocity[..., 3:], 0.0, atol=0.08)
 
 
 @pytest.mark.required
