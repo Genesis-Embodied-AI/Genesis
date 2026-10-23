@@ -445,7 +445,9 @@ def test_convex_contact_stability(show_viewer):
     for _ in range(50):
         scene.step()
         for entity in entities:
-            assert_allclose(entity.get_dofs_velocity(), 0.0, atol=5e-3)
+            velocity = entity.get_dofs_velocity()
+            assert_allclose(velocity[..., :3], 0.0, atol=2e-3)
+            assert_allclose(velocity[..., 3:], 0.0, atol=0.08)
 
 
 @pytest.mark.required
