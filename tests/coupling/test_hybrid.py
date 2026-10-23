@@ -91,7 +91,7 @@ def test_rigid_mpm_muscle(show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("substeps", [1, 10])
-def test_rigid_mpm_legacy_coupling(substeps, show_viewer):
+def test_rigid_mpm_legacy_coupling(substeps, tol, show_viewer):
     # This test is aimining at two things:
     # 1) When substep = 1, the rigid object should be affected by the MPM particles
     # 2) Regardless of substeps, as far as the substep dt is the same, they should give consistent results
@@ -155,6 +155,12 @@ def test_rigid_mpm_legacy_coupling(substeps, show_viewer):
     # Check that the sand moved the box along the negative Y direction
     pos = tensor_to_array(obj_rigid.get_pos())
     assert pos[1] + 0.25 < 0.0
+
+    # A rollout after a reset starts free of the coupling wrench the previous one left
+    scene.reset()
+    for i in range(horizon):
+        scene.step()
+    assert_allclose(obj_rigid.get_pos(), pos, tol=tol)
 
 
 @pytest.mark.slow  # ~250s

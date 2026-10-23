@@ -6,6 +6,7 @@ import torch
 
 import genesis as gs
 
+from ..utils.assertions import assert_allclose
 from .utils import assert_grad_matches_fd, make_diff_scene_pair
 
 
@@ -79,15 +80,19 @@ def test_fk_grad_matches_fd(model_name, request, precision, show_viewer):
         np.random.RandomState(quat_seed).standard_normal(quat_shape), dtype=gs.tc_float, device=gs.device
     ).reshape(-1)
     for setter, output, input_seed in checks:
+        # The setter is given before the first step and again before the second, mid-rollout
         rng = np.random.default_rng(input_seed)
-        if setter == "pos":
-            step_input = rng.standard_normal((B, 3))
-        elif setter == "quat":
-            step_input = np.broadcast_to(np.array([1.0, 0.0, 0.0, 0.0]), (B, 4)).copy()
-            step_input = step_input + 0.05 * rng.standard_normal((B, 4))
-            step_input = step_input / np.linalg.norm(step_input, axis=-1, keepdims=True)
-        else:
-            step_input = rng.standard_normal((B, n_dofs))
+        step_inputs = []
+        for _ in range(2):
+            if setter == "pos":
+                step_input = rng.standard_normal((B, 3))
+            elif setter == "quat":
+                step_input = np.broadcast_to(np.array([1.0, 0.0, 0.0, 0.0]), (B, 4)).copy()
+                step_input = step_input + 0.05 * rng.standard_normal((B, 4))
+                step_input = step_input / np.linalg.norm(step_input, axis=-1, keepdims=True)
+            else:
+                step_input = rng.standard_normal((B, n_dofs))
+            step_inputs.append(step_input)
 
         def apply_vel_per_env(e, x):
             # Same-step per-environment commands: each call must keep its own tape slot and gradient path.
@@ -95,8 +100,8 @@ def test_fk_grad_matches_fd(model_name, request, precision, show_viewer):
             e.set_dofs_velocity(x[1:], envs_idx=[1])
 
         apply_fn = {
-            "pos": lambda e, x: e.set_pos(x),
-            "quat": lambda e, x: e.set_quat(x),
+            "pos": lambda e, x: e.set_pos(x, relative=False),
+            "quat": lambda e, x: e.set_quat(x, relative=False),
             "vel": apply_vel_per_env,
             "force": lambda e, x: e.control_dofs_force(x),
         }[setter]
@@ -113,7 +118,7 @@ def test_fk_grad_matches_fd(model_name, request, precision, show_viewer):
 
         assert_grad_matches_fd(
             pair,
-            [step_input],
+            step_inputs,
             apply_fn,
             loss_fn,
             rtol=fp64_tol if precision == "64" else fp32_tol,
@@ -230,3 +235,45 @@ def test_per_step_pd_target_grad_matches_fd(control_mode, grad_revolute, precisi
         atol=1e-10 if precision == "64" else 5e-5,
         eps=3e-5 if precision == "64" else 3e-2,
     )
+
+
+@pytest.mark.required
+def test_requires_grad_parity(grad_free, grad_hopper, grad_chain3, tol, show_viewer):
+    scenes = []
+    for requires_grad in (True, False):
+        scene = gs.Scene(
+            sim_options=gs.options.SimOptions(
+                requires_grad=requires_grad,
+            ),
+            rigid_options=gs.options.RigidOptions(
+                enable_collision=False,
+            ),
+            viewer_options=gs.options.ViewerOptions(
+                camera_pos=(3.5, -3.5, 2.0),
+                camera_lookat=(0.0, 0.0, 0.5),
+            ),
+            show_viewer=show_viewer and requires_grad,
+        )
+        for mjcf, pos in (
+            (grad_free, (0.0, 0.0, 1.0)),
+            (grad_hopper, (1.5, 0.0, 0.0)),
+            (grad_chain3, (-1.5, 0.0, 1.0)),
+        ):
+            scene.add_entity(
+                gs.morphs.MJCF(
+                    file=mjcf,
+                    pos=pos,
+                ),
+            )
+        scene.build(n_envs=2)
+        scenes.append(scene)
+
+    dofs_vel = np.random.uniform(-2.0, 2.0, (2, scenes[0].rigid_solver.n_dofs))
+    for scene in scenes:
+        scene.rigid_solver.set_dofs_velocity(dofs_vel)
+    for _ in range(30):
+        for scene in scenes:
+            scene.step()
+        states = [scene.rigid_solver.get_state() for scene in scenes]
+        assert_allclose(states[0].qpos, states[1].qpos, tol=tol)
+        assert_allclose(states[0].dofs_vel, states[1].dofs_vel, tol=tol)

@@ -142,8 +142,9 @@ def kernel_update_acc(
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
+    is_backward: qd.template(),
 ):
-    func_update_acc(dyn_state, dyn_info, rigid_info, rigid_config, update_cacc=True, is_backward=False)
+    func_update_acc(dyn_state, dyn_info, rigid_info, rigid_config, update_cacc=True, is_backward=is_backward)
 
 
 @qd.func
@@ -1935,6 +1936,8 @@ def func_midpoint_free_body(
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
+    is_reversed: qd.template(),
+    is_backward: qd.template(),
 ):
     """Integrate the velocities of a free rigid body over one substep with the implicit midpoint rule, so that a
     tumbling body keeps its kinetic energy and angular momentum.
@@ -1948,8 +1951,12 @@ def func_midpoint_free_body(
     Otherwise the coupled midpoint center-of-mass velocity has a closed form, with gravity applied in the accelerating
     frame, and a linear augmentation couples the rotation to it through the origin.
 
-    Writes acc[dofs] = (new - old) / h and vel_next[dofs] = (new + old) / 2: the position update integrates with
-    the midpoint velocity, and the caller recovers the true next velocity from it afterwards.
+    Autodiff cannot reverse the Newton iteration, so the replay of the substep by the backward pass, selected by
+    `is_backward`, stores the converged velocity and its residual (see midpoint_ang in array_class.py), and the
+    integration the backward pass reverses, selected by `is_reversed`, resumes from them.
+
+    Writes acc[dofs] = (new - old) / h, from which the integration advances the velocity, and the position with the
+    midpoint velocity (see func_integrate).
     """
     EPS = rigid_info.EPS[None]
     # Newton tolerance on the residual, relative to the momentum scale (matching MuJoCo's midpoint integration)
@@ -2057,58 +2064,76 @@ def func_midpoint_free_body(
                 mass_inv_mat[j, j] = 1.0 / (mass + aug_vel[j])
             aug_vel_mat = rot_x2i_mat @ aug_vel_mat @ rot_x2i_mat.transpose()
             mass_inv_mat = rot_x2i_mat @ mass_inv_mat @ rot_x2i_mat.transpose()
-    skew_r = qd.Matrix([[0.0, -r_com[2], r_com[1]], [r_com[2], 0.0, -r_com[0]], [-r_com[1], r_com[0], 0.0]])
+    skew_r = gu.qd_vec_to_skew(r_com)
     identity = qd.Matrix.identity(gs.qd_float, 3)
-
     # Newton iteration with backtracking line search on the residual of the rotational midpoint equation. The residual
     # is f(w_mid) = 2/h * (I + E) * (w_mid - w) + w_mid x (I * w_mid) - tau - r_com x (E_lin * a_origin). The last term
     # is the moment of the linear augmentation E_lin. The translation midpoint gives a_origin = a_com - u, with (m * Id
     # + E_lin) @ a_com = f + m * g + E_lin @ u and u = alpha x r_com + w_mid x (w_mid x r_com). Each candidate is
     # evaluated once. An accepted one takes a Newton step, a rejected one halves the step.
+    # The integration the backward pass reverses resumes from the velocity the solve converged to and takes one Newton
+    # step on the residual shifted by the one stored there. The step is zero in value, and its derivative with respect
+    # to the data of the equation is the one the implicit function theorem gives at the solution.
     w_mid = w
     w_try = w
+    f_conv = qd.Vector.zero(gs.qd_float, 3)
+    if qd.static(is_reversed):
+        w_try = dyn_state.links.midpoint_ang[i_l, i_b]
+        f_conv = dyn_state.links.midpoint_res[i_l, i_b]
+    f_mid = qd.Vector.zero(gs.qd_float, 3)
     delta = qd.Vector.zero(gs.qd_float, 3)
     step = gs.qd_float(1.0)
     f_norm = gs.qd_float(-1.0)
     n_newton = 0
     n_backtracks = 0
-    while n_newton < 100 and n_backtracks < 20:
+    for _ in range(1 if qd.static(is_reversed) else 100 * 21):
         Iw = inertia @ w_try
-        f = i2h * (inertia_aug @ (w_try - w)) + w_try.cross(Iw) - tau_com
+        f = i2h * (inertia_aug @ (w_try - w)) + w_try.cross(Iw) - tau_com - f_conv
         if is_coupled:
             alpha = i2h * (w_try - w)
             u = alpha.cross(r_com) + w_try.cross(w_try.cross(r_com))
             a_origin = mass_inv_mat @ (force + mass * gravity + aug_vel_mat @ u) - u
             f = f - r_com.cross(aug_vel_mat @ a_origin)
-        if f_norm < 0.0 or f.norm() < f_norm:
+        is_accepted = True
+        is_converged = False
+        if qd.static(not is_reversed):
+            is_accepted = f_norm < 0.0 or f.norm() < f_norm
+        if is_accepted:
             w_mid = w_try
-            f_norm = f.norm()
-            if f_norm < tol * (1.0 + i2h * Iw.norm()):
-                break
-            # J = 2/h * (I + E) + d(w x Iw)/dw, with d(w x Iw)/dw = skew(w_mid) @ I - skew(I @ w_mid)
-            skew_w = qd.Matrix([[0.0, -w_mid[2], w_mid[1]], [w_mid[2], 0.0, -w_mid[0]], [-w_mid[1], w_mid[0], 0.0]])
-            skew_Iw = qd.Matrix([[0.0, -Iw[2], Iw[1]], [Iw[2], 0.0, -Iw[0]], [-Iw[1], Iw[0], 0.0]])
-            J = i2h * inertia_aug + skew_w @ inertia - skew_Iw
-            if is_coupled:
-                # d(a_origin)/dw = (M^-1 @ E - Id) @ du/dw with du/dw = -2/h * skew(r_com) + d(w x (w x r_com))/dw
-                du_dw = -i2h * skew_r + w_mid.outer_product(r_com) + w_mid.dot(r_com) * identity
-                du_dw = du_dw - 2.0 * r_com.outer_product(w_mid)
-                J = J - skew_r @ aug_vel_mat @ ((mass_inv_mat @ aug_vel_mat - identity) @ du_dw)
-            delta = J.inverse() @ (-f)
-            step = gs.qd_float(1.0)
-            n_newton += 1
-            n_backtracks = 0
+            f_mid = f
+            if qd.static(not is_reversed):
+                f_norm = f.norm()
+                is_converged = f_norm < tol * (1.0 + i2h * Iw.norm())
+            if not is_converged:
+                # J = 2/h * (I + E) + d(w x Iw)/dw, with d(w x Iw)/dw = skew(w_mid) @ I - skew(I @ w_mid)
+                J = i2h * inertia_aug + gu.qd_vec_to_skew(w_mid) @ inertia - gu.qd_vec_to_skew(Iw)
+                if is_coupled:
+                    # d(a_origin)/dw = (M^-1 @ E - Id) @ du/dw with du/dw = -2/h * skew(r_com) + d(w x (w x r_com))/dw
+                    du_dw = -i2h * skew_r + w_mid.outer_product(r_com) + w_mid.dot(r_com) * identity
+                    du_dw = du_dw - 2.0 * r_com.outer_product(w_mid)
+                    J = J - skew_r @ aug_vel_mat @ ((mass_inv_mat @ aug_vel_mat - identity) @ du_dw)
+                delta = J.inverse() @ (-f)
+                step = gs.qd_float(1.0)
+                n_newton += 1
+                n_backtracks = 0
         else:
             step = 0.5 * step
             n_backtracks += 1
         w_try = w_mid + step * delta
+        if qd.static(not is_reversed):
+            if is_converged or n_newton == 100 or n_backtracks == 20:
+                break
+    if qd.static(is_reversed):
+        w_mid = w_try
+    if qd.static(is_backward and not is_reversed):
+        dyn_state.links.midpoint_ang[i_l, i_b] = w_mid
+        dyn_state.links.midpoint_res[i_l, i_b] = f_mid
 
-    # Next angular velocity in the body frame; positions integrate with the midpoint velocity
+    # Next angular velocity in the body frame
     w_new = 2.0 * w_mid - w
     w_new_body = gu.qd_transform_by_quat(w_new, iquat)
     for j in qd.static(range(3)):
         dyn_state.dofs.acc[dof_start + 3 + j, i_b] = (w_new_body[j] - w_body[j]) / h
-        dyn_state.dofs.vel_next[dof_start + 3 + j, i_b] = 0.5 * (w_new_body[j] + w_body[j])
 
     if not is_aligned:
         # Closed-form midpoint solve of the coupled translation, (2/h * Id + skew(w_mid)) @ vcom_mid = b
@@ -2138,7 +2163,28 @@ def func_midpoint_free_body(
         v_new_world = gu.qd_transform_by_quat(gu.qd_transform_by_quat(v_new, iquat), xquat_new)
         for j in qd.static(range(3)):
             dyn_state.dofs.acc[dof_start + j, i_b] = (v_new_world[j] - v_world[j]) / h
-            dyn_state.dofs.vel_next[dof_start + j, i_b] = 0.5 * (v_new_world[j] + v_world[j])
+
+
+@qd.func
+def func_midpoint_free_bodies(
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+    is_reversed: qd.template(),
+    is_backward: qd.template(),
+):
+    """Run the midpoint integration of every awake free body eligible for it (see func_midpoint_free_body)."""
+    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    for i_l, i_b in qd.ndrange(dyn_info.links.root_idx.shape[0], dyn_state.dofs.ctrl_mode.shape[1]):
+        is_awake = True
+        if qd.static(rigid_config.use_hibernation):
+            is_awake = not dyn_state.links.is_hibernated[i_l, i_b]
+        if is_awake:
+            if func_midpoint_eligible(i_l, i_b, dyn_state, dyn_info, rigid_info, rigid_config):
+                func_midpoint_free_body(
+                    i_l, i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_reversed, is_backward
+                )
 
 
 @qd.func
@@ -2147,9 +2193,16 @@ def func_integrate(
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
+    is_reversed: qd.template(),
     is_backward: qd.template(),
 ):
     BW = qd.static(is_backward)
+
+    # Standalone free bodies advance with the implicit midpoint rule under the velocity-implicit integrators. It gives
+    # their acceleration, from which the velocity advances as for any other DOF, while their position advances with the
+    # midpoint velocity.
+    if qd.static(rigid_config.integrator != gs.integrator.Euler):
+        func_midpoint_free_bodies(dyn_state, dyn_info, rigid_info, rigid_config, is_reversed, is_backward)
 
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_d, i_b in qd.ndrange(dyn_state.dofs.ctrl_mode.shape[0], dyn_state.dofs.ctrl_mode.shape[1]):
@@ -2161,20 +2214,6 @@ def func_integrate(
                 dyn_state.dofs.vel[i_d, i_b] + dyn_state.dofs.acc[i_d, i_b] * rigid_info.substep_dt[None]
             )
 
-    # Standalone free bodies advance with the implicit midpoint rule under the velocity-implicit integrators: their
-    # acc / vel_next are overwritten here so the position loop below integrates with the midpoint velocity, and the
-    # loop after it recovers the true next velocity. Gated out of the differentiable path: the Newton iteration
-    # carries no adjoint.
-    if qd.static(not is_backward and not rigid_config.requires_grad and rigid_config.integrator != gs.integrator.Euler):
-        qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_l, i_b in qd.ndrange(dyn_info.links.root_idx.shape[0], dyn_state.dofs.ctrl_mode.shape[1]):
-            is_awake = True
-            if qd.static(rigid_config.use_hibernation):
-                is_awake = not dyn_state.links.is_hibernated[i_l, i_b]
-            if is_awake:
-                if func_midpoint_eligible(i_l, i_b, dyn_state, dyn_info, rigid_info, rigid_config):
-                    func_midpoint_free_body(i_l, i_b, dyn_state, dyn_info, rigid_info, rigid_config)
-
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_l, i_b in qd.ndrange(dyn_info.links.root_idx.shape[0], dyn_state.dofs.ctrl_mode.shape[1]):
         is_awake = True
@@ -2184,6 +2223,17 @@ def func_integrate(
             I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
             if dyn_info.links.n_dofs[I_l] > 0:
                 EPS = rigid_info.EPS[None]
+
+                # A free body integrated with the midpoint rule moves with its midpoint velocity, its translation too
+                # unless its center of mass sits at its joint origin (see func_midpoint_free_body)
+                is_midpoint_ang = False
+                is_midpoint_vel = False
+                if qd.static(rigid_config.integrator != gs.integrator.Euler):
+                    if func_midpoint_eligible(i_l, i_b, dyn_state, dyn_info, rigid_info, rigid_config):
+                        is_midpoint_ang = True
+                        is_midpoint_vel = not func_midpoint_is_aligned(
+                            i_l, i_b, dyn_state, dyn_info, rigid_info, rigid_config
+                        )
 
                 dof_start = dyn_info.links.dof_start[I_l]
                 q_start = dyn_info.links.q_start[I_l]
@@ -2208,6 +2258,9 @@ def func_integrate(
                             dyn_state.dofs.vel_next[dof_start + 2, i_b],
                         ]
                     )
+                    if is_midpoint_vel:
+                        for j in qd.static(range(3)):
+                            vel[j] = 0.5 * (vel[j] + dyn_state.dofs.vel[dof_start + j, i_b])
                     pos = pos + vel * rigid_info.substep_dt[None]
                     for j in qd.static(range(3)):
                         rigid_info.qpos_next[q_start + j, i_b] = pos[j]
@@ -2221,16 +2274,17 @@ def func_integrate(
                             rigid_info.qpos[q_start + rot_offset + 3, i_b],
                         ]
                     )
-                    ang = (
-                        qd.Vector(
-                            [
-                                dyn_state.dofs.vel_next[dof_start + rot_offset + 0, i_b],
-                                dyn_state.dofs.vel_next[dof_start + rot_offset + 1, i_b],
-                                dyn_state.dofs.vel_next[dof_start + rot_offset + 2, i_b],
-                            ]
-                        )
-                        * rigid_info.substep_dt[None]
+                    ang = qd.Vector(
+                        [
+                            dyn_state.dofs.vel_next[dof_start + rot_offset + 0, i_b],
+                            dyn_state.dofs.vel_next[dof_start + rot_offset + 1, i_b],
+                            dyn_state.dofs.vel_next[dof_start + rot_offset + 2, i_b],
+                        ]
                     )
+                    if is_midpoint_ang:
+                        for j in qd.static(range(3)):
+                            ang[j] = 0.5 * (ang[j] + dyn_state.dofs.vel[dof_start + rot_offset + j, i_b])
+                    ang = ang * rigid_info.substep_dt[None]
                     qrot = gu.qd_rotvec_to_quat(ang, EPS)
                     rot = gu.qd_transform_quat_by_quat(qrot, rot0)
                     for j in qd.static(range(4)):
@@ -2244,37 +2298,17 @@ def func_integrate(
                                 + dyn_state.dofs.vel_next[dof_start + j_, i_b] * rigid_info.substep_dt[None]
                             )
 
-    # Recover the true next velocity of the midpoint-integrated free bodies, whose vel_next held the midpoint
-    # velocity for the position update above.
-    if qd.static(not is_backward and not rigid_config.requires_grad and rigid_config.integrator != gs.integrator.Euler):
+    # The coupling wrench of this substep is consumed: the bias force read it during forward dynamics and the midpoint
+    # pass above read it last, and the coupler accumulates the next one after the substep. The replay of a substep in
+    # the backward pass restores it (see func_load_adjoint_cache in diff.py) for the reversed integration.
+    if qd.static(not is_backward):
         qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
         for i_l, i_b in qd.ndrange(dyn_info.links.root_idx.shape[0], dyn_state.dofs.ctrl_mode.shape[1]):
-            is_awake = True
+            dyn_state.links.cfrc_coupling_ang[i_l, i_b] = qd.Vector.zero(gs.qd_float, 3)
+            dyn_state.links.cfrc_coupling_vel[i_l, i_b] = qd.Vector.zero(gs.qd_float, 3)
             if qd.static(rigid_config.use_hibernation):
-                is_awake = not dyn_state.links.is_hibernated[i_l, i_b]
-            if is_awake:
-                if func_midpoint_eligible(i_l, i_b, dyn_state, dyn_info, rigid_info, rigid_config):
-                    I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
-                    # Linear DOFs are midpoint-integrated only when the center of mass is off the joint origin
-                    # (see func_midpoint_free_body)
-                    j_start = 3
-                    if not func_midpoint_is_aligned(i_l, i_b, dyn_state, dyn_info, rigid_info, rigid_config):
-                        j_start = 0
-                    for j in range(j_start, 6):
-                        i_d = dyn_info.links.dof_start[I_l] + j
-                        dyn_state.dofs.vel_next[i_d, i_b] = (
-                            2.0 * dyn_state.dofs.vel_next[i_d, i_b] - dyn_state.dofs.vel[i_d, i_b]
-                        )
-
-    # The coupling wrench of this substep is consumed: the bias force read it during forward dynamics and the midpoint
-    # pass above read it last. The coupler accumulates the next one after the substep.
-    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
-    for i_l, i_b in qd.ndrange(dyn_info.links.root_idx.shape[0], dyn_state.dofs.ctrl_mode.shape[1]):
-        dyn_state.links.cfrc_coupling_ang[i_l, i_b] = qd.Vector.zero(gs.qd_float, 3)
-        dyn_state.links.cfrc_coupling_vel[i_l, i_b] = qd.Vector.zero(gs.qd_float, 3)
-        if qd.static(rigid_config.use_hibernation and not is_backward):
-            if not dyn_state.links.is_hibernated[i_l, i_b]:
-                func_count_settled_step(i_l, i_b, dyn_state, dyn_info, rigid_info, rigid_config)
+                if not dyn_state.links.is_hibernated[i_l, i_b]:
+                    func_count_settled_step(i_l, i_b, dyn_state, dyn_info, rigid_info, rigid_config)
 
 
 @qd.func

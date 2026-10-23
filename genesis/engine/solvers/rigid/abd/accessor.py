@@ -165,8 +165,10 @@ def kernel_set_state(
     for i_l, i_b_ in qd.ndrange(n_links, _B):
         for j in qd.static(range(3)):
             dyn_state.links.pos[i_l, envs_idx[i_b_]][j] = links_pos[envs_idx[i_b_], i_l, j]
-            dyn_state.links.cfrc_applied_vel[i_l, envs_idx[i_b_]][j] = gs.qd_float(0.0)
-            dyn_state.links.cfrc_applied_ang[i_l, envs_idx[i_b_]][j] = gs.qd_float(0.0)
+            dyn_state.links.cfrc_applied_vel[i_l, envs_idx[i_b_]][j] = 0.0
+            dyn_state.links.cfrc_applied_ang[i_l, envs_idx[i_b_]][j] = 0.0
+            dyn_state.links.cfrc_coupling_vel[i_l, envs_idx[i_b_]][j] = 0.0
+            dyn_state.links.cfrc_coupling_ang[i_l, envs_idx[i_b_]][j] = 0.0
         for j in qd.static(range(4)):
             dyn_state.links.quat[i_l, envs_idx[i_b_]][j] = links_quat[envs_idx[i_b_], i_l, j]
 

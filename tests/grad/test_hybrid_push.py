@@ -162,3 +162,72 @@ def test_muscle_actuation_grad_matches_fd(precision, show_viewer):
     assert (np.abs(fd_grad) > 1e-3).all()
     tol = 2e-9 if precision == "64" else 2e-4
     assert_allclose(torch.stack([actu.grad for actu in actus_ana]), fd_grad, rtol=tol, atol=tol)
+
+
+@pytest.mark.required
+def test_coupling_wrench_grad_matches_fd(precision, show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=4e-3,
+            substeps=4,
+            gravity=(0.0, 0.0, 0.0),
+            requires_grad=True,
+        ),
+        mpm_options=gs.options.MPMOptions(
+            lower_bound=(-0.5, -0.5, -0.5),
+            upper_bound=(0.5, 0.5, 0.5),
+            grid_density=16,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.6, -0.6, 0.4),
+            camera_lookat=(0.0, 0.0, 0.0),
+        ),
+        show_viewer=show_viewer,
+    )
+    block = scene.add_entity(
+        morph=gs.morphs.Box(
+            lower=(-0.2, -0.05, -0.05),
+            upper=(-0.05, 0.05, 0.05),
+        ),
+        material=gs.materials.MPM.Elastic(
+            E=5e4,
+        ),
+    )
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0.0, 0.01, 0.0),
+            size=(0.08, 0.08, 0.08),
+        ),
+    )
+    scene.build(n_envs=2)
+
+    def rollout(vel):
+        scene.reset()
+        block.set_velocity((0.5, 0.0, 0.0))
+        box.set_dofs_velocity(vel)
+        for _ in range(20):
+            scene.step()
+        return (box.get_state().pos ** 2).sum() + (box.get_state().quat[..., 1:] ** 2).sum()
+
+    tol = 2e-10 if precision == "64" else 1e-4
+    vel = np.tile([0.1, 0.2, -0.1, 0.5, -0.3, 0.4], (2, 1))
+    vel_ana = torch.tensor(vel, dtype=gs.tc_float, device=gs.device, requires_grad=True)
+    loss = rollout(vel_ana)
+    # The block pushes the box, which would otherwise keep its velocity
+    assert (box.get_dofs_velocity()[..., 0] > vel_ana[..., 0] + 5e-3).all()
+    loss.backward()
+    # The finite differences run on the same scene without gradients, which simulates the same physics. A rollout after
+    # a reset starts free of the coupling wrench the previous one left.
+    eps = 1e-5 if precision == "64" else 1e-2
+    fd_grad = np.zeros_like(vel)
+    with torch.no_grad():
+        for i, j in np.ndindex(vel.shape):
+            losses = []
+            for sign in (+1, -1):
+                perturbed = vel.copy()
+                perturbed[i, j] += sign * eps
+                losses.append(float(rollout(perturbed)))
+            fd_grad[i, j] = (losses[0] - losses[1]) / (2.0 * eps)
+    (grad_rerun,) = torch.autograd.grad(rollout(vel_ana), vel_ana)
+    assert_allclose(grad_rerun, vel_ana.grad, tol=tol)
+    assert_allclose(vel_ana.grad, fd_grad, rtol=tol, atol=tol)
