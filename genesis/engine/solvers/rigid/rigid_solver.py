@@ -87,6 +87,7 @@ from .abd.diff import (
     kernel_begin_backward_substep,
     kernel_copy_acc,
     kernel_copy_next_to_curr_no_check,
+    kernel_flag_nan_grad,
     kernel_prepare_backward_substep,
     kernel_save_adjoint_cache,
 )
@@ -536,13 +537,14 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             enable_cooperative_constraint_kernels or self.sim._para_level < gs.PARA_LEVEL.ALL
         )
 
-        # The level sweep (see func_sweep_links_by_level) syncs the lanes of a block, which neither the CPU nor the
-        # differentiable runs offer. The serial walks run one thread per tree or root and env through all the links of
+        # The level sweep (see func_sweep_links_by_level) syncs the lanes of a block, which the CPU does not offer. Nor
+        # does autodiff, so in a differentiable scene only the forward passes sweep, and the passes the backward pass
+        # replays or reverses (is_backward) keep the walks. The serial walks run one thread per tree or root and env through all the links of
         # its group, so they take as long as the longest group. The lanes of an env step through a level in chunks of
         # their count, so the sweep stays within that time while its lane steps over all the levels and envs fit in the
         # cores times the longest group. Past that bound it only adds instructions to a busy GPU, whether the links are
         # grouped by tree or by root.
-        enable_level_sweep = gs.backend != gs.cpu and not self.sim.options.requires_grad
+        enable_level_sweep = gs.backend != gs.cpu
         if enable_level_sweep and not is_generic:
             n_lanes_per_env = array_class.RigidSimStaticConfig.level_sweep_n_lanes_per_env
             for links_group_idx, links_level in (
@@ -632,6 +634,9 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             # Largest mass block in DOFs, the unit the per-block factor is sized for: merged entities can make a block
             # exceed any single entity (see attach).
             max_block_dofs = int((dofs_mass_block_end - dofs_mass_block_start).max()) if self.n_dofs else 0
+            # Rounded up to a power of two, a compile-time bound that scenes of similar size share (see
+            # func_compute_mass_matrix_and_link_force)
+            rigid_config.update(max_mass_block_dofs=1 << (max_block_dofs - 1).bit_length() if max_block_dofs else 0)
             if gs.backend != gs.cpu:
                 max_tiled_envs = get_gpu_core_count()
                 envs_undersaturate = self.n_envs <= max_tiled_envs
@@ -1370,6 +1375,24 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
     def get_error_envs_mask(self):
         return qd_to_torch(self._errno) > 0
 
+    def check_grad_errno(self):
+        """Raise if a reverse substep flagged a 'nan' gradient (see func_flag_nan_grad), once the backward pass is over.
+
+        Only that flag is read: the reverse pass replays the forward substeps, whose own flags a 'nan' gradient tends to
+        raise as well, and those would hide the cause. Each reverse substep flags the gradient the previous one left, so
+        the gradient the last one leaves is flagged here.
+        """
+        kernel_flag_nan_grad(self.dyn_state, self.rigid_info, self.rigid_config, self._errno)
+        if gs.use_zerocopy:
+            errno = np.bitwise_or.reduce(qd_to_numpy(self._errno))
+        else:
+            errno = kernel_bit_reduction(self._errno)
+        if errno & array_class.ErrorCode.INVALID_GRAD_NAN:
+            gs.raise_exception(
+                "The backward pass produced a 'nan' gradient of the positions or velocities. The rollout is likely too "
+                "stiff to differentiate over this horizon: shorten it, or decrease the Rigid simulation timestep."
+            )
+
     def check_errno(self):
         if gs.use_zerocopy:
             errno = np.bitwise_or.reduce(qd_to_numpy(self._errno))
@@ -1677,7 +1700,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             kernel_copy_next_to_curr_no_check(self.dyn_state, self.rigid_info, self.rigid_config)
             self._update_cartesian_grad(envs_idx)
 
-        is_grad_valid = kernel_begin_backward_substep(
+        kernel_begin_backward_substep(
             f,
             self.dyn_state,
             self.dyn_state_adjoint_cache,
@@ -1685,9 +1708,8 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             self.dyn_info,
             self.rigid_info,
             self.rigid_config,
+            self._errno,
         )
-        if not is_grad_valid:
-            gs.raise_exception(f"Nan grad in qpos or dofs_vel found at step {self._sim.cur_step_global}")
 
         kernel_step_2.grad(
             self.dyn_state,
@@ -1947,20 +1969,30 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             if ckpt_name not in self._ckpt:
                 self._ckpt[ckpt_name] = dict()
 
-            # copy=True required: with the zerocopy backend qd_to_numpy returns a view, so later substeps would
-            # overwrite this ckpt's buffer in place.
-            self._ckpt[ckpt_name]["qpos"] = qd_to_numpy(self._rigid_adjoint_cache.qpos, copy=True)
-            self._ckpt[ckpt_name]["dofs_vel"] = qd_to_numpy(self._rigid_adjoint_cache.dofs_vel, copy=True)
-            self._ckpt[ckpt_name]["dofs_acc"] = qd_to_numpy(self._rigid_adjoint_cache.dofs_acc, copy=True)
+            # Kept on the device, so that taking a checkpoint at every step does not wait on the host. copy=True is
+            # required: with the zerocopy backend qd_to_torch returns a view, so later substeps would overwrite this
+            # checkpoint's buffer in place.
+            self._ckpt[ckpt_name]["qpos"] = qd_to_torch(self._rigid_adjoint_cache.qpos, copy=True)
+            self._ckpt[ckpt_name]["dofs_vel"] = qd_to_torch(self._rigid_adjoint_cache.dofs_vel, copy=True)
+            self._ckpt[ckpt_name]["dofs_acc"] = qd_to_torch(self._rigid_adjoint_cache.dofs_acc, copy=True)
 
             for entity in self._entities:
                 entity.save_ckpt(ckpt_name)
 
     def load_ckpt(self, ckpt_name):
         # Set first frame
-        self.rigid_info.qpos.from_numpy(self._ckpt[ckpt_name]["qpos"][0])
-        self.dyn_state.dofs.vel.from_numpy(self._ckpt[ckpt_name]["dofs_vel"][0])
-        self.dyn_state.dofs.acc.from_numpy(self._ckpt[ckpt_name]["dofs_acc"][0])
+        for name, field in (
+            ("qpos", self.rigid_info.qpos),
+            ("dofs_vel", self.dyn_state.dofs.vel),
+            ("dofs_acc", self.dyn_state.dofs.acc),
+        ):
+            first_frame = self._ckpt[ckpt_name][name][0]
+            if gs.use_zerocopy:
+                qd_to_torch(field, copy=False).copy_(first_frame)
+            else:
+                field.from_numpy(tensor_to_array(first_frame))
+        if gs.use_zerocopy and gs.backend == gs.metal:
+            torch.mps.synchronize()
 
         if not self._enable_mujoco_compatibility:
             # Mirror the post-integrate refresh of kernel_step_2: the replayed substeps skip their own cartesian /
