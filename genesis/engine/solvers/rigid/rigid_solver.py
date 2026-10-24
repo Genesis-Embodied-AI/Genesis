@@ -35,6 +35,7 @@ from ..kinematic_solver import (
     _balanced_variant_mapping,
     _fill_base_link_geom_offsets,
     _offset_world_shift,
+    _select,
     _select_links_offset,
 )
 from .abd.accessor import (
@@ -2034,7 +2035,9 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
         # in-place write below still applies, both for an environment-uniform and a per-environment offset. Multi-link
         # relative sets are composed in the kernel branch instead.
         if relative and isinstance(links_idx, int):
-            cur_quat = self.get_links_quat(links_idx, envs_idx, relative=False)[..., 0, :]
+            # The setter reads the current orientation to compute its target, which tracks no gradient
+            with torch.no_grad():
+                cur_quat = self.get_links_quat(links_idx, envs_idx, relative=False)[..., 0, :]
             offset_pos = _select_links_offset(self._links_offset_pos, links_idx, envs_idx)[..., 0, :]
             offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)[..., 0, :]
             pos = torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device) + _offset_world_shift(
@@ -2944,18 +2947,26 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             )
 
         ref_frame = self._sanitize_ref_frame(ref)
+        # See _select in kinematic_solver.py for the state read in a differentiable scene. It holds link origins alone.
+        is_state_read = ref_frame == link_ref_frame.link_origin and self._requires_grad and torch.is_grad_enabled()
+        state = self.get_state() if is_state_read else None
         if ref_frame == link_ref_frame.root_COM:
             tensor = qd_to_torch(self.dyn_state.links.root_COM, envs_idx, links_idx, transpose=True, copy=True)
         elif ref_frame == link_ref_frame.link_COM:
             i_pos = qd_to_torch(self.dyn_state.links.i_pos, envs_idx, links_idx, transpose=True)
             root_COM = qd_to_torch(self.dyn_state.links.root_COM, envs_idx, links_idx, transpose=True)
             tensor = i_pos + root_COM
+        elif state is not None:
+            tensor = _select(state.links_pos, envs_idx, links_idx)
         else:
             tensor = qd_to_torch(self.dyn_state.links.pos, envs_idx, links_idx, transpose=True, copy=True)
 
         # The pose offset is defined on the link origin, so it is only stripped for the 'link_origin' reference.
         if relative and ref_frame == link_ref_frame.link_origin and not self._links_offset_pos_is_identity[idx].all():
-            quat = qd_to_torch(self.dyn_state.links.quat, envs_idx, links_idx, transpose=True)
+            if state is not None:
+                quat = _select(state.links_quat, envs_idx, links_idx)
+            else:
+                quat = qd_to_torch(self.dyn_state.links.quat, envs_idx, links_idx, transpose=True)
             offset_pos = _select_links_offset(self._links_offset_pos, links_idx, envs_idx)
             offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
             tensor -= _offset_world_shift(offset_pos, offset_quat, quat)

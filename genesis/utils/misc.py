@@ -1093,7 +1093,9 @@ def sanitize_indexed_tensor(
     is_preallocated = tensor is not None
     if is_preallocated or not skip_allocation:
         expected_shape = [*map(len, indices_), *expected_shape[len(indices_) :]]
-        tensor = broadcast_tensor(tensor, dtype, expected_shape, dim_names).contiguous()
+        # The result feeds kernels, which take values alone. The gradient of an input tracking gradients reaches the
+        # simulation through the tape of the step instead (see genesis.grad.bridge).
+        tensor = broadcast_tensor(tensor, dtype, expected_shape, dim_names).detach().contiguous()
 
     return tensor, tuple(indices_)
 
