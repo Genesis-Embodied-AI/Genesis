@@ -350,7 +350,7 @@ class Mesh(RBC, serialization.SerializationMixin):
         """
         n_verts = len(self.verts)
         edges_key = _get_sorted_edges_key(self.faces, n_verts)
-        edges_key = edges_key[np.concatenate(((True,), edges_key[1:] != edges_key[:-1]))]
+        edges_key = edges_key[np.diff(edges_key, prepend=-1) != 0]
         edges = np.stack(np.divmod(edges_key, n_verts), axis=-1)
         return edges[edges[:, 0] != edges[:, 1]]
 
@@ -705,10 +705,12 @@ class Mesh(RBC, serialization.SerializationMixin):
         Whether the mesh is a closed manifold surface.
         """
         # Every edge must be shared by exactly two faces, counted on the sorted edge keys, which scales to millions of
-        # faces where the row grouping of trimesh does not.
-        edges_key = _get_sorted_edges_key(self.faces, len(self.verts))
-        is_edge_start = np.concatenate(((True,), edges_key[1:] != edges_key[:-1], (True,)))
-        return len(self.faces) > 0 and (np.diff(np.flatnonzero(is_edge_start)) == 2).all()
+        # faces where the row grouping of trimesh does not. Bracketing the keys by values out of their range makes each
+        # group of equal keys start at a change, and leaves a mesh without faces watertight, as trimesh has it.
+        n_verts = len(self.verts)
+        edges_key = _get_sorted_edges_key(self.faces, n_verts)
+        is_edge_start = np.diff(edges_key, prepend=-1, append=n_verts * n_verts) != 0
+        return (np.diff(np.flatnonzero(is_edge_start)) == 2).all()
 
     @property
     def metadata(self):
