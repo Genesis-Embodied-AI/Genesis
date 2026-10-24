@@ -2,7 +2,6 @@ import functools
 import math
 import os
 import pickle
-from itertools import chain
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
@@ -72,6 +71,16 @@ CHARTS_ROT = np.stack((np.eye(3), gu.euler_to_R(np.array((90.0, 0.0, 0.0)))))
 
 # Data derived from the trimesh of a mesh alone, shared by the meshes of one trimesh (see 'Mesh.tmesh_hash')
 _TMESH_CACHE = OwnedCache()
+
+
+def _get_sorted_edges_key(faces, n_verts):
+    """Return the sorted keys of the edges of every face, with one key per face side.
+
+    The key of an edge packs its two vertex indices, smaller first, into one integer, which sorts and compares millions
+    of edges much faster than rows of vertex pairs.
+    """
+    faces_rolled = np.roll(faces, 1, axis=1)
+    return np.sort(np.minimum(faces, faces_rolled) * n_verts + np.maximum(faces, faces_rolled), axis=None)
 
 
 def cached_by_tmesh(method):
@@ -339,9 +348,10 @@ class Mesh(RBC, serialization.SerializationMixin):
         """
         Get the unique edges of the mesh.
         """
-        edges = np.concatenate(np.array([self.faces, np.roll(self.faces, 1, axis=1)]).T)
-        edges.sort(axis=1)
-        edges = np.unique(edges, axis=0)
+        n_verts = len(self.verts)
+        edges_key = _get_sorted_edges_key(self.faces, n_verts)
+        edges_key = edges_key[np.concatenate(((True,), edges_key[1:] != edges_key[:-1]))]
+        edges = np.stack(np.divmod(edges_key, n_verts), axis=-1)
         return edges[edges[:, 0] != edges[:, 1]]
 
     @property
@@ -358,7 +368,7 @@ class Mesh(RBC, serialization.SerializationMixin):
         # closing a non-watertight one raises when it has fewer than 4 non-coplanar vertices.
         try:
             tmesh = trimesh.Trimesh(self.verts, self.faces, process=False)
-            if not tmesh.is_watertight:
+            if not self.is_watertight:
                 gs.logger.warning(
                     "Mesh is not watertight. Falling back to convex hull for estimating inertial properties."
                 )
@@ -408,11 +418,15 @@ class Mesh(RBC, serialization.SerializationMixin):
         vert_neighbors concatenates each vertex's neighbor indices, vert_n_neighbors holds the neighbor count of each
         vertex, and vert_neighbor_start the offset of each vertex's slice into vert_neighbors.
         """
-        vert_neighbors_list = trimesh.Trimesh(self.verts, self.faces, process=False).vertex_neighbors
-        vert_neighbors = np.array(tuple(chain.from_iterable(vert_neighbors_list)), dtype=gs.np_int)
-        vert_n_neighbors = np.array(tuple(map(len, vert_neighbors_list)), dtype=gs.np_int)
-        vert_neighbor_start = np.array((0, *np.cumsum(vert_n_neighbors)[:-1]), dtype=gs.np_int)
-        return vert_neighbors, vert_n_neighbors, vert_neighbor_start
+        # The unique edges are sorted with their smaller vertex first, so listing every edge from its larger vertex then
+        # from its smaller one and grouping them by vertex with a stable sort yields the neighbors of each vertex in
+        # ascending order.
+        edges = self.get_unique_edges()
+        verts_idx = np.concatenate((edges[:, 1], edges[:, 0]))
+        vert_neighbors = np.concatenate((edges[:, 0], edges[:, 1]))[np.argsort(verts_idx, kind="stable")]
+        vert_n_neighbors = np.bincount(verts_idx, minlength=len(self.verts))
+        vert_neighbor_start = np.concatenate(((0,), np.cumsum(vert_n_neighbors[:-1])), dtype=gs.np_int)
+        return vert_neighbors.astype(gs.np_int), vert_n_neighbors.astype(gs.np_int), vert_neighbor_start
 
     def copy(self):
         """
@@ -679,7 +693,9 @@ class Mesh(RBC, serialization.SerializationMixin):
         key = ("is_convex", self.tmesh_hash)
         is_convex = _TMESH_CACHE.find(key)
         if is_convex is None:
-            is_convex = trimesh.Trimesh(self.verts, self.faces, process=False).is_convex
+            # trimesh deems a mesh that is not watertight non-convex. Testing that first spares its own test, which
+            # builds the face adjacency of the whole mesh, on such a mesh, a terrain surface among them.
+            is_convex = self.is_watertight and trimesh.Trimesh(self.verts, self.faces, process=False).is_convex
         return _TMESH_CACHE.own(self, key, is_convex)
 
     @property
@@ -688,7 +704,11 @@ class Mesh(RBC, serialization.SerializationMixin):
         """
         Whether the mesh is a closed manifold surface.
         """
-        return trimesh.Trimesh(self.verts, self.faces, process=False).is_watertight
+        # Every edge must be shared by exactly two faces, counted on the sorted edge keys, which scales to millions of
+        # faces where the row grouping of trimesh does not.
+        edges_key = _get_sorted_edges_key(self.faces, len(self.verts))
+        is_edge_start = np.concatenate(((True,), edges_key[1:] != edges_key[:-1], (True,)))
+        return len(self.faces) > 0 and (np.diff(np.flatnonzero(is_edge_start)) == 2).all()
 
     @property
     def metadata(self):
