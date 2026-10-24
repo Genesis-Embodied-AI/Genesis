@@ -33,7 +33,7 @@ def parse_terrain(morph: Terrain, surface):
 
     Returns
     --------------------------
-    vmesh        : Mesh
+    vmesh        : Mesh | None, None when the morph disables visualization
     mesh         : Mesh
     height_field : np.ndarray
     """
@@ -178,7 +178,7 @@ def parse_terrain(morph: Terrain, surface):
         surface=surface,
         uv_scale=morph.uv_scale if need_uvs else None,
     )
-    vmesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=surface, metadata={})
+    vmesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=surface, metadata={}) if morph.visualization else None
     mesh = gs.Mesh.from_trimesh(
         mesh=tmesh,
         surface=gs.surfaces.Collision(),
@@ -309,7 +309,19 @@ def convert_heightfield_to_watertight_trimesh(
         else:
             visual = None
 
-        vmesh_single = trimesh.Trimesh(vertices_top, triangles_top, visual=visual, process=False)
+        # The normals are computed here and handed over, the way trimesh computes them, because trimesh would
+        # otherwise keep every intermediate of their computation cached on the surface, several times its size.
+        triangles = vertices_top.astype(np.float64)[triangles_top]
+        faces_normal_valid, is_face_valid = trimesh.triangles.normals(triangles)
+        faces_normal = np.zeros((len(triangles_top), 3))
+        faces_normal[is_face_valid] = faces_normal_valid
+        verts_normal = trimesh.geometry.weighted_vertex_normals(
+            len(vertices_top), triangles_top, faces_normal, trimesh.triangles.angles(triangles)
+        )
+        del triangles
+        vmesh_single = trimesh.Trimesh(
+            vertices_top, triangles_top, vertex_normals=verts_normal, visual=visual, process=False
+        )
 
     # bottom plane
     z_min = np.min(vertices_top[:, 2]) - 1.0
