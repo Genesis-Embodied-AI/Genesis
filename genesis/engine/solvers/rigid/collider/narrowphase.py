@@ -1516,6 +1516,7 @@ def func_contact_mpr_terrain(
     i_ga: int,
     i_gb: int,
     i_b: int,
+    i_s: int,
     geoms_init_AABB: array_class.GeomsInitAABB,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
@@ -1557,7 +1558,7 @@ def func_contact_mpr_terrain(
                 direction[i_axis] = -1.0
             v1 = mpr.support_driver(
                 i_ga,
-                i_b,
+                i_s,
                 direction,
                 ga_pos_terrain_frame,
                 ga_quat_terrain_frame,
@@ -1567,23 +1568,23 @@ def func_contact_mpr_terrain(
                 rigid_config,
                 collider_static_config,
             )
-            collider_state.xyz_max_min[3 * i_m + i_axis, i_b] = v1[i_axis]
+            collider_state.xyz_max_min[3 * i_m + i_axis, i_s] = v1[i_axis]
 
         for i in qd.static(range(3)):
-            collider_state.prism[i, i_b][2] = collider_info.terrain_xyz_maxmin[5]
+            collider_state.prism[i, i_s][2] = collider_info.terrain_xyz_maxmin[5]
 
             if (
-                collider_info.terrain_xyz_maxmin[i] < collider_state.xyz_max_min[i + 3, i_b] - margin
-                or collider_info.terrain_xyz_maxmin[i + 3] > collider_state.xyz_max_min[i, i_b] + margin
+                collider_info.terrain_xyz_maxmin[i] < collider_state.xyz_max_min[i + 3, i_s] - margin
+                or collider_info.terrain_xyz_maxmin[i + 3] > collider_state.xyz_max_min[i, i_s] + margin
             ):
                 is_return = True
 
         if not is_return:
             sh = collider_info.terrain_scale[0]
-            r_min = gs.qd_int(qd.floor((collider_state.xyz_max_min[3, i_b] - collider_info.terrain_xyz_maxmin[3]) / sh))
-            r_max = gs.qd_int(qd.ceil((collider_state.xyz_max_min[0, i_b] - collider_info.terrain_xyz_maxmin[3]) / sh))
-            c_min = gs.qd_int(qd.floor((collider_state.xyz_max_min[4, i_b] - collider_info.terrain_xyz_maxmin[4]) / sh))
-            c_max = gs.qd_int(qd.ceil((collider_state.xyz_max_min[1, i_b] - collider_info.terrain_xyz_maxmin[4]) / sh))
+            r_min = gs.qd_int(qd.floor((collider_state.xyz_max_min[3, i_s] - collider_info.terrain_xyz_maxmin[3]) / sh))
+            r_max = gs.qd_int(qd.ceil((collider_state.xyz_max_min[0, i_s] - collider_info.terrain_xyz_maxmin[3]) / sh))
+            c_min = gs.qd_int(qd.floor((collider_state.xyz_max_min[4, i_s] - collider_info.terrain_xyz_maxmin[4]) / sh))
+            c_max = gs.qd_int(qd.ceil((collider_state.xyz_max_min[1, i_s] - collider_info.terrain_xyz_maxmin[4]) / sh))
 
             r_min = qd.max(0, r_min)
             c_min = qd.max(0, c_min)
@@ -1605,6 +1606,9 @@ def func_contact_mpr_terrain(
             qrot = qd.Vector.zero(gs.qd_float, 4)
             n_con = 0
             n_detections = 5 if multi_contact else 1
+            # The pairs of an environment add their contacts concurrently, so the contacts of this pair are tracked here
+            # to be merged within the pair.
+            contacts_pos = qd.Matrix.zero(gs.qd_float, qd.static(collider_static_config.n_contacts_per_convex_pair), 3)
 
             ga_pos_tf = ga_pos_terrain_frame
             ga_quat_tf = ga_quat_terrain_frame
@@ -1628,26 +1632,26 @@ def func_contact_mpr_terrain(
                             if n_con < qd.static(collider_static_config.n_contacts_per_convex_pair):
                                 nvert = nvert + 1
                                 func_add_prism_vert(
-                                    i_b,
+                                    i_s,
                                     sh * (r + i) + collider_info.terrain_xyz_maxmin[3],
                                     sh * c + collider_info.terrain_xyz_maxmin[4],
                                     collider_info.terrain_hf[r + i, c] + margin,
                                     collider_state,
                                 )
                                 if nvert > 2 and (
-                                    collider_state.prism[3, i_b][2] >= collider_state.xyz_max_min[5, i_b]
-                                    or collider_state.prism[4, i_b][2] >= collider_state.xyz_max_min[5, i_b]
-                                    or collider_state.prism[5, i_b][2] >= collider_state.xyz_max_min[5, i_b]
+                                    collider_state.prism[3, i_s][2] >= collider_state.xyz_max_min[5, i_s]
+                                    or collider_state.prism[4, i_s][2] >= collider_state.xyz_max_min[5, i_s]
+                                    or collider_state.prism[5, i_s][2] >= collider_state.xyz_max_min[5, i_s]
                                 ):
                                     center_b = qd.Vector.zero(gs.qd_float, 3)
                                     for i_p in qd.static(range(6)):
-                                        center_b = center_b + collider_state.prism[i_p, i_b]
+                                        center_b = center_b + collider_state.prism[i_p, i_s]
                                     center_b = center_b / 6.0
 
                                     is_col, normal, penetration, contact_pos = mpr.func_mpr_contact_from_centers(
                                         i_ga,
                                         i_gb,
-                                        i_b,
+                                        i_s,
                                         center_a,
                                         center_b,
                                         ga_pos_tf,
@@ -1672,8 +1676,8 @@ def func_contact_mpr_terrain(
                                         # face normal. Only snap when the bias is small (dot > 0.95) so that contacts on
                                         # real cliff edges, where MPR's normal is genuinely far from any single cell's
                                         # top face normal, keep MPR's result.
-                                        e1 = collider_state.prism[4, i_b] - collider_state.prism[3, i_b]
-                                        e2 = collider_state.prism[5, i_b] - collider_state.prism[3, i_b]
+                                        e1 = collider_state.prism[4, i_s] - collider_state.prism[3, i_s]
+                                        e2 = collider_state.prism[5, i_s] - collider_state.prism[3, i_s]
                                         top_face_normal = e1.cross(e2).normalized()
                                         if top_face_normal[2] < 0.0:
                                             top_face_normal = -top_face_normal
@@ -1708,11 +1712,11 @@ def func_contact_mpr_terrain(
                                         )
 
                                         valid = True
-                                        i_c = collider_state.n_contacts[i_b]
-                                        for j in range(n_con):
-                                            if (
-                                                contact_pos - collider_state.contact_data.pos[i_c - j - 1, i_b]
-                                            ).norm() < tolerance:
+                                        for i_con in range(n_con):
+                                            contact_pos_prev = qd.Vector(
+                                                [contacts_pos[i_con, 0], contacts_pos[i_con, 1], contacts_pos[i_con, 2]]
+                                            )
+                                            if (contact_pos - contact_pos_prev).norm() < tolerance:
                                                 valid = False
                                                 break
                                         if valid and i_detection > 0 and not snap_fired:
@@ -1738,9 +1742,11 @@ def func_contact_mpr_terrain(
                                                 dyn_info,
                                                 rigid_info,
                                                 collider_info,
-                                                use_atomic=False,
+                                                use_atomic=True,
                                                 errno=errno,
                                             )
+                                            for k in qd.static(range(3)):
+                                                contacts_pos[n_con, k] = contact_pos[k]
                                             n_con = n_con + 1
                                             if i_detection == 0 and not is_col_0:
                                                 is_col_0 = True
@@ -4745,39 +4751,45 @@ def func_narrow_phase_any_vs_terrain(
     collider_static_config: qd.template(),
     errno: qd.Tensor,
 ):
-    """
-    NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`. However, parallelize over both B and collisioin_pairs (instead of only over B) leads to significantly slow performance for batched scene. We can treat B=0 and B>0 separately, but we will end up with messier code.
-    Therefore, for a big non-batched scene, users are encouraged to simply use `gs.cpu` backend.
-    Updated NOTE & TODO: For a HUGE scene with numerous bodies, it's also reasonable to run on GPU. Let's save this for later.
-    Update2: Now we use n_broad_pairs instead of n_collision_pairs, so we probably need to think about how to handle non-batched large scene better.
+    """Detect the contacts of every geom against the terrain, one thread per pair of a geom and the terrain.
+
+    A first pass gathers the broad phase pairs of each environment that hold the terrain, then each pair runs on its own
+    scratch slot of mpr_state and of the terrain prism (see terrain_pairs in array_class.py). A pair walks the cells
+    under its geom serially, so one thread per environment walking all its pairs leaves too few threads to fill a GPU.
     """
     _B = collider_state.active_buffer.shape[1]
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
+        n_terrain_pairs = 0
         for i_pair in range(qd.min(collider_state.n_broad_pairs[i_b], collider_state.broad_collision_pairs.shape[0])):
             i_ga = collider_state.broad_collision_pairs[i_pair, i_b][0]
             i_gb = collider_state.broad_collision_pairs[i_pair, i_b][1]
+            if dyn_info.geoms.type[i_ga] == gs.GEOM_TYPE.TERRAIN:
+                i_ga, i_gb = i_gb, i_ga
+            if dyn_info.geoms.type[i_gb] == gs.GEOM_TYPE.TERRAIN:
+                collider_state.terrain_pairs[n_terrain_pairs, i_b] = qd.Vector([i_ga, i_gb], dt=gs.qd_int)
+                n_terrain_pairs = n_terrain_pairs + 1
+        collider_state.n_terrain_pairs[i_b] = n_terrain_pairs
 
-            if qd.static(collider_static_config.has_terrain):
-                if dyn_info.geoms.type[i_ga] == gs.GEOM_TYPE.TERRAIN:
-                    i_ga, i_gb = i_gb, i_ga
-
-                if dyn_info.geoms.type[i_gb] == gs.GEOM_TYPE.TERRAIN:
-                    func_contact_mpr_terrain(
-                        i_ga,
-                        i_gb,
-                        i_b,
-                        geoms_init_AABB,
-                        dyn_state,
-                        collider_state,
-                        mpr_state,
-                        dyn_info,
-                        rigid_info,
-                        collider_info,
-                        rigid_config,
-                        collider_static_config,
-                        errno,
-                    )
+    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_tp, i_b in qd.ndrange(collider_state.terrain_pairs.shape[0], _B):
+        if i_tp < collider_state.n_terrain_pairs[i_b]:
+            func_contact_mpr_terrain(
+                collider_state.terrain_pairs[i_tp, i_b][0],
+                collider_state.terrain_pairs[i_tp, i_b][1],
+                i_b,
+                i_tp * _B + i_b,
+                geoms_init_AABB,
+                dyn_state,
+                collider_state,
+                mpr_state,
+                dyn_info,
+                rigid_info,
+                collider_info,
+                rigid_config,
+                collider_static_config,
+                errno,
+            )
 
 
 @qd.func

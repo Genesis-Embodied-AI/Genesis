@@ -25,19 +25,25 @@ class MPR:
             CCD_ITERATIONS=50,
         )
         self.mpr_state = array_class.get_mpr_state(self._solver._B)
-        # The scratch states of the split narrowphase, at the smallest size until 'activate' sizes them when it runs
+        # The scratch states of the split narrowphase and of the terrain narrowphase, at the smallest size until
+        # 'activate' and 'activate_terrain' size them when they run
         # FIXME: quadrants#856 - see the scratch states of GJK in gjk.py.
         self.contact0_mpr_state = array_class.get_mpr_state(1)
         self.multicontact_mpr_state = array_class.get_mpr_state(1)
+        self.terrain_mpr_state = array_class.get_mpr_state(1)
 
     def activate(self, n_contact0_threads, n_multicontact_threads):
         """Allocate the scratch states the split narrowphase runs MPR on.
 
         The split narrowphase runs MPR on one state per thread of its contact0 pass (n_contact0_threads) and of its
-        multicontact pass (n_multicontact_threads), while the other passes run it on one state per environment.
+        multicontact pass (n_multicontact_threads), while the generic convex pass runs it on one state per environment.
         """
         self.contact0_mpr_state = array_class.get_mpr_state(n_contact0_threads)
         self.multicontact_mpr_state = array_class.get_mpr_state(n_multicontact_threads)
+
+    def activate_terrain(self, n_terrain_threads):
+        """Allocate the scratch state the terrain narrowphase runs MPR on, one per thread (n_terrain_threads)."""
+        self.terrain_mpr_state = array_class.get_mpr_state(n_terrain_threads)
 
 
 @qd.kernel
