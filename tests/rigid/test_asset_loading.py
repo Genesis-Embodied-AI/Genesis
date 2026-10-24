@@ -5,6 +5,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import pytest
 import torch
+import trimesh
 from PIL import Image
 
 import genesis as gs
@@ -226,6 +227,8 @@ def test_parsing_inertia_defaults(
     degenerate_inertials,
     zero_density_marker_mjcf,
     implicit_inertial_origin_chain,
+    visual_collision_inertia,
+    asset_tmp_path,
     show_viewer,
     tol,
     caplog,
@@ -468,6 +471,145 @@ def test_parsing_inertia_defaults(
     # Only the link whose geometry is offset qualifies, once per copy of the robot.
     dubious_com_records = [record for record in caplog.records if "dubious center of mass" in record.getMessage()]
     assert len(dubious_com_records) == 3
+
+    urdf_collision_only, urdf_without_inertial, urdf_with_inertial, mjcf_visual_collision = visual_collision_inertia
+    # A GLB file stores its vertices in single precision, which bounds the inertia estimated from its visual mesh
+    GLB_TOL = 2e-7
+    inertia_scene = gs.Scene()
+    for is_from_visual, is_aligned, has_collision, has_visual, has_inertial, is_recomputed in (
+        (False, False, True, True, False, False),
+        (True, False, True, True, False, False),
+        (True, True, True, True, False, False),
+        (True, False, False, True, False, False),
+        (True, False, True, False, False, False),
+        (True, False, True, True, True, False),
+        (True, False, True, True, True, True),
+    ):
+        entity_inertia = inertia_scene.add_entity(
+            morph=gs.morphs.URDF(
+                visualization=has_visual,
+                collision=has_collision,
+                file=urdf_with_inertial if has_inertial else urdf_without_inertial,
+                recompute_inertia=is_recomputed,
+                inertia_from_visual=is_from_visual,
+                align=is_aligned,
+            ),
+            material=gs.materials.Rigid(
+                rho=1000.0,
+            ),
+        )
+        if has_inertial and not is_recomputed:
+            mass, com, inertia = 2.0, (0.0, 0.0, 0.0), (0.01, 0.02, 0.025)
+        elif is_from_visual or (has_visual and not has_collision):
+            mass, com, inertia = 48.0, (0.2, 0.0, 0.0), (2.08, 1.6, 0.8)
+        else:
+            mass, com, inertia = 1.0, (0.0, 0.0, 0.0), (1.0 / 600.0,) * 3
+        link = entity_inertia.base_link
+        assert_allclose(link.desc.mass, mass, tol=GLB_TOL)
+        assert_allclose(link.desc.inertial_pos, 0.0 if is_aligned else com, tol=GLB_TOL)
+        assert_allclose(np.linalg.eigvalsh(link.desc.inertia), sorted(inertia), tol=GLB_TOL)
+        if is_aligned:
+            assert_allclose(link.desc.offset_pos, com, tol=GLB_TOL)
+        # Visual geometry estimates the inertia without being drawn
+        assert len(link.desc.vgeoms) == has_visual
+
+    with pytest.raises(gs.GenesisException, match="recompute_inertia"):
+        gs.morphs.MJCF(file=zero_density_marker_mjcf, recompute_inertia=False, inertia_from_visual=True)
+
+    entity_variants = inertia_scene.add_entity(
+        morph=(
+            gs.morphs.URDF(file=urdf_without_inertial, align=False),
+            gs.morphs.URDF(file=urdf_without_inertial, inertia_from_visual=True, align=False),
+        ),
+        material=gs.materials.Rigid(
+            rho=1000.0,
+        ),
+    )
+    assert_allclose(entity_variants.desc.variants[1].links[0].mass, 48.0, tol=GLB_TOL)
+    assert_allclose(entity_variants.desc.variants[1].links[0].inertial_pos, (0.2, 0.0, 0.0), tol=GLB_TOL)
+    assert_allclose(
+        np.linalg.eigvalsh(entity_variants.desc.variants[1].links[0].inertia), (0.8, 1.6, 2.08), tol=GLB_TOL
+    )
+
+    # Attaching makes the welded base movable, which estimates its inertia from the same geometry selection
+    carrier_inertia = inertia_scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.2, 0.2, 0.2),
+        ),
+    )
+    entity_inertia_mounted = inertia_scene.add_entity(
+        morph=gs.morphs.URDF(
+            visualization=False,
+            file=urdf_without_inertial,
+            inertia_from_visual=True,
+            batch_fixed_verts=True,
+            fixed=True,
+        ),
+        material=gs.materials.Rigid(
+            rho=1000.0,
+        ),
+    )
+    entity_inertia_mounted.attach(carrier_inertia, parent_link_name=carrier_inertia.base_link.name)
+    assert_allclose(entity_inertia_mounted.base_link.desc.mass, 48.0, tol=GLB_TOL)
+
+    # A link without visual geometry falls back to its collision geometry
+    entity_collision_only = inertia_scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=urdf_collision_only,
+            inertia_from_visual=True,
+            align=False,
+        ),
+        material=gs.materials.Rigid(
+            rho=1000.0,
+        ),
+    )
+    assert_allclose(entity_collision_only.base_link.desc.mass, 1.0, tol=gs.EPS)
+
+    # The collision box an MJCF draws counts once, as collision geometry. Estimating from visual geometry recomputes
+    # the inertia MuJoCo compiled, from visual geometry kept undrawn.
+    entity_inertia_mjcf = inertia_scene.add_entity(
+        morph=gs.morphs.MJCF(
+            visualization=False,
+            file=mjcf_visual_collision,
+            inertia_from_visual=True,
+            align=False,
+        ),
+        material=gs.materials.Rigid(
+            rho=1000.0,
+        ),
+    )
+    assert_allclose(entity_inertia_mjcf.base_link.desc.mass, 48.0, tol=gs.EPS)
+    assert_allclose(entity_inertia_mjcf.base_link.desc.inertial_pos, (0.2, 0.0, 0.0), tol=gs.EPS)
+
+    # A mesh takes the volume its surface encloses, closed by its watertight wrap when open, rather than that of the
+    # convex pieces its collision is split into. The wrap encloses the surface within a small offset.
+    torus = trimesh.creation.torus(major_radius=0.2, minor_radius=0.05)
+    open_torus_path = str(asset_tmp_path / "open_torus.obj")
+    trimesh.Trimesh(torus.vertices, torus.faces[1:]).export(open_torus_path)
+    entity_torus = inertia_scene.add_entity(
+        morph=gs.morphs.Mesh(
+            visualization=False,
+            file=open_torus_path,
+            inertia_from_visual=True,
+        ),
+        material=gs.materials.Rigid(
+            rho=1000.0,
+        ),
+    )
+    entity_torus_variants = inertia_scene.add_entity(
+        morph=(
+            gs.morphs.Mesh(file=open_torus_path),
+            gs.morphs.Mesh(file=open_torus_path, inertia_from_visual=True),
+        ),
+        material=gs.materials.Rigid(
+            rho=1000.0,
+        ),
+    )
+    assert_allclose(entity_torus.base_link.desc.mass, 1000.0 * torus.volume, rtol=0.02)
+    assert_allclose(entity_torus_variants.desc.variants[1].links[0].mass, 1000.0 * torus.volume, rtol=0.02)
+
+    # The URDF loads go through the parser MuJoCo provides, the undecodable visual meshes included
+    assert not any("legacy URDF parser" in record.getMessage() for record in caplog.records)
 
     # Every link of an aligned free body keeps its own mass, so each link reads its authored mass. The two totals are
     # accumulated by independent code paths, so their agreement is bounded by that cross-path floor.

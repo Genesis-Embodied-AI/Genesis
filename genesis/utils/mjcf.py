@@ -237,7 +237,7 @@ def parse_xml(morph, surface, rigid_options=None):
     file = uu.load_xacro(morph.file, morph.xacro_args) if morph.is_format(XACRO_FORMAT) else morph.file
     mj = build_model(
         file,
-        not morph.visualization,
+        not (morph.visualization or morph.inertia_from_visual),
         merge_fixed_links,
         exclude_ground_plane,
         links_to_keep,
@@ -737,7 +737,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
     # Geometries of visual groups (0, 1 or 2) are rendered in accordance with MuJoCo, collision ones included
     if not is_col or info["group"] in (0, 1, 2):
         vmesh = gs.Mesh.from_trimesh(tmesh, scale=scale, surface=surface, metadata=metadata)
-        g_infos.append({**info, "vmesh": vmesh, "contype": 0, "conaffinity": 0})
+        g_infos.append({**info, "vmesh": vmesh, "contype": 0, "conaffinity": 0, "is_drawn_collision": is_col})
 
     return g_infos
 
